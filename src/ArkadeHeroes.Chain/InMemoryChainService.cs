@@ -1,0 +1,69 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+
+namespace ArkadeHeroes.Chain;
+
+/// <summary>
+/// Chain simulation for unit tests and offline development: same contract as
+/// the NArk-backed service, no infrastructure. Every player starts with a
+/// faucet balance; asset ids are fake but unique.
+/// </summary>
+public class InMemoryChainService : IChainService
+{
+    public const long FaucetSats = 100_000;
+
+    private readonly ConcurrentDictionary<string, PlayerWallet> _wallets = new();
+    private readonly ConcurrentDictionary<string, long> _balances = new();
+    private readonly ConcurrentDictionary<string, string> _assetHolders = new(); // assetId → playerId
+    private long _treasuryBalance;
+
+    private static string NewId(string prefix)
+        => $"{prefix}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}";
+
+    public Task<ChainInfo> GetInfoAsync(CancellationToken ct = default)
+        => Task.FromResult(new ChainInfo("InMemory", "simnet", "sim-treasury", "sim-species-asset"));
+
+    public Task<PlayerWallet> GetOrCreatePlayerWalletAsync(string playerId, CancellationToken ct = default)
+    {
+        var wallet = _wallets.GetOrAdd(playerId, id =>
+        {
+            _balances[id] = FaucetSats;
+            return new PlayerWallet(id, NewId("sim-ark1"));
+        });
+        return Task.FromResult(wallet);
+    }
+
+    public Task<long> GetBalanceSatsAsync(string playerId, CancellationToken ct = default)
+        => Task.FromResult(_balances.GetValueOrDefault(playerId));
+
+    public Task<HeroMintResult> MintHeroAssetAsync(string playerId, HeroMintData data, CancellationToken ct = default)
+    {
+        if (!_wallets.ContainsKey(playerId))
+            throw new InvalidOperationException($"Player {playerId} has no wallet.");
+        var assetId = NewId("sim-asset");
+        _assetHolders[assetId] = playerId;
+        return Task.FromResult(new HeroMintResult(assetId, NewId("sim-arktx")));
+    }
+
+    public Task<string> PayFeeAsync(string playerId, long amountSats, string memo, CancellationToken ct = default)
+    {
+        if (amountSats < 0) throw new ArgumentOutOfRangeException(nameof(amountSats));
+        var paid = false;
+        _balances.AddOrUpdate(playerId,
+            _ => throw new InvalidOperationException($"Player {playerId} has no wallet."),
+            (_, balance) =>
+            {
+                if (balance < amountSats) return balance;
+                paid = true;
+                return balance - amountSats;
+            });
+        if (!paid)
+            throw new InvalidOperationException(
+                $"Insufficient balance for fee of {amountSats} sats ({memo}).");
+        Interlocked.Add(ref _treasuryBalance, amountSats);
+        return Task.FromResult(NewId("sim-payment"));
+    }
+
+    public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)
+        => Task.FromResult(_assetHolders.TryGetValue(assetId, out var holder) && holder == playerId);
+}
