@@ -10,11 +10,11 @@
 // Winner derivation (game-specific): the match outcome is a pure function of
 //   matchSeed = SHA256(serverSeed ‖ matchId ‖ challengerHeroId ‖ defenderHeroId ‖ nonce)
 // replayed through the deterministic BattleEngine over the committed pre-fight
-// hero snapshots. The server commits SHA256(serverSeed) at open. v1-covenant
-// keeps the engine off-chain and verifies the commit-reveal chain plus a game
-// oracle signature over (matchId, winnerPk); full in-script battle replay is
-// not practical, so the oracle attests the replayable outcome — any observer
-// can recompute it and slash a lying oracle reputationally.
+// hero snapshots. The server commits SHA256(serverSeed) at open. The oracle
+// attests the replayable outcome by co-signing ONLY the settle branch that
+// pays the actual winner — settlement is branch-per-party because the Arkade
+// Language grammar has no pubkey-equality predicate. Any observer can recompute
+// the outcome from the revealed seed and expose a lying oracle.
 
 import "single_sig.ark";
 
@@ -23,37 +23,41 @@ contract WagerEscrow(
     pubkey challengerPk,
     pubkey defenderPk,
     pubkey oraclePk,            // game outcome oracle
-    int stakeSats,              // per-side stake; pot = 2 * stakeSats
+    int stakeSats,              // per-side stake
+    int potSats,                // 2 * stakeSats — explicit param: the grammar has no inline arithmetic
     int expiryTime,             // absolute locktime for forfeit/refund paths
     int exit                    // CSV delay for unilateral exit leaves
 ) {
-    // Winner sweep: spend both stake VTXOs in one tx paying the pot to the
-    // winner. The revealed serverSeed must match the pre-nonce commitment,
-    // and the oracle signs the (seed-derived) outcome.
-    function settle(
+    // Challenger won: sweep both stake VTXOs in one tx paying the pot to the
+    // challenger. The revealed serverSeed must match the pre-nonce commitment,
+    // and the oracle signs only the branch matching the engine outcome.
+    function settleToChallenger(
         bytes32 serverSeed,
-        pubkey winnerPk,
         signature oracleSig,
         int otherStakeInputIdx
     ) {
-        // Commit–reveal: the seed the outcome derives from was fixed before
-        // either player's nonce existed.
         require(sha256(serverSeed) == serverSeedCommit, "seed does not match commitment");
-
-        // Winner must be one of the two staked parties.
-        require(winnerPk == challengerPk || winnerPk == defenderPk, "winner not a party");
-
-        // Oracle attests the engine outcome for this seed (see header).
         require(checkSig(oracleSig, oraclePk), "invalid oracle sig");
 
         // atomicSweep: the sibling stake VTXO is spent in the same tx, so one
-        // stake can never be swept alone (coinflip covenants.ts pattern —
-        // compiles to OP_INSPECTINPUTVALUE on the sibling input).
+        // stake can never be swept alone (coinflip covenants.ts pattern).
         require(tx.inputs[otherStakeInputIdx].value == stakeSats, "sibling stake missing");
 
-        // The whole pot lands on the winner's single-sig VTXO.
-        require(tx.outputs[0].value >= stakeSats + stakeSats, "pot underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(winnerPk, exit), "pot not paid to winner");
+        require(tx.outputs[0].value >= potSats, "pot underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(challengerPk, exit), "pot not paid to challenger");
+    }
+
+    // Defender won: identical shape, paying the defender.
+    function settleToDefender(
+        bytes32 serverSeed,
+        signature oracleSig,
+        int otherStakeInputIdx
+    ) {
+        require(sha256(serverSeed) == serverSeedCommit, "seed does not match commitment");
+        require(checkSig(oracleSig, oraclePk), "invalid oracle sig");
+        require(tx.inputs[otherStakeInputIdx].value == stakeSats, "sibling stake missing");
+        require(tx.outputs[0].value >= potSats, "pot underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(defenderPk, exit), "pot not paid to defender");
     }
 
     // Challenger walks away with both stakes if the match never resolves
@@ -65,13 +69,19 @@ contract WagerEscrow(
         require(checkSig(challengerSig, challengerPk), "invalid challenger sig");
     }
 
-    // Per-side refund: reclaim ONLY your own stake after expiry (open matches
+    // Per-side refunds: reclaim ONLY your own stake after expiry (open matches
     // nobody accepted, or mutual abandonment). No sibling-input requirement.
-    function refund(pubkey partyPk, signature partySig) {
+    function refundChallenger(signature challengerSig) {
         require(tx.locktime >= expiryTime, "not yet expired");
-        require(partyPk == challengerPk || partyPk == defenderPk, "not a party");
         require(tx.outputs[0].value >= stakeSats, "stake underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(partyPk, exit), "must pay the refunding party");
-        require(checkSig(partySig, partyPk), "invalid party sig");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(challengerPk, exit), "must pay the challenger");
+        require(checkSig(challengerSig, challengerPk), "invalid challenger sig");
+    }
+
+    function refundDefender(signature defenderSig) {
+        require(tx.locktime >= expiryTime, "not yet expired");
+        require(tx.outputs[0].value >= stakeSats, "stake underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(defenderPk, exit), "must pay the defender");
+        require(checkSig(defenderSig, defenderPk), "invalid defender sig");
     }
 }

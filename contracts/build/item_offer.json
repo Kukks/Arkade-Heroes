@@ -1,0 +1,163 @@
+{
+  "contractName": "ItemOffer",
+  "constructorInputs": [
+    {
+      "name": "itemAssetIdTxid",
+      "type": "bytes32"
+    },
+    {
+      "name": "itemAssetIdGidx",
+      "type": "int"
+    },
+    {
+      "name": "priceSats",
+      "type": "int"
+    },
+    {
+      "name": "sellerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "cancelAfter",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "fulfill",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "takerOutputIdx",
+            "type": "int"
+          },
+          {
+            "name": "changeOutputIdx",
+            "type": "int"
+          }
+        ],
+        "asm": [
+          "<itemAssetIdTxid>",
+          "<itemAssetIdGidx>",
+          "OP_FINDASSETGROUPBYASSETID",
+          "OP_VERIFY",
+          "<itemGroup>",
+          "OP_1",
+          "OP_INSPECTASSETGROUPSUM",
+          "<itemGroup>",
+          "OP_0",
+          "OP_INSPECTASSETGROUPSUM",
+          "OP_SUB64",
+          "OP_VERIFY",
+          "0",
+          "OP_EQUAL",
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "<priceSats>",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<sellerPk>,<exit>)>",
+          "OP_EQUAL",
+          "<takerOutputIdx>",
+          "<itemAssetIdTxid>",
+          "<itemAssetIdGidx>",
+          "OP_INSPECTOUTASSETLOOKUP",
+          "OP_VERIFY",
+          "1",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "<changeOutputIdx>",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:ItemOffer(<itemAssetIdTxid>,<itemAssetIdGidx>,<priceSats>,<sellerPk>,<cancelAfter>,<exit>)>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "fulfill",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:fulfill>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cancel",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "sellerSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "OP_INSPECTLOCKTIME",
+          "<cancelAfter>",
+          "OP_GREATERTHANOREQUAL",
+          "<sellerPk>",
+          "<sellerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "cancel",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:cancel>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\ncontract ItemOffer(\n    bytes32 itemAssetIdTxid,\n    int itemAssetIdGidx,\n    int priceSats,\n    pubkey sellerPk,\n    int cancelAfter,\n    int exit\n) {\n    function fulfill(int takerOutputIdx, int changeOutputIdx) {\n        let itemGroup = tx.assetGroups.find(itemAssetIdTxid, itemAssetIdGidx);\n        require(itemGroup.delta == 0, \"no mint/burn during a sale\");\n\n        require(tx.outputs[0].value >= priceSats, \"price underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk, exit), \"seller not paid\");\n\n        require(tx.outputs[takerOutputIdx].assets.lookup(itemAssetIdTxid, itemAssetIdGidx) == 1, \"taker unit missing\");\n        require(tx.outputs[changeOutputIdx].scriptPubKey == new ItemOffer(\n            itemAssetIdTxid, itemAssetIdGidx, priceSats, sellerPk, cancelAfter, exit\n        ), \"remaining units must stay offered\");\n    }\n\n    function cancel(signature sellerSig) {\n        require(tx.locktime >= cancelAfter, \"offer window still open\");\n        require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n    }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-07-03T21:37:28.359934600+00:00",
+  "warnings": [
+    "warning[type]: fn fulfill: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn fulfill: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn fulfill: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}

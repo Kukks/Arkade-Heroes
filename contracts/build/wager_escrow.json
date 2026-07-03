@@ -1,0 +1,351 @@
+{
+  "contractName": "WagerEscrow",
+  "constructorInputs": [
+    {
+      "name": "serverSeedCommit",
+      "type": "bytes32"
+    },
+    {
+      "name": "challengerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "defenderPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "stakeSats",
+      "type": "int"
+    },
+    {
+      "name": "potSats",
+      "type": "int"
+    },
+    {
+      "name": "expiryTime",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "settleToChallenger",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "serverSeed",
+            "type": "bytes32"
+          },
+          {
+            "name": "oracleSig",
+            "type": "signature"
+          },
+          {
+            "name": "otherStakeInputIdx",
+            "type": "int"
+          }
+        ],
+        "asm": [
+          "<serverSeed>",
+          "OP_SHA256",
+          "<serverSeedCommit>",
+          "OP_EQUAL",
+          "<oraclePk>",
+          "<oracleSig>",
+          "OP_CHECKSIG",
+          "<otherStakeInputIdx>",
+          "OP_INSPECTINPUTVALUE",
+          "<stakeSats>",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "<potSats>",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<challengerPk>,<exit>)>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "settleToChallenger",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:settleToChallenger>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settleToDefender",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "serverSeed",
+            "type": "bytes32"
+          },
+          {
+            "name": "oracleSig",
+            "type": "signature"
+          },
+          {
+            "name": "otherStakeInputIdx",
+            "type": "int"
+          }
+        ],
+        "asm": [
+          "<serverSeed>",
+          "OP_SHA256",
+          "<serverSeedCommit>",
+          "OP_EQUAL",
+          "<oraclePk>",
+          "<oracleSig>",
+          "OP_CHECKSIG",
+          "<otherStakeInputIdx>",
+          "OP_INSPECTINPUTVALUE",
+          "<stakeSats>",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "<potSats>",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<defenderPk>,<exit>)>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "settleToDefender",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:settleToDefender>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "forfeitToChallenger",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "challengerSig",
+            "type": "signature"
+          },
+          {
+            "name": "otherStakeInputIdx",
+            "type": "int"
+          }
+        ],
+        "asm": [
+          "OP_INSPECTLOCKTIME",
+          "<expiryTime>",
+          "OP_GREATERTHANOREQUAL",
+          "<otherStakeInputIdx>",
+          "OP_INSPECTINPUTVALUE",
+          "<stakeSats>",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<challengerPk>,<exit>)>",
+          "OP_EQUAL",
+          "<challengerPk>",
+          "<challengerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "forfeitToChallenger",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:forfeitToChallenger>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "refundChallenger",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "challengerSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "OP_INSPECTLOCKTIME",
+          "<expiryTime>",
+          "OP_GREATERTHANOREQUAL",
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "<stakeSats>",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<challengerPk>,<exit>)>",
+          "OP_EQUAL",
+          "<challengerPk>",
+          "<challengerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "refundChallenger",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:refundChallenger>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "refundDefender",
+      "arkade": {
+        "inputs": [
+          {
+            "name": "defenderSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "OP_INSPECTLOCKTIME",
+          "<expiryTime>",
+          "OP_GREATERTHANOREQUAL",
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "<stakeSats>",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<defenderPk>,<exit>)>",
+          "OP_EQUAL",
+          "<defenderPk>",
+          "<defenderSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
+        {
+          "name": "refundDefender",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:refundDefender>",
+            "OP_CHECKSIG"
+          ]
+        }
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\ncontract WagerEscrow(\n    bytes32 serverSeedCommit,\n    pubkey challengerPk,\n    pubkey defenderPk,\n    pubkey oraclePk,\n    int stakeSats,\n    int potSats,\n    int expiryTime,\n    int exit\n) {\n    function settleToChallenger(\n        bytes32 serverSeed,\n        signature oracleSig,\n        int otherStakeInputIdx\n    ) {\n        require(sha256(serverSeed) == serverSeedCommit, \"seed does not match commitment\");\n        require(checkSig(oracleSig, oraclePk), \"invalid oracle sig\");\n\n        require(tx.inputs[otherStakeInputIdx].value == stakeSats, \"sibling stake missing\");\n\n        require(tx.outputs[0].value >= potSats, \"pot underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(challengerPk, exit), \"pot not paid to challenger\");\n    }\n\n    function settleToDefender(\n        bytes32 serverSeed,\n        signature oracleSig,\n        int otherStakeInputIdx\n    ) {\n        require(sha256(serverSeed) == serverSeedCommit, \"seed does not match commitment\");\n        require(checkSig(oracleSig, oraclePk), \"invalid oracle sig\");\n        require(tx.inputs[otherStakeInputIdx].value == stakeSats, \"sibling stake missing\");\n        require(tx.outputs[0].value >= potSats, \"pot underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(defenderPk, exit), \"pot not paid to defender\");\n    }\n\n    function forfeitToChallenger(signature challengerSig, int otherStakeInputIdx) {\n        require(tx.locktime >= expiryTime, \"not yet expired\");\n        require(tx.inputs[otherStakeInputIdx].value == stakeSats, \"sibling stake missing\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(challengerPk, exit), \"must pay challenger\");\n        require(checkSig(challengerSig, challengerPk), \"invalid challenger sig\");\n    }\n\n    function refundChallenger(signature challengerSig) {\n        require(tx.locktime >= expiryTime, \"not yet expired\");\n        require(tx.outputs[0].value >= stakeSats, \"stake underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(challengerPk, exit), \"must pay the challenger\");\n        require(checkSig(challengerSig, challengerPk), \"invalid challenger sig\");\n    }\n\n    function refundDefender(signature defenderSig) {\n        require(tx.locktime >= expiryTime, \"not yet expired\");\n        require(tx.outputs[0].value >= stakeSats, \"stake underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(defenderPk, exit), \"must pay the defender\");\n        require(checkSig(defenderSig, defenderPk), \"invalid defender sig\");\n    }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-07-03T21:38:25.478571500+00:00",
+  "warnings": [
+    "warning[type]: fn settleToChallenger: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settleToChallenger: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settleToDefender: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settleToDefender: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn forfeitToChallenger: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn refundChallenger: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn refundDefender: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}
