@@ -1,3 +1,7 @@
 [submodule "external/dotnet-sdk"]
 	path = external/dotnet-sdk
 	url = https://github.com/arkade-os/dotnet-sdk.git
+[submodule "regtest"]
+	path = regtest
+	url = https://github.com/ArkLabsHQ/arkade-regtest.git
+	branch = master
