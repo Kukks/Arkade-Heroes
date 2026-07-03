@@ -152,11 +152,37 @@ public class NArkChainService(
 
     // ── IChainService ──────────────────────────────────────────────────
 
+    private string? _emulatorSignerKey;
+    private bool _emulatorProbed;
+
     public async Task<ChainInfo> GetInfoAsync(CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        return new ChainInfo("NArk", serverInfo.Network.Name, _treasuryAddress!, _speciesAssetId);
+
+        // Probe the covenant co-signer once; its key is what game covenants
+        // tweak (ArkadeScriptTweak) and is surfaced so clients can verify
+        // covenant leaves independently.
+        if (!_emulatorProbed)
+        {
+            _emulatorProbed = true;
+            try
+            {
+                var emulator = new Covenants.EmulatorClient(new Uri(options.EmulatorUri.TrimEnd('/') + "/"));
+                using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                probeCts.CancelAfter(TimeSpan.FromSeconds(5));
+                _emulatorSignerKey = (await emulator.GetInfoAsync(probeCts.Token)).SignerPubkey;
+                logger.LogInformation("Arkade Script emulator reachable at {Uri}, signer {Key}",
+                    options.EmulatorUri, _emulatorSignerKey);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Arkade Script emulator not reachable at {Uri} ({Reason}) — covenant paths unavailable until it is",
+                    options.EmulatorUri, ex.Message);
+            }
+        }
+
+        return new ChainInfo("NArk", serverInfo.Network.Name, _treasuryAddress!, _speciesAssetId, _emulatorSignerKey);
     }
 
     public async Task<PlayerWallet> GetOrCreatePlayerWalletAsync(string playerId, CancellationToken ct = default)

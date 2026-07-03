@@ -2,7 +2,9 @@
 
 A breeding + battling game powered by [Arkade](https://docs.arkadeos.com) covenant mechanics — CryptoKitties-style genetics with levels, skills, equipment, and PvP matches, settled over Bitcoin via Arkade VTXOs.
 
-> Status: early foundation. Minimal client/server with real game logic; graphics intentionally absent. The goal is a playable loop on local regtest first, deepening the covenant integration iteration by iteration.
+> Status: early foundation, playable on local regtest. Minimal client/server with real game logic; graphics intentionally absent.
+>
+> **Covenant-first**: every game action is specified as an Arkade Script covenant (`contracts/`) over transaction shapes the server already executes today — asset deltas, genesis-metadata genome commitments, commit–reveal randomness, pinned payout outputs. Enforcement migrates from "server policy + client audit" to emulator co-signing without changing any transaction. The covenant key-tweak primitive (`ArkadeScriptTweak`) and emulator client are live in `src/ArkadeHeroes.Chain/Covenants/`, and `/api/chain/info` surfaces the emulator's signer key.
 
 ## Layout
 
@@ -13,6 +15,7 @@ A breeding + battling game powered by [Arkade](https://docs.arkadeos.com) covena
 | `src/ArkadeHeroes.Chain` | Chain abstraction: in-memory chain for tests + NArk (Arkade .NET SDK) backend |
 | `src/ArkadeHeroes.Server` | ASP.NET Core minimal API — the game service |
 | `src/ArkadeHeroes.Client` | Console client — the "minimal layer" UI |
+| `contracts/` | **Arkade Script covenants — the authoritative game rules** (breeding/transfer, wager escrow, item offers); see `contracts/README.md` |
 | `tests/` | Unit + integration tests; regtest E2E |
 | `external/dotnet-sdk` | [NArk](https://github.com/arkade-os/dotnet-sdk) submodule (brings `regtest/` denigiri harness) |
 | `docs/research/` | Findings from the Arkade ecosystem repos this design is grounded in |

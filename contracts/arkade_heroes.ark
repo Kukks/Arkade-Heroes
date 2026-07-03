@@ -1,0 +1,98 @@
+// Arkade Heroes — species contract (breeding + transfer)
+//
+// Modeled on arkade-os/compiler examples/arkade_kitties.ark (the compiled,
+// working baseline). Heroes are unique Arkade assets (amount 1) controlled by
+// the game's species control asset; the 32-byte genome and generation are
+// committed in immutable genesis metadata (metadataHash).
+//
+// Oracle semantics (game-specific): oraclePk is the game's breeding oracle.
+// It signs only child metadata whose genome equals
+//   GeneMixer.Mix(sireGenome, dameGenome, entropy)
+//   entropy = SHA256(serverSeed ‖ sireAssetId ‖ dameAssetId ‖ playerNonce)
+// with the serverSeed committed (SHA256) before the player's nonce was chosen.
+// The derivation is deterministic and published, so any observer can recompute
+// the child genome from the revealed seed and reject a cheating oracle. The
+// long-term replacement is the design-doc mixGenomes computed in-script with
+// VRF entropy (compiler/docs/ArkadeKitties.md §BreedReveal).
+
+import "single_sig.ark";
+
+contract ArkadeHeroes(
+    bytes32 speciesControlIdTxid,
+    int speciesControlIdGidx,
+    pubkey oraclePk,
+    int exit
+) {
+    // Breed two heroes into a fresh child asset, retaining both parents and
+    // the species control asset. Mirrors ArkadeKitties.breed structurally.
+    function breed(
+        bytes32 sireIdTxid,
+        int sireIdGidx,
+        bytes32 dameIdTxid,
+        int dameIdGidx,
+        bytes32 childIdTxid,
+        int childIdGidx,
+        bytes32 sireGenomeHash,
+        bytes32 dameGenomeHash,
+        bytes32 expectedChildMetadataHash,
+        signature oracleSig,
+        int childOutputIdx,
+        int sireOutputIdx,
+        int dameOutputIdx,
+        int ctrlOutputIdx
+    ) {
+        // Parents: species-controlled, genomes as claimed, retained (delta 0).
+        let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);
+        require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "sire not species-controlled");
+        require(sireGroup.metadataHash == sireGenomeHash, "sire genome mismatch");
+        require(sireGroup.delta == 0, "sire must be retained");
+
+        let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);
+        require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "dame not species-controlled");
+        require(dameGroup.metadataHash == dameGenomeHash, "dame genome mismatch");
+        require(dameGroup.delta == 0, "dame must be retained");
+
+        // Child: freshly minted in this tx, exactly one unit, species-controlled,
+        // metadata (genome ‖ generation ‖ provenance) exactly as oracle-signed.
+        let childGroup = tx.assetGroups.find(childIdTxid, childIdGidx);
+        require(childGroup.isFresh == 1, "child must be fresh");
+        require(childGroup.delta == 1, "must mint exactly 1 child");
+        require(childGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "child not species-controlled");
+        require(childGroup.metadataHash == expectedChildMetadataHash, "child genome mismatch");
+
+        // Species control must ride along unchanged — this is what makes
+        // breeding permissioned by the species, not by any asset holder.
+        let ctrlGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
+        require(ctrlGroup.delta == 0, "species control must be retained");
+
+        // Oracle attests the child genome derivation (see header).
+        require(checkSig(oracleSig, oraclePk), "invalid oracle sig");
+
+        // All four assets must land in outputs.
+        require(tx.outputs[childOutputIdx].assets.lookup(childIdTxid, childIdGidx) == 1, "child not in output");
+        require(tx.outputs[sireOutputIdx].assets.lookup(sireIdTxid, sireIdGidx) == 1, "sire not returned");
+        require(tx.outputs[dameOutputIdx].assets.lookup(dameIdTxid, dameIdGidx) == 1, "dame not returned");
+        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "ctrl not retained");
+    }
+
+    // Transfer a hero to a new owner's single-sig VTXO. Note the game rule
+    // "equipment does not travel" is off-chain policy: item assets simply
+    // stay in the sender's wallet because they are separate asset groups.
+    function transfer(
+        bytes32 heroIdTxid,
+        int heroIdGidx,
+        pubkey newOwnerPk,
+        signature ownerSig,
+        pubkey ownerPk
+    ) {
+        let heroGroup = tx.assetGroups.find(heroIdTxid, heroIdGidx);
+
+        require(heroGroup.isFresh == 0, "must be existing hero");
+        require(heroGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "not species-controlled");
+        require(heroGroup.delta == 0, "must be transfer only");
+
+        require(tx.outputs[0].assets.lookup(heroIdTxid, heroIdGidx) == 1, "hero not in output");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk, exit), "wrong destination");
+        require(checkSig(ownerSig, ownerPk), "invalid owner sig");
+    }
+}

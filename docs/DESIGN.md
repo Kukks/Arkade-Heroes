@@ -38,9 +38,27 @@ Growth genes are the breeding meta: invisible at level 1, dominant at high level
 
 Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative by speed, skill choice by highest expected damage off cooldown, damage = `power · scale / (defense + 25)` with element ring multipliers (1.3×/0.75×), crit (luck), dodge (speed), ±10% variance — all rolls from a seeded xoshiro256** stream. Max 60 turns, then HP-fraction decision. Output is a replayable `BattleResult` event log; the match seed is commit–reveal over both players' nonces, so either player can re-run the engine and verify the outcome.
 
-## 2. Chain integration (ArkadeHeroes.Chain)
+## 2. Chain integration (ArkadeHeroes.Chain) — covenant-first
 
-### v1 (this iteration) — real assets, server-authoritative rules
+**The covenants in `contracts/*.ark` are the authoritative rules of the game.** Every mechanic is specified as an Arkade Script covenant over a concrete transaction shape; the running server is an *executor* of those shapes, not the definition of them. Migrating a mechanic to covenant enforcement swaps who refuses an invalid transaction (the emulator's tweaked-key signature instead of server policy) — the transactions, asset structures, and derivations do not change.
+
+| Mechanic | Covenant (contracts/) | Transaction shape (live today) | Enforcement today | Covenant gap |
+|---|---|---|---|---|
+| Hero identity | `arkade_heroes.ark` | asset amount 1, species-controlled, genome+provenance in genesis metadata | on-chain (structure) + server issuance | compile + tapleaf binding |
+| Breeding | `arkade_heroes.breed` | parents retained (Δ0) + control retained (Δ0) + child fresh-minted (Δ1) with derived genome | server executes; commit–reveal audited client-side | emulator co-signing + oracle sig |
+| Transfer | `arkade_heroes.transfer` | Δ0 asset move to recipient's VTXO | on-chain (asset move) via server wallets | owner-key spend path |
+| Wagered match | `wager_escrow.ark` | two stake VTXOs → atomic sweep to winner; time-locked forfeit/refund | treasury escrow + on-chain payout | escrow taptree + emulator packet |
+| Item sales | `item_offer.ark` | pay-seller-in-same-tx for one asset unit | server delivers after fee payment | offer VTXO (banco pattern) |
+
+**Invariants that keep every mode covenant-compatible** (enforced by tests):
+1. All randomness is commit–reveal (`SHA256(serverSeed)` published before player nonces) and all derivations are pure functions — `GeneMixer.Mix` is byte-compatible with the design-doc `mixGenomes`, `BattleEngine.Fight` replays from the match seed.
+2. Genome, generation, lineage, and the commit–reveal proof are sealed in asset **genesis metadata** — the covenant's `metadataHash` checks bind to data that already exists on-chain today.
+3. Heroes/items are **species-controlled asset groups** with the exact delta discipline the covenants require (retain Δ0 / fresh-mint Δ1).
+4. Fees, stakes, and payouts are plain Arkade transactions with fixed destinations — the outputs the covenants pin (`scriptPubKey == SingleSig(...)`, `value >= pot`).
+
+**Covenant plumbing already in code** (`src/ArkadeHeroes.Chain/Covenants/`): `ArkadeScriptTweak` (the `ArkScriptHash` tagged-hash key tweak that binds a tapleaf to a script, ported from the emulator) and `EmulatorClient` (`/v1/info`, `/v1/tx`). The regtest stack's emulator is probed at startup and its signer key is surfaced through `/api/chain/info` — clients can compute covenant keys themselves.
+
+### v1 execution mode — real assets, server-executed shapes
 
 - **Hero = Arkade asset, amount 1**, minted via NArk `AssetManager.IssueAsync` with `Metadata = { genome, generation, parentA, parentB, serverSeed, nonce }` and `ControlAssetId` = the **species control asset** the game server mints once at first boot (the ArkadeKitties species-gate concept).
 - **Canonicity**: a hero is legit iff its asset's control is the game's species asset (server is the only holder of the control asset, hence the only possible issuer — verifiable on-chain via `GetAssetDetailsAsync`).
@@ -51,12 +69,15 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 - **Server wallet**: NArk `InMemoryWalletProvider` (EF Core later), funded on regtest via `arkd note`.
 - The game DB caches hero state for matchmaking/progression; the chain is authoritative for existence + ownership.
 
-### v2+ — progressive decentralization (documented, not built)
+### Covenant activation roadmap (contracts are written; this is the wiring order)
 
-1. **Covenant breeding** (ArkadeKitties compiled example as baseline): breed becomes an Arkade Script contract — parents + species control retained (`delta == 0`), child fresh-minted (`delta == 1`), `metadataHash` verified, oracle sig → emulator co-signing. Our `GeneMixer` is already byte-compatible with the design doc's `mixGenomes` so the off-chain and on-chain derivations agree.
-2. **Wagered matches**: coinflip's two-escrow `atomicSweep` taptree (4 collaborative + 4 exit leaves) with the match seed commit–reveal as the win predicate; forfeit/refund PSBTs pre-built for the client.
-3. **Equipment marketplace**: banco non-interactive offers (asset↔sats, asset↔asset), optional solver bot as auction settler.
-4. **NArk gaps to contribute upstream** (from research): emulator REST/gRPC client, Emulator Packet TLV `0x01` builder, `ArkScriptHash` tweak, covenant bytecode builders.
+1. **Compiler wiring**: run `contracts/*.ark` through `arkade-os/compiler`, consume the artifact JSON (constructor args, per-function witness order, tapleaf asm) — see `contracts/README.md` for which constructs are already compile-verified vs. pending.
+2. **Emulator Packet builder** (TLV `0x01` in the ARK extension OP_RETURN) on top of NArk's existing `Extension`/`Packet` encoders — the last missing piece between `EmulatorClient.SubmitTxAsync` and a real covenant spend.
+3. **Breeding + transfer** move onto `arkade_heroes.ark` tapleaves (oracle = game key; emulator co-signs).
+4. **Wagered matches** move onto `wager_escrow.ark` two-stake escrows with pre-built forfeit/refund PSBTs handed to clients at open/accept (coinflip's recovery model).
+5. **Item offers** become resting `item_offer.ark` VTXOs — the shop works with the server offline, and the same covenant is the player-to-player marketplace.
+6. **Oracle retirement**: replace outcome/genome oracles with in-script derivation + VRF entropy per the ArkadeKitties design doc, as compiler/emulator capabilities allow.
+7. **Upstream contributions to NArk**: the emulator client, packet builder, `ArkScriptHash` tweak, and covenant bytecode builders generalize beyond this game.
 
 ## 3. Topology
 

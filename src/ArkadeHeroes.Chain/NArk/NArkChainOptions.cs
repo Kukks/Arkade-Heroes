@@ -17,6 +17,13 @@ public class NArkChainOptions
     public string DbPath { get; set; } = "arkade-heroes-chain.db";
 
     /// <summary>
+    /// Arkade Script emulator (covenant co-signing service). Optional — the
+    /// game runs without it in server-enforced mode, but covenant paths
+    /// require it.
+    /// </summary>
+    public string EmulatorUri { get; set; } = "http://localhost:7073";
+
+    /// <summary>
     /// Optional fixed BIP-39 mnemonic for the treasury wallet. When empty a
     /// mnemonic is generated on first boot and persisted in wallet storage.
     /// </summary>

@@ -4,7 +4,9 @@ public record ChainInfo(
     string Mode,
     string Network,
     string TreasuryAddress,
-    string? SpeciesAssetId);
+    string? SpeciesAssetId,
+    /// <summary>Covenant co-signer (Arkade Script emulator) key, when the service is reachable.</summary>
+    string? EmulatorSignerKey = null);
 
 public record PlayerWallet(string PlayerId, string ArkadeAddress);
 

@@ -428,5 +428,6 @@ public class GameClient(string serverUrl)
         Console.WriteLine($"  chain: {info.Mode} ({info.Network})");
         Console.WriteLine($"  treasury: {info.TreasuryAddress}");
         Console.WriteLine($"  species asset: {info.SpeciesAssetId ?? "-"}");
+        Console.WriteLine($"  covenant co-signer (emulator): {info.EmulatorSignerKey ?? "not reachable"}");
     }
 }

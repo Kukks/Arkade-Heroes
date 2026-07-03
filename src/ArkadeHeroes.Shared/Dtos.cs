@@ -126,6 +126,7 @@ public record UnequipRequest(string Slot);
 // ── Chain / misc ───────────────────────────────────────────────────────────
 
 public record ChainInfoDto(
-    string Mode, string Network, string TreasuryAddress, string? SpeciesAssetId);
+    string Mode, string Network, string TreasuryAddress, string? SpeciesAssetId,
+    string? EmulatorSignerKey = null);
 
 public record ErrorResponse(string Error);

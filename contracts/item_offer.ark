@@ -1,0 +1,42 @@
+// Arkade Heroes — non-interactive item sale offer
+//
+// Modeled on arkade-os/banco (README + src/offer.ts): the treasury funds an
+// offer VTXO carrying item-asset units under this covenant and goes offline.
+// Any taker can spend it iff, in the same Arkade transaction, output 0 pays
+// the treasury the asking price. This replaces the server-mediated
+// POST /api/items/{id}/buy with a fully non-interactive on-chain shop —
+// and the identical shape works player-to-player for secondary trading.
+
+import "single_sig.ark";
+
+contract ItemOffer(
+    bytes32 itemAssetIdTxid,    // the item type's fungible asset
+    int itemAssetIdGidx,
+    int priceSats,              // price per unit
+    pubkey sellerPk,            // treasury (or any player reselling)
+    int cancelAfter,            // absolute locktime for seller cancel
+    int exit
+) {
+    // Any taker: pay the seller, take one unit. Remaining units re-lock under
+    // the same covenant (banco partial-fill pattern via delta accounting).
+    function fulfill(int takerOutputIdx, int changeOutputIdx) {
+        let itemGroup = tx.assetGroups.find(itemAssetIdTxid, itemAssetIdGidx);
+        require(itemGroup.delta == 0, "no mint/burn during a sale");
+
+        // Seller gets paid in the same tx — this is the whole trick.
+        require(tx.outputs[0].value >= priceSats, "price underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk, exit), "seller not paid");
+
+        // Exactly one unit leaves to the taker; the rest must be re-offered.
+        require(tx.outputs[takerOutputIdx].assets.lookup(itemAssetIdTxid, itemAssetIdGidx) == 1, "taker unit missing");
+        require(tx.outputs[changeOutputIdx].scriptPubKey == new ItemOffer(
+            itemAssetIdTxid, itemAssetIdGidx, priceSats, sellerPk, cancelAfter, exit
+        ), "remaining units must stay offered");
+    }
+
+    // Seller reclaims unsold inventory after the offer window.
+    function cancel(signature sellerSig) {
+        require(tx.locktime >= cancelAfter, "offer window still open");
+        require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+    }
+}

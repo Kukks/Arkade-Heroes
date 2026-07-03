@@ -188,7 +188,8 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
 api.MapGet("/chain/info", async (IChainService chain, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
-    return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId));
+    return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
+        info.EmulatorSignerKey));
 });
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
