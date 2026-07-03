@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/external/" />
+  <Folder Name="/external/dotnet-sdk/">
+    <Project Path="external/dotnet-sdk/NArk.Abstractions/NArk.Abstractions.csproj" />
+    <Project Path="external/dotnet-sdk/NArk.Core/NArk.Core.csproj" />
+    <Project Path="external/dotnet-sdk/NArk.Swaps/NArk.Swaps.csproj" />
+    <Project Path="external/dotnet-sdk/NArk/NArk.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ArkadeHeroes.Chain/ArkadeHeroes.Chain.csproj" />
+    <Project Path="src/ArkadeHeroes.Client/ArkadeHeroes.Client.csproj" />
+    <Project Path="src/ArkadeHeroes.Core/ArkadeHeroes.Core.csproj" />
+    <Project Path="src/ArkadeHeroes.Server/ArkadeHeroes.Server.csproj" />
+    <Project Path="src/ArkadeHeroes.Shared/ArkadeHeroes.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ArkadeHeroes.Tests.E2E/ArkadeHeroes.Tests.E2E.csproj" />
+    <Project Path="tests/ArkadeHeroes.Tests/ArkadeHeroes.Tests.csproj" />
+  </Folder>
+</Solution>

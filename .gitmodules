@@ -1,0 +1,3 @@
+[submodule "external/dotnet-sdk"]
+	path = external/dotnet-sdk
+	url = https://github.com/arkade-os/dotnet-sdk.git
