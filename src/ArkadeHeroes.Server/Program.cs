@@ -25,7 +25,7 @@ else
 
 var app = builder.Build();
 
-// GameRuleException → 400 with a readable message.
+// GameRuleException → 400; anything else → 500, both with readable JSON.
 app.Use(async (context, next) =>
 {
     try
@@ -37,6 +37,12 @@ app.Use(async (context, next) =>
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new ErrorResponse(ex.Message));
     }
+    catch (Exception ex) when (!context.Response.HasStarted)
+    {
+        app.Logger.LogError(ex, "Unhandled error on {Path}", context.Request.Path);
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        await context.Response.WriteAsJsonAsync(new ErrorResponse($"{ex.GetType().Name}: {ex.Message}"));
+    }
 });
 
 var api = app.MapGroup("/api");
@@ -45,17 +51,17 @@ var api = app.MapGroup("/api");
 
 api.MapPost("/players", async (RegisterPlayerRequest request, GameService game, CancellationToken ct) =>
 {
-    var (player, wallet, balance) = await game.RegisterPlayerAsync(request.Name, ct);
-    return Results.Ok(new PlayerDto(player.Id, player.Name, wallet.ArkadeAddress, balance,
+    var (player, address, balance) = await game.RegisterPlayerAsync(request.Name, request.ArkadeAddress, ct);
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance,
         player.StarterClaimed, player.Token));
 });
 
 api.MapGet("/players/me", async (HttpContext http, GameService game, IChainService chain, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var wallet = await chain.GetOrCreatePlayerWalletAsync(player.Id, ct);
-    var balance = await chain.GetBalanceSatsAsync(player.Id, ct);
-    return Results.Ok(new PlayerDto(player.Id, player.Name, wallet.ArkadeAddress, balance, player.StarterClaimed));
+    var address = await chain.GetPlayerAddressAsync(player.Id, ct);
+    var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed));
 });
 
 // ── Heroes ─────────────────────────────────────────────────────────────────
@@ -95,8 +101,8 @@ api.MapGet("/heroes/{heroId}", (string heroId, GameService game) =>
 api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (session, fee) = await game.CommitBreedingAsync(player, request.ParentAId, request.ParentBId, ct);
-    return Results.Ok(new BreedCommitResponse(session.Id, session.CommitmentHex, fee));
+    var (session, invoice) = await game.CommitBreedingAsync(player, request.ParentAId, request.ParentBId, ct);
+    return Results.Ok(new BreedCommitResponse(session.Id, session.CommitmentHex, invoice.ToDto()));
 });
 
 api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedRevealRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -111,16 +117,17 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var session = await game.OpenMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId,
+    var (session, invoice) = await game.OpenMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId,
         request.WagerSats, ct);
-    return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status));
+    return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status,
+        invoice?.ToDto()));
 });
 
 api.MapPost("/matches/{matchId}/accept", async (string matchId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var session = await game.AcceptMatchAsync(player, matchId, ct);
-    return Results.Ok(ToMatchDto(session));
+    var (session, invoice) = await game.AcceptMatchAsync(player, matchId, ct);
+    return Results.Ok(new AcceptMatchResponse(ToMatchDto(session), invoice.ToDto()));
 });
 
 api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -149,13 +156,13 @@ api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
         ? Results.Ok(ToMatchDto(session))
         : Results.NotFound());
 
-// ── Hero transfer ──────────────────────────────────────────────────────────
+// ── Hero transfer: the owner's wallet moves the asset; this confirms ───────
 
 api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (hero, arkTxId) = await game.TransferHeroAsync(player, heroId, request.ToPlayerId, ct);
-    return Results.Ok(new TransferResponse(hero.ToDto(), arkTxId));
+    var hero = await game.ConfirmTransferAsync(player, heroId, request.ToPlayerId, ct);
+    return Results.Ok(new TransferResponse(hero.ToDto()));
 });
 
 // ── Items ──────────────────────────────────────────────────────────────────
@@ -165,8 +172,15 @@ api.MapGet("/items", () => Results.Ok(ItemCatalog.All.Select(i => i.ToDto()).ToL
 api.MapPost("/items/{itemId}/buy", async (string itemId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (itemAssetId, arkTxId, balance, unitsHeld) = await game.BuyItemAsync(player, itemId, ct);
-    return Results.Ok(new BuyItemResponse(itemAssetId, arkTxId, balance, unitsHeld));
+    var (_, invoice) = await game.CreateItemInvoiceAsync(player, itemId, ct);
+    return Results.Ok(new ItemInvoiceResponse(invoice.ToDto()));
+});
+
+api.MapPost("/items/claim", async (ClaimItemRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (itemAssetId, arkTxId, unitsHeld) = await game.ClaimItemAsync(player, request.InvoiceId, ct);
+    return Results.Ok(new ClaimItemResponse(itemAssetId, arkTxId, unitsHeld));
 });
 
 api.MapPost("/heroes/{heroId}/equip", async (string heroId, EquipRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -194,6 +208,29 @@ api.MapGet("/chain/info", async (IChainService chain, CancellationToken ct) =>
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
+// ── Dev-only simulation of the CLIENT wallet (InMemory chain mode only) ────
+// These stand in for the player's own wallet actions until/unless a real
+// wallet is attached. They do not exist in NArk mode — there, the client's
+// actual wallet pays invoices and moves assets.
+if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
+{
+    var dev = app.MapGroup("/api/dev");
+
+    dev.MapPost("/pay-invoice", (PayInvoiceDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        ((InMemoryChainService)chain).PayInvoiceFromPlayer(player.Id, request.InvoiceId);
+        return Results.Ok(new { paid = true });
+    });
+
+    dev.MapPost("/transfer-asset", (TransferAssetDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        ((InMemoryChainService)chain).TransferAssetFromPlayer(player.Id, request.ToPlayerId, request.AssetId);
+        return Results.Ok(new { transferred = true });
+    });
+}
+
 app.Run();
 
 static string? BearerToken(HttpContext http)
@@ -206,6 +243,12 @@ static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,
     session.Status, session.CommitmentHex, session.Result?.ToDto(),
     session.WagerSats, session.DefenderPlayerId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet invoice payment.</summary>
+public record PayInvoiceDevRequest(string InvoiceId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet asset transfer.</summary>
+public record TransferAssetDevRequest(string AssetId, string ToPlayerId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;

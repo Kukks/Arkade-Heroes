@@ -35,6 +35,8 @@ dotnet run --project src/ArkadeHeroes.Client
 
 Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `buy rusty-blade` / `equip 3 rusty-blade` / `unequip 3 Weapon`, plus `transfer <hero> <playerId>` and wagered PvP: `challenge <mine> <theirs> <sats>` → (opponent) `accept <matchId>` → `duel <matchId>`. Items are fungible Arkade assets (one unit backs one equipped hero). Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
 
+**Non-custodial:** the server never holds player keys. You register your own wallet's Arkade address; every fee/stake is an invoice your wallet pays (the server verifies receipt on-chain); heroes and items are minted straight into your wallet; transfers are spends you sign. In the offline InMemory mode a simulated wallet stands in (dev-only endpoints); in NArk mode the E2E suite drives real `SelfCustodyWallet`s and the console client prints invoices to pay until its embedded wallet lands.
+
 ## Playing on regtest with real Arkade assets
 
 Heroes become real Arkade assets (amount 1, genome sealed in genesis metadata, controlled by the game's species asset); fees are real Arkade transactions.

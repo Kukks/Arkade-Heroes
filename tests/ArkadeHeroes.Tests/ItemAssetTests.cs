@@ -1,33 +1,38 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace ArkadeHeroes.Tests;
 
-/// <summary>Item units are fungible assets: buying delivers one, equipping allocates it, one unit backs one hero.</summary>
+/// <summary>
+/// Item units are fungible assets bought non-custodially: invoice → the
+/// player's wallet pays → claim delivers the unit; equipping allocates a held
+/// unit and one unit backs at most one hero.
+/// </summary>
 public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
     public ItemAssetTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private async Task<(HttpClient Client, List<HeroDto> Heroes)> PlayerWithStartersAsync(string name)
+    [Fact]
+    public async Task ClaimWithoutPaymentIsRejected()
     {
-        var client = _factory.CreateClient();
-        var register = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name));
-        var player = (await register.Content.ReadFromJsonAsync<PlayerDto>())!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
-        var starter = await client.PostAsync("/api/heroes/starter", null);
-        var heroes = (await starter.Content.ReadFromJsonAsync<StarterResponse>())!.Heroes.ToList();
-        return (client, heroes);
+        var (client, _) = await _factory.RegisterAsync("I-Unpaid");
+        var invoiceResponse = await client.PostAsync("/api/items/steel-saber/buy", null);
+        invoiceResponse.EnsureSuccessStatusCode();
+        var invoice = (await invoiceResponse.Content.ReadFromJsonAsync<ItemInvoiceResponse>())!.Invoice;
+
+        var claim = await client.PostAsJsonAsync("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId));
+        Assert.Equal(HttpStatusCode.BadRequest, claim.StatusCode);
     }
 
     [Fact]
     public async Task EquipWithoutHoldingIsRejected()
     {
-        var (client, heroes) = await PlayerWithStartersAsync("I-NoUnit");
+        var (client, _) = await _factory.RegisterAsync("I-NoUnit");
+        var heroes = await client.ClaimStartersAsync();
         var response = await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
             new EquipRequest("steel-saber"));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -38,15 +43,14 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task OneUnitBacksOnlyOneHero()
     {
-        var (client, heroes) = await PlayerWithStartersAsync("I-OneUnit");
+        var (client, _) = await _factory.RegisterAsync("I-OneUnit");
+        var heroes = await client.ClaimStartersAsync();
 
-        (await client.PostAsync("/api/items/lucky-feather/buy", null)).EnsureSuccessStatusCode();
+        await client.BuyItemAsync("lucky-feather");
 
-        // First hero equips fine.
         (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
             new EquipRequest("lucky-feather"))).EnsureSuccessStatusCode();
 
-        // Second hero can't use the same unit.
         var second = await client.PostAsJsonAsync($"/api/heroes/{heroes[1].Id}/equip",
             new EquipRequest("lucky-feather"));
         Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
@@ -65,12 +69,12 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task BuyingMoreUnitsAllowsMoreHeroes()
     {
-        var (client, heroes) = await PlayerWithStartersAsync("I-TwoUnits");
+        var (client, _) = await _factory.RegisterAsync("I-TwoUnits");
+        var heroes = await client.ClaimStartersAsync();
 
-        (await client.PostAsync("/api/items/swift-anklet/buy", null)).EnsureSuccessStatusCode();
-        var secondBuy = (await (await client.PostAsync("/api/items/swift-anklet/buy", null))
-            .Content.ReadFromJsonAsync<BuyItemResponse>())!;
-        Assert.Equal(2UL, secondBuy.UnitsHeld);
+        await client.BuyItemAsync("swift-anklet");
+        var second = await client.BuyItemAsync("swift-anklet");
+        Assert.Equal(2UL, second.UnitsHeld);
 
         (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
             new EquipRequest("swift-anklet"))).EnsureSuccessStatusCode();

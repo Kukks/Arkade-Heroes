@@ -8,6 +8,9 @@ namespace ArkadeHeroes.Server;
 
 public static class DtoMapper
 {
+    public static FeeInvoiceDto ToDto(this Chain.FeeInvoice invoice)
+        => new(invoice.InvoiceId, invoice.PayToAddress, invoice.AmountSats, invoice.Memo);
+
     public static HeroDto ToDto(this Hero hero, string? commitmentHex = null)
     {
         var items = hero.Equipment.ResolveItems();

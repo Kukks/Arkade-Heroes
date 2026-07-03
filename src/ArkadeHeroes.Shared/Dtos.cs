@@ -2,7 +2,11 @@ namespace ArkadeHeroes.Shared;
 
 // ── Players ────────────────────────────────────────────────────────────────
 
-public record RegisterPlayerRequest(string Name);
+/// <summary>Registration binds the player to THEIR wallet's address — keys never leave the client.</summary>
+public record RegisterPlayerRequest(string Name, string ArkadeAddress);
+
+/// <summary>A fee/stake invoice: pay this exact treasury address from your own wallet.</summary>
+public record FeeInvoiceDto(string InvoiceId, string PayToAddress, long AmountSats, string Memo);
 
 public record PlayerDto(
     string PlayerId,
@@ -53,7 +57,7 @@ public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
 public record BreedCommitRequest(string ParentAId, string ParentBId);
 
-public record BreedCommitResponse(string BreedingId, string CommitmentHex, long FeeSats);
+public record BreedCommitResponse(string BreedingId, string CommitmentHex, FeeInvoiceDto Invoice);
 
 public record BreedRevealRequest(string Nonce);
 
@@ -64,7 +68,11 @@ public record BreedRevealResponse(
 
 public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0);
 
-public record OpenMatchResponse(string MatchId, string CommitmentHex, long WagerSats, string Status);
+public record OpenMatchResponse(
+    string MatchId, string CommitmentHex, long WagerSats, string Status,
+    FeeInvoiceDto? StakeInvoice = null);
+
+public record AcceptMatchResponse(MatchDto Match, FeeInvoiceDto StakeInvoice);
 
 public record FightRequest(string Nonce);
 
@@ -102,11 +110,11 @@ public record MatchDto(
     long WagerSats = 0,
     string? DefenderPlayerId = null);
 
-// ── Hero transfer ──────────────────────────────────────────────────────────
+// ── Hero transfer (client-signed spend; server verifies + confirms) ────────
 
 public record TransferRequest(string ToPlayerId);
 
-public record TransferResponse(HeroDto Hero, string ArkTxId);
+public record TransferResponse(HeroDto Hero);
 
 // ── Items / equipment ──────────────────────────────────────────────────────
 
@@ -115,7 +123,11 @@ public record ItemDto(
     int MaxHp, int Attack, int Magic, int Defense, int Speed, int CritPercent,
     long PriceSats);
 
-public record BuyItemResponse(string ItemAssetId, string ArkTxId, long BalanceSats, ulong UnitsHeld);
+public record ItemInvoiceResponse(FeeInvoiceDto Invoice);
+
+public record ClaimItemRequest(string InvoiceId);
+
+public record ClaimItemResponse(string ItemAssetId, string ArkTxId, ulong UnitsHeld);
 
 public record EquipRequest(string ItemId);
 

@@ -38,7 +38,16 @@ Growth genes are the breeding meta: invisible at level 1, dominant at high level
 
 Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative by speed, skill choice by highest expected damage off cooldown, damage = `power · scale / (defense + 25)` with element ring multipliers (1.3×/0.75×), crit (luck), dodge (speed), ±10% variance — all rolls from a seeded xoshiro256** stream. Max 60 turns, then HP-fraction decision. Output is a replayable `BattleResult` event log; the match seed is commit–reveal over both players' nonces, so either player can re-run the engine and verify the outcome.
 
-## 2. Chain integration (ArkadeHeroes.Chain) — covenant-first
+## 2. Chain integration (ArkadeHeroes.Chain) — covenant-first, non-custodial
+
+**Standing mandate (owner directive):** players own their characters and progression **non-custodially** — the game server must never hold player keys — and **covenants enforce fairness across the board**. No architectural shortcut that violates either is acceptable as an end-state; anything interim must be additive toward this target and is tracked for removal.
+
+- **Keys**: player wallets live in the client (mnemonic generated and stored locally, never transmitted). The server knows players only as Arkade addresses/pubkeys.
+- **Assets**: heroes and item units sit in player wallets from mint onward; the server's treasury signs only its own outputs (mints, payouts).
+- **Payments**: fees and stakes are paid *by the client's wallet* to per-session treasury invoice addresses; the server verifies receipt on-chain — it cannot spend player funds because it never can.
+- **Progression**: derived from commit–reveal-verifiable events whose proofs the player holds (receipts now, XP-asset deliveries next) — portable across servers, recomputable by anyone.
+- **Fairness**: every rule lives in `contracts/*.ark`; enforcement migrates from server-refusal to emulator co-signing per the roadmap below, and the deterministic derivations (genome mixing, battle replay) are the same bytes in both regimes.
+- **Deprecated**: the custodial player-wallet mode (server-held HD wallets) is scheduled for removal once the self-custody client lands; it must not grow new features.
 
 **The covenants in `contracts/*.ark` are the authoritative rules of the game.** Every mechanic is specified as an Arkade Script covenant over a concrete transaction shape; the running server is an *executor* of those shapes, not the definition of them. Migrating a mechanic to covenant enforcement swaps who refuses an invalid transaction (the emulator's tweaked-key signature instead of server policy) — the transactions, asset structures, and derivations do not change.
 

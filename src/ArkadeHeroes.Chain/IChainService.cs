@@ -8,7 +8,12 @@ public record ChainInfo(
     /// <summary>Covenant co-signer (Arkade Script emulator) key, when the service is reachable.</summary>
     string? EmulatorSignerKey = null);
 
-public record PlayerWallet(string PlayerId, string ArkadeAddress);
+/// <summary>
+/// A fee/stake invoice: a fresh treasury address unique to one game action, so
+/// a client payment to it is unambiguously bound to that action. The client's
+/// own wallet pays it; the server only observes.
+/// </summary>
+public record FeeInvoice(string InvoiceId, string PayToAddress, long AmountSats, string Memo);
 
 /// <summary>Genesis data committed into a hero asset's metadata at mint time.</summary>
 public record HeroMintData(
@@ -39,44 +44,54 @@ public record HeroMintResult(string AssetId, string ArkTxId);
 public record ItemDeliveryResult(string ItemAssetId, string ArkTxId);
 
 /// <summary>
-/// The game's view of Arkade. <c>InMemoryChainService</c> simulates it for unit
-/// tests and offline dev; <c>NArkChainService</c> talks to a real Arkade
-/// operator (regtest denigiri stack) via the NArk SDK.
+/// The game's view of Arkade under the non-custodial mandate: players are
+/// known to the server ONLY as Arkade addresses they registered; the server's
+/// treasury signs its own outputs (mints, deliveries, payouts) and verifies
+/// player-side actions (fee payments, transfers) by observing the chain. The
+/// server never holds or moves player keys or funds.
 /// </summary>
 public interface IChainService
 {
     Task<ChainInfo> GetInfoAsync(CancellationToken ct = default);
 
-    /// <summary>Creates (or returns) the player's wallet and Arkade address.</summary>
-    Task<PlayerWallet> GetOrCreatePlayerWalletAsync(string playerId, CancellationToken ct = default);
+    // ── Players = addresses ────────────────────────────────────────────
 
-    Task<long> GetBalanceSatsAsync(string playerId, CancellationToken ct = default);
+    /// <summary>Binds a player id to the Arkade address their own wallet controls.</summary>
+    Task RegisterPlayerAddressAsync(string playerId, string arkadeAddress, CancellationToken ct = default);
+
+    /// <summary>The player's registered Arkade address.</summary>
+    Task<string> GetPlayerAddressAsync(string playerId, CancellationToken ct = default);
+
+    /// <summary>Read-only convenience: on-chain sats currently sitting at the player's registered address (public data).</summary>
+    Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default);
+
+    // ── Fees: client pays, server observes ─────────────────────────────
+
+    /// <summary>Creates an invoice at a fresh treasury address for one game action.</summary>
+    Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default);
+
+    /// <summary>True once the invoice address has received at least the invoiced amount.</summary>
+    Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default);
+
+    // ── Treasury-signed actions ────────────────────────────────────────
 
     /// <summary>
     /// Mints a hero as an Arkade asset (amount 1, genome in genesis metadata,
-    /// control = species asset) delivered to the player's address.
+    /// control = species asset) delivered to the player's registered address.
     /// </summary>
-    Task<HeroMintResult> MintHeroAssetAsync(string playerId, HeroMintData data, CancellationToken ct = default);
+    Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default);
 
-    /// <summary>Pays a game fee (breeding, item purchase, wager stake) from the player to the treasury. Returns a payment reference.</summary>
-    Task<string> PayFeeAsync(string playerId, long amountSats, string memo, CancellationToken ct = default);
+    /// <summary>Delivers one unit of an item's fungible asset (lazily issued, species-controlled) to the player's registered address.</summary>
+    Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default);
 
-    /// <summary>Pays out from the treasury to a player (wager winnings). Returns a payment reference.</summary>
-    Task<string> PayoutAsync(string playerId, long amountSats, string memo, CancellationToken ct = default);
+    /// <summary>Pays out from the treasury to the player's registered address (wager winnings). Returns a payment reference.</summary>
+    Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default);
 
-    /// <summary>Moves a hero asset from one player's wallet to another's. Returns the Arkade transaction id.</summary>
-    Task<string> TransferHeroAssetAsync(string fromPlayerId, string toPlayerId, string assetId, CancellationToken ct = default);
+    // ── On-chain reads (never DB trust) ────────────────────────────────
 
-    /// <summary>True if the player's wallet currently holds the hero asset.</summary>
+    /// <summary>True if the player's registered address currently holds the hero asset.</summary>
     Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default);
 
-    /// <summary>
-    /// Delivers one unit of an item's fungible Arkade asset to the player.
-    /// The asset for the item type is issued lazily by the treasury on first
-    /// sale (species-controlled, item id in genesis metadata).
-    /// </summary>
-    Task<ItemDeliveryResult> DeliverItemAssetAsync(string playerId, string itemId, string itemName, CancellationToken ct = default);
-
-    /// <summary>Units of the item's asset currently held by the player's wallet.</summary>
+    /// <summary>Units of the item's asset currently held at the player's registered address.</summary>
     Task<ulong> GetItemAssetBalanceAsync(string playerId, string itemId, CancellationToken ct = default);
 }

@@ -13,9 +13,11 @@ namespace ArkadeHeroes.Server;
 public class GameRuleException(string message) : Exception(message);
 
 /// <summary>
-/// Orchestrates game flows: registration, starter mints, two-phase
-/// commit–reveal breeding and matches, purchases. Core stays pure; the chain
-/// service anchors heroes and fees on Arkade.
+/// Orchestrates game flows under the non-custodial mandate: players register
+/// their own wallet's Arkade address; every fee/stake is an invoice the
+/// player's wallet pays and the server verifies on-chain; the treasury signs
+/// only its own outputs (mints, item deliveries, payouts); asset ownership is
+/// checked against the chain, never against server records alone.
 /// </summary>
 public class GameService(GameStore store, IChainService chain, IOptions<GameOptions> options)
 {
@@ -26,21 +28,33 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
 
     // ── Players ────────────────────────────────────────────────────────
 
-    public async Task<(Player Player, PlayerWallet Wallet, long Balance)> RegisterPlayerAsync(
-        string name, CancellationToken ct)
+    public async Task<(Player Player, string Address, long Balance)> RegisterPlayerAsync(
+        string name, string arkadeAddress, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new GameRuleException("Player name is required.");
+        if (string.IsNullOrWhiteSpace(arkadeAddress))
+            throw new GameRuleException("Your wallet's Arkade address is required — keys stay on your side.");
+
         var player = new Player
         {
             Id = NewId("player"),
             Name = name.Trim(),
             Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
         };
+
+        try
+        {
+            await chain.RegisterPlayerAddressAsync(player.Id, arkadeAddress.Trim(), ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new GameRuleException(ex.Message);
+        }
+
         store.Players[player.Id] = player;
         store.PlayersByToken[player.Token] = player;
-        var wallet = await chain.GetOrCreatePlayerWalletAsync(player.Id, ct);
-        var balance = await chain.GetBalanceSatsAsync(player.Id, ct);
-        return (player, wallet, balance);
+        var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
+        return (player, arkadeAddress.Trim(), balance);
     }
 
     public Player Authenticate(string? token)
@@ -65,7 +79,7 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         return hero;
     }
 
-    /// <summary>Mints the one-time pair of generation-0 starter heroes.</summary>
+    /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
         if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
@@ -112,9 +126,9 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         return hero;
     }
 
-    // ── Breeding: commit then reveal ───────────────────────────────────
+    // ── Breeding: commit (invoice) → client pays → reveal ──────────────
 
-    public async Task<(BreedingSession Session, long Fee)> CommitBreedingAsync(
+    public async Task<(BreedingSession Session, FeeInvoice Invoice)> CommitBreedingAsync(
         Player player, string parentAId, string parentBId, CancellationToken ct)
     {
         var parentA = GetOwnedHero(player, parentAId);
@@ -123,8 +137,8 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         if (BreedingService.Validate(parentA, parentB, DateTimeOffset.UtcNow) is { } error)
             throw new GameRuleException(error);
 
-        // Fee up front: committing reserves the server seed.
-        await chain.PayFeeAsync(player.Id, _options.BreedingFeeSats, $"breed:{parentAId}+{parentBId}", ct);
+        var invoice = await chain.CreateFeeInvoiceAsync(
+            $"breed:{parentAId}+{parentBId}", _options.BreedingFeeSats, ct);
 
         var seed = CommitReveal.NewSeed();
         var session = new BreedingSession
@@ -135,9 +149,10 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             ParentBId = parentBId,
             ServerSeed = seed,
             CommitmentHex = CommitReveal.Commit(seed),
+            FeeInvoiceId = invoice.InvoiceId,
         };
         store.Breedings[session.Id] = session;
-        return (session, _options.BreedingFeeSats);
+        return (session, invoice);
     }
 
     public async Task<(Hero Child, string ServerSeedHex, string EntropyHex)> RevealBreedingAsync(
@@ -147,6 +162,10 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             throw new GameRuleException($"Unknown breeding session '{breedingId}'.");
         if (session.Completed) throw new GameRuleException("Breeding already completed.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        // The player's wallet must have paid the fee invoice — verified on-chain.
+        if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
+            throw new GameRuleException("The breeding fee invoice has not been paid yet — pay it from your wallet, then reveal.");
 
         var parentA = GetOwnedHero(player, session.ParentAId);
         var parentB = GetOwnedHero(player, session.ParentBId);
@@ -175,9 +194,9 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         return (child, serverSeedHex, entropyHex);
     }
 
-    // ── Matches: open (→ accept when wagered) → fight ──────────────────
+    // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
 
-    public async Task<MatchSession> OpenMatchAsync(
+    public async Task<(MatchSession Session, FeeInvoice? Invoice)> OpenMatchAsync(
         Player player, string challengerHeroId, string defenderHeroId, long wagerSats, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
@@ -189,9 +208,9 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         if (wagerSats > 0 && defender.OwnerId == player.Id)
             throw new GameRuleException("Wagered matches need an opponent — you own both heroes.");
 
-        // Challenger escrows their stake with the treasury up front.
+        FeeInvoice? invoice = null;
         if (wagerSats > 0)
-            await chain.PayFeeAsync(player.Id, wagerSats, $"wager-stake:challenger", ct);
+            invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:challenger", wagerSats, ct);
 
         var seed = CommitReveal.NewSeed();
         var session = new MatchSession
@@ -203,14 +222,16 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             ServerSeed = seed,
             CommitmentHex = CommitReveal.Commit(seed),
             WagerSats = wagerSats,
+            ChallengerInvoiceId = invoice?.InvoiceId,
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
-        return session;
+        return (session, invoice);
     }
 
-    /// <summary>Defender's owner accepts a wagered match by escrowing the matching stake.</summary>
-    public async Task<MatchSession> AcceptMatchAsync(Player player, string matchId, CancellationToken ct)
+    /// <summary>Defender's owner accepts a wagered match and receives their stake invoice.</summary>
+    public async Task<(MatchSession Session, FeeInvoice Invoice)> AcceptMatchAsync(
+        Player player, string matchId, CancellationToken ct)
     {
         if (!store.Matches.TryGetValue(matchId, out var session))
             throw new GameRuleException($"Unknown match '{matchId}'.");
@@ -223,10 +244,11 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         if (defender.OwnerId != player.Id)
             throw new GameRuleException("Only the defender hero's owner can accept this match.");
 
-        await chain.PayFeeAsync(player.Id, session.WagerSats, $"wager-stake:defender:{matchId}", ct);
+        var invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:defender:{matchId}", session.WagerSats, ct);
+        session.DefenderInvoiceId = invoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
-        return session;
+        return (session, invoice);
     }
 
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
@@ -242,6 +264,15 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
                 ? "This wagered match is waiting for the defender's owner to accept."
                 : "Match already resolved.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        // Wagered: both stakes must actually sit at the invoice addresses on-chain.
+        if (session.WagerSats > 0)
+        {
+            if (!await chain.IsInvoicePaidAsync(session.ChallengerInvoiceId!, ct))
+                throw new GameRuleException("Your stake invoice is unpaid — pay it from your wallet first.");
+            if (session.DefenderInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderInvoiceId, ct))
+                throw new GameRuleException("The defender's stake invoice is unpaid.");
+        }
 
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);
@@ -267,7 +298,8 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
-        // Wager settlement: winner's owner takes the whole pot from escrow.
+        // Wager settlement: winner's owner takes the whole pot, paid by the
+        // treasury to their registered address.
         long winnerPayout = 0;
         if (session.WagerSats > 0)
         {
@@ -284,9 +316,16 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             challengerSnapshot, defenderSnapshot, winnerPayout);
     }
 
-    // ── Hero transfer ──────────────────────────────────────────────────
+    private static void ApplyXp(Hero hero, long award)
+    {
+        var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award);
+        hero.Level = level;
+        hero.Xp = xp;
+    }
 
-    public async Task<(Hero Hero, string ArkTxId)> TransferHeroAsync(
+    // ── Hero transfer: the player's wallet moves the asset; we verify ──
+
+    public async Task<Hero> ConfirmTransferAsync(
         Player player, string heroId, string toPlayerId, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId);
@@ -295,41 +334,82 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         if (!store.Players.ContainsKey(toPlayerId))
             throw new GameRuleException($"Unknown player '{toPlayerId}'.");
 
-        var arkTxId = await chain.TransferHeroAssetAsync(player.Id, toPlayerId, hero.AssetId ?? hero.Id, ct);
+        // Non-custodial: the owner's wallet performs the asset spend itself.
+        // We only verify the chain now shows the recipient holding the asset.
+        var moved = await chain.VerifyHeroOwnershipAsync(toPlayerId, hero.AssetId ?? hero.Id, ct);
+        if (!moved)
+            throw new GameRuleException(
+                "The chain does not show the recipient holding this hero yet — send the hero asset from your wallet first, then confirm.");
 
-        // Item assets stay in the sender's wallet, so the loadout can't travel:
-        // strip it, returning the units to the sender's equip pool.
+        // Item assets stay in the sender's wallet, so the loadout can't travel.
         foreach (var slot in hero.Equipment.Slots.Keys.ToList())
             hero.Equipment.Unequip(slot);
 
         hero.OwnerId = toPlayerId;
-        return (hero, arkTxId);
+        return hero;
     }
 
-    private static void ApplyXp(Hero hero, long award)
-    {
-        var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award);
-        hero.Level = level;
-        hero.Xp = xp;
-    }
+    // ── Equipment: invoice → client pays → claim delivers the unit ─────
 
-    // ── Equipment ──────────────────────────────────────────────────────
-    // Buying pays the price and delivers a unit of the item's fungible Arkade
-    // asset; equipping allocates a held unit to a hero. A unit can back only
-    // one equipped hero at a time.
-
-    public async Task<(string ItemAssetId, string ArkTxId, long Balance, ulong UnitsHeld)> BuyItemAsync(
+    public async Task<(ItemPurchase Purchase, FeeInvoice Invoice)> CreateItemInvoiceAsync(
         Player player, string itemId, CancellationToken ct)
     {
         var item = Core.Equipment.ItemCatalog.Find(itemId)
             ?? throw new GameRuleException($"Unknown item '{itemId}'.");
 
-        await chain.PayFeeAsync(player.Id, item.PriceSats, $"item:{itemId}", ct);
-        var delivery = await chain.DeliverItemAssetAsync(player.Id, item.Id, item.Name, ct);
+        var invoice = await chain.CreateFeeInvoiceAsync($"item:{itemId}", item.PriceSats, ct);
+        var purchase = new ItemPurchase
+        {
+            InvoiceId = invoice.InvoiceId,
+            PlayerId = player.Id,
+            ItemId = item.Id,
+        };
+        store.ItemPurchases[invoice.InvoiceId] = purchase;
+        return (purchase, invoice);
+    }
 
-        var balance = await chain.GetBalanceSatsAsync(player.Id, ct);
-        var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
-        return (delivery.ItemAssetId, delivery.ArkTxId, balance, held);
+    public async Task<(string ItemAssetId, string ArkTxId, ulong UnitsHeld)> ClaimItemAsync(
+        Player player, string invoiceId, CancellationToken ct)
+    {
+        if (!store.ItemPurchases.TryGetValue(invoiceId, out var purchase) || purchase.PlayerId != player.Id)
+            throw new GameRuleException($"Unknown purchase '{invoiceId}'.");
+
+        // Idempotent success: a claimed purchase re-reports its delivery.
+        if (purchase.Status == "claimed")
+        {
+            var heldAlready = await chain.GetItemAssetBalanceAsync(player.Id, purchase.ItemId, ct);
+            return (purchase.ItemAssetId!, purchase.DeliveryTxId!, heldAlready);
+        }
+
+        if (!await chain.IsInvoicePaidAsync(invoiceId, ct))
+            throw new GameRuleException("The item invoice has not been paid yet — pay it from your wallet, then claim.");
+
+        // pending → delivering, exactly one claimer at a time; a failed delivery
+        // returns to pending so the paid purchase stays claimable.
+        lock (purchase.Gate)
+        {
+            if (purchase.Status == "delivering")
+                throw new GameRuleException("Delivery already in progress — retry in a moment.");
+            if (purchase.Status == "claimed")
+                throw new GameRuleException("Purchase already claimed.");
+            purchase.Status = "delivering";
+        }
+
+        try
+        {
+            var item = Core.Equipment.ItemCatalog.Find(purchase.ItemId)!;
+            var delivery = await chain.DeliverItemAssetAsync(player.Id, item.Id, item.Name, ct);
+            purchase.ItemAssetId = delivery.ItemAssetId;
+            purchase.DeliveryTxId = delivery.ArkTxId;
+            purchase.Status = "claimed";
+            var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
+            return (delivery.ItemAssetId, delivery.ArkTxId, held);
+        }
+        catch
+        {
+            purchase.Status = "pending";
+            throw;
+        }
     }
 
     public async Task<Hero> EquipAsync(Player player, string heroId, string itemId, CancellationToken ct)
@@ -343,7 +423,6 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             h.OwnerId == player.Id &&
             h.Id != hero.Id &&
             h.Equipment.Slots.Values.Contains(item.Id));
-        // Re-equipping the same item on the same hero's slot is a no-op allocation-wise.
         var alreadyOnTargetSlot = hero.Equipment.Slots.TryGetValue(item.Slot, out var current) && current == item.Id;
         if (!alreadyOnTargetSlot && (ulong)unitsAllocated >= unitsHeld)
             throw new GameRuleException(
