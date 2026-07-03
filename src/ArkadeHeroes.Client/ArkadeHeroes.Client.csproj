@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Shared\ArkadeHeroes.Shared.csproj" />
+    <ProjectReference Include="..\ArkadeHeroes.Chain\ArkadeHeroes.Chain.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

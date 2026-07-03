@@ -35,7 +35,7 @@ dotnet run --project src/ArkadeHeroes.Client
 
 Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `buy rusty-blade` / `equip 3 rusty-blade` / `unequip 3 Weapon`, plus `transfer <hero> <playerId>` and wagered PvP: `challenge <mine> <theirs> <sats>` → (opponent) `accept <matchId>` → `duel <matchId>`. Items are fungible Arkade assets (one unit backs one equipped hero). Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
 
-**Non-custodial:** the server never holds player keys. You register your own wallet's Arkade address; every fee/stake is an invoice your wallet pays (the server verifies receipt on-chain); heroes and items are minted straight into your wallet; transfers are spends you sign. In the offline InMemory mode a simulated wallet stands in (dev-only endpoints); in NArk mode the E2E suite drives real `SelfCustodyWallet`s and the console client prints invoices to pay until its embedded wallet lands.
+**Non-custodial:** the server never holds player keys. In NArk mode the client opens an embedded self-custody wallet on first use (keys in a local SQLite next to your session; `backup` prints the mnemonic, `wallet` shows address/balance/assets, `fund` shows how to top up). Registration binds your wallet's address; every fee/stake is an invoice your wallet pays automatically (the server only verifies receipt on-chain); heroes and items are minted straight into your wallet; transfers are spends your wallet signs. Run several players side by side with `ARKADE_HEROES_HOME=<dir>`. In the offline InMemory mode a simulated wallet stands in (dev-only endpoints). Wallet-file encryption is a tracked follow-up.
 
 ## Playing on regtest with real Arkade assets
 

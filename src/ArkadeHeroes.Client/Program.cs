@@ -38,3 +38,5 @@ while (true)
         Console.WriteLine($"  ✗ cannot reach server: {ex.Message}");
     }
 }
+
+await game.DisposeAsync();

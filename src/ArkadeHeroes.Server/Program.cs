@@ -64,6 +64,15 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed));
 });
 
+// Public profile: players are addresses, and addresses are public — this is
+// what a sender needs to transfer a hero to another player wallet-to-wallet.
+api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChainService chain, CancellationToken ct) =>
+{
+    if (!store.Players.TryGetValue(playerId, out var player)) return Results.NotFound();
+    var address = await chain.GetPlayerAddressAsync(player.Id, ct);
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, 0, player.StarterClaimed));
+});
+
 // ── Heroes ─────────────────────────────────────────────────────────────────
 
 api.MapPost("/heroes/starter", async (HttpContext http, GameService game, CancellationToken ct) =>

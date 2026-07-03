@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Shared;
 
 namespace ArkadeHeroes.Client;
@@ -14,24 +15,54 @@ public class GameClientException(string message) : Exception(message);
 /// the client re-derives genomes and replays battles instead of trusting the
 /// server's word.
 /// </summary>
-public class GameClient(string serverUrl)
+public class GameClient(string serverUrl) : IAsyncDisposable
 {
     private readonly HttpClient _http = new() { BaseAddress = new Uri(serverUrl) };
-    private static readonly string SessionFile =
-        Path.Combine(AppContext.BaseDirectory, "arkade-heroes-session.json");
+
+    /// <summary>Per-player data dir (session + wallet). Override with ARKADE_HEROES_HOME to run several players side by side.</summary>
+    private static readonly string HomeDir =
+        Environment.GetEnvironmentVariable("ARKADE_HEROES_HOME") ?? AppContext.BaseDirectory;
+
+    private static readonly string SessionFile = Path.Combine(HomeDir, "arkade-heroes-session.json");
+    private static readonly string WalletDbFile = Path.Combine(HomeDir, "arkade-heroes-wallet.db");
 
     private PlayerDto? _me;
     private string? _chainMode;
+    private SelfCustodyWallet? _wallet;
     private readonly List<HeroDto> _lastListing = [];
+
+    /// <summary>
+    /// Opens (or creates) the player's self-custody wallet: keys generated and
+    /// stored locally in <see cref="WalletDbFile"/>, never sent anywhere.
+    /// TODO(tracked): encrypt the wallet db with a passphrase.
+    /// </summary>
+    private async Task<SelfCustodyWallet> WalletAsync()
+    {
+        if (_wallet is not null) return _wallet;
+        Directory.CreateDirectory(HomeDir);
+        Console.WriteLine("  opening self-custody wallet (keys stay on this machine)…");
+        _wallet = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+        {
+            ArkUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_ARK") ?? "http://localhost:7070",
+            DbPath = WalletDbFile,
+        });
+        Console.WriteLine($"    wallet address: {_wallet.Address}");
+        return _wallet;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_wallet is not null) await _wallet.DisposeAsync();
+        _http.Dispose();
+    }
 
     private async Task<string> ChainModeAsync()
         => _chainMode ??= (await GetAsync<ChainInfoDto>("/api/chain/info")).Mode;
 
     /// <summary>
-    /// Settles a fee invoice. In the InMemory simulation the dev endpoint
-    /// stands in for the player's wallet; in NArk mode the player's own wallet
-    /// must pay (the embedded self-custody wallet is the next iteration —
-    /// until then the invoice is printed to pay manually).
+    /// Settles a fee invoice from the player's OWN wallet: the embedded
+    /// self-custody wallet in NArk mode, or the dev simulation endpoint in
+    /// InMemory mode. The server only ever observes the payment.
     /// </summary>
     private async Task<bool> SettleInvoiceAsync(FeeInvoiceDto invoice)
     {
@@ -42,10 +73,44 @@ public class GameClient(string serverUrl)
             Console.WriteLine($"    paid {invoice.AmountSats} sats (simulated wallet) → {ShortId(invoice.PayToAddress)}");
             return true;
         }
-        Console.WriteLine($"    ⚠ pay this invoice from YOUR wallet, then re-run the follow-up command:");
-        Console.WriteLine($"      {invoice.AmountSats} sats → {invoice.PayToAddress}");
-        Console.WriteLine($"      (regtest faucet wallet: node regtest/regtest.mjs ark send --to {invoice.PayToAddress} --amount {invoice.AmountSats} --password secret)");
-        return false;
+
+        var wallet = await WalletAsync();
+        try
+        {
+            var txid = await wallet.SendAsync(invoice.PayToAddress, invoice.AmountSats);
+            Console.WriteLine($"    paid {invoice.AmountSats} sats from your wallet (tx {ShortId(txid)})");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            throw new GameClientException(
+                $"could not pay the invoice from your wallet ({ex.Message}) — check 'wallet' and fund your address ('fund')");
+        }
+    }
+
+    /// <summary>
+    /// Retries an action that depends on the server OBSERVING our on-chain
+    /// payment (reveal, claim, duel) — observation lags the send by a moment.
+    /// </summary>
+    private static async Task<T> RetryUntilObservedAsync<T>(Func<Task<T>> action, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+        GameClientException? last = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                return await action();
+            }
+            catch (GameClientException ex) when (
+                ex.Message.Contains("not been paid") || ex.Message.Contains("unpaid") ||
+                ex.Message.Contains("does not show"))
+            {
+                last = ex;
+                await Task.Delay(1500);
+            }
+        }
+        throw new GameClientException($"{what}: the server did not observe the payment in time — {last?.Message}");
     }
 
     // ── Session ────────────────────────────────────────────────────────
@@ -94,6 +159,9 @@ public class GameClient(string serverUrl)
             case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
+            case "wallet": await WalletInfoAsync(); break;
+            case "backup": await BackupAsync(); break;
+            case "fund": await FundAsync(); break;
             case "shop": await ShopAsync(); break;
             case "buy": await BuyAsync(Arg(parts, 1, "buy <itemId>")); break;
             case "claim": await ClaimAsync(Arg(parts, 1, "claim <invoiceId>")); break;
@@ -124,7 +192,10 @@ public class GameClient(string serverUrl)
           matches                list open/accepted wagered matches
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
-          transfer <hero> <pid>  send a hero (the Arkade asset moves wallets)
+          transfer <hero> <pid>  send a hero (you sign; the Arkade asset moves wallets)
+          wallet                 your self-custody wallet: address, balance, assets
+          backup                 print your wallet mnemonic (guard it!)
+          fund                   how to fund your wallet address
           shop                   list equipment
           buy <itemId>           buy an item (delivers a fungible Arkade asset unit)
           equip <hero> <itemId>  equip a held item unit
@@ -188,16 +259,14 @@ public class GameClient(string serverUrl)
 
     private async Task RegisterAsync(string name, string? address)
     {
-        // Non-custodial: registration binds YOUR address. In the InMemory
-        // simulation a local sim-address stands in for a wallet; in NArk mode
-        // provide your wallet's Arkade address (embedded wallet lands next).
+        // Non-custodial: registration binds YOUR address — in NArk mode it
+        // comes from the embedded self-custody wallet automatically; in the
+        // InMemory simulation a local sim-address stands in for it.
         if (address is null)
         {
-            if (await ChainModeAsync() == "InMemory")
-                address = $"sim-wallet-{NewNonce()}";
-            else
-                throw new GameClientException(
-                    "NArk mode needs your wallet's Arkade address: register <name> <tark1...>");
+            address = await ChainModeAsync() == "InMemory"
+                ? $"sim-wallet-{NewNonce()}"
+                : (await WalletAsync()).Address;
         }
 
         var player = await PostAsync<PlayerDto>("/api/players", new RegisterPlayerRequest(name, address));
@@ -214,7 +283,9 @@ public class GameClient(string serverUrl)
     {
         RequireSession();
         _me = await GetAsync<PlayerDto>("/api/players/me");
-        Console.WriteLine($"  {_me.Name}  ·  {_me.BalanceSats} sats  ·  {_me.ArkadeAddress}");
+        Console.WriteLine($"  {_me.Name}  ·  {_me.BalanceSats} sats");
+        Console.WriteLine($"  player id: {_me.PlayerId}   (others use this to transfer heroes to you)");
+        Console.WriteLine($"  address:   {_me.ArkadeAddress}");
     }
 
     private async Task ClaimStarterAsync()
@@ -283,15 +354,13 @@ public class GameClient(string serverUrl)
         var commit = await PostAsync<BreedCommitResponse>("/api/breeding/commit",
             new BreedCommitRequest(parentA.Id, parentB.Id));
         Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)} (fee invoice {commit.Invoice.AmountSats} sats)");
-        if (!await SettleInvoiceAsync(commit.Invoice))
-        {
-            Console.WriteLine($"    then: breed-reveal {commit.BreedingId} (or re-run breed after paying)");
-            return;
-        }
+        await SettleInvoiceAsync(commit.Invoice);
 
         var nonce = NewNonce();
-        var reveal = await PostAsync<BreedRevealResponse>(
-            $"/api/breeding/{commit.BreedingId}/reveal", new BreedRevealRequest(nonce));
+        var reveal = await RetryUntilObservedAsync(
+            () => PostAsync<BreedRevealResponse>(
+                $"/api/breeding/{commit.BreedingId}/reveal", new BreedRevealRequest(nonce)),
+            "breeding reveal");
 
         var child = reveal.Hero;
         Console.WriteLine($"  ✓ born: {child.Name}  gen{child.Generation}  [{child.Element}]");
@@ -372,6 +441,24 @@ public class GameClient(string serverUrl)
         Console.WriteLine($"    opponent runs 'accept {open.MatchId}', then you run 'duel {open.MatchId}'");
     }
 
+    private async Task DuelResolveAsync(string matchId)
+    {
+        var match = await GetAsync<MatchDto>($"/api/matches/{matchId}");
+        var nonce = NewNonce();
+        var fight = await RetryUntilObservedAsync(
+            () => PostAsync<FightResponse>($"/api/matches/{matchId}/fight", new FightRequest(nonce)),
+            "duel");
+
+        PrintBattle(fight);
+        if (fight.WinnerPayoutSats > 0)
+            Console.WriteLine($"    💰 pot: {fight.WinnerPayoutSats} sats paid to the winner's owner");
+
+        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
+        Console.WriteLine(ok
+            ? $"    fairness ✓ {detail}"
+            : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
     private async Task ListMatchesAsync()
     {
         var open = await GetAsync<List<MatchDto>>("/api/matches?status=open");
@@ -399,18 +486,7 @@ public class GameClient(string serverUrl)
     private async Task DuelAsync(string matchId)
     {
         RequireSession();
-        var match = await GetAsync<MatchDto>($"/api/matches/{matchId}");
-        var nonce = NewNonce();
-        var fight = await PostAsync<FightResponse>($"/api/matches/{matchId}/fight", new FightRequest(nonce));
-
-        PrintBattle(fight);
-        if (fight.WinnerPayoutSats > 0)
-            Console.WriteLine($"    💰 pot: {fight.WinnerPayoutSats} sats paid to the winner's owner");
-
-        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
-        Console.WriteLine(ok
-            ? $"    fairness ✓ {detail}"
-            : $"    fairness ✗ SERVER CHEATED: {detail}");
+        await DuelResolveAsync(matchId);
     }
 
     private async Task TransferAsync(string heroRef, string toPlayerId)
@@ -427,12 +503,55 @@ public class GameClient(string serverUrl)
         }
         else
         {
-            Console.WriteLine($"    ⚠ send the hero asset {hero.AssetId} from YOUR wallet to the recipient's address, then this confirm will pass");
+            var recipient = await GetAsync<PlayerDto>($"/api/players/{toPlayerId}");
+            var wallet = await WalletAsync();
+            var txid = await wallet.SendAssetAsync(recipient.ArkadeAddress, hero.AssetId ?? hero.Id, 1);
+            Console.WriteLine($"    hero asset sent from your wallet to {recipient.Name}'s address (tx {ShortId(txid)})");
         }
 
-        var result = await PostAsync<TransferResponse>($"/api/heroes/{hero.Id}/transfer",
-            new TransferRequest(toPlayerId));
+        var result = await RetryUntilObservedAsync(
+            () => PostAsync<TransferResponse>($"/api/heroes/{hero.Id}/transfer",
+                new TransferRequest(toPlayerId)),
+            "transfer confirmation");
         Console.WriteLine($"  ✓ {result.Hero.Name} transferred to {toPlayerId} (verified on-chain)");
+    }
+
+    private async Task WalletInfoAsync()
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            Console.WriteLine("  InMemory mode — the simulated wallet lives server-side (dev endpoints)");
+            return;
+        }
+        var wallet = await WalletAsync();
+        var balance = await wallet.GetBalanceSatsAsync();
+        var assets = await wallet.GetAssetsAsync();
+        Console.WriteLine($"  address  {wallet.Address}");
+        Console.WriteLine($"  balance  {balance} sats");
+        Console.WriteLine($"  assets   {(assets.Count == 0 ? "none" : "")}");
+        foreach (var (assetId, amount) in assets)
+            Console.WriteLine($"    {ShortId(assetId)} × {amount}");
+    }
+
+    private async Task BackupAsync()
+    {
+        if (await ChainModeAsync() == "InMemory")
+            throw new GameClientException("InMemory mode has no real wallet to back up");
+        var wallet = await WalletAsync();
+        Console.WriteLine("  ⚠ your mnemonic — anyone with these words controls your heroes and funds:");
+        Console.WriteLine($"    {wallet.Mnemonic}");
+    }
+
+    private async Task FundAsync()
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            Console.WriteLine("  InMemory mode — every player starts with a simulated balance");
+            return;
+        }
+        var wallet = await WalletAsync();
+        Console.WriteLine($"  send sats to your address: {wallet.Address}");
+        Console.WriteLine($"  regtest faucet: node regtest/regtest.mjs ark send --to {wallet.Address} --amount 100000 --password secret");
     }
 
     private async Task ShopAsync()
@@ -461,12 +580,10 @@ public class GameClient(string serverUrl)
         RequireSession();
         var invoice = (await PostAsync<ItemInvoiceResponse>($"/api/items/{itemId}/buy")).Invoice;
         Console.WriteLine($"  invoice: {invoice.AmountSats} sats for {itemId}");
-        if (!await SettleInvoiceAsync(invoice))
-        {
-            Console.WriteLine($"    then: claim {invoice.InvoiceId}");
-            return;
-        }
-        var claim = await PostAsync<ClaimItemResponse>("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId));
+        await SettleInvoiceAsync(invoice);
+        var claim = await RetryUntilObservedAsync(
+            () => PostAsync<ClaimItemResponse>("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId)),
+            "item claim");
         Console.WriteLine($"  ✓ bought {itemId} — you now hold {claim.UnitsHeld} unit(s)");
         Console.WriteLine($"    item asset {ShortId(claim.ItemAssetId)}  tx {ShortId(claim.ArkTxId)}");
     }
