@@ -1,4 +1,5 @@
 using ArkadeHeroes.Chain;
+using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
@@ -12,8 +13,15 @@ builder.Services.AddSingleton<GameService>();
 // Chain mode: "InMemory" (default) or "NArk" (regtest denigiri stack).
 var chainMode = builder.Configuration.GetValue<string>("Chain:Mode") ?? "InMemory";
 if (chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
-    throw new NotSupportedException("Chain:Mode=NArk lands with the NArkChainService iteration.");
-builder.Services.AddSingleton<IChainService, InMemoryChainService>();
+{
+    var nArkOptions = new ArkadeHeroes.Chain.NArk.NArkChainOptions();
+    builder.Configuration.GetSection(ArkadeHeroes.Chain.NArk.NArkChainOptions.SectionName).Bind(nArkOptions);
+    builder.Services.AddNArkChain(nArkOptions);
+}
+else
+{
+    builder.Services.AddSingleton<IChainService, InMemoryChainService>();
+}
 
 var app = builder.Build();
 
