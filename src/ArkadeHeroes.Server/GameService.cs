@@ -175,14 +175,23 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         return (child, serverSeedHex, entropyHex);
     }
 
-    // ── Matches: open then fight ───────────────────────────────────────
+    // ── Matches: open (→ accept when wagered) → fight ──────────────────
 
-    public MatchSession OpenMatch(Player player, string challengerHeroId, string defenderHeroId)
+    public async Task<MatchSession> OpenMatchAsync(
+        Player player, string challengerHeroId, string defenderHeroId, long wagerSats, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
         if (challenger.Id == defender.Id)
             throw new GameRuleException("A hero cannot fight itself.");
+        if (wagerSats < 0)
+            throw new GameRuleException("Wager cannot be negative.");
+        if (wagerSats > 0 && defender.OwnerId == player.Id)
+            throw new GameRuleException("Wagered matches need an opponent — you own both heroes.");
+
+        // Challenger escrows their stake with the treasury up front.
+        if (wagerSats > 0)
+            await chain.PayFeeAsync(player.Id, wagerSats, $"wager-stake:challenger", ct);
 
         var seed = CommitReveal.NewSeed();
         var session = new MatchSession
@@ -193,19 +202,45 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             DefenderHeroId = defender.Id,
             ServerSeed = seed,
             CommitmentHex = CommitReveal.Commit(seed),
+            WagerSats = wagerSats,
+            DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
         return session;
     }
 
-    public (MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
+    /// <summary>Defender's owner accepts a wagered match by escrowing the matching stake.</summary>
+    public async Task<MatchSession> AcceptMatchAsync(Player player, string matchId, CancellationToken ct)
+    {
+        if (!store.Matches.TryGetValue(matchId, out var session))
+            throw new GameRuleException($"Unknown match '{matchId}'.");
+        if (session.WagerSats == 0)
+            throw new GameRuleException("Friendly matches don't need acceptance — the challenger can fight directly.");
+        if (session.Status != "open")
+            throw new GameRuleException($"Match is {session.Status}, not open.");
+
+        var defender = GetHero(session.DefenderHeroId);
+        if (defender.OwnerId != player.Id)
+            throw new GameRuleException("Only the defender hero's owner can accept this match.");
+
+        await chain.PayFeeAsync(player.Id, session.WagerSats, $"wager-stake:defender:{matchId}", ct);
+        session.DefenderPlayerId = player.Id;
+        session.Status = "accepted";
+        return session;
+    }
+
+    public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
         long ChallengerXp, long DefenderXp,
-        Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot)
-        Fight(Player player, string matchId, string nonce)
+        Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout)>
+        FightAsync(Player player, string matchId, string nonce, CancellationToken ct)
     {
         if (!store.Matches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
             throw new GameRuleException($"Unknown match '{matchId}'.");
-        if (session.Status != "open") throw new GameRuleException("Match already resolved.");
+        var fightable = session.Status == "accepted" || (session.Status == "open" && session.WagerSats == 0);
+        if (!fightable)
+            throw new GameRuleException(session.Status == "open"
+                ? "This wagered match is waiting for the defender's owner to accept."
+                : "Match already resolved.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
         var challenger = GetHero(session.ChallengerHeroId);
@@ -232,12 +267,37 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
+        // Wager settlement: winner's owner takes the whole pot from escrow.
+        long winnerPayout = 0;
+        if (session.WagerSats > 0)
+        {
+            winnerPayout = session.WagerSats * 2;
+            var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
+            await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
+        }
+
         return (session, result,
             Convert.ToHexString(session.ServerSeed).ToLowerInvariant(),
             session.EntropyHex,
             challengerWon ? winnerAward : loserAward,
             challengerWon ? loserAward : winnerAward,
-            challengerSnapshot, defenderSnapshot);
+            challengerSnapshot, defenderSnapshot, winnerPayout);
+    }
+
+    // ── Hero transfer ──────────────────────────────────────────────────
+
+    public async Task<(Hero Hero, string ArkTxId)> TransferHeroAsync(
+        Player player, string heroId, string toPlayerId, CancellationToken ct)
+    {
+        var hero = GetOwnedHero(player, heroId);
+        if (toPlayerId == player.Id)
+            throw new GameRuleException("Hero already belongs to you.");
+        if (!store.Players.ContainsKey(toPlayerId))
+            throw new GameRuleException($"Unknown player '{toPlayerId}'.");
+
+        var arkTxId = await chain.TransferHeroAssetAsync(player.Id, toPlayerId, hero.AssetId ?? hero.Id, ct);
+        hero.OwnerId = toPlayerId;
+        return (hero, arkTxId);
     }
 
     private static void ApplyXp(Hero hero, long award)

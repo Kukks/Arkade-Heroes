@@ -64,6 +64,30 @@ public class InMemoryChainService : IChainService
         return Task.FromResult(NewId("sim-payment"));
     }
 
+    public Task<string> PayoutAsync(string playerId, long amountSats, string memo, CancellationToken ct = default)
+    {
+        if (amountSats < 0) throw new ArgumentOutOfRangeException(nameof(amountSats));
+        if (!_balances.ContainsKey(playerId))
+            throw new InvalidOperationException($"Player {playerId} has no wallet.");
+        if (Interlocked.Add(ref _treasuryBalance, -amountSats) < 0)
+        {
+            Interlocked.Add(ref _treasuryBalance, amountSats);
+            throw new InvalidOperationException($"Treasury cannot cover payout of {amountSats} sats ({memo}).");
+        }
+        _balances.AddOrUpdate(playerId, amountSats, (_, balance) => balance + amountSats);
+        return Task.FromResult(NewId("sim-payout"));
+    }
+
+    public Task<string> TransferHeroAssetAsync(string fromPlayerId, string toPlayerId, string assetId, CancellationToken ct = default)
+    {
+        if (!_wallets.ContainsKey(toPlayerId))
+            throw new InvalidOperationException($"Player {toPlayerId} has no wallet.");
+        var moved = _assetHolders.TryUpdate(assetId, toPlayerId, fromPlayerId);
+        if (!moved)
+            throw new InvalidOperationException($"Asset {assetId} is not held by {fromPlayerId}.");
+        return Task.FromResult(NewId("sim-arktx"));
+    }
+
     public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)
         => Task.FromResult(_assetHolders.TryGetValue(assetId, out var holder) && holder == playerId);
 }

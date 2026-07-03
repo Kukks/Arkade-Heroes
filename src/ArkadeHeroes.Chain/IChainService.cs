@@ -54,8 +54,14 @@ public interface IChainService
     /// </summary>
     Task<HeroMintResult> MintHeroAssetAsync(string playerId, HeroMintData data, CancellationToken ct = default);
 
-    /// <summary>Pays a game fee (breeding, item purchase) from the player to the treasury. Returns a payment reference.</summary>
+    /// <summary>Pays a game fee (breeding, item purchase, wager stake) from the player to the treasury. Returns a payment reference.</summary>
     Task<string> PayFeeAsync(string playerId, long amountSats, string memo, CancellationToken ct = default);
+
+    /// <summary>Pays out from the treasury to a player (wager winnings). Returns a payment reference.</summary>
+    Task<string> PayoutAsync(string playerId, long amountSats, string memo, CancellationToken ct = default);
+
+    /// <summary>Moves a hero asset from one player's wallet to another's. Returns the Arkade transaction id.</summary>
+    Task<string> TransferHeroAssetAsync(string fromPlayerId, string toPlayerId, string assetId, CancellationToken ct = default);
 
     /// <summary>True if the player's wallet currently holds the hero asset.</summary>
     Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default);

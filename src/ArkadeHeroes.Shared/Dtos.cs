@@ -60,11 +60,11 @@ public record BreedRevealRequest(string Nonce);
 public record BreedRevealResponse(
     HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef);
 
-// ── Matches (two-phase commit–reveal) ──────────────────────────────────────
+// ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
-public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId);
+public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0);
 
-public record OpenMatchResponse(string MatchId, string CommitmentHex);
+public record OpenMatchResponse(string MatchId, string CommitmentHex, long WagerSats, string Status);
 
 public record FightRequest(string Nonce);
 
@@ -87,7 +87,10 @@ public record FightResponse(
     // Pre-fight snapshots: exactly what the battle engine saw, so a client can
     // rebuild both heroes and replay the fight to verify the outcome.
     HeroDto ChallengerSnapshot,
-    HeroDto DefenderSnapshot);
+    HeroDto DefenderSnapshot,
+    // Wager settlement: 0 for friendly matches.
+    long WagerSats = 0,
+    long WinnerPayoutSats = 0);
 
 public record MatchDto(
     string MatchId,
@@ -95,7 +98,15 @@ public record MatchDto(
     string DefenderHeroId,
     string Status,
     string CommitmentHex,
-    BattleResultDto? Result);
+    BattleResultDto? Result,
+    long WagerSats = 0,
+    string? DefenderPlayerId = null);
+
+// ── Hero transfer ──────────────────────────────────────────────────────────
+
+public record TransferRequest(string ToPlayerId);
+
+public record TransferResponse(HeroDto Hero, string ArkTxId);
 
 // ── Items / equipment ──────────────────────────────────────────────────────
 

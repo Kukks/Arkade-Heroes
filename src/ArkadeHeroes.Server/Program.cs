@@ -108,30 +108,55 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
 
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
-api.MapPost("/matches/open", (OpenMatchRequest request, HttpContext http, GameService game) =>
+api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var session = game.OpenMatch(player, request.ChallengerHeroId, request.DefenderHeroId);
-    return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex));
+    var session = await game.OpenMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId,
+        request.WagerSats, ct);
+    return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status));
 });
 
-api.MapPost("/matches/{matchId}/fight", (string matchId, FightRequest request, HttpContext http, GameService game) =>
+api.MapPost("/matches/{matchId}/accept", async (string matchId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (session, result, serverSeedHex, entropyHex, challengerXp, defenderXp, challengerSnapshot, defenderSnapshot) =
-        game.Fight(player, matchId, request.Nonce);
+    var session = await game.AcceptMatchAsync(player, matchId, ct);
+    return Results.Ok(ToMatchDto(session));
+});
+
+api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, result, serverSeedHex, entropyHex, challengerXp, defenderXp,
+            challengerSnapshot, defenderSnapshot, winnerPayout) =
+        await game.FightAsync(player, matchId, request.Nonce, ct);
     var challenger = game.GetHero(session.ChallengerHeroId);
     var defender = game.GetHero(session.DefenderHeroId);
     return Results.Ok(new FightResponse(result.ToDto(), serverSeedHex, entropyHex,
         challengerXp, defenderXp, challenger.ToDto(), defender.ToDto(),
-        challengerSnapshot, defenderSnapshot));
+        challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout));
 });
+
+api.MapGet("/matches", (string? status, GameStore store) =>
+    Results.Ok(store.Matches.Values
+        .Where(m => status is null || m.Status == status)
+        .OrderByDescending(m => m.CreatedAt)
+        .Take(50)
+        .Select(ToMatchDto)
+        .ToList()));
 
 api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
     store.Matches.TryGetValue(matchId, out var session)
-        ? Results.Ok(new MatchDto(session.Id, session.ChallengerHeroId, session.DefenderHeroId,
-            session.Status, session.CommitmentHex, session.Result?.ToDto()))
+        ? Results.Ok(ToMatchDto(session))
         : Results.NotFound());
+
+// ── Hero transfer ──────────────────────────────────────────────────────────
+
+api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (hero, arkTxId) = await game.TransferHeroAsync(player, heroId, request.ToPlayerId, ct);
+    return Results.Ok(new TransferResponse(hero.ToDto(), arkTxId));
+});
 
 // ── Items ──────────────────────────────────────────────────────────────────
 
@@ -161,6 +186,11 @@ static string? BearerToken(HttpContext http)
     var header = http.Request.Headers.Authorization.ToString();
     return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..] : null;
 }
+
+static MatchDto ToMatchDto(MatchSession session) => new(
+    session.Id, session.ChallengerHeroId, session.DefenderHeroId,
+    session.Status, session.CommitmentHex, session.Result?.ToDto(),
+    session.WagerSats, session.DefenderPlayerId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;

@@ -30,7 +30,7 @@ dotnet run --project src/ArkadeHeroes.Server
 dotnet run --project src/ArkadeHeroes.Client
 ```
 
-Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `equip 3 rusty-blade`. Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
+Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `equip 3 rusty-blade`, plus `transfer <hero> <playerId>` and wagered PvP: `challenge <mine> <theirs> <sats>` → (opponent) `accept <matchId>` → `duel <matchId>`. Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
 
 ## Playing on regtest with real Arkade assets
 

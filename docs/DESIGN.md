@@ -46,6 +46,8 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 - **Canonicity**: a hero is legit iff its asset's control is the game's species asset (server is the only holder of the control asset, hence the only possible issuer — verifiable on-chain via `GetAssetDetailsAsync`).
 - **Ownership**: the player's Arkade address holds the VTXO carrying the hero asset. Mint delivers the asset to the player; trades are plain asset spends.
 - **Payments**: breeding fees / item purchases are Arkade transactions (sats) from player wallet to the game treasury address.
+- **Transfers**: heroes move between players as plain asset spends (`POST /api/heroes/{id}/transfer`, client `transfer`).
+- **Wagered matches**: open → accept → duel. Both sides escrow their stake with the treasury (real Arkade transactions); the winner's owner is paid the pot on resolution. This is the server-escrow stepping stone to the coinflip-style covenant escrow (`atomicSweep`) in v2.
 - **Server wallet**: NArk `InMemoryWalletProvider` (EF Core later), funded on regtest via `arkd note`.
 - The game DB caches hero state for matchmaking/progression; the chain is authoritative for existence + ownership.
 

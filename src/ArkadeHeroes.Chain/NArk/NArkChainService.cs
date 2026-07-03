@@ -239,6 +239,43 @@ public class NArkChainService(
         return txId.ToString();
     }
 
+    public async Task<string> PayoutAsync(string playerId, long amountSats, string memo, CancellationToken ct = default)
+    {
+        await EnsureTreasuryAsync(ct);
+        if (amountSats <= 0) return "free";
+        var playerAddress = (await GetOrCreatePlayerWalletAsync(playerId, ct)).ArkadeAddress;
+
+        var txId = await spendingService.Spend(_treasuryWalletId!,
+        [
+            new ArkTxOut(ArkTxOutType.Vtxo, Money.Satoshis(amountSats), ArkAddress.Parse(playerAddress)),
+        ], cancellationToken: ct);
+        logger.LogInformation("Payout {Amount} sats ({Memo}) → {PlayerId}: {TxId}",
+            amountSats, memo, playerId, txId);
+        return txId.ToString();
+    }
+
+    public async Task<string> TransferHeroAssetAsync(string fromPlayerId, string toPlayerId, string assetId, CancellationToken ct = default)
+    {
+        await EnsureTreasuryAsync(ct);
+        var fromWalletId = await RequirePlayerWalletIdAsync(fromPlayerId, ct);
+        var toAddress = (await GetOrCreatePlayerWalletAsync(toPlayerId, ct)).ArkadeAddress;
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+
+        // Make sure the sender's asset VTXO is in local storage before coin selection.
+        await WaitForAssetVtxoAsync(fromWalletId, assetId, TimeSpan.FromSeconds(30), ct);
+
+        var txId = await spendingService.Spend(fromWalletId,
+        [
+            new ArkTxOut(ArkTxOutType.Vtxo, serverInfo.Dust, ArkAddress.Parse(toAddress))
+            {
+                Assets = [new ArkTxOutAsset(assetId, 1)],
+            },
+        ], cancellationToken: ct);
+        logger.LogInformation("Hero asset {AssetId} transferred {From} → {To}: {TxId}",
+            assetId, fromPlayerId, toPlayerId, txId);
+        return txId.ToString();
+    }
+
     public async Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)
     {
         var walletId = await RequirePlayerWalletIdAsync(playerId, ct);

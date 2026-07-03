@@ -34,7 +34,14 @@ public class MatchSession
     public required byte[] ServerSeed { get; init; }
     public required string CommitmentHex { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
-    public string Status { get; set; } = "open"; // open | resolved
+
+    /// <summary>Stake each side escrows with the treasury; 0 = friendly match.</summary>
+    public long WagerSats { get; init; }
+
+    /// <summary>Owner of the defender hero at open time (must accept wagered matches).</summary>
+    public string? DefenderPlayerId { get; set; }
+
+    public string Status { get; set; } = "open"; // open | accepted | resolved
     public BattleResult? Result { get; set; }
     public string? EntropyHex { get; set; }
     public string? Nonce { get; set; }

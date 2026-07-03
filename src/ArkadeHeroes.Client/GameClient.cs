@@ -64,6 +64,11 @@ public class GameClient(string serverUrl)
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB>"), Arg(parts, 2, "breed <parentA> <parentB>")); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
+            case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats>"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats>"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats>")); break;
+            case "matches": await ListMatchesAsync(); break;
+            case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
+            case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
+            case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "shop": await ShopAsync(); break;
             case "equip": await EquipAsync(Arg(parts, 1, "equip <hero> <itemId>"), Arg(parts, 2, "equip <hero> <itemId>")); break;
             case "info": await ChainInfoAsync(); break;
@@ -86,7 +91,12 @@ public class GameClient(string serverUrl)
           heroes                 list all heroes (find opponents)
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
           breed <a> <b>          breed two of your heroes (commit-reveal, audited)
-          fight <mine> <theirs>  battle another hero (commit-reveal, replay-audited)
+          fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
+          challenge <m> <t> <w>  open a wagered match (w sats escrowed each side)
+          matches                list open/accepted wagered matches
+          accept <matchId>       accept a wagered challenge against your hero
+          duel <matchId>         resolve an accepted wagered match (challenger)
+          transfer <hero> <pid>  send a hero (the Arkade asset moves wallets)
           shop                   list equipment
           equip <hero> <itemId>  buy + equip an item
           info                   chain backend info
@@ -296,6 +306,70 @@ public class GameClient(string serverUrl)
                           $"({fight.Result.WinnerRemainingHp}/{fight.Result.WinnerMaxHp} hp left)");
         Console.WriteLine($"    xp: challenger +{fight.ChallengerXpAward}, defender +{fight.DefenderXpAward}" +
                           $"  (levels now {fight.ChallengerHero.Level}/{fight.DefenderHero.Level})");
+    }
+
+    private async Task ChallengeAsync(string mineRef, string theirsRef, string wagerText)
+    {
+        RequireSession();
+        if (!long.TryParse(wagerText, out var wager) || wager <= 0)
+            throw new GameClientException("wager must be a positive number of sats");
+        var mine = ResolveHero(mineRef);
+        var theirs = ResolveHero(theirsRef);
+
+        var open = await PostAsync<OpenMatchResponse>("/api/matches/open",
+            new OpenMatchRequest(mine.Id, theirs.Id, wager));
+        Console.WriteLine($"  ✓ challenge opened: {open.MatchId}");
+        Console.WriteLine($"    wager {open.WagerSats} sats escrowed; commitment {ShortId(open.CommitmentHex)}");
+        Console.WriteLine($"    opponent runs 'accept {open.MatchId}', then you run 'duel {open.MatchId}'");
+    }
+
+    private async Task ListMatchesAsync()
+    {
+        var open = await GetAsync<List<MatchDto>>("/api/matches?status=open");
+        var accepted = await GetAsync<List<MatchDto>>("/api/matches?status=accepted");
+        var interesting = open.Concat(accepted).Where(m => m.WagerSats > 0).ToList();
+        if (interesting.Count == 0)
+        {
+            Console.WriteLine("  no open wagered matches");
+            return;
+        }
+        foreach (var m in interesting)
+            Console.WriteLine($"  {m.MatchId}  [{m.Status}]  wager {m.WagerSats} sats  " +
+                              $"{ShortId(m.ChallengerHeroId)} vs {ShortId(m.DefenderHeroId)}");
+    }
+
+    private async Task AcceptAsync(string matchId)
+    {
+        RequireSession();
+        var match = await PostAsync<MatchDto>($"/api/matches/{matchId}/accept");
+        Console.WriteLine($"  ✓ accepted — {match.WagerSats} sats escrowed. Challenger resolves with 'duel {match.MatchId}'.");
+    }
+
+    private async Task DuelAsync(string matchId)
+    {
+        RequireSession();
+        var match = await GetAsync<MatchDto>($"/api/matches/{matchId}");
+        var nonce = NewNonce();
+        var fight = await PostAsync<FightResponse>($"/api/matches/{matchId}/fight", new FightRequest(nonce));
+
+        PrintBattle(fight);
+        if (fight.WinnerPayoutSats > 0)
+            Console.WriteLine($"    💰 pot: {fight.WinnerPayoutSats} sats paid to the winner's owner");
+
+        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
+        Console.WriteLine(ok
+            ? $"    fairness ✓ {detail}"
+            : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
+    private async Task TransferAsync(string heroRef, string toPlayerId)
+    {
+        RequireSession();
+        var hero = ResolveHero(heroRef);
+        var result = await PostAsync<TransferResponse>($"/api/heroes/{hero.Id}/transfer",
+            new TransferRequest(toPlayerId));
+        Console.WriteLine($"  ✓ {result.Hero.Name} transferred to {toPlayerId}");
+        Console.WriteLine($"    arkade tx: {ShortId(result.ArkTxId)}");
     }
 
     private async Task ShopAsync()
