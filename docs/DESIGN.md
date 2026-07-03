@@ -32,7 +32,7 @@ Growth genes are the breeding meta: invisible at level 1, dominant at high level
 
 - XP: winner `60 + 12·loserLevel`, loser `20 + 4·winnerLevel`. Curve `80 + 45·level^1.35`, cap 50.
 - Skills: level 1 `Strike`; level 3 gene-A skill; level 6 gene-B skill; level 9 `Elemental Burst`.
-- Equipment: 3 slots (weapon/armor/trinket), fixed catalog, flat stat mods, priced in sats. Items are id-addressed so a later iteration can issue them as fungible Arkade assets and trade them banco-style.
+- Equipment: 3 slots (weapon/armor/trinket), fixed catalog, flat stat mods, priced in sats. Each item type is a **fungible Arkade asset** (issued lazily by the treasury on first sale, supply 1000, species-controlled, item id in genesis metadata). Buying pays the price and delivers one unit to the player's wallet; equipping allocates a held unit (one unit backs at most one equipped hero); unequip frees it. Loadouts don't travel on hero transfer — item assets stay with the seller's wallet, so the server strips equipment when a hero changes owners. Banco-style item trading is the v2 path.
 
 ### Combat
 

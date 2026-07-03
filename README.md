@@ -30,7 +30,7 @@ dotnet run --project src/ArkadeHeroes.Server
 dotnet run --project src/ArkadeHeroes.Client
 ```
 
-Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `equip 3 rusty-blade`, plus `transfer <hero> <playerId>` and wagered PvP: `challenge <mine> <theirs> <sats>` → (opponent) `accept <matchId>` → `duel <matchId>`. Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
+Client commands: `register <name>` → `starter` → `mine` → `breed 1 2` → `fight 3 1` → `shop` / `buy rusty-blade` / `equip 3 rusty-blade` / `unequip 3 Weapon`, plus `transfer <hero> <playerId>` and wagered PvP: `challenge <mine> <theirs> <sats>` → (opponent) `accept <matchId>` → `duel <matchId>`. Items are fungible Arkade assets (one unit backs one equipped hero). Every breed and fight is audited locally (commit–reveal + battle replay) and prints `fairness ✓`.
 
 ## Playing on regtest with real Arkade assets
 

@@ -115,9 +115,13 @@ public record ItemDto(
     int MaxHp, int Attack, int Magic, int Defense, int Speed, int CritPercent,
     long PriceSats);
 
+public record BuyItemResponse(string ItemAssetId, string ArkTxId, long BalanceSats, ulong UnitsHeld);
+
 public record EquipRequest(string ItemId);
 
-public record EquipResponse(HeroDto Hero, long BalanceSats, string FeePaymentRef);
+public record EquipResponse(HeroDto Hero);
+
+public record UnequipRequest(string Slot);
 
 // ── Chain / misc ───────────────────────────────────────────────────────────
 

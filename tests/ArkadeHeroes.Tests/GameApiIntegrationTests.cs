@@ -106,14 +106,22 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
             open.MatchId, fightNonce, open.CommitmentHex, fight);
         Assert.True(matchOk, matchDetail);
 
-        // ── Shop: buy + equip changes stats and charges the price ──────
+        // ── Shop: buy delivers an item asset unit; equip allocates it ──
         var heroBefore = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{child.Id}"))!;
+        var buyResponse = await alice.PostAsync("/api/items/rusty-blade/buy", null);
+        buyResponse.EnsureSuccessStatusCode();
+        var buy = (await buyResponse.Content.ReadFromJsonAsync<BuyItemResponse>())!;
+        Assert.Equal(1UL, buy.UnitsHeld);
+        Assert.False(string.IsNullOrEmpty(buy.ItemAssetId));
+
         var equipResponse = await alice.PostAsJsonAsync($"/api/heroes/{child.Id}/equip",
             new EquipRequest("rusty-blade"));
         equipResponse.EnsureSuccessStatusCode();
         var equip = (await equipResponse.Content.ReadFromJsonAsync<EquipResponse>())!;
         Assert.Equal(heroBefore.Stats.Attack + 4, equip.Hero.Stats.Attack);
-        Assert.True(equip.BalanceSats < me.BalanceSats);
+
+        var meAfterBuy = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        Assert.True(meAfterBuy.BalanceSats < me.BalanceSats, "item price should have been charged");
     }
 
     [Fact]

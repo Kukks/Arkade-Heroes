@@ -70,7 +70,9 @@ public class GameClient(string serverUrl)
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "shop": await ShopAsync(); break;
+            case "buy": await BuyAsync(Arg(parts, 1, "buy <itemId>")); break;
             case "equip": await EquipAsync(Arg(parts, 1, "equip <hero> <itemId>"), Arg(parts, 2, "equip <hero> <itemId>")); break;
+            case "unequip": await UnequipAsync(Arg(parts, 1, "unequip <hero> <slot>"), Arg(parts, 2, "unequip <hero> <slot>")); break;
             case "info": await ChainInfoAsync(); break;
             case "quit" or "exit": return true;
             default:
@@ -98,7 +100,9 @@ public class GameClient(string serverUrl)
           duel <matchId>         resolve an accepted wagered match (challenger)
           transfer <hero> <pid>  send a hero (the Arkade asset moves wallets)
           shop                   list equipment
-          equip <hero> <itemId>  buy + equip an item
+          buy <itemId>           buy an item (delivers a fungible Arkade asset unit)
+          equip <hero> <itemId>  equip a held item unit
+          unequip <hero> <slot>  free an item unit (Weapon/Armor/Trinket)
           info                   chain backend info
           quit                   exit
         heroes can be referenced by list number (1, 2, …) or id prefix.
@@ -390,7 +394,15 @@ public class GameClient(string serverUrl)
                 Console.WriteLine($"    {i.Id,-16} {i.Name,-18} {string.Join(" ", mods),-28} {i.PriceSats,6} sats");
             }
         }
-        Console.WriteLine("  'equip <hero> <itemId>' to buy");
+        Console.WriteLine("  'buy <itemId>' to purchase, then 'equip <hero> <itemId>'");
+    }
+
+    private async Task BuyAsync(string itemId)
+    {
+        RequireSession();
+        var result = await PostAsync<BuyItemResponse>($"/api/items/{itemId}/buy");
+        Console.WriteLine($"  ✓ bought {itemId} — you now hold {result.UnitsHeld} unit(s), balance {result.BalanceSats} sats");
+        Console.WriteLine($"    item asset {ShortId(result.ItemAssetId)}  tx {ShortId(result.ArkTxId)}");
     }
 
     private async Task EquipAsync(string heroRef, string itemId)
@@ -398,8 +410,16 @@ public class GameClient(string serverUrl)
         RequireSession();
         var hero = ResolveHero(heroRef);
         var result = await PostAsync<EquipResponse>($"/api/heroes/{hero.Id}/equip", new EquipRequest(itemId));
-        Console.WriteLine($"  ✓ {result.Hero.Name} equipped {itemId} (paid, balance {result.BalanceSats} sats)");
+        Console.WriteLine($"  ✓ {result.Hero.Name} equipped {itemId}");
         Console.WriteLine($"    stats now: hp{result.Hero.Stats.MaxHp} atk{result.Hero.Stats.Attack} mag{result.Hero.Stats.Magic} def{result.Hero.Stats.Defense} spd{result.Hero.Stats.Speed}");
+    }
+
+    private async Task UnequipAsync(string heroRef, string slot)
+    {
+        RequireSession();
+        var hero = ResolveHero(heroRef);
+        var result = await PostAsync<EquipResponse>($"/api/heroes/{hero.Id}/unequip", new UnequipRequest(slot));
+        Console.WriteLine($"  ✓ {result.Hero.Name} unequipped {slot} — the item unit is free for another hero");
     }
 
     private async Task ChainInfoAsync()

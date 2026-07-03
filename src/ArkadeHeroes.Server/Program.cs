@@ -162,11 +162,25 @@ api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest r
 
 api.MapGet("/items", () => Results.Ok(ItemCatalog.All.Select(i => i.ToDto()).ToList()));
 
+api.MapPost("/items/{itemId}/buy", async (string itemId, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (itemAssetId, arkTxId, balance, unitsHeld) = await game.BuyItemAsync(player, itemId, ct);
+    return Results.Ok(new BuyItemResponse(itemAssetId, arkTxId, balance, unitsHeld));
+});
+
 api.MapPost("/heroes/{heroId}/equip", async (string heroId, EquipRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (hero, balance, paymentRef) = await game.BuyAndEquipAsync(player, heroId, request.ItemId, ct);
-    return Results.Ok(new EquipResponse(hero.ToDto(), balance, paymentRef));
+    var hero = await game.EquipAsync(player, heroId, request.ItemId, ct);
+    return Results.Ok(new EquipResponse(hero.ToDto()));
+});
+
+api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, HttpContext http, GameService game) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var hero = game.Unequip(player, heroId, request.Slot);
+    return Results.Ok(new EquipResponse(hero.ToDto()));
 });
 
 // ── Chain / health ─────────────────────────────────────────────────────────

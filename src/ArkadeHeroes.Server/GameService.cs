@@ -296,6 +296,12 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             throw new GameRuleException($"Unknown player '{toPlayerId}'.");
 
         var arkTxId = await chain.TransferHeroAssetAsync(player.Id, toPlayerId, hero.AssetId ?? hero.Id, ct);
+
+        // Item assets stay in the sender's wallet, so the loadout can't travel:
+        // strip it, returning the units to the sender's equip pool.
+        foreach (var slot in hero.Equipment.Slots.Keys.ToList())
+            hero.Equipment.Unequip(slot);
+
         hero.OwnerId = toPlayerId;
         return (hero, arkTxId);
     }
@@ -308,18 +314,52 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
     }
 
     // ── Equipment ──────────────────────────────────────────────────────
+    // Buying pays the price and delivers a unit of the item's fungible Arkade
+    // asset; equipping allocates a held unit to a hero. A unit can back only
+    // one equipped hero at a time.
 
-    public async Task<(Hero Hero, long Balance, string PaymentRef)> BuyAndEquipAsync(
-        Player player, string heroId, string itemId, CancellationToken ct)
+    public async Task<(string ItemAssetId, string ArkTxId, long Balance, ulong UnitsHeld)> BuyItemAsync(
+        Player player, string itemId, CancellationToken ct)
+    {
+        var item = Core.Equipment.ItemCatalog.Find(itemId)
+            ?? throw new GameRuleException($"Unknown item '{itemId}'.");
+
+        await chain.PayFeeAsync(player.Id, item.PriceSats, $"item:{itemId}", ct);
+        var delivery = await chain.DeliverItemAssetAsync(player.Id, item.Id, item.Name, ct);
+
+        var balance = await chain.GetBalanceSatsAsync(player.Id, ct);
+        var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
+        return (delivery.ItemAssetId, delivery.ArkTxId, balance, held);
+    }
+
+    public async Task<Hero> EquipAsync(Player player, string heroId, string itemId, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId);
         var item = Core.Equipment.ItemCatalog.Find(itemId)
             ?? throw new GameRuleException($"Unknown item '{itemId}'.");
 
-        var paymentRef = await chain.PayFeeAsync(player.Id, item.PriceSats, $"item:{itemId}:{heroId}", ct);
-        hero.Equipment.Equip(item);
+        var unitsHeld = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
+        var unitsAllocated = store.Heroes.Values.Count(h =>
+            h.OwnerId == player.Id &&
+            h.Id != hero.Id &&
+            h.Equipment.Slots.Values.Contains(item.Id));
+        // Re-equipping the same item on the same hero's slot is a no-op allocation-wise.
+        var alreadyOnTargetSlot = hero.Equipment.Slots.TryGetValue(item.Slot, out var current) && current == item.Id;
+        if (!alreadyOnTargetSlot && (ulong)unitsAllocated >= unitsHeld)
+            throw new GameRuleException(
+                $"You hold {unitsHeld} unit(s) of {item.Name} and {unitsAllocated} are already equipped — buy another with 'buy {item.Id}'.");
 
-        var balance = await chain.GetBalanceSatsAsync(player.Id, ct);
-        return (hero, balance, paymentRef);
+        hero.Equipment.Equip(item);
+        return hero;
+    }
+
+    public Hero Unequip(Player player, string heroId, string slotName)
+    {
+        var hero = GetOwnedHero(player, heroId);
+        if (!Enum.TryParse<Core.Equipment.EquipmentSlot>(slotName, ignoreCase: true, out var slot))
+            throw new GameRuleException($"Unknown slot '{slotName}' (Weapon/Armor/Trinket).");
+        if (!hero.Equipment.Unequip(slot))
+            throw new GameRuleException($"{hero.Name} has nothing equipped in {slot}.");
+        return hero;
     }
 }

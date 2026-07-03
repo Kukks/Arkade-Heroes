@@ -284,6 +284,71 @@ public class NArkChainService(
         return vtxos.Any(v => v.Assets is { Count: > 0 } assets && assets.Any(a => a.AssetId == assetId));
     }
 
+    // ── Item assets (fungible, species-controlled, lazily issued) ──────
+
+    private const ulong ItemIssuanceSupply = 1_000;
+
+    public async Task<ItemDeliveryResult> DeliverItemAssetAsync(string playerId, string itemId, string itemName, CancellationToken ct = default)
+    {
+        var species = await EnsureSpeciesAssetAsync(ct);
+        var playerAddress = (await GetOrCreatePlayerWalletAsync(playerId, ct)).ArkadeAddress;
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+
+        var kvKey = $"itemAsset:{itemId}";
+        var assetId = await GetKvAsync(kvKey, ct);
+        if (assetId is null)
+        {
+            await _initLock.WaitAsync(ct);
+            try
+            {
+                assetId = await GetKvAsync(kvKey, ct);
+                if (assetId is null)
+                {
+                    var issuance = await assetManager.IssueAsync(_treasuryWalletId!,
+                        new IssuanceParams(ItemIssuanceSupply, species, new Dictionary<string, string>
+                        {
+                            ["item"] = itemId,
+                            ["name"] = itemName,
+                            ["game"] = "arkade-heroes",
+                        }), ct);
+                    await WaitForAssetVtxoAsync(_treasuryWalletId!, issuance.AssetId, TimeSpan.FromSeconds(30), ct);
+                    assetId = issuance.AssetId;
+                    await SetKvAsync(kvKey, assetId, ct);
+                    logger.LogInformation("Item asset issued for {ItemId}: {AssetId} (supply {Supply})",
+                        itemId, assetId, ItemIssuanceSupply);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+
+        var txId = await spendingService.Spend(_treasuryWalletId!,
+        [
+            new ArkTxOut(ArkTxOutType.Vtxo, serverInfo.Dust, ArkAddress.Parse(playerAddress))
+            {
+                Assets = [new ArkTxOutAsset(assetId, 1)],
+            },
+        ], cancellationToken: ct);
+        logger.LogInformation("Item {ItemId} unit delivered to {PlayerId}: {TxId}", itemId, playerId, txId);
+        return new ItemDeliveryResult(assetId, txId.ToString());
+    }
+
+    public async Task<ulong> GetItemAssetBalanceAsync(string playerId, string itemId, CancellationToken ct = default)
+    {
+        var assetId = await GetKvAsync($"itemAsset:{itemId}", ct);
+        if (assetId is null) return 0;
+        var walletId = await RequirePlayerWalletIdAsync(playerId, ct);
+        await PollWalletScriptsAsync(walletId, ct);
+        var vtxos = await vtxoStorage.GetVtxos(walletIds: [walletId], cancellationToken: ct);
+        return vtxos
+            .Where(v => v.Assets is { Count: > 0 })
+            .SelectMany(v => v.Assets!)
+            .Where(a => a.AssetId == assetId)
+            .Aggregate(0UL, (sum, a) => sum + a.Amount);
+    }
+
     // ── Sync helpers (poll pattern from the SDK's E2E asset helpers) ───
 
     private async Task PollWalletScriptsAsync(string walletId, CancellationToken ct)

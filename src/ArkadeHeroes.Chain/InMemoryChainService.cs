@@ -15,6 +15,8 @@ public class InMemoryChainService : IChainService
     private readonly ConcurrentDictionary<string, PlayerWallet> _wallets = new();
     private readonly ConcurrentDictionary<string, long> _balances = new();
     private readonly ConcurrentDictionary<string, string> _assetHolders = new(); // assetId → playerId
+    private readonly ConcurrentDictionary<string, string> _itemAssets = new(); // itemId → assetId
+    private readonly ConcurrentDictionary<(string PlayerId, string ItemId), ulong> _itemHoldings = new();
     private long _treasuryBalance;
 
     private static string NewId(string prefix)
@@ -90,4 +92,16 @@ public class InMemoryChainService : IChainService
 
     public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)
         => Task.FromResult(_assetHolders.TryGetValue(assetId, out var holder) && holder == playerId);
+
+    public Task<ItemDeliveryResult> DeliverItemAssetAsync(string playerId, string itemId, string itemName, CancellationToken ct = default)
+    {
+        if (!_wallets.ContainsKey(playerId))
+            throw new InvalidOperationException($"Player {playerId} has no wallet.");
+        var assetId = _itemAssets.GetOrAdd(itemId, _ => NewId("sim-item"));
+        _itemHoldings.AddOrUpdate((playerId, itemId), 1UL, (_, count) => count + 1);
+        return Task.FromResult(new ItemDeliveryResult(assetId, NewId("sim-arktx")));
+    }
+
+    public Task<ulong> GetItemAssetBalanceAsync(string playerId, string itemId, CancellationToken ct = default)
+        => Task.FromResult(_itemHoldings.GetValueOrDefault((playerId, itemId)));
 }

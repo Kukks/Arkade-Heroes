@@ -34,6 +34,8 @@ public record HeroMintData(
 
 public record HeroMintResult(string AssetId, string ArkTxId);
 
+public record ItemDeliveryResult(string ItemAssetId, string ArkTxId);
+
 /// <summary>
 /// The game's view of Arkade. <c>InMemoryChainService</c> simulates it for unit
 /// tests and offline dev; <c>NArkChainService</c> talks to a real Arkade
@@ -65,4 +67,14 @@ public interface IChainService
 
     /// <summary>True if the player's wallet currently holds the hero asset.</summary>
     Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Delivers one unit of an item's fungible Arkade asset to the player.
+    /// The asset for the item type is issued lazily by the treasury on first
+    /// sale (species-controlled, item id in genesis metadata).
+    /// </summary>
+    Task<ItemDeliveryResult> DeliverItemAssetAsync(string playerId, string itemId, string itemName, CancellationToken ct = default);
+
+    /// <summary>Units of the item's asset currently held by the player's wallet.</summary>
+    Task<ulong> GetItemAssetBalanceAsync(string playerId, string itemId, CancellationToken ct = default);
 }
