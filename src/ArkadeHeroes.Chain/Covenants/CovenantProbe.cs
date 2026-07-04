@@ -24,6 +24,11 @@ public static class CovenantSpender
     /// <summary>Waits for a VTXO to appear at the given contract's address (script-addressed).</summary>
     public static async Task<ArkVtxo> WaitForVtxoAsync(
         SelfCustodyWallet observer, ArkadeArtifactContract contract, TimeSpan timeout, CancellationToken ct = default)
+        => (await WaitForVtxosAsync(observer, contract, 1, timeout, ct))[0];
+
+    /// <summary>Waits for at least <paramref name="count"/> unspent VTXOs at the contract's address (e.g. both wager stakes).</summary>
+    public static async Task<IReadOnlyList<ArkVtxo>> WaitForVtxosAsync(
+        SelfCustodyWallet observer, ArkadeArtifactContract contract, int count, TimeSpan timeout, CancellationToken ct = default)
     {
         var script = contract.GetArkAddress().ScriptPubKey.ToHex();
         var vtxoSync = observer.GetService<VtxoSynchronizationService>();
@@ -32,18 +37,26 @@ public static class CovenantSpender
         while (DateTime.UtcNow < deadline)
         {
             await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
-            var vtxo = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct)).FirstOrDefault();
-            if (vtxo is not null) return vtxo;
+            var vtxos = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct))
+                .DistinctBy(v => v.OutPoint).ToList();
+            if (vtxos.Count >= count) return vtxos;
             await Task.Delay(500, ct);
         }
-        throw new TimeoutException($"No VTXO observed at covenant address within {timeout}.");
+        throw new TimeoutException($"Expected {count} VTXO(s) at the covenant address within {timeout}.");
     }
+
+    /// <summary>One covenant input of a multi-input spend: which contract/function/witness spends which VTXO.</summary>
+    public sealed record CovenantInput(
+        ArkadeArtifactContract Contract,
+        string FunctionName,
+        IReadOnlyList<byte[]> Witness,
+        ArkVtxo Vtxo);
 
     /// <summary>
     /// Spends a covenant VTXO through the named function. <paramref name="gameOutputs"/>
     /// are the value outputs the covenant constrains; the packet output is appended here.
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> SpendAsync(
+    public static Task<EmulatorSubmitResponse> SpendAsync(
         SelfCustodyWallet actor,
         Uri emulatorUri,
         ArkadeArtifactContract contract,
@@ -52,21 +65,40 @@ public static class CovenantSpender
         ArkVtxo vtxo,
         TxOut[] gameOutputs,
         CancellationToken ct = default)
+        => SpendManyAsync(actor, emulatorUri,
+            [new CovenantInput(contract, functionName, functionWitness, vtxo)], gameOutputs, ct);
+
+    /// <summary>
+    /// Spends MULTIPLE covenant VTXOs in one Arkade transaction (e.g. the two
+    /// wager stakes swept atomically). Packet entry vins follow input order.
+    /// </summary>
+    public static async Task<EmulatorSubmitResponse> SpendManyAsync(
+        SelfCustodyWallet actor,
+        Uri emulatorUri,
+        IReadOnlyList<CovenantInput> inputs,
+        TxOut[] gameOutputs,
+        CancellationToken ct = default)
     {
         var transport = actor.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
 
-        var coin = new ArkCoin(
-            actor.WalletId, contract, vtxo.CreatedAt, vtxo.ExpiresAt, vtxo.ExpiresAtHeight,
-            vtxo.OutPoint, vtxo.TxOut,
-            signerDescriptor: null,
-            spendingScriptBuilder: contract.LeafFor(functionName),
-            spendingConditionWitness: null,
-            lockTime: null, sequence: null,
-            vtxo.Swept, vtxo.Unrolled, vtxo.Assets);
+        var coins = new List<ArkCoin>();
+        var entries = new List<EmulatorEntry>();
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            var input = inputs[i];
+            coins.Add(new ArkCoin(
+                actor.WalletId, input.Contract, input.Vtxo.CreatedAt, input.Vtxo.ExpiresAt, input.Vtxo.ExpiresAtHeight,
+                input.Vtxo.OutPoint, input.Vtxo.TxOut,
+                signerDescriptor: null,
+                spendingScriptBuilder: input.Contract.LeafFor(input.FunctionName),
+                spendingConditionWitness: null,
+                lockTime: null, sequence: null,
+                input.Vtxo.Swept, input.Vtxo.Unrolled, input.Vtxo.Assets));
+            entries.Add(new EmulatorEntry((ushort)i, input.Contract.ScriptFor(input.FunctionName), input.Witness));
+        }
 
-        var packet = new EmulatorPacket([new EmulatorEntry(0, contract.ScriptFor(functionName), functionWitness)]);
-        var extension = new Extension([packet]);
+        var extension = new Extension([new EmulatorPacket(entries)]);
         TxOut[] outputs =
         [
             .. gameOutputs,
@@ -78,7 +110,7 @@ public static class CovenantSpender
             actor.GetService<ISafetyService>(),
             actor.GetService<IWalletProvider>(),
             actor.GetService<IIntentStorage>());
-        var (arkTx, checkpoints) = await builder.ConstructArkTransaction([coin], outputs, serverInfo, ct);
+        var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
 
         var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));
         return await emulator.SubmitTxAsync(new EmulatorSubmitRequest(

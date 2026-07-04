@@ -40,6 +40,33 @@ public class ArkadeCovenantsTests
     }
 
     [Fact]
+    public void AtomicSweepPrependsTheCrossInputCheck()
+    {
+        var script = ArkadeCovenants.AtomicSweep(SomeP2Tr(), 10_000, 5_000);
+
+        Assert.Equal(0xc9, script[0]);            // INSPECTINPUTVALUE
+        Assert.Equal(2, script[1]);               // push 2 (5000 = 0x1388 LE)
+        Assert.Equal(0x88, script[2]);
+        Assert.Equal(0x13, script[3]);
+        Assert.Equal(0x88, script[4]);            // EQUALVERIFY
+        Assert.Equal(0x76, script[5]);            // payTo body starts (DUP)
+        Assert.Equal(ArkadeCovenants.PayTo(SomeP2Tr(), 10_000), script[5..]);
+    }
+
+    [Fact]
+    public void SettleWithSeedComposesGateThenSweep()
+    {
+        var commitment = Enumerable.Repeat((byte)7, 32).ToArray();
+        var script = ArkadeCovenants.SettleWithSeed(commitment, SomeP2Tr(), 10_000, 5_000);
+
+        Assert.Equal(0xa8, script[0]);            // SHA256
+        Assert.Equal(32, script[1]);              // push 32 (commitment)
+        Assert.Equal(commitment, script[2..34]);
+        Assert.Equal(0x88, script[34]);           // EQUALVERIFY
+        Assert.Equal(ArkadeCovenants.AtomicSweep(SomeP2Tr(), 10_000, 5_000), script[35..]);
+    }
+
+    [Fact]
     public void EncodeIndexIsMinimal()
     {
         Assert.Empty(ArkadeCovenants.EncodeIndex(0));

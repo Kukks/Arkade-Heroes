@@ -56,6 +56,61 @@ public static class ArkadeCovenants
         return script.ToArray();
     }
 
+    private const byte OpSha256 = 0xa8;
+
+    /// <summary>
+    /// The <c>atomicSweep</c> covenant (coinflip R1): strengthens <see cref="PayTo"/>
+    /// with a cross-input check — the spending tx must also contain another input
+    /// (index witness-supplied) whose value equals <paramref name="otherInputValueSats"/>.
+    /// Both escrow leaves pin the sibling's stake, so one stake can never be
+    /// swept without the other.
+    ///
+    ///   Witness: [outputIndex, otherInputIndex]  (otherInputIndex on top)
+    ///   Script:  INSPECTINPUTVALUE &lt;otherValueMinLE&gt; EQUALVERIFY + payTo body
+    /// </summary>
+    public static byte[] AtomicSweep(Script recipientP2tr, long potSats, long otherInputValueSats)
+    {
+        if (otherInputValueSats <= 0)
+            throw new ArgumentOutOfRangeException(nameof(otherInputValueSats));
+        var other = EncodeMinimalScriptNum(otherInputValueSats);
+        var body = PayTo(recipientP2tr, potSats);
+        return
+        [
+            OpInspectInputValue,
+            (byte)other.Length, .. other,
+            OpEqualVerify,
+            .. body,
+        ];
+    }
+
+    /// <summary>
+    /// Commit–reveal gate: the witness must reveal the pre-committed server
+    /// seed before anything else runs.
+    ///
+    ///   Witness: [... , serverSeed]  (seed on top)
+    ///   Script:  SHA256 &lt;commit32&gt; EQUALVERIFY
+    /// </summary>
+    public static byte[] Sha256Gate(byte[] commitment32)
+    {
+        if (commitment32.Length != 32)
+            throw new ArgumentException("Commitment must be 32 bytes.", nameof(commitment32));
+        return
+        [
+            OpSha256,
+            32, .. commitment32,
+            OpEqualVerify,
+        ];
+    }
+
+    /// <summary>
+    /// A wager-escrow settle branch: reveal the committed seed, then sweep both
+    /// stakes atomically to the winner.
+    ///
+    ///   Witness: [outputIndex, otherInputIndex, serverSeed]  (seed on top)
+    /// </summary>
+    public static byte[] SettleWithSeed(byte[] commitment32, Script winnerP2tr, long potSats, long stakeSats)
+        => [.. Sha256Gate(commitment32), .. AtomicSweep(winnerP2tr, potSats, stakeSats)];
+
     /// <summary>
     /// Encode a non-negative integer as the minimal script-num byte string the
     /// introspection opcodes read for indices (0 → empty).
