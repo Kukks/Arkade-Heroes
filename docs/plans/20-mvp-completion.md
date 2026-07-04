@@ -201,9 +201,14 @@ matchmaking, wallet import/restore UX, **expired-session bookkeeping** (mark aba
 matches `expired` via a per-party escrow-funded probe + an abandonment window, so `GET
 /api/matches` drops refunded rows — see item 6; needs per-party state to avoid mis-marking live
 pending matches), **coin-selection recoverable-coin filter** (a treasury-bought item's offer
-deposit can fail `SendAssetAsync` with `VTXO_RECOVERABLE` — the diagnostic in item 3 shows it's a
-recoverable *sats* coin pulled into selection, not the asset; refresh/settle coins before spend
-or exclude non-`CanSpendOffchain` coins — likely an upstream NArk fix).
+deposit can fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
+`SpendingService.GetAvailableCoins` (SpendingService.cs:168) excludes only unconfirmed-onchain
+VTXOs, NOT recoverable (`Swept || Expired`) ones — so a recoverable coin is offered to selection
+and dooms the spend. INFERRED (not reproduced): that such a coin is actually present in the
+failing flow. Fix = filter selection to `CanSpendOffchain`, or settle/refresh coins before spend;
+the auto-selecting `Spend(walletId, outputs)` overload can't inject the filter, so a game-side fix
+would need the explicit-coins `Spend(walletId, coins, outputs)` overload + local selection — most
+cleanly an upstream NArk change to `GetAvailableCoins`).
 
 ## Working rules reminder (unchanged)
 
