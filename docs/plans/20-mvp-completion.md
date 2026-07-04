@@ -110,7 +110,9 @@ Server-computed from receipts (anyone can recompute — that's the trust story):
 lineage depth. `GET /api/leaderboard` + client `top`. No covenant work. Done = walkthrough
 shows both players ranked.
 
-## 5. Wallet-file encryption — task 23 (small, hygiene)
+## 5. Wallet-file encryption — task 23 (small, hygiene) — DESIGN NOTE
+
+**Storage finding:** the mnemonic is persisted by NArk's IWalletStorage (SelfCustodyWallet.CreateAsync calls WalletFactory.CreateWallet + walletStorage.SaveWallet, which stores the plaintext mnemonic as the wallet Secret in the wallet sqlite). Encryption cannot be a simple SelfCustodyWalletOptions.Passphrase that wraps the string, because NArk derives keys from the mnemonic and re-persists the plaintext Secret itself. Correct fix requires either: (a) storing the ENCRYPTED mnemonic in our own ChainKv, NOT calling SaveWallet with the plaintext Secret (load path decrypts then feeds WalletFactory an in-memory-only wallet), or (b) a custom IWalletStorage that encrypts Secret at rest with a passphrase-derived key (scrypt/AES-GCM). Option (b) is cleanest (transparent to callers) but touches NArk's storage contract. Must stay opt-in (E2Es create wallets with no passphrase → plaintext, non-interactive). Deferred as hygiene; the wart is real but the game is regtest-only today.
 
 Mnemonic is plaintext in the wallet sqlite. Passphrase-derived key (scrypt/AES-GCM in
 `SelfCustodyWallet`), env `ARKADE_HEROES_WALLET_PASSPHRASE` for tests/non-interactive, client
