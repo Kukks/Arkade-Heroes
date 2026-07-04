@@ -64,19 +64,32 @@ public class GameClient(string serverUrl) : IAsyncDisposable
 
     /// <summary>
     /// Opens (or creates) the player's self-custody wallet: keys generated and
-    /// stored locally in <see cref="WalletDbFile"/>, never sent anywhere.
-    /// TODO(tracked): encrypt the wallet db with a passphrase.
+    /// stored locally in <see cref="WalletDbFile"/>, never sent anywhere. Set
+    /// <c>ARKADE_HEROES_WALLET_PASSPHRASE</c> to encrypt the mnemonic at rest
+    /// (AES-256-GCM); the SAME passphrase is then required to reopen the wallet.
     /// </summary>
     private async Task<SelfCustodyWallet> WalletAsync()
     {
         if (_wallet is not null) return _wallet;
         Directory.CreateDirectory(HomeDir);
-        Console.WriteLine("  opening self-custody wallet (keys stay on this machine)…");
-        _wallet = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+        var passphrase = Environment.GetEnvironmentVariable("ARKADE_HEROES_WALLET_PASSPHRASE");
+        var encrypted = !string.IsNullOrEmpty(passphrase);
+        Console.WriteLine($"  opening self-custody wallet (keys stay on this machine{(encrypted ? ", encrypted at rest" : "")})…");
+        try
         {
-            ArkUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_ARK") ?? "http://localhost:7070",
-            DbPath = WalletDbFile,
-        });
+            _wallet = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+            {
+                ArkUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_ARK") ?? "http://localhost:7070",
+                DbPath = WalletDbFile,
+                Passphrase = passphrase,
+            });
+        }
+        catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or InvalidOperationException
+                                   && ex.Message.Contains("passphrase", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new GameClientException(
+                "could not open your wallet — set ARKADE_HEROES_WALLET_PASSPHRASE to the passphrase it was encrypted with");
+        }
         Console.WriteLine($"    wallet address: {_wallet.Address}");
         return _wallet;
     }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NArk.Abstractions;
 using NArk.Abstractions.Assets;
 using NArk.Abstractions.Contracts;
@@ -12,6 +13,7 @@ using NArk.Core.Wallet;
 using NArk.Hosting;
 using NArk.Safety.AsyncKeyedLock;
 using NArk.Storage.EfCore.Hosting;
+using NArk.Storage.EfCore.Storage;
 using NBitcoin;
 
 namespace ArkadeHeroes.Chain.NArk;
@@ -25,6 +27,15 @@ public class SelfCustodyWalletOptions
 
     /// <summary>BIP-39 mnemonic; generated fresh when null. NEVER leaves this process.</summary>
     public string? Mnemonic { get; set; }
+
+    /// <summary>
+    /// Opt-in passphrase to encrypt the wallet's mnemonic at rest (AES-256-GCM,
+    /// see <see cref="WalletSecretCipher"/>). When null/empty the mnemonic is
+    /// stored in cleartext (today's behaviour, used by the non-interactive E2E
+    /// suite). When set, the wallet DB holds only ciphertext and the SAME
+    /// passphrase is required to reopen it.
+    /// </summary>
+    public string? Passphrase { get; set; }
 }
 
 /// <summary>
@@ -69,6 +80,15 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         services.AddDbContextFactory<GameArkDbContext>(builder =>
             builder.UseSqlite($"Data Source={options.DbPath}"));
         services.AddArkEfCoreStorage<GameArkDbContext>();
+        // Opt-in at-rest encryption: keep the concrete EfCoreWalletStorage that
+        // AddArkEfCoreStorage registered, but swap the IWalletStorage the SDK
+        // resolves for an encrypting decorator over it (transparent to NArk).
+        if (!string.IsNullOrEmpty(options.Passphrase))
+        {
+            services.RemoveAll<IWalletStorage>();
+            services.AddSingleton<IWalletStorage>(sp =>
+                new EncryptingWalletStorage(sp.GetRequiredService<EfCoreWalletStorage>(), options.Passphrase));
+        }
         services.AddArkCoreServices();
         services.AddArkNetwork(new ArkNetworkConfig(options.ArkUri));
         services.AddSingleton<IIntentScheduler, SimpleIntentScheduler>();
@@ -93,6 +113,12 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
             string mnemonic;
             if (existing is not null && !string.IsNullOrEmpty(existing.Secret))
             {
+                // With a passphrase the storage decorator has already decrypted
+                // the secret; without one, a still-encrypted secret can't be used
+                // as a mnemonic — fail clearly instead of deriving a junk wallet.
+                if (WalletSecretCipher.IsEncrypted(existing.Secret))
+                    throw new InvalidOperationException(
+                        "This wallet is encrypted — provide its passphrase (SelfCustodyWalletOptions.Passphrase) to open it.");
                 walletId = existing.Id;
                 mnemonic = existing.Secret!;
             }
