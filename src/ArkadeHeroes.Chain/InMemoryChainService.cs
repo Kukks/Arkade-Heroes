@@ -116,6 +116,17 @@ public class InMemoryChainService : IChainService
         return new ItemDeliveryResult(assetId, NewId("sim-arktx"));
     }
 
+    private readonly ConcurrentDictionary<string, ulong> _xpHoldings = new(); // playerId → XP units
+
+    public async Task<ulong> DeliverXpAsync(string toPlayerId, ulong amount, CancellationToken ct = default)
+    {
+        await GetPlayerAddressAsync(toPlayerId, ct);
+        return _xpHoldings.AddOrUpdate(toPlayerId, amount, (_, held) => held + amount);
+    }
+
+    public Task<ulong> GetXpBalanceAsync(string playerId, CancellationToken ct = default)
+        => Task.FromResult(_xpHoldings.GetValueOrDefault(playerId));
+
     public async Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default)
     {
         if (amountSats < 0) throw new ArgumentOutOfRangeException(nameof(amountSats));

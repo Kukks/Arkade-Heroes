@@ -105,6 +105,18 @@ public interface IChainService
     /// <summary>Delivers one unit of an item's fungible asset (lazily issued, species-controlled) to the player's registered address.</summary>
     Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default);
 
+    /// <summary>
+    /// Delivers <paramref name="amount"/> units of the game's shared XP asset
+    /// (lazily issued, species-controlled) to the player's registered address —
+    /// progression mirrored on-chain. The signed receipts remain the
+    /// verification root; this makes a hero's earned XP a spendable on-chain
+    /// balance. Returns the total XP units the player now holds.
+    /// </summary>
+    Task<ulong> DeliverXpAsync(string toPlayerId, ulong amount, CancellationToken ct = default);
+
+    /// <summary>The player's current on-chain XP-asset balance.</summary>
+    Task<ulong> GetXpBalanceAsync(string playerId, CancellationToken ct = default);
+
     /// <summary>Pays out from the treasury to the player's registered address (wager winnings). Returns a payment reference.</summary>
     Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default);
 

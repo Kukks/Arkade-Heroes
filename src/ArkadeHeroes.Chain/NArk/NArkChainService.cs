@@ -433,6 +433,65 @@ public class NArkChainService(
         }
     }
 
+    private const ulong XpIssuanceSupply = 1_000_000_000;
+
+    public async Task<ulong> DeliverXpAsync(string toPlayerId, ulong amount, CancellationToken ct = default)
+    {
+        if (amount == 0) return await GetXpBalanceAsync(toPlayerId, ct);
+        var species = await EnsureSpeciesAssetAsync(ct);
+        var playerAddress = await GetPlayerAddressAsync(toPlayerId, ct);
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+
+        var assetId = await GetKvAsync("xpAsset", ct);
+        if (assetId is null)
+        {
+            await _initLock.WaitAsync(ct);
+            try
+            {
+                assetId = await GetKvAsync("xpAsset", ct);
+                if (assetId is null)
+                {
+                    var issuance = await WithTreasurySpendAsync(async () =>
+                    {
+                        await ConsolidateTreasuryBtcIfNeededAsync(ct);
+                        var result = await assetManager.IssueAsync(_treasuryWalletId!,
+                            new IssuanceParams(XpIssuanceSupply, species, new Dictionary<string, string>
+                            {
+                                ["asset"] = "xp",
+                                ["game"] = "arkade-heroes",
+                            }), ct);
+                        await WaitForTreasuryAssetAsync(result.AssetId, TimeSpan.FromSeconds(30), ct);
+                        return result;
+                    }, ct);
+                    assetId = issuance.AssetId;
+                    await SetKvAsync("xpAsset", assetId, ct);
+                    logger.LogInformation("XP asset issued: {AssetId} (supply {Supply})", assetId, XpIssuanceSupply);
+                }
+            }
+            finally { _initLock.Release(); }
+        }
+
+        await WithTreasurySpendAsync(async () => await spendingService.Spend(_treasuryWalletId!,
+            await SelectDeliveryCoinsAsync(assetId, ct),
+            [
+                new ArkTxOut(ArkTxOutType.Vtxo, serverInfo.Dust, ArkAddress.Parse(playerAddress))
+                {
+                    Assets = [new ArkTxOutAsset(assetId, amount)],
+                },
+            ], cancellationToken: ct), ct);
+        logger.LogInformation("Delivered {Amount} XP to {PlayerId}", amount, toPlayerId);
+        return await GetXpBalanceAsync(toPlayerId, ct);
+    }
+
+    public async Task<ulong> GetXpBalanceAsync(string playerId, CancellationToken ct = default)
+    {
+        var assetId = await GetKvAsync("xpAsset", ct);
+        if (assetId is null) return 0;
+        var vtxos = await GetVtxosAtPlayerAddressAsync(playerId, ct);
+        return vtxos.Where(v => v.Assets is { Count: > 0 }).SelectMany(v => v.Assets!)
+            .Where(a => a.AssetId == assetId).Aggregate(0UL, (s, a) => s + a.Amount);
+    }
+
     public async Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);

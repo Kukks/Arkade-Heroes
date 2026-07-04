@@ -411,6 +411,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var loserAward = Leveling.LoserAward(winner.Level);
         ApplyXp(winner, winnerAward);
         ApplyXp(loser, loserAward);
+        // Mirror the earned XP on-chain as a spendable asset balance (the
+        // receipts remain the verification root). Delivered in the BACKGROUND:
+        // an on-chain XP delivery is a treasury spend that must not add its
+        // latency to the duel response, and a hiccup must not fail the resolved
+        // match. Uses CancellationToken.None — it outlives the request.
+        DeliverXpInBackground(winner.OwnerId, (ulong)winnerAward);
+        DeliverXpInBackground(loser.OwnerId, (ulong)loserAward);
 
         session.Status = "resolved";
         session.Result = result;
@@ -462,6 +469,18 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award);
         hero.Level = level;
         hero.Xp = xp;
+    }
+
+    private void DeliverXpInBackground(string playerId, ulong amount)
+    {
+        if (amount == 0 || !_options.DeliverXpAssetsOnChain) return;
+        // Fire-and-forget: chain is a singleton, so this safely outlives the
+        // request. The match is already resolved + receipted; XP is best-effort.
+        _ = Task.Run(async () =>
+        {
+            try { await chain.DeliverXpAsync(playerId, amount, CancellationToken.None); }
+            catch { /* best-effort on-chain mirror */ }
+        });
     }
 
     // ── Hero transfer: the player's wallet moves the asset; we verify ──
