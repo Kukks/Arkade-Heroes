@@ -1,6 +1,6 @@
 # Task 18 — client `refund <matchId>`: player-facing timelocked stake reclaim
 
-**Status: designed, validated against the live stack, ZERO code written.** (Three write attempts died on a session outage; nothing partial is in the tree.)
+**Status: SHIPPED.** Implemented substantially as specced below (two deltas: `/api/chain/info` advertises the existing `Chain:NArk:EmulatorUri`/`EsploraUri` options rather than a new `EsploraApiUri` key — the mempool web proxy `:3000/api` serves the esplora endpoints incl. `mediantime`; and the dev refund endpoint maps `InvalidOperationException` → `GameRuleException` for 400s). Gate: 69 unit + 7 E2E green (`CovenantRefundTests` ×4, `ClientRefundFlowTests`). This file remains as the design record.
 **Goal:** a player whose covenant-match counterparty vanished reclaims their stake from the console client with **no oracle, no counterparty, no server cooperation** — completing the liveness story of task 17 (commit `bd901fa`) end-user-side.
 
 **Prerequisite reading:** `contracts/README.md` → *Timelock protocol invariants*. Invariant #4 (submit-once; arkd poisoned-txid bug) shapes this whole design: **a single refused submission of the canonical refund tx permanently destroys that refund path** on current arkd. The client must therefore gate on the *chain's* clock and submit exactly once.

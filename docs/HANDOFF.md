@@ -28,7 +28,7 @@ Loop protocol per iteration: keep the gate green → implement milestone → ful
 - **Portable progression receipts**: BIP340-signed match/breeding facts, player-held, independently replayable (`ReceiptVerifier`).
 - All three `.ark` contracts compile with `arkadec` (artifacts committed under `contracts/build/`).
 
-What is **not** yet built: client `refund` command (task 18 — specced, zero code written), covenant breeding, XP-as-assets, marketplace, leaderboard, wallet-file encryption. See §7.
+What is **not** yet built: covenant breeding, XP-as-assets, marketplace, leaderboard, wallet-file encryption. See §7. (Task 18 — the client `refund` command — SHIPPED after this document was first written: gate is now **69 unit + 7 E2E**; see `docs/plans/18-client-refund.md` for the design record and §6.)
 
 ## 3. World verification runbook — run this BEFORE any work
 
@@ -36,7 +36,7 @@ Expected outputs recorded 2026-07-04 at `bd901fa`. If any check fails, fix the w
 
 ```bash
 # 1. Repo state (clean tree; HEAD is bd901fa or a descendant — handoff-doc commits follow it)
-git -C C:/Git/Arkade-Heroes log --oneline -5     # → …handoff commits… then bd901fa
+git -C C:/Git/Arkade-Heroes log --oneline -8     # → task-18 + handoff commits, then bd901fa
 git -C C:/Git/Arkade-Heroes status --short       # → (empty)
 
 # 2. Regtest stack up? (start: `node regtest/regtest.mjs start --profile ark --profile emulator` from repo root)
@@ -44,10 +44,10 @@ docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 65/65, <1s
+dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 69/69, ~3s
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~2 min)
-dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 6/6
+dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 7/7
 
 # 5. Chain plumbing probes
 node regtest/regtest.mjs rpc getblockcount                       # bitcoin-cli passthrough works
@@ -99,9 +99,9 @@ Covenant/protocol traps live in **`contracts/README.md`** (authoritative, incl. 
 10. **Debug arsenal**: `docker logs emulator|arkd --since 10m`; `node regtest/regtest.mjs rpc <bitcoin-cli args>`; arkd REST indexer `http://localhost:7070/v1/indexer/vtxos?outpoints=<txid>:<vout>` (also `?scripts=`); esplora `:8999/api/v1`. When a spend "succeeds" but funds don't appear, interrogate the indexer by outpoint FIRST — it distinguishes "never created" from "created but filtered".
 11. **Session quirk (not code)**: the remote permission stream ("Yep Anywhere") intermittently dies mid-turn — Write/Edit/Bash all fail with "Tool permission request failed: Error: Stream closed". Work already on disk survives. Remedy: end the turn with a precise `ScheduleWakeup` continuation prompt; the channel heals between turns. Never leave a milestone uncommitted longer than necessary.
 
-## 6. Next task (18): client `refund <matchId>` — fully specced
+## 6. Task 18: client `refund <matchId>` — SHIPPED
 
-Complete spec with file-by-file plan, verified API/port facts, and test matrix: **`docs/plans/18-client-refund.md`**. Zero code exists for it yet; the design was validated against the live stack (esplora mediantime probe, NArk `EsploraBlockchain.GetChainTime` returns MTP, arkd has no public chain-time RPC).
+Implemented and gated (69 unit + 7 E2E). Design record: **`docs/plans/18-client-refund.md`**. The next task is covenant breeding — start from `docs/plans/19-backlog.md` §19 (pinned opcode semantics + probe list).
 
 ## 7. Backlog after 18 (priority order under the mandate)
 
