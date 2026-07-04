@@ -32,7 +32,7 @@ Growth genes are the breeding meta: invisible at level 1, dominant at high level
 
 - XP: winner `60 + 12·loserLevel`, loser `20 + 4·winnerLevel`. Curve `80 + 45·level^1.35`, cap 50.
 - Skills: level 1 `Strike`; level 3 gene-A skill; level 6 gene-B skill; level 9 `Elemental Burst`.
-- Equipment: 3 slots (weapon/armor/trinket), fixed catalog, flat stat mods, priced in sats. Each item type is a **fungible Arkade asset** (issued lazily by the treasury on first sale, supply 1000, species-controlled, item id in genesis metadata). Buying pays the price and delivers one unit to the player's wallet; equipping allocates a held unit (one unit backs at most one equipped hero); unequip frees it. Loadouts don't travel on hero transfer — item assets stay with the seller's wallet, so the server strips equipment when a hero changes owners. Banco-style item trading is the v2 path.
+- Equipment: 3 slots (weapon/armor/trinket), fixed catalog, flat stat mods, priced in sats. Each item type is a **fungible Arkade asset** (issued lazily by the treasury on first sale, supply 1000, species-controlled, item id in genesis metadata). Buying pays the price and delivers one unit to the player's wallet; equipping allocates a held unit (one unit backs at most one equipped hero); unequip frees it. Loadouts don't travel on hero transfer — item assets stay with the seller's wallet, so the server strips equipment when a hero changes owners. Banco-style item trading between players is live (resting covenant offers — see the covenant roadmap below).
 
 ### Combat
 
@@ -82,9 +82,9 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 
 1. ~~**Compiler wiring**~~ **DONE**: all three contracts compile with `arkade-os/compiler`; artifacts in `contracts/build/`.
 2. ~~**Emulator Packet builder**~~ **DONE**: `EmulatorPacket` (TLV `0x01`) rides NArk's `Extension`, wire-format-tested. **The full pipeline is PROVEN live** (`CovenantSpendTests` on regtest): a VTXO whose only leaf is `<tweakedEmulatorKey> CHECKSIGVERIFY <serverKey> CHECKSIG` was funded from a self-custody wallet and spent via `EmulatorClient.SubmitTxAsync` with the packet revealing the script — the emulator co-signed a passing script and **refused a failing one**. Covenant enforcement is script execution, not goodwill.
-3. **Breeding + transfer** move onto `arkade_heroes.ark` tapleaves (oracle = game key; emulator co-signs).
-4. **Wagered matches** move onto `wager_escrow.ark` two-stake escrows with pre-built forfeit/refund PSBTs handed to clients at open/accept (coinflip's recovery model).
-5. **Item offers** become resting `item_offer.ark` VTXOs — the shop works with the server offline, and the same covenant is the player-to-player marketplace.
+3. ~~**Breeding**~~ **DONE**: covenant-mode breeding is live (`BreedAuthorized` tapleaf — parents retained, child controlled by the species, fee paid, child metadata root oracle-signed by the game key via CHECKSIGFROMSTACK; honest breed co-signed, cheats refused). Transfers stay client-signed (the owner's own asset spend needs no covenant).
+4. ~~**Wagered matches**~~ **DONE**: `wager_escrow`-style per-party escrows are live — each side stakes into its own address (settle branches oracle-authorized, plus a timelocked refund leaf paying only that party). Client reclaims an abandoned stake by rebuilding the covenant locally (`EscrowRefundFlow`), the liveness goal the pre-built-PSBT model targeted.
+5. ~~**Item offers**~~ **DONE**: resting item-offer VTXOs are live — the seller rests one item unit behind a `fulfill` (pay-seller-the-ask) + timelocked `reclaim` covenant; ANY buyer funds the ask from their OWN wallet and takes the item (emulator refuses underpayment). Server is the discovery index only. Hero sales remain the parking-lot extension.
 6. **Oracle retirement**: replace outcome/genome oracles with in-script derivation + VRF entropy per the ArkadeKitties design doc, as compiler/emulator capabilities allow.
 7. **Upstream contributions to NArk**: the emulator client, packet builder, `ArkScriptHash` tweak, and covenant bytecode builders generalize beyond this game.
 
