@@ -116,7 +116,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     {
         var mint = await chain.MintHeroAssetAsync(player.Id, new HeroMintData(
             genome.ToHex(), generation, parentA, parentB, serverSeedHex, playerNonce), ct);
+        return BuildAndStoreHero(player, mint, genome, generation, parentA, parentB, serverSeedHex, playerNonce, entropyHex);
+    }
 
+    private Hero BuildAndStoreHero(
+        Player player, HeroMintResult mint, Genome genome, int generation,
+        string? parentA, string? parentB, string? serverSeedHex, string? playerNonce, string? entropyHex)
+    {
         var hero = new Hero
         {
             Id = mint.AssetId,
@@ -138,8 +144,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     // ── Breeding: commit (invoice) → client pays → reveal ──────────────
 
-    public async Task<(BreedingSession Session, FeeInvoice Invoice)> CommitBreedingAsync(
-        Player player, string parentAId, string parentBId, CancellationToken ct)
+    public async Task<(BreedingSession Session, FeeInvoice? Invoice)> CommitBreedingAsync(
+        Player player, string parentAId, string parentBId, string mode, CancellationToken ct)
     {
         var parentA = GetOwnedHero(player, parentAId);
         var parentB = GetOwnedHero(player, parentBId);
@@ -147,13 +153,32 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (BreedingService.Validate(parentA, parentB, DateTimeOffset.UtcNow) is { } error)
             throw new GameRuleException(error);
 
+        var seed = CommitReveal.NewSeed();
+        var sessionId = NewId("breed");
+
+        if (mode == "covenant")
+        {
+            // The player deposits BOTH parents + the fee into the breed escrow;
+            // the covenant (not the treasury) then enforces the mint's shape.
+            var escrow = await chain.CreateBreedEscrowAsync(
+                sessionId, player.Id, parentA.AssetId!, parentB.AssetId!,
+                _options.BreedingFeeSats, receipts.PublicKeyHex,
+                DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+            var covenantSession = new BreedingSession
+            {
+                Id = sessionId, PlayerId = player.Id, ParentAId = parentAId, ParentBId = parentBId,
+                ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+                Mode = "covenant", EscrowAddress = escrow.EscrowAddress,
+            };
+            store.Breedings[covenantSession.Id] = covenantSession;
+            return (covenantSession, null);
+        }
+
         var invoice = await chain.CreateFeeInvoiceAsync(
             $"breed:{parentAId}+{parentBId}", _options.BreedingFeeSats, ct);
-
-        var seed = CommitReveal.NewSeed();
         var session = new BreedingSession
         {
-            Id = NewId("breed"),
+            Id = sessionId,
             PlayerId = player.Id,
             ParentAId = parentAId,
             ParentBId = parentBId,
@@ -173,9 +198,17 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (session.Completed) throw new GameRuleException("Breeding already completed.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
-        // The player's wallet must have paid the fee invoice — verified on-chain.
-        if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
+        // The deposit must be present: a paid fee invoice (invoice mode) or the
+        // parents + fee sitting in the breed escrow (covenant mode).
+        if (session.Mode == "covenant")
+        {
+            if (!await chain.IsBreedEscrowFundedAsync(session.Id, ct))
+                throw new GameRuleException("Deposit both parents and the fee into the breed escrow, then reveal.");
+        }
+        else if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId!, ct))
+        {
             throw new GameRuleException("The breeding fee invoice has not been paid yet — pay it from your wallet, then reveal.");
+        }
 
         var parentA = GetOwnedHero(player, session.ParentAId);
         var parentB = GetOwnedHero(player, session.ParentBId);
@@ -197,8 +230,28 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
-        var child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
-            session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
+        Hero child;
+        if (session.Mode == "covenant")
+        {
+            // The oracle (game key) attests the child's metadata Merkle root;
+            // the covenant binds the on-chain mint to exactly this attestation.
+            var childData = new HeroMintData(
+                outcome.ChildGenome.ToHex(), outcome.ChildGeneration,
+                session.ParentAId, session.ParentBId, serverSeedHex, nonce);
+            var root = Chain.Covenants.ArkadeCovenants.MetadataMerkleRoot(
+                Chain.Covenants.BreedEscrowContracts.ChildMetadata(
+                    childData.GenomeHex, childData.Generation, childData.ParentAId ?? "", childData.ParentBId ?? "",
+                    childData.ServerSeedHex ?? "", childData.PlayerNonce ?? ""));
+            var oracleSig = receipts.SignDigest(root);
+            var mint = await chain.ExecuteBreedCovenantAsync(session.Id, childData, oracleSig, ct);
+            child = BuildAndStoreHero(player, mint, outcome.ChildGenome, outcome.ChildGeneration,
+                session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex);
+        }
+        else
+        {
+            child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
+                session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
+        }
         session.ChildHeroId = child.Id;
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(

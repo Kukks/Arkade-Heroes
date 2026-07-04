@@ -55,9 +55,13 @@ public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
 // ── Breeding (two-phase commit–reveal) ─────────────────────────────────────
 
-public record BreedCommitRequest(string ParentAId, string ParentBId);
+/// <summary>Mode "invoice" (fee invoice, treasury mint) or "covenant" (parents+fee escrow deposit, emulator-enforced mint).</summary>
+public record BreedCommitRequest(string ParentAId, string ParentBId, string Mode = "invoice");
 
-public record BreedCommitResponse(string BreedingId, string CommitmentHex, FeeInvoiceDto Invoice);
+/// <summary>In covenant mode <see cref="Invoice"/> is null and <see cref="EscrowAddress"/>/<see cref="EscrowFeeSats"/> are set.</summary>
+public record BreedCommitResponse(
+    string BreedingId, string CommitmentHex, FeeInvoiceDto? Invoice,
+    string? EscrowAddress = null, long EscrowFeeSats = 0);
 
 public record BreedRevealRequest(string Nonce);
 

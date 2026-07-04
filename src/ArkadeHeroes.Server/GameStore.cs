@@ -20,8 +20,12 @@ public class BreedingSession
     public required string ParentBId { get; init; }
     public required byte[] ServerSeed { get; init; }
     public required string CommitmentHex { get; init; }
-    /// <summary>Fee invoice the player's own wallet must pay before reveal.</summary>
-    public required string FeeInvoiceId { get; init; }
+    /// <summary>"invoice" (fee-paid, treasury mint) or "covenant" (escrow deposit, emulator-enforced mint).</summary>
+    public string Mode { get; init; } = "invoice";
+    /// <summary>Fee invoice the player's own wallet must pay before reveal (invoice mode).</summary>
+    public string? FeeInvoiceId { get; init; }
+    /// <summary>Breed escrow address the player deposits both parents + fee into (covenant mode).</summary>
+    public string? EscrowAddress { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Completed { get; set; }
     public string? ChildHeroId { get; set; }

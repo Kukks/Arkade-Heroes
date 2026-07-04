@@ -108,12 +108,20 @@ api.MapGet("/heroes/{heroId}", (string heroId, GameService game) =>
 
 // ── Breeding (commit → reveal) ─────────────────────────────────────────────
 
-api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext http, GameService game,
+    Microsoft.Extensions.Options.IOptions<GameOptions> options, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (session, invoice) = await game.CommitBreedingAsync(player, request.ParentAId, request.ParentBId, ct);
-    return Results.Ok(new BreedCommitResponse(session.Id, session.CommitmentHex, invoice.ToDto()));
+    var (session, invoice) = await game.CommitBreedingAsync(player, request.ParentAId, request.ParentBId, request.Mode, ct);
+    return Results.Ok(new BreedCommitResponse(session.Id, session.CommitmentHex, invoice?.ToDto(),
+        session.EscrowAddress, session.EscrowAddress is null ? 0 : options.Value.BreedingFeeSats));
 });
+
+// Public breed-escrow parameters: everything a player needs to rebuild the
+// escrow contract locally and reclaim an abandoned deposit. 404 for
+// invoice-mode or unknown breedings.
+api.MapGet("/breedings/{breedingId}/escrow", async (string breedingId, IChainService chain, CancellationToken ct) =>
+    await chain.GetBreedEscrowParamsAsync(breedingId, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
 api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedRevealRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
@@ -286,6 +294,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         }
         return Results.Ok(new { refunded = true });
     });
+
+    dev.MapPost("/fund-breed-escrow", (FundBreedEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).FundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { funded = true });
+    });
 }
 
 app.Run();
@@ -312,6 +328,9 @@ public record StakeEscrowDevRequest(string MatchId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet timelocked refund reclaim.</summary>
 public record RefundEscrowDevRequest(string MatchId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of both parents + fee into a breed escrow.</summary>
+public record FundBreedEscrowDevRequest(string BreedingId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;
