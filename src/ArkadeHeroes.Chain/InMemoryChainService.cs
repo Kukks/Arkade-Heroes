@@ -143,7 +143,9 @@ public class InMemoryChainService : IChainService
 
     // ── Covenant wager escrows (simulated) ─────────────────────────────
 
-    private sealed record Escrow(string ChallengerId, string DefenderId, long StakeSats, string OraclePkHex)
+    private sealed record Escrow(
+        string ChallengerId, string DefenderId, long StakeSats, string OraclePkHex,
+        string CommitmentHex, long RefundAfterUnixSeconds)
     {
         public bool ChallengerStaked;
         public bool DefenderStaked;
@@ -159,7 +161,8 @@ public class InMemoryChainService : IChainService
     {
         await GetPlayerAddressAsync(challengerPlayerId, ct);
         await GetPlayerAddressAsync(defenderPlayerId, ct);
-        _escrows[matchId] = new Escrow(challengerPlayerId, defenderPlayerId, stakeSats, oraclePubKeyHex);
+        _escrows[matchId] = new Escrow(challengerPlayerId, defenderPlayerId, stakeSats, oraclePubKeyHex,
+            Convert.ToHexString(seedCommitment32).ToLowerInvariant(), refundAfterUnixSeconds);
         return new WagerEscrowInfo(matchId,
             $"sim-escrow-{matchId}-challenger", $"sim-escrow-{matchId}-defender",
             stakeSats, stakeSats * 2, refundAfterUnixSeconds);
@@ -168,6 +171,47 @@ public class InMemoryChainService : IChainService
     public Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)
         => Task.FromResult(_escrows.TryGetValue(matchId, out var escrow)
                            && escrow is { ChallengerStaked: true, DefenderStaked: true });
+
+    public async Task<Covenants.WagerEscrowParams?> GetWagerEscrowParamsAsync(string matchId, CancellationToken ct = default)
+    {
+        if (!_escrows.TryGetValue(matchId, out var escrow)) return null;
+        return new Covenants.WagerEscrowParams(
+            escrow.CommitmentHex,
+            await GetPlayerAddressAsync(escrow.ChallengerId, ct),
+            await GetPlayerAddressAsync(escrow.DefenderId, ct),
+            escrow.StakeSats,
+            escrow.OraclePkHex,
+            matchId,
+            escrow.RefundAfterUnixSeconds);
+    }
+
+    /// <summary>
+    /// Simulated timelocked refund (the InMemory stand-in for the client's
+    /// covenant refund spend). Enforces the same rules the covenant + operator
+    /// do: only a party, only their own staked amount, only after expiry
+    /// (the FORFEIT_CLOSURE_LOCKED analogue), never after settlement, never twice.
+    /// </summary>
+    public void RefundEscrowFromPlayer(string playerId, string matchId)
+    {
+        if (!_escrows.TryGetValue(matchId, out var escrow))
+            throw new InvalidOperationException($"Unknown escrow {matchId}.");
+        var isChallenger = escrow.ChallengerId == playerId;
+        var isDefender = escrow.DefenderId == playerId;
+        if (!isChallenger && !isDefender)
+            throw new InvalidOperationException("Not a party to this escrow.");
+        if (escrow.Settled)
+            throw new InvalidOperationException("Escrow already settled — nothing to refund.");
+        if (!(isChallenger ? escrow.ChallengerStaked : escrow.DefenderStaked))
+            throw new InvalidOperationException("Nothing staked to refund.");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (now < escrow.RefundAfterUnixSeconds)
+            throw new InvalidOperationException(
+                $"Refund locked until {escrow.RefundAfterUnixSeconds} (chain time {now}).");
+
+        if (isChallenger) escrow.ChallengerStaked = false;
+        else escrow.DefenderStaked = false;
+        _playerBalances.AddOrUpdate(playerId, escrow.StakeSats, (_, b) => b + escrow.StakeSats);
+    }
 
     /// <summary>Simulated client-wallet stake into the escrow (the InMemory stand-in for paying the escrow address).</summary>
     public void StakeEscrowFromPlayer(string playerId, string matchId)

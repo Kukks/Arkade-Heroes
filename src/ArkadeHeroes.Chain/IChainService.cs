@@ -117,6 +117,15 @@ public interface IChainService
     Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default);
 
     /// <summary>
+    /// The public escrow parameters persisted for a covenant match — everything
+    /// a PLAYER needs to rebuild the per-party contracts independently (via
+    /// <see cref="Covenants.WagerEscrowContracts.Build"/>) and reclaim a
+    /// timelocked refund without trusting the server. Null when the match has
+    /// no covenant escrow (invoice mode or unknown match).
+    /// </summary>
+    Task<Covenants.WagerEscrowParams?> GetWagerEscrowParamsAsync(string matchId, CancellationToken ct = default);
+
+    /// <summary>
     /// Settles the escrow through the covenant: presents the oracle's BIP340
     /// signature over the winning branch's settle message, reveals the seed,
     /// and sweeps both stakes atomically to the winner via the emulator.

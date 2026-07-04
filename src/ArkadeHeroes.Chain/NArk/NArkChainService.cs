@@ -449,10 +449,6 @@ public class NArkChainService(
 
     // ── Covenant wager escrows ─────────────────────────────────────────
 
-    private sealed record EscrowParams(
-        string CommitmentHex, string ChallengerAddress, string DefenderAddress, long StakeSats,
-        string OraclePkHex, string MatchId, long RefundAfterUnixSeconds);
-
     private async Task<string> RequireEmulatorSignerAsync(CancellationToken ct)
     {
         await GetInfoAsync(ct); // probes the emulator once
@@ -462,50 +458,16 @@ public class NArkChainService(
     }
 
     /// <summary>
-    /// Per-party escrow contracts (coinflip's shape): both carry BOTH settle
-    /// branches (the winner branch spends both VTXOs atomically), and each
-    /// carries a timelocked refund leaf paying ONLY its own party — so a party
-    /// can always reclaim their own stake after expiry, and never the other's.
+    /// Rebuilds both per-party escrow contracts from the persisted params via
+    /// the shared <see cref="Covenants.WagerEscrowContracts"/> builder — the
+    /// same construction clients run to reclaim refunds trustlessly.
     /// </summary>
     private async Task<(Covenants.ArkadeArtifactContract Challenger, Covenants.ArkadeArtifactContract Defender)>
-        BuildEscrowContractsAsync(EscrowParams parameters, CancellationToken ct)
+        BuildEscrowContractsAsync(Covenants.WagerEscrowParams parameters, CancellationToken ct)
     {
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorKey = await RequireEmulatorSignerAsync(ct);
-        var commitment = Convert.FromHexString(parameters.CommitmentHex);
-        var oraclePk = Convert.FromHexString(parameters.OraclePkHex);
-        var challengerScript = ArkAddress.Parse(parameters.ChallengerAddress).ScriptPubKey;
-        var defenderScript = ArkAddress.Parse(parameters.DefenderAddress).ScriptPubKey;
-        var pot = parameters.StakeSats * 2;
-
-        // Each settle branch pins ITS OWN message, so the oracle's signature
-        // authorizes exactly one (match, winner) pair — no cross-branch replay.
-        Covenants.ArkadeContractFunction[] settleBranches =
-        [
-            new("settleToChallenger",
-                Covenants.ArkadeCovenants.SettleAuthorized(
-                    Covenants.ArkadeCovenants.SettleMessage(parameters.MatchId, challengerWon: true), oraclePk,
-                    commitment, challengerScript, pot, parameters.StakeSats)),
-            new("settleToDefender",
-                Covenants.ArkadeCovenants.SettleAuthorized(
-                    Covenants.ArkadeCovenants.SettleMessage(parameters.MatchId, challengerWon: false), oraclePk,
-                    commitment, defenderScript, pot, parameters.StakeSats)),
-        ];
-
-        var refundLockTime = new LockTime((uint)parameters.RefundAfterUnixSeconds);
-        var challengerContract = new Covenants.ArkadeArtifactContract(
-            "wager-escrow-challenger", serverInfo.SignerKey, emulatorKey,
-            [
-                .. settleBranches,
-                new("refund", Covenants.ArkadeCovenants.RefundTo(challengerScript, parameters.StakeSats), refundLockTime),
-            ]);
-        var defenderContract = new Covenants.ArkadeArtifactContract(
-            "wager-escrow-defender", serverInfo.SignerKey, emulatorKey,
-            [
-                .. settleBranches,
-                new("refund", Covenants.ArkadeCovenants.RefundTo(defenderScript, parameters.StakeSats), refundLockTime),
-            ]);
-        return (challengerContract, defenderContract);
+        return Covenants.WagerEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey);
     }
 
     public async Task<WagerEscrowInfo> CreateWagerEscrowAsync(
@@ -514,7 +476,7 @@ public class NArkChainService(
         long refundAfterUnixSeconds, CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
-        var parameters = new EscrowParams(
+        var parameters = new Covenants.WagerEscrowParams(
             Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
             await GetPlayerAddressAsync(challengerPlayerId, ct),
             await GetPlayerAddressAsync(defenderPlayerId, ct),
@@ -535,11 +497,17 @@ public class NArkChainService(
         return new WagerEscrowInfo(matchId, challengerAddress, defenderAddress, stakeSats, stakeSats * 2, refundAfterUnixSeconds);
     }
 
-    private async Task<EscrowParams> RequireEscrowParamsAsync(string matchId, CancellationToken ct)
+    private async Task<Covenants.WagerEscrowParams> RequireEscrowParamsAsync(string matchId, CancellationToken ct)
     {
         var json = await GetKvAsync($"escrow:{matchId}", ct)
                    ?? throw new InvalidOperationException($"No covenant escrow recorded for match {matchId}.");
-        return System.Text.Json.JsonSerializer.Deserialize<EscrowParams>(json)!;
+        return System.Text.Json.JsonSerializer.Deserialize<Covenants.WagerEscrowParams>(json)!;
+    }
+
+    public async Task<Covenants.WagerEscrowParams?> GetWagerEscrowParamsAsync(string matchId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"escrow:{matchId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.WagerEscrowParams>(json);
     }
 
     public async Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)

@@ -147,6 +147,8 @@ public record UnequipRequest(string Slot);
 public record ChainInfoDto(
     string Mode, string Network, string TreasuryAddress, string? SpeciesAssetId,
     string? EmulatorSignerKey = null,
-    string? GameSignerKey = null);
+    string? GameSignerKey = null,
+    string? EmulatorUri = null,
+    string? EsploraApiUri = null);
 
 public record ErrorResponse(string Error);

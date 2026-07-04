@@ -189,6 +189,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "matches": await ListMatchesAsync(); break;
             case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
+            case "refund": await RefundAsync(Arg(parts, 1, "refund <matchId>")); break;
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
@@ -225,6 +226,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           matches                list open/accepted wagered matches
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
+          refund <matchId>       reclaim your covenant stake after expiry (no server trust)
           transfer <hero> <pid>  send a hero (you sign; the Arkade asset moves wallets)
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
@@ -239,6 +241,47 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           quit                   exit
         heroes can be referenced by list number (1, 2, …) or id prefix.
         """);
+
+    /// <summary>
+    /// Reclaims this player's stake from an abandoned covenant match. In NArk
+    /// mode the contracts are rebuilt LOCALLY from the match's public escrow
+    /// params and the refund is spent by the player's own wallet through the
+    /// emulator — the server is only consulted for the (verifiable) params.
+    /// </summary>
+    private async Task RefundAsync(string matchId)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/refund-escrow", new { MatchId = matchId });
+            Console.WriteLine("    stake refunded (simulated wallet)");
+            return;
+        }
+
+        var escrow = await GetAsync<Chain.Covenants.WagerEscrowParams>($"/api/matches/{matchId}/escrow");
+        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
+            ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
+        var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
+            ?? throw new GameClientException("no esplora API for chain time — set ARKADE_HEROES_ESPLORA (e.g. http://localhost:8999/api/v1)");
+
+        var wallet = await WalletAsync();
+        var balanceBefore = await wallet.GetBalanceSatsAsync();
+        Console.WriteLine($"    rebuilding escrow contracts locally (stake {escrow.StakeSats} sats, refundable after {escrow.RefundAfterUnixSeconds})…");
+        try
+        {
+            await Chain.Covenants.EscrowRefundFlow.RefundAsync(
+                wallet, new Uri(emulatorUri), escrow,
+                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct));
+        }
+        catch (Chain.Covenants.RefundNotYetDueException ex)
+        {
+            Console.WriteLine($"    not yet: refund unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
+            return;
+        }
+        Console.WriteLine("    refund co-signed — waiting for the stake to land in your wallet…");
+        await wallet.WaitForBalanceAsync(balanceBefore + escrow.StakeSats, TimeSpan.FromSeconds(90));
+        Console.WriteLine($"    reclaimed {escrow.StakeSats} sats — balance {balanceBefore + escrow.StakeSats}+");
+    }
 
     // ── HTTP helpers ───────────────────────────────────────────────────
 

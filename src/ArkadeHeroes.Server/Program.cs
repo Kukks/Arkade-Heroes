@@ -169,6 +169,15 @@ api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
         ? Results.Ok(ToMatchDto(session))
         : Results.NotFound());
 
+// Public escrow parameters of a covenant match: everything a player needs to
+// rebuild the per-party contracts locally (WagerEscrowContracts.Build) and
+// reclaim a timelocked refund WITHOUT trusting this server. 404 for
+// invoice-mode or unknown matches.
+api.MapGet("/matches/{matchId}/escrow", async (string matchId, IChainService chain, CancellationToken ct) =>
+    await chain.GetWagerEscrowParamsAsync(matchId, ct) is { } parameters
+        ? Results.Ok(parameters)
+        : Results.NotFound());
+
 // ── Hero transfer: the owner's wallet moves the asset; this confirms ───────
 
 api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -212,11 +221,12 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
 
 // ── Chain / health ─────────────────────────────────────────────────────────
 
-api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, CancellationToken ct) =>
+api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
-        info.EmulatorSignerKey, receipts.PublicKeyHex));
+        info.EmulatorSignerKey, receipts.PublicKeyHex,
+        config["Chain:EmulatorUri"], config["Chain:EsploraApiUri"]));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and
@@ -256,6 +266,22 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         ((InMemoryChainService)chain).StakeEscrowFromPlayer(player.Id, request.MatchId);
         return Results.Ok(new { staked = true });
     });
+
+    dev.MapPost("/refund-escrow", (RefundEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try
+        {
+            ((InMemoryChainService)chain).RefundEscrowFromPlayer(player.Id, request.MatchId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Domain refusals (locked, not a party, nothing staked, settled)
+            // are 400s, matching what the real covenant path surfaces.
+            throw new GameRuleException(ex.Message);
+        }
+        return Results.Ok(new { refunded = true });
+    });
 }
 
 app.Run();
@@ -279,6 +305,9 @@ public record TransferAssetDevRequest(string AssetId, string ToPlayerId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet escrow stake.</summary>
 public record StakeEscrowDevRequest(string MatchId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet timelocked refund reclaim.</summary>
+public record RefundEscrowDevRequest(string MatchId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;
