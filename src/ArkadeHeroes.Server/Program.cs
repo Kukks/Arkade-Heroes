@@ -224,9 +224,13 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
 api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
+    // Advertised so clients can run covenant refunds without out-of-band
+    // config; defaults mirror NArkChainOptions. Meaningless in InMemory mode.
+    var isNArk = info.Mode.Equals("NArk", StringComparison.OrdinalIgnoreCase);
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
         info.EmulatorSignerKey, receipts.PublicKeyHex,
-        config["Chain:EmulatorUri"], config["Chain:EsploraApiUri"]));
+        isNArk ? config["Chain:NArk:EmulatorUri"] ?? "http://localhost:7073" : null,
+        isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and
