@@ -158,4 +158,41 @@ public class CovenantOfferProbeTests : IAsyncLifetime
         // And the buyer walked away with nothing — the item never moved.
         Assert.DoesNotContain(await _buyer.GetAssetsAsync(), a => a.AssetId == itemId && a.Amount > 0);
     }
+
+    /// <summary>
+    /// Exercises the multi-funding-coin path of the buyer-funded covenant spend:
+    /// a buyer whose coins are each SMALLER than the ask must draw on more than
+    /// one funding input, so the post-construction correction re-signs each
+    /// funding coin's checkpoint + ark-tx input in its per-coin loop (the honest
+    /// fulfil above only ever uses one). Proves that loop is correct.
+    /// </summary>
+    [Fact]
+    public async Task RestingOffer_BuyerFundsFromMultipleCoins()
+    {
+        var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        const long ask = 8_000;
+
+        // A buyer with TWO coins each below the ask → fulfilment needs both.
+        await using var multiBuyer = await NewWalletAsync();
+        await RegtestHelper.ArkSend(multiBuyer.Address, 5_000);
+        await RegtestHelper.ArkSend(multiBuyer.Address, 5_000);
+        await multiBuyer.WaitForBalanceAsync(10_000, TimeSpan.FromSeconds(60));
+
+        var itemId = await MintItemToSellerAsync(serverInfo, emulatorInfo);
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var offer = new OfferParams(_seller.Address, itemId, ask, serverInfo.Dust.Satoshi, "offer-multi", refundAfter);
+        var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        await _seller.SendAssetAsync(contract.GetArkAddress().ToString(isMain), itemId, 1);
+        await CovenantSpender.WaitForVtxosAsync(_seller, contract, 1, TimeSpan.FromSeconds(45));
+
+        var sellerBefore = await _seller.GetBalanceSatsAsync();
+
+        await OfferFulfillFlow.FulfillAsync(multiBuyer, EmulatorUri, offer);
+
+        await multiBuyer.WaitForAssetAsync(itemId, TimeSpan.FromSeconds(60));
+        await _seller.WaitForBalanceAsync(sellerBefore + ask, TimeSpan.FromSeconds(60));
+    }
 }
