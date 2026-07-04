@@ -194,6 +194,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
             case "fund": await FundAsync(); break;
+            case "top": await LeaderboardAsync(); break;
             case "receipts": await ListReceiptsAsync(); break;
             case "verify-receipts": await VerifyReceiptsAsync(); break;
             case "shop": await ShopAsync(); break;
@@ -231,6 +232,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
           fund                   how to fund your wallet address
+          top                    leaderboard (wins/level, recomputed from receipts)
           receipts               your signed progression receipts (portable proof)
           verify-receipts        verify signatures + recompute levels from receipts
           shop                   list equipment
@@ -646,6 +648,19 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         var wallet = await WalletAsync();
         Console.WriteLine("  ⚠ your mnemonic — anyone with these words controls your heroes and funds:");
         Console.WriteLine($"    {wallet.Mnemonic}");
+    }
+
+    private async Task LeaderboardAsync()
+    {
+        var board = await GetAsync<List<LeaderboardEntryDto>>("/api/leaderboard");
+        if (board.Count == 0)
+        {
+            Console.WriteLine("  no heroes yet");
+            return;
+        }
+        Console.WriteLine("  #   hero            lvl  wins  matches");
+        foreach (var e in board.Take(20))
+            Console.WriteLine($"  {e.Rank,-3} {e.Name,-15} {e.Level,3}  {e.Wins,4}  {e.Matches,7}");
     }
 
     private async Task ListReceiptsAsync()

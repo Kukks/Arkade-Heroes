@@ -255,6 +255,19 @@ api.MapGet("/receipts/hero/{heroId}", (string heroId, GameStore store) =>
         ? list.ToArray()
         : Array.Empty<ProgressionReceiptDto>()));
 
+// The leaderboard, recomputed from the signed receipts (each match receipt is
+// filed under both heroes, so dedupe by receipt id). No trust of its own — a
+// client holding the receipt chain gets the same ranking.
+api.MapGet("/leaderboard", (GameStore store) =>
+{
+    var heroes = store.Heroes.Values.ToDictionary(
+        h => h.Id, h => (h.Name, h.Level, h.OwnerId));
+    var receipts = store.ReceiptsByHero.Values
+        .SelectMany(list => list)
+        .DistinctBy(r => r.Id);
+    return Results.Ok(LeaderboardBuilder.Build(heroes, receipts));
+});
+
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
 // ── Dev-only simulation of the CLIENT wallet (InMemory chain mode only) ────

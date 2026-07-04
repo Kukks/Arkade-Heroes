@@ -89,7 +89,11 @@ to the hero owner's address. Reuse the item-asset pipeline (lazy issuance in
 as assets in the winner's wallet in the walkthrough; InMemory parity; receipts remain the
 verification root.
 
-## 3. Marketplace — task 21 (medium)
+## 3. Marketplace — task 21 (medium) — DESIGN NOTE
+
+**Funding-model decision (found while scoping):** `ConstructArkTransaction` takes explicit coins+outputs and does NOT auto-source the actor's wallet to balance a shortfall (`TransactionHelpers.cs:57`). The proven `OfferFulfillCovenantTests` paid the seller from the OFFER VTXO's own sats (taker keeps the spread) — a bounty shape, not a buyer-pays item sale. A real item sale (offer VTXO carries the ITEM; buyer pays `ask` from THEIR funds; buyer takes the item) needs the BUYER's coin added as a second input to the covenant spend. The offer VTXO is script-addressed (emulator co-signs it), so the buyer's own `SpendingService` can't spend it — only `CovenantSpender` (emulator path) can, and it currently builds coins ONLY from covenant inputs. **So the marketplace requires extending `CovenantSpender.SpendManyCoreAsync` to also accept the actor's plain funding coins (buyer's VTXO + signer descriptor + collaborative spending-script builder), co-signed by the buyer alongside the emulator's covenant co-sign.** This is the honest design; it is deferred behind the reliable small wins (leaderboard, warts) and then implemented. Original sketch below.
+
+### (was) Marketplace — task 21
 
 Banco-style offers, primitive already proven live (`OfferFulfillCovenantTests`):
 - **Item sale (MVP scope):** seller rests an offer VTXO (item asset + `PayTo(seller, ask)`
