@@ -35,8 +35,8 @@ What is **not** yet built: client `refund` command (task 18 — specced, zero co
 Expected outputs recorded 2026-07-04 at `bd901fa`. If any check fails, fix the world first — do not code against a broken baseline.
 
 ```bash
-# 1. Repo state (must be clean at or after bd901fa)
-git -C C:/Git/Arkade-Heroes log --oneline -1     # → bd901fa …
+# 1. Repo state (clean tree; HEAD is bd901fa or a descendant — handoff-doc commits follow it)
+git -C C:/Git/Arkade-Heroes log --oneline -5     # → …handoff commits… then bd901fa
 git -C C:/Git/Arkade-Heroes status --short       # → (empty)
 
 # 2. Regtest stack up? (start: `node regtest/regtest.mjs start --profile ark --profile emulator` from repo root)
@@ -95,7 +95,7 @@ Covenant/protocol traps live in **`contracts/README.md`** (authoritative, incl. 
 6. **`SHA256` ambiguity** with `NBitcoin.Secp256k1` — alias it.
 7. **Shell quirks**: bash `VAR=x cmd1 | cmd2` applies the var to cmd1 only (export instead); MSYS mangles `ref:path` colons (use PowerShell for those); the Bash tool cwd can reset between calls — use absolute paths or `cd` within the same command.
 8. **`dotnet test` swallows `Console.WriteLine`** — add `--logger "console;verbosity=detailed"` to see test diagnostics.
-9. **arkd log level**: only warnings/errors surface; a silent gRPC method = success. The emulator logs "finalizing tx" BEFORE calling FinalizeTx and only logs on failure (`finalizing tx failed`).
+9. **arkd log level**: only warnings/errors surface; a silent gRPC method = success. The emulator's `finalizing tx` info line is emitted BEFORE it calls FinalizeTx; the outcome is only visible on failure (an error line `finalizing tx failed: …`) — no error after it means the finalize succeeded.
 10. **Debug arsenal**: `docker logs emulator|arkd --since 10m`; `node regtest/regtest.mjs rpc <bitcoin-cli args>`; arkd REST indexer `http://localhost:7070/v1/indexer/vtxos?outpoints=<txid>:<vout>` (also `?scripts=`); esplora `:8999/api/v1`. When a spend "succeeds" but funds don't appear, interrogate the indexer by outpoint FIRST — it distinguishes "never created" from "created but filtered".
 11. **Session quirk (not code)**: the remote permission stream ("Yep Anywhere") intermittently dies mid-turn — Write/Edit/Bash all fail with "Tool permission request failed: Error: Stream closed". Work already on disk survives. Remedy: end the turn with a precise `ScheduleWakeup` continuation prompt; the channel heals between turns. Never leave a milestone uncommitted longer than necessary.
 
@@ -112,3 +112,4 @@ Sketches in `docs/plans/19-backlog.md`. Order: **covenant breeding** (arkade_her
 - Auto-memory lives at `C:\Users\evilk\.claude\projects\C--Git-Arkade-Heroes\memory\` (index `MEMORY.md` → `arkade-heroes-project.md`, `cadence-preference.md`). Keep it updated per milestone; it is the cross-session brain, but **this repo's docs are the durable source of truth** — anything load-bearing goes in the repo.
 - Never add AI attribution to commits/PRs. No time estimates in any artifact. Match existing file style. Commit messages: dense, technical, capture the WHY and the traps (see `git log` for the house style).
 - The user reads results asynchronously; close each turn with honest status: what ran, what's confirmed vs inferred, commit hashes.
+- The harness task list (TaskList/TaskUpdate tools) tracks milestones — tasks #1–#17 completed, **#18 in_progress** (its description points at the spec file). Keep it in sync per milestone; if a fresh session has an empty task list, recreate #18 from `docs/plans/18-client-refund.md`.
