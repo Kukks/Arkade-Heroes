@@ -354,6 +354,256 @@ public class CovenantBreedProbeTests : IAsyncLifetime
         Assert.EndsWith("0100", childId); // group index 1, uint16 LE
     }
 
+    /// <summary>
+    /// Rung 4: the FULL breeding covenant — <see cref="ArkadeCovenants.BreedAuthorized"/> —
+    /// live: parents present + retained, child controlled by the species,
+    /// exact fee, oracle-signed metadata root. One honest breed passes; four
+    /// adversarial variants are refused (each on its own VTXO at the SAME
+    /// contract — refusals here are emulator-side and poison nothing).
+    /// </summary>
+    [Fact]
+    public async Task BreedAuthorized_HonestPasses_CheatsRefused()
+    {
+        var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
+        var isMain = serverInfo.Network == Network.Main;
+        byte[] opTrue = [0x51];
+        const long fund = 12_000, carrierIn = 6_000, feeSats = 2_000;
+
+        // Mint the species, then BOTH parents (one tx, two controlled groups).
+        var mintContract = new ArkadeArtifactContract(
+            "rung4-mint", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [new ArkadeContractFunction("mint", opTrue)]);
+        var mintAddress = mintContract.GetArkAddress().ToString(isMain);
+        await _funder.SendAsync(mintAddress, fund);
+        await _funder.SendAsync(mintAddress, fund);
+        var mintVtxos = await CovenantSpender.WaitForVtxosAsync(_funder, mintContract, 2, TimeSpan.FromSeconds(45));
+
+        var speciesResponse = await CovenantSpender.SpendManyAsync(
+            _funder, EmulatorUri,
+            [new CovenantSpender.CovenantInput(mintContract, "mint", [], mintVtxos[0])],
+            [new TxOut(Money.Satoshis(fund), funderScript)],
+            extraPackets: [Packet.Create([AssetGroup.Create(
+                assetId: null, controlAsset: null, inputs: [],
+                outputs: [AssetOutput.Create(0, 1)],
+                metadata: new List<AssetMetadata> { AssetMetadata.Create("species", "rung4") })])]);
+        var speciesId = AssetId.Create(
+            PSBT.Parse(speciesResponse.SignedArkTx, serverInfo.Network).GetGlobalTransaction().GetHash().ToString(), 0);
+        await WaitForMintedAssetAsync(speciesId.ToString()[..64]);
+
+        AssetGroup ControlledMint(string genome) => AssetGroup.Create(
+            assetId: null, controlAsset: AssetRef.FromId(speciesId), inputs: [],
+            outputs: [AssetOutput.Create(0, 1)],
+            metadata: new List<AssetMetadata> { AssetMetadata.Create("genome", genome) });
+        var parentsResponse = await CovenantSpender.SpendManyAsync(
+            _funder, EmulatorUri,
+            [new CovenantSpender.CovenantInput(mintContract, "mint", [], mintVtxos[1])],
+            [new TxOut(Money.Satoshis(fund), funderScript)],
+            extraPackets: [Packet.Create([ControlledMint("parent-a"), ControlledMint("parent-b")])]);
+        var parentsTxId = PSBT.Parse(parentsResponse.SignedArkTx, serverInfo.Network)
+            .GetGlobalTransaction().GetHash().ToString();
+        var parentAId = AssetId.Create(parentsTxId, 0);
+        var parentBId = AssetId.Create(parentsTxId, 1);
+        await _funder.WaitForAssetAsync(parentAId.ToString(), TimeSpan.FromSeconds(45));
+        await _funder.WaitForAssetAsync(parentBId.ToString(), TimeSpan.FromSeconds(45));
+
+        // The breed contract (ids now known).
+        var oracleKey = NBitcoin.Secp256k1.ECPrivKey.Create(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        Span<byte> oraclePkSpan = stackalloc byte[32];
+        oracleKey.CreateXOnlyPubKey().WriteToSpan(oraclePkSpan);
+        var oraclePk = oraclePkSpan.ToArray();
+
+        // The fee pays a treasury address DISTINCT from the player (funder), or
+        // the builder coalesces the two same-script outputs and the fee vanishes.
+        var treasuryScript = new Key().PubKey.GetAddress(ScriptPubKeyType.TaprootBIP86, serverInfo.Network).ScriptPubKey;
+        var breedContract = new ArkadeArtifactContract(
+            "rung4-breed", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [new ArkadeContractFunction("breed",
+                ArkadeCovenants.BreedAuthorized(speciesId, parentAId, parentBId, oraclePk, treasuryScript, feeSats))]);
+        var breedAddress = breedContract.GetArkAddress();
+
+        // Deliver BOTH parents onto carriers at the breed address. NArk's
+        // selector cannot ride two assets on one coin, so deliver per-asset;
+        // its passthrough may still hitchhike B onto A's carrier (rung 2), so
+        // the honest tx spends WHATEVER carriers hold the parents.
+        var spending = _funder.GetService<global::NArk.Core.Services.SpendingService>();
+        async Task DeliverAsync(AssetId id) => await spending.Spend(_funder.WalletId,
+        [
+            new global::NArk.Abstractions.ArkTxOut(
+                global::NArk.Abstractions.ArkTxOutType.Vtxo, Money.Satoshis(carrierIn), breedAddress)
+            { Assets = [new global::NArk.Abstractions.ArkTxOutAsset(id.ToString(), 1)] },
+        ]);
+        await DeliverAsync(parentAId);
+        var afterA = await CovenantSpender.WaitForVtxosAsync(_funder, breedContract, 1, TimeSpan.FromSeconds(45));
+        if (!afterA.Any(v => v.Assets is { Count: 2 })) await DeliverAsync(parentBId);
+
+        var vtxos = await CovenantSpender.WaitForVtxosAsync(_funder, breedContract, 1, TimeSpan.FromSeconds(45));
+        var carriers = vtxos.Where(v => v.Assets is { Count: > 0 }).OrderBy(v => v.OutPoint.Hash.ToString()).ToList();
+        int VinOf(AssetId id) => carriers.FindIndex(v => v.Assets!.Any(a => a.AssetId == id.ToString()));
+        var iA = VinOf(parentAId);
+        var iB = VinOf(parentBId);
+        Assert.True(iA >= 0 && iB >= 0, "parents not on breed carriers");
+
+        // Packet: passthrough parents (retained) + controlled child at group 2.
+        var childMetadata = new List<AssetMetadata>
+        {
+            AssetMetadata.Create("breed", "arkade-heroes-breed-v1|rung4|parents"),
+            AssetMetadata.Create("genome", "rung4-child-genome"),
+        };
+        AssetGroup Pt(AssetId id, int vin) => AssetGroup.Create(
+            assetId: id, controlAsset: null,
+            inputs: [AssetInput.Create((ushort)vin, 1)], outputs: [AssetOutput.Create(0, 1)], metadata: []);
+        AssetGroup Child(AssetId control) => AssetGroup.Create(
+            assetId: null, controlAsset: AssetRef.FromId(control), inputs: [],
+            outputs: [AssetOutput.Create(0, 1)], metadata: childMetadata);
+        byte[] SignRoot(byte[] root32)
+        {
+            var sig = oracleKey.SignBIP340(root32);
+            var bytes = new byte[64];
+            sig.WriteToSpan(bytes);
+            return bytes;
+        }
+        var honestRoot = ArkadeCovenants.MetadataMerkleRoot(childMetadata);
+
+        // All attempts run on the SAME carriers — emulator refusals never reach
+        // arkd, so a rejected cheat leaves the VTXOs unspent for the next try.
+        // Every packet conserves assets (parents in+out, child mint), so arkd
+        // is satisfied and ONLY the covenant is the gatekeeper.
+        Task<EmulatorSubmitResponse> Attempt(List<AssetGroup> groups, byte[] sig, long feePaid)
+        {
+            var total = carriers.Sum(v => (long)v.Amount);
+            return CovenantSpender.SpendManyAsync(
+                _funder, EmulatorUri,
+                [.. carriers.Select(v => new CovenantSpender.CovenantInput(breedContract, "breed",
+                    ArkadeCovenants.BreedWitness(sig, 2, feeOutputIndex: 1, iA, iB), v))],
+                [
+                    new TxOut(Money.Satoshis(total - feePaid), funderScript),  // change + assets (vout 0)
+                    new TxOut(Money.Satoshis(feePaid), treasuryScript),         // fee (vout 1)
+                ],
+                extraPackets: [Packet.Create(groups)]);
+        }
+        List<AssetGroup> HonestGroups() => [Pt(parentAId, iA), Pt(parentBId, iB), Child(speciesId)];
+
+        // 1. WRONG-ROOT signature (oracle signed other bytes) — CSFS refuses.
+        var badSig = await Assert.ThrowsAnyAsync<Exception>(() =>
+            Attempt(HonestGroups(), SignRoot(System.Security.Cryptography.SHA256.HashData([0xba, 0xad])), feeSats));
+        Assert.Contains("Emulator rejected", badSig.Message);
+
+        // 2. WRONG SPECIES (child controlled by parentA, not the species) —
+        //    arkd accepts (parentA exists), the 0xe7 species pin refuses.
+        var wrongSpecies = await Assert.ThrowsAnyAsync<Exception>(() =>
+            Attempt([Pt(parentAId, iA), Pt(parentBId, iB), Child(parentAId)], SignRoot(honestRoot), feeSats));
+        Assert.Contains("Emulator rejected", wrongSpecies.Message);
+
+        // 3. FEE THEFT (pays 1000, not 2000) — the payTo pin refuses.
+        var feeTheft = await Assert.ThrowsAnyAsync<Exception>(() =>
+            Attempt(HonestGroups(), SignRoot(honestRoot), 1_000));
+        Assert.Contains("Emulator rejected", feeTheft.Message);
+
+        // 4. HONEST breed — parents retained, child minted, fee paid.
+        var honest = await Attempt(HonestGroups(), SignRoot(honestRoot), feeSats);
+        var breedTxId = PSBT.Parse(honest.SignedArkTx, serverInfo.Network)
+            .GetGlobalTransaction().GetHash().ToString();
+        var childId = await WaitForMintedAssetAsync(breedTxId);
+        Assert.EndsWith("0200", childId); // child = group 2
+        var assets = await _funder.GetAssetsAsync();
+        Assert.Contains(assets, a => a.AssetId == parentAId.ToString());
+        Assert.Contains(assets, a => a.AssetId == parentBId.ToString());
+    }
+
+    /// <summary>
+    /// Minimal isolated probe for the ctrl_txid wire format of
+    /// OP_INSPECTASSETGROUPCTRL(0xe7): mint a species, then spend a plain
+    /// covenant VTXO in a tx whose packet is a single controlled-child
+    /// issuance, running 0xe7 on group 0 and comparing the pushed ctrl_txid
+    /// against each candidate. Exactly one leaf co-signs — it names the format.
+    /// </summary>
+    [Fact]
+    public async Task CtrlTxidFormat_Resolves()
+    {
+        var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
+        var isMain = serverInfo.Network == Network.Main;
+        const long fund = 12_000;
+        byte[] opTrue = [0x51];
+
+        var speciesContract = new ArkadeArtifactContract(
+            "ctrlfmt-species", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [new ArkadeContractFunction("mint", opTrue)]);
+        await _funder.SendAsync(speciesContract.GetArkAddress().ToString(isMain), fund);
+        var speciesVtxo = await CovenantSpender.WaitForVtxoAsync(_funder, speciesContract, TimeSpan.FromSeconds(45));
+        var speciesResponse = await CovenantSpender.SpendManyAsync(
+            _funder, EmulatorUri,
+            [new CovenantSpender.CovenantInput(speciesContract, "mint", [], speciesVtxo)],
+            [new TxOut(Money.Satoshis(fund), funderScript)],
+            extraPackets: [Packet.Create([AssetGroup.Create(
+                assetId: null, controlAsset: null, inputs: [],
+                outputs: [AssetOutput.Create(0, 1)],
+                metadata: new List<AssetMetadata> { AssetMetadata.Create("species", "ctrlfmt") })])]);
+        var speciesId = AssetId.Create(
+            PSBT.Parse(speciesResponse.SignedArkTx, serverInfo.Network).GetGlobalTransaction().GetHash().ToString(), 0);
+        await WaitForMintedAssetAsync(speciesId.ToString()[..64]);
+
+        // Move the species asset OUT of the funder so it cannot hitchhike onto
+        // the probe VTXOs (which would make arkd reject on conservation).
+        // Control-by-ID resolves against arkd's issuance history, so the asset
+        // need not be held (rung 3: a non-holder mints under it fine).
+        var sinkDb = Path.Combine(Path.GetTempPath(), $"ah-sink-{Guid.NewGuid():N}.db");
+        await using (var sink = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+        {
+            ArkUri = "http://localhost:7070",
+            DbPath = sinkDb,
+        }))
+        {
+            await _funder.SendAssetAsync(sink.Address, speciesId.ToString(), 1);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+            while ((await _funder.GetAssetsAsync()).Any(a => a.AssetId == speciesId.ToString()))
+            {
+                Assert.True(DateTime.UtcNow < deadline, "species asset never left the funder");
+                await Task.Delay(1000);
+            }
+
+            // 0xe7 (group 0) → VERIFY found → DROP gidx → compare ctrl_txid.
+        byte[] Probe(byte[] candidate) => [0x00, 0xe7, 0x69, 0x75, (byte)candidate.Length, .. candidate, 0x87];
+        var probe = new ArkadeArtifactContract(
+            "ctrlfmt-probe", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [
+                new ArkadeContractFunction("raw", Probe(speciesId.Txid)),
+                new ArkadeContractFunction("rev", Probe(speciesId.Txid.Reverse().ToArray())),
+                new ArkadeContractFunction("ser", Probe(speciesId.Serialize())),
+            ]);
+
+        AssetGroup Child() => AssetGroup.Create(
+            assetId: null, controlAsset: AssetRef.FromId(speciesId), inputs: [],
+            outputs: [AssetOutput.Create(0, 1)],
+            metadata: new List<AssetMetadata> { AssetMetadata.Create("genome", "ctrlfmt-child") });
+
+        var winners = new List<string>();
+        foreach (var fn in new[] { "raw", "rev", "ser" })
+        {
+            await _funder.SendAsync(probe.GetArkAddress().ToString(isMain), fund);
+            var vtxo = await CovenantSpender.WaitForVtxoAsync(_funder, probe, TimeSpan.FromSeconds(45));
+            try
+            {
+                await CovenantSpender.SpendManyAsync(
+                    _funder, EmulatorUri,
+                    [new CovenantSpender.CovenantInput(probe, fn, [], vtxo)],
+                    [new TxOut(Money.Satoshis(fund), funderScript)],
+                    extraPackets: [Packet.Create([Child()])]);
+                winners.Add(fn);
+            }
+            catch (InvalidOperationException) { /* mismatch */ }
+        }
+            // ctrl_txid is REVERSED (internal) order — same as the 0xf1/0xf2 family.
+            Assert.Equal("rev", winners.Single());
+        }
+    }
+
     /// <summary>Waits until an asset whose id starts with the given txid holds amount 1 in the funder wallet, returning the full asset id.</summary>
     private async Task<string> WaitForMintedAssetAsync(string arkTxId)
     {

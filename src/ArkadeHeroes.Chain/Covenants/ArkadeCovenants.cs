@@ -186,6 +186,106 @@ public static class ArkadeCovenants
     public static byte[] RefundTo(Script partyP2tr, long stakeSats)
         => PayTo(partyP2tr, stakeSats);
 
+    private const byte OpDrop = 0x75;
+    private const byte OpInspectAssetGroupCtrl = 0xe7;
+    private const byte OpInspectAssetGroupMetadataHash = 0xe9;
+    private const byte OpInspectInAssetLookup = 0xf2;
+    private const byte OpEqualVerify88 = 0x88;
+
+    /// <summary>
+    /// The full covenant-breeding gate. An invalid breed is UNSIGNABLE:
+    ///  1. each parent asset (baked canonical id) must be PRESENT at a
+    ///     witness-named input with amount 1 (OP_INSPECTINASSETLOOKUP; arkd's
+    ///     input-conservation rule then forces the retention passthroughs);
+    ///  2. the child group's CONTROL asset must equal the species (baked) —
+    ///     mandatory because arkd itself lets ANYONE mint under a foreign
+    ///     control asset (proven live, rung 3);
+    ///  3. the breeding fee output (witness-named index) pays the treasury
+    ///     exactly <paramref name="feeSats"/> (payTo);
+    ///  4. the breeding oracle's BIP340 signature over the child group's
+    ///     metadata Merkle root — READ FROM THE TX via
+    ///     OP_INSPECTASSETGROUPMETADATAHASH — must verify (CSFS). The genome
+    ///     and breed-context entries live inside that metadata, so the signed
+    ///     root binds them without baking the (commit-reveal) genome upfront.
+    ///
+    /// BYTE ORDER: in-VM asset txids are INTERNAL byte order — the REVERSE of
+    /// NArk's AssetId.Txid (display-decoded). This builder reverses
+    /// internally; pass NArk AssetIds as-is.
+    ///
+    ///   Witness (bottom→top): [oracleSig64, childK, feeOutIdx, childK, iB, iA]
+    ///   — build it with <see cref="BreedWitness"/>.
+    /// </summary>
+    public static byte[] BreedAuthorized(
+        global::NArk.Core.Assets.AssetId species,
+        global::NArk.Core.Assets.AssetId parentA,
+        global::NArk.Core.Assets.AssetId parentB,
+        byte[] oraclePk32, Script feeP2tr, long feeSats)
+    {
+        if (oraclePk32.Length != 32) throw new ArgumentException("Oracle key must be 32 bytes (x-only).", nameof(oraclePk32));
+
+        // Per parent (stack top: i): push txid(internal), gidx; 0xf2 pops
+        // gidx, txid, i → pushes amount, found; VERIFY found; amount==1.
+        static byte[] ParentPresent(global::NArk.Core.Assets.AssetId parent) =>
+        [
+            32, .. parent.Txid.Reverse(),
+            .. PushScriptNum(parent.GroupIndex),
+            OpInspectInAssetLookup,
+            OpVerify,
+            Op1, OpEqualVerify88,
+        ];
+
+        return
+        [
+            // Parents (consume iA, then iB from the witness top).
+            .. ParentPresent(parentA),
+            .. ParentPresent(parentB),
+            // Species pin (consumes childK): 0xe7 pushes ctrl_txid, ctrl_gidx,
+            // found (top). VERIFY found; DROP gidx; txid EQUALVERIFY. The txid
+            // uniquely identifies the species; gidx pinning is dropped because
+            // the VM pushes a canonical-empty scriptNum for index 0, which a
+            // data push of 0x00 does not equal. ctrl_txid is REVERSED
+            // (internal) order — SAME as the 0xf1/0xf2 family (proven live,
+            // CtrlTxidFormat_Resolves).
+            OpInspectAssetGroupCtrl,
+            OpVerify,
+            OpDrop,
+            32, .. species.Txid.Reverse(), OpEqualVerify88,
+            // Fee (consumes feeOutIdx): payTo ends with EQUAL — VERIFY it. The
+            // fee output MUST pay a different address than the change, or the
+            // builder coalesces same-script outputs and the fee vanishes.
+            .. PayTo(feeP2tr, feeSats),
+            OpVerify,
+            // Oracle (consumes childK then oracleSig): root from the tx, key
+            // baked, CSFS pops pk, msg, sig and leaves the verdict.
+            OpInspectAssetGroupMetadataHash,
+            32, .. oraclePk32,
+            OpCheckSigFromStack,
+        ];
+    }
+
+    /// <summary>The witness for <see cref="BreedAuthorized"/> — see its stack contract.</summary>
+    public static byte[][] BreedWitness(
+        byte[] oracleSig64, int childGroupIndex, int feeOutputIndex,
+        int parentAInputIndex, int parentBInputIndex) =>
+    [
+        oracleSig64,
+        EncodeIndex(childGroupIndex),
+        EncodeIndex(feeOutputIndex),
+        EncodeIndex(childGroupIndex),
+        EncodeIndex(parentBInputIndex),
+        EncodeIndex(parentAInputIndex),
+    ];
+
+    /// <summary>Minimal script-number PUSH opcodes for small non-negative values (0 → OP_0, 1..16 → OP_1..OP_16, else a minimal data push).</summary>
+    private static byte[] PushScriptNum(int value)
+    {
+        if (value < 0) throw new ArgumentOutOfRangeException(nameof(value));
+        if (value == 0) return [0x00];
+        if (value <= 16) return [(byte)(0x50 + value)];
+        var bytes = EncodeMinimalScriptNum(value);
+        return [(byte)bytes.Length, .. bytes];
+    }
+
     /// <summary>
     /// The Merkle root of an asset group's metadata, exactly as the emulator's
     /// OP_INSPECTASSETGROUPMETADATAHASH computes it (emulator
