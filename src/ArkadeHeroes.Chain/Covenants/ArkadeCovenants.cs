@@ -187,6 +187,51 @@ public static class ArkadeCovenants
         => PayTo(partyP2tr, stakeSats);
 
     /// <summary>
+    /// The Merkle root of an asset group's metadata, exactly as the emulator's
+    /// OP_INSPECTASSETGROUPMETADATAHASH computes it (emulator
+    /// asset_opcodes.go computeMetadataMerkleRoot): leaf = SHA256 of the
+    /// serialized entry (LEB128 var-slices of key then value — NArk's
+    /// BufferWriter matches ark-lib here; the CompactSize divergence is
+    /// EmulatorPacket-only), pairwise SHA256(left||right), odd node promoted
+    /// unhashed. Empty metadata → 32 zero bytes. This is what the breeding
+    /// oracle signs: the root binds the child's genome (and the breed-context
+    /// entries) to the covenant-checked mint.
+    /// </summary>
+    public static byte[] MetadataMerkleRoot(IReadOnlyList<global::NArk.Core.Assets.AssetMetadata> metadata)
+    {
+        if (metadata.Count == 0) return new byte[32];
+
+        var hashes = new List<byte[]>(metadata.Count);
+        foreach (var entry in metadata)
+        {
+            var writer = new global::NArk.Core.Assets.BufferWriter();
+            entry.SerializeTo(writer);
+            hashes.Add(System.Security.Cryptography.SHA256.HashData(writer.ToBytes()));
+        }
+
+        while (hashes.Count > 1)
+        {
+            var next = new List<byte[]>((hashes.Count + 1) / 2);
+            for (var i = 0; i < hashes.Count; i += 2)
+            {
+                if (i + 1 < hashes.Count)
+                {
+                    var combined = new byte[64];
+                    hashes[i].CopyTo(combined, 0);
+                    hashes[i + 1].CopyTo(combined, 32);
+                    next.Add(System.Security.Cryptography.SHA256.HashData(combined));
+                }
+                else
+                {
+                    next.Add(hashes[i]);
+                }
+            }
+            hashes = next;
+        }
+        return hashes[0];
+    }
+
+    /// <summary>
     /// Encode a non-negative integer as the minimal script-num byte string the
     /// introspection opcodes read for indices (0 → empty).
     /// </summary>
