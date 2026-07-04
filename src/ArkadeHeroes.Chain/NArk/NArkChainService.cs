@@ -569,6 +569,16 @@ public class NArkChainService(
         return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.WagerEscrowParams>(json);
     }
 
+    /// <summary>
+    /// A stake is a pure-BTC VTXO of the exact amount — NEVER an asset carrier.
+    /// Now that item/hero/XP assets circulate, an asset VTXO could sit at the
+    /// same sat value as the stake; sweeping it as a stake would spend the wrong
+    /// coin (and drop its asset). Funded-checks and settle-selection both require
+    /// no assets so only the real BTC stake qualifies.
+    /// </summary>
+    private static bool IsBtcStake(ArkVtxo v, long stakeSats)
+        => (long)v.Amount == stakeSats && v.Assets is null or { Count: 0 };
+
     public async Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)
     {
         var parameters = await RequireEscrowParamsAsync(matchId, ct);
@@ -578,8 +588,8 @@ public class NArkChainService(
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { challengerScript, defenderScript });
         var challengerVtxos = await vtxoStorage.GetVtxos(scripts: [challengerScript], cancellationToken: ct);
         var defenderVtxos = await vtxoStorage.GetVtxos(scripts: [defenderScript], cancellationToken: ct);
-        return challengerVtxos.Any(v => (long)v.Amount == parameters.StakeSats)
-               && defenderVtxos.Any(v => (long)v.Amount == parameters.StakeSats);
+        return challengerVtxos.Any(v => IsBtcStake(v, parameters.StakeSats))
+               && defenderVtxos.Any(v => IsBtcStake(v, parameters.StakeSats));
     }
 
     public async Task<string> SettleWagerEscrowAsync(
@@ -593,9 +603,9 @@ public class NArkChainService(
 
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { challengerScript, defenderScript });
         var challengerStake = (await vtxoStorage.GetVtxos(scripts: [challengerScript], cancellationToken: ct))
-            .FirstOrDefault(v => (long)v.Amount == parameters.StakeSats);
+            .FirstOrDefault(v => IsBtcStake(v, parameters.StakeSats));
         var defenderStake = (await vtxoStorage.GetVtxos(scripts: [defenderScript], cancellationToken: ct))
-            .FirstOrDefault(v => (long)v.Amount == parameters.StakeSats);
+            .FirstOrDefault(v => IsBtcStake(v, parameters.StakeSats));
         if (challengerStake is null || defenderStake is null)
             throw new InvalidOperationException($"Escrow for {matchId} is not fully funded.");
 
