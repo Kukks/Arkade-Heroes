@@ -62,7 +62,8 @@ public record BreedCommitResponse(string BreedingId, string CommitmentHex, FeeIn
 public record BreedRevealRequest(string Nonce);
 
 public record BreedRevealResponse(
-    HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef);
+    HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef,
+    ProgressionReceiptDto? Receipt = null);
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
@@ -98,7 +99,9 @@ public record FightResponse(
     HeroDto DefenderSnapshot,
     // Wager settlement: 0 for friendly matches.
     long WagerSats = 0,
-    long WinnerPayoutSats = 0);
+    long WinnerPayoutSats = 0,
+    // Signed, player-held progression fact for this match.
+    ProgressionReceiptDto? Receipt = null);
 
 public record MatchDto(
     string MatchId,
@@ -139,6 +142,7 @@ public record UnequipRequest(string Slot);
 
 public record ChainInfoDto(
     string Mode, string Network, string TreasuryAddress, string? SpeciesAssetId,
-    string? EmulatorSignerKey = null);
+    string? EmulatorSignerKey = null,
+    string? GameSignerKey = null);
 
 public record ErrorResponse(string Error);

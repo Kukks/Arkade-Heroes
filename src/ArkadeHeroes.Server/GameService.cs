@@ -19,9 +19,19 @@ public class GameRuleException(string message) : Exception(message);
 /// only its own outputs (mints, item deliveries, payouts); asset ownership is
 /// checked against the chain, never against server records alone.
 /// </summary>
-public class GameService(GameStore store, IChainService chain, IOptions<GameOptions> options)
+public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options)
 {
     private readonly GameOptions _options = options.Value;
+
+    private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
+    {
+        var receipt = receipts.Issue(unsigned);
+        foreach (var heroId in heroIds)
+            store.ReceiptsByHero.AddOrUpdate(heroId,
+                _ => [receipt],
+                (_, list) => { lock (list) { list.Add(receipt); } return list; });
+        return receipt;
+    }
 
     private static string NewId(string prefix)
         => $"{prefix}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}";
@@ -155,7 +165,7 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
         return (session, invoice);
     }
 
-    public async Task<(Hero Child, string ServerSeedHex, string EntropyHex)> RevealBreedingAsync(
+    public async Task<(Hero Child, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> RevealBreedingAsync(
         Player player, string breedingId, string nonce, CancellationToken ct)
     {
         if (!store.Breedings.TryGetValue(breedingId, out var session) || session.PlayerId != player.Id)
@@ -191,7 +201,14 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
         session.ChildHeroId = child.Id;
 
-        return (child, serverSeedHex, entropyHex);
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "breeding", session.Id, session.ParentAId, session.ParentBId, child.Id,
+                serverSeedHex, nonce, session.CommitmentHex,
+                0, 0, parentA.Level, parentB.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            session.ParentAId, session.ParentBId, child.Id);
+
+        return (child, serverSeedHex, entropyHex, receipt);
     }
 
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
@@ -253,7 +270,8 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
 
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
         long ChallengerXp, long DefenderXp,
-        Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout)>
+        Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout,
+        Shared.ProgressionReceiptDto Receipt)>
         FightAsync(Player player, string matchId, string nonce, CancellationToken ct)
     {
         if (!store.Matches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
@@ -308,12 +326,22 @@ public class GameService(GameStore store, IChainService chain, IOptions<GameOpti
             await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
         }
 
+        var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "match", session.Id, challenger.Id, defender.Id, result.WinnerId,
+                serverSeedHexOut, nonce, session.CommitmentHex,
+                challengerWon ? winnerAward : loserAward,
+                challengerWon ? loserAward : winnerAward,
+                challenger.Level, defender.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            challenger.Id, defender.Id);
+
         return (session, result,
-            Convert.ToHexString(session.ServerSeed).ToLowerInvariant(),
+            serverSeedHexOut,
             session.EntropyHex,
             challengerWon ? winnerAward : loserAward,
             challengerWon ? loserAward : winnerAward,
-            challengerSnapshot, defenderSnapshot, winnerPayout);
+            challengerSnapshot, defenderSnapshot, winnerPayout, receipt);
     }
 
     private static void ApplyXp(Hero hero, long award)

@@ -8,4 +8,7 @@ public class GameOptions
 
     /// <summary>Base unit for breeding cooldowns. Short by default so regtest play loops stay fast.</summary>
     public TimeSpan BreedingCooldownBaseUnit { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Fixed 32-byte hex key for signing progression receipts; ephemeral per process when unset.</summary>
+    public string? ReceiptKeyHex { get; set; }
 }

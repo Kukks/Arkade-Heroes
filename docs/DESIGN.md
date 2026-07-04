@@ -103,10 +103,11 @@ Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile 
 
 ## 4. Trust model summary
 
-| Concern | v1 | Target |
+| Concern | Now | Target |
 |---|---|---|
-| Hero existence/ownership | on-chain (Arkade asset) | same |
-| Genome derivation | server, commit–reveal auditable | covenant + oracle/VRF |
+| Hero existence/ownership | on-chain (Arkade asset, player wallet) | same |
+| Genome derivation | server, commit–reveal auditable + client-recomputed | covenant + oracle/VRF |
 | Match outcome | server, commit–reveal auditable + client-replayable | covenant escrow, emulator-enforced |
-| Fees/wagers | plain Arkade transactions | covenant escrow (atomicSweep) |
-| Custody | player self-custody of heroes + funds | same, plus unilateral exit |
+| Progression (XP/levels) | **signed receipts, player-held, replayable by anyone** (`ReceiptVerifier`; server DB is a cache) | + XP as on-chain asset deliveries |
+| Fees/wagers | client-paid invoices, on-chain verified | covenant escrow (atomicSweep — bytecode proven live via offer covenant) |
+| Custody | player self-custody of heroes + funds (embedded wallet) | same, plus unilateral exit |

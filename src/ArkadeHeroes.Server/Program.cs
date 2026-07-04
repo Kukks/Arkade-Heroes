@@ -8,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<GameOptions>(builder.Configuration.GetSection(GameOptions.SectionName));
 builder.Services.AddSingleton<GameStore>();
+builder.Services.AddSingleton<ReceiptSigner>();
 builder.Services.AddSingleton<GameService>();
 
 // Chain mode: "InMemory" (default) or "NArk" (regtest denigiri stack).
@@ -117,8 +118,8 @@ api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext h
 api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedRevealRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (child, serverSeedHex, entropyHex) = await game.RevealBreedingAsync(player, breedingId, request.Nonce, ct);
-    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit"));
+    var (child, serverSeedHex, entropyHex, receipt) = await game.RevealBreedingAsync(player, breedingId, request.Nonce, ct);
+    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt));
 });
 
 // ── Matches (open → fight) ─────────────────────────────────────────────────
@@ -143,13 +144,13 @@ api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest requ
 {
     var player = game.Authenticate(BearerToken(http));
     var (session, result, serverSeedHex, entropyHex, challengerXp, defenderXp,
-            challengerSnapshot, defenderSnapshot, winnerPayout) =
+            challengerSnapshot, defenderSnapshot, winnerPayout, receipt) =
         await game.FightAsync(player, matchId, request.Nonce, ct);
     var challenger = game.GetHero(session.ChallengerHeroId);
     var defender = game.GetHero(session.DefenderHeroId);
     return Results.Ok(new FightResponse(result.ToDto(), serverSeedHex, entropyHex,
         challengerXp, defenderXp, challenger.ToDto(), defender.ToDto(),
-        challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout));
+        challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout, receipt));
 });
 
 api.MapGet("/matches", (string? status, GameStore store) =>
@@ -208,12 +209,19 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
 
 // ── Chain / health ─────────────────────────────────────────────────────────
 
-api.MapGet("/chain/info", async (IChainService chain, CancellationToken ct) =>
+api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
-        info.EmulatorSignerKey));
+        info.EmulatorSignerKey, receipts.PublicKeyHex));
 });
+
+// Receipts are signed public facts — anyone can pull a hero's chain and
+// recompute its progression (the server DB is just a cache of this).
+api.MapGet("/receipts/hero/{heroId}", (string heroId, GameStore store) =>
+    Results.Ok(store.ReceiptsByHero.TryGetValue(heroId, out var list)
+        ? list.ToArray()
+        : Array.Empty<ProgressionReceiptDto>()));
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 

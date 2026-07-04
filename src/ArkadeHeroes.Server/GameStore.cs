@@ -74,4 +74,7 @@ public class GameStore
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
+
+    /// <summary>Server-side receipt cache, keyed by hero id (receipts are signed public facts; players hold their own copies).</summary>
+    public ConcurrentDictionary<string, List<Shared.ProgressionReceiptDto>> ReceiptsByHero { get; } = new();
 }

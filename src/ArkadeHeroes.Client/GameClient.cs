@@ -25,6 +25,37 @@ public class GameClient(string serverUrl) : IAsyncDisposable
 
     private static readonly string SessionFile = Path.Combine(HomeDir, "arkade-heroes-session.json");
     private static readonly string WalletDbFile = Path.Combine(HomeDir, "arkade-heroes-wallet.db");
+    private static readonly string ReceiptsFile = Path.Combine(HomeDir, "arkade-heroes-receipts.json");
+
+    // ── Progression receipts: player-held, server-signed facts ─────────
+
+    private async Task<List<ProgressionReceiptDto>> LoadReceiptsAsync()
+    {
+        if (!File.Exists(ReceiptsFile)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<ProgressionReceiptDto>>(
+                await File.ReadAllTextAsync(ReceiptsFile)) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private async Task StoreReceiptAsync(ProgressionReceiptDto? receipt)
+    {
+        if (receipt is null) return;
+        Directory.CreateDirectory(HomeDir);
+        var receipts = await LoadReceiptsAsync();
+        if (receipts.Any(r => r.Type == receipt.Type && r.Id == receipt.Id)) return;
+        receipts.Add(receipt);
+        await File.WriteAllTextAsync(ReceiptsFile, JsonSerializer.Serialize(receipts));
+        var (ok, _) = ReceiptVerifier.Verify(receipt);
+        Console.WriteLine(ok
+            ? $"    receipt ✓ signed by the game — stored locally ({receipts.Count} held)"
+            : "    receipt ✗ SIGNATURE INVALID — the server issued a bad receipt!");
+    }
 
     private PlayerDto? _me;
     private string? _chainMode;
@@ -162,6 +193,8 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
             case "fund": await FundAsync(); break;
+            case "receipts": await ListReceiptsAsync(); break;
+            case "verify-receipts": await VerifyReceiptsAsync(); break;
             case "shop": await ShopAsync(); break;
             case "buy": await BuyAsync(Arg(parts, 1, "buy <itemId>")); break;
             case "claim": await ClaimAsync(Arg(parts, 1, "claim <invoiceId>")); break;
@@ -196,6 +229,8 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
           fund                   how to fund your wallet address
+          receipts               your signed progression receipts (portable proof)
+          verify-receipts        verify signatures + recompute levels from receipts
           shop                   list equipment
           buy <itemId>           buy an item (delivers a fungible Arkade asset unit)
           equip <hero> <itemId>  equip a held item unit
@@ -362,6 +397,8 @@ public class GameClient(string serverUrl) : IAsyncDisposable
                 $"/api/breeding/{commit.BreedingId}/reveal", new BreedRevealRequest(nonce)),
             "breeding reveal");
 
+        await StoreReceiptAsync(reveal.Receipt);
+
         var child = reveal.Hero;
         Console.WriteLine($"  ✓ born: {child.Name}  gen{child.Generation}  [{child.Element}]");
         Console.WriteLine($"    hp{child.Stats.MaxHp} atk{child.Stats.Attack} mag{child.Stats.Magic} def{child.Stats.Defense} spd{child.Stats.Speed}");
@@ -386,6 +423,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             $"/api/matches/{open.MatchId}/fight", new FightRequest(nonce));
 
         PrintBattle(fight);
+        await StoreReceiptAsync(fight.Receipt);
 
         var (ok, detail) = FairnessAudit.VerifyMatch(open.MatchId, nonce, open.CommitmentHex, fight);
         Console.WriteLine(ok
@@ -452,6 +490,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         PrintBattle(fight);
         if (fight.WinnerPayoutSats > 0)
             Console.WriteLine($"    💰 pot: {fight.WinnerPayoutSats} sats paid to the winner's owner");
+        await StoreReceiptAsync(fight.Receipt);
 
         var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
         Console.WriteLine(ok
@@ -540,6 +579,54 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         var wallet = await WalletAsync();
         Console.WriteLine("  ⚠ your mnemonic — anyone with these words controls your heroes and funds:");
         Console.WriteLine($"    {wallet.Mnemonic}");
+    }
+
+    private async Task ListReceiptsAsync()
+    {
+        var receipts = await LoadReceiptsAsync();
+        if (receipts.Count == 0)
+        {
+            Console.WriteLine("  no receipts yet — they arrive with every breed and fight");
+            return;
+        }
+        foreach (var r in receipts.OrderBy(r => r.UnixSeconds))
+            Console.WriteLine($"  {r.Type,-9} {ShortId(r.Id)}  {ShortId(r.HeroAId)} vs {ShortId(r.HeroBId)}  " +
+                              $"xp {r.XpAwardA}/{r.XpAwardB}  {DateTimeOffset.FromUnixTimeSeconds(r.UnixSeconds):HH:mm:ss}");
+        Console.WriteLine($"  {receipts.Count} receipt(s) held — your progression, portable and provable");
+    }
+
+    private async Task VerifyReceiptsAsync()
+    {
+        RequireSession();
+        var chainInfo = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var held = await LoadReceiptsAsync();
+
+        // Signature + commit-reveal verification on everything we hold.
+        var bad = 0;
+        foreach (var receipt in held)
+        {
+            var (ok, detail) = ReceiptVerifier.Verify(receipt);
+            var keyMatches = chainInfo.GameSignerKey is null ||
+                             string.Equals(receipt.GameSignerKeyHex, chainInfo.GameSignerKey, StringComparison.OrdinalIgnoreCase);
+            if (!ok || !keyMatches)
+            {
+                bad++;
+                Console.WriteLine($"  ✗ {receipt.Type} {ShortId(receipt.Id)}: {(ok ? "signed by an unknown key" : detail)}");
+            }
+        }
+        Console.WriteLine(bad == 0
+            ? $"  ✓ all {held.Count} receipt(s) verify against the game key {ShortId(chainInfo.GameSignerKey ?? "?")}"
+            : $"  {bad}/{held.Count} receipts FAILED verification");
+
+        // Level replay: pull each hero's full public receipt chain and recompute.
+        var mine = await GetAsync<List<HeroDto>>("/api/heroes/mine");
+        foreach (var hero in mine)
+        {
+            var chain = await GetAsync<List<ProgressionReceiptDto>>($"/api/receipts/hero/{hero.Id}");
+            var expected = ReceiptVerifier.ReplayLevel(hero.Id, chain);
+            var match = expected == hero.Level ? "✓" : "✗";
+            Console.WriteLine($"  {match} {hero.Name}: level {hero.Level} (recomputed {expected} from {chain.Count} receipt(s))");
+        }
     }
 
     private async Task FundAsync()
