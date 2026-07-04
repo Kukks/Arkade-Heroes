@@ -51,7 +51,7 @@ dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 6/6
 
 # 5. Chain plumbing probes
 node regtest/regtest.mjs rpc getblockcount                       # bitcoin-cli passthrough works
-curl -s http://localhost:8999/api/v1/blocks/tip/hash             # esplera/mempool API up (port 8999)
+curl -s http://localhost:8999/api/v1/blocks/tip/hash             # esplora/mempool API up (port 8999)
 # block JSON has "mediantime" — the client-side chain clock for timelocked refunds:
 # curl -s http://localhost:8999/api/v1/block/$TIP | grep mediantime
 ```
