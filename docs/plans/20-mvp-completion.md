@@ -146,25 +146,36 @@ Server-computed from receipts (anyone can recompute — that's the trust story):
 lineage depth. `GET /api/leaderboard` + client `top`. No covenant work. Done = walkthrough
 shows both players ranked.
 
-## 5. Wallet-file encryption — task 23 (small, hygiene) — DESIGN NOTE
+## 5. Wallet-file encryption — task 23 — ✅ DONE (SHIPPED, opt-in)
 
-**Storage finding:** the mnemonic is persisted by NArk's IWalletStorage (SelfCustodyWallet.CreateAsync calls WalletFactory.CreateWallet + walletStorage.SaveWallet, which stores the plaintext mnemonic as the wallet Secret in the wallet sqlite). Encryption cannot be a simple SelfCustodyWalletOptions.Passphrase that wraps the string, because NArk derives keys from the mnemonic and re-persists the plaintext Secret itself. Correct fix requires either: (a) storing the ENCRYPTED mnemonic in our own ChainKv, NOT calling SaveWallet with the plaintext Secret (load path decrypts then feeds WalletFactory an in-memory-only wallet), or (b) a custom IWalletStorage that encrypts Secret at rest with a passphrase-derived key (scrypt/AES-GCM). Option (b) is cleanest (transparent to callers) but touches NArk's storage contract. Must stay opt-in (E2Es create wallets with no passphrase → plaintext, non-interactive). Deferred as hygiene; the wart is real but the game is regtest-only today.
+Chose option (b) from the design note: `EncryptingWalletStorage`, an `IWalletStorage` decorator
+over NArk's `EfCoreWalletStorage` (which `AddArkEfCoreStorage` registers as a separate concrete
+type, so we just swap the `IWalletStorage` resolution when a passphrase is set — `RemoveAll` +
+re-add). It encrypts the `ArkWalletInfo.Secret` on write and decrypts on read, so the SQLite DB
+holds only ciphertext while NArk's signer still gets the plaintext mnemonic at runtime —
+transparent to the SDK, no submodule change. `WalletSecretCipher`: PBKDF2-SHA256 (210k) +
+AES-256-GCM, self-describing `enc:v1:` token so plaintext coexists and a wrong passphrase fails
+on the GCM tag. `SelfCustodyWalletOptions.Passphrase` (opt-in; null = today's plaintext), fails
+fast if an encrypted wallet is opened without it. Client reads
+`ARKADE_HEROES_WALLET_PASSPHRASE`. Proven: `WalletSecretCipherTests` (6) + `WalletEncryptionE2ETests`
+(2 — no cleartext on disk incl. WAL/journal sidecars; reopens only with the right passphrase;
+passwordless stays plaintext). E2E suite unaffected (no passphrase → pass-through).
 
-Mnemonic is plaintext in the wallet sqlite. Passphrase-derived key (scrypt/AES-GCM in
-`SelfCustodyWallet`), env `ARKADE_HEROES_WALLET_PASSPHRASE` for tests/non-interactive, client
-prompts once per session. Done = wallet DB no longer contains the mnemonic in cleartext;
-E2Es green with the env passphrase.
+## 6. Known warts — starter-claim ✅ DONE; funded-check ✅ DONE; expired-session bookkeeping = documented minor limitation
 
-## 6. Known warts — starter-claim rollback ✅ DONE; expired-session + funded-check tightening remain (minor)
-
-- **Starter-claim not rolled back on failed mint** (found in task 18): move the
-  `StarterClaimed` flag flip AFTER the chain mint succeeds, or roll back on throw; add an
-  InMemory unit test. Without this a funding race strands a player hero-less.
-- **Match/breeding records after refund**: mark sessions `expired` when an escrow refund is
-  observed (server bookkeeping only; the covenant doesn't care) so lists stay truthful.
-- **`IsEscrowFundedAsync` exact-amount check** counts ANY exact-stake VTXO — fine today, but
-  after marketplace lands, assets at similar values could confuse it; tighten to BTC-only
-  VTXOs when touched.
+- **Starter-claim not rolled back on failed mint** — ✅ DONE (flag flip after mint + InMemory test).
+- **`IsEscrowFundedAsync` exact-amount check** — ✅ DONE (`56b4be1`): now that marketplace assets
+  circulate, both the funded gate and the settle input-selection require a pure-BTC VTXO
+  (`IsBtcStake`: `v.Assets is null or empty`), so an asset carrier at the same sat value can't be
+  swept as a stake. WagerEscrowCovenant re-gated green.
+- **Match/breeding records after refund** — DEFERRED (documented minor limitation, not shipped).
+  An abandoned covenant match stays `open`/`accepted` in `GET /api/matches` after a client-side
+  refund (harmless staleness — the covenant is the truth; a stale row just can't be re-acted on
+  because the escrow is empty). NOT fixed because correct refund-detection needs PER-PARTY escrow
+  state: `IsEscrowFundedAsync` requires BOTH parties, so it can't distinguish "defender hasn't
+  staked yet" (live) from "challenger refunded" (dead), and a naive list-reconciliation would
+  mis-mark normal pending matches as expired — strictly worse than the current harmless staleness.
+  A correct fix (per-party funded probe + abandonment window) is post-MVP; logged in the parking lot.
 
 ## 7. MVP walkthrough — ✅ docs/RUNBOOK.md shipped (human two-terminal script, each leg mapped to its proving E2E); a single consolidated walkthrough E2E is redundant with the per-leg E2Es (FullGameLoop + CovenantBreedFlowE2E + ClientRefundFlow + WagerEscrowCovenant)
 
@@ -181,7 +192,10 @@ against the client's actual command output.
 CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
 poisoned-txid bug report (`19-backlog.md` §24 has the trace), hero marketplace, pre-built
 recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
-matchmaking, wallet import/restore UX.
+matchmaking, wallet import/restore UX, **expired-session bookkeeping** (mark abandoned covenant
+matches `expired` via a per-party escrow-funded probe + an abandonment window, so `GET
+/api/matches` drops refunded rows — see item 6; needs per-party state to avoid mis-marking live
+pending matches).
 
 ## Working rules reminder (unchanged)
 
