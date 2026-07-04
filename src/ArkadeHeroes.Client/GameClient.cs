@@ -178,8 +178,13 @@ public class GameClient(string serverUrl) : IAsyncDisposable
     }
 
     private async Task SaveSessionAsync(string token)
-        => await File.WriteAllTextAsync(SessionFile,
+    {
+        // A custom ARKADE_HEROES_HOME may not exist yet, and `register` saves the
+        // session before any wallet op that would create it — ensure it first.
+        Directory.CreateDirectory(HomeDir);
+        await File.WriteAllTextAsync(SessionFile,
             JsonSerializer.Serialize(new SessionState(serverUrl, token)));
+    }
 
     private record SessionState(string ServerUrl, string Token);
 
