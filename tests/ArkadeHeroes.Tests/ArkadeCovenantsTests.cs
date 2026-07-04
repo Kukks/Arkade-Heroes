@@ -1,0 +1,70 @@
+using ArkadeHeroes.Chain.Covenants;
+using NBitcoin;
+
+namespace ArkadeHeroes.Tests;
+
+public class ArkadeCovenantsTests
+{
+    private static Script SomeP2Tr()
+    {
+        var program = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+        return Script.FromBytesUnsafe([0x51, 0x20, .. program]);
+    }
+
+    [Fact]
+    public void PayToMatchesTheCoinflipByteLayout()
+    {
+        // DUP INSPECTOUTPUTSCRIPTPUBKEY 1 EQUALVERIFY <wp32> EQUALVERIFY
+        // INSPECTOUTPUTVALUE <amountMinLE> EQUAL
+        var script = ArkadeCovenants.PayTo(SomeP2Tr(), 6_000);
+
+        Assert.Equal(0x76, script[0]);            // DUP
+        Assert.Equal(0xd1, script[1]);            // INSPECTOUTPUTSCRIPTPUBKEY
+        Assert.Equal(0x51, script[2]);            // OP_1 (witness v1)
+        Assert.Equal(0x88, script[3]);            // EQUALVERIFY
+        Assert.Equal(32, script[4]);              // push 32 (witness program)
+        Assert.Equal(0x88, script[37]);           // EQUALVERIFY
+        Assert.Equal(0xcf, script[38]);           // INSPECTOUTPUTVALUE
+        Assert.Equal(2, script[39]);              // push 2 (6000 = 0x1770 LE)
+        Assert.Equal(0x70, script[40]);
+        Assert.Equal(0x17, script[41]);
+        Assert.Equal(0x87, script[^1]);           // EQUAL
+    }
+
+    [Fact]
+    public void PayToRejectsNonTaprootAndBadAmounts()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ArkadeCovenants.PayTo(Script.FromBytesUnsafe([0x00, 0x14]), 1_000));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ArkadeCovenants.PayTo(SomeP2Tr(), 0));
+    }
+
+    [Fact]
+    public void EncodeIndexIsMinimal()
+    {
+        Assert.Empty(ArkadeCovenants.EncodeIndex(0));
+        Assert.Equal(new byte[] { 0x01 }, ArkadeCovenants.EncodeIndex(1));
+        Assert.Equal(new byte[] { 0x80, 0x00 }, ArkadeCovenants.EncodeIndex(128)); // sign-pad
+    }
+
+    [Fact]
+    public void ArtifactContractBindsEachFunctionToItsOwnTweakedLeaf()
+    {
+        const string emulatorKey = "02999413c46fa10ada5cbc4bcc79a1d09160c2ba3cfc812705d7a13e5e545fb2a9";
+        var server = NBitcoin.Scripting.OutputDescriptor.Parse(
+            "tr(" + emulatorKey[2..] + ")", Network.RegTest);
+
+        var contract = new ArkadeArtifactContract("test", server, emulatorKey,
+        [
+            new ArkadeContractFunction("a", [0x51]),
+            new ArkadeContractFunction("b", [0x52]),
+        ]);
+
+        Assert.Equal(2, contract.FunctionNames.Count);
+        Assert.NotEqual(
+            contract.LeafFor("a").BuildScript().ToList()[0].PushData,
+            contract.LeafFor("b").BuildScript().ToList()[0].PushData); // distinct tweaks
+        Assert.Equal([0x51], contract.ScriptFor("a"));
+        Assert.Throws<ArgumentException>(() => contract.ScriptFor("missing"));
+    }
+}
