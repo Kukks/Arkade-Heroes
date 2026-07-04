@@ -571,6 +571,130 @@ public class NArkChainService(
         return string.IsNullOrEmpty(response.SignedArkTx) ? "settled" : "covenant-settled";
     }
 
+    // ── Covenant breeding escrows ──────────────────────────────────────
+
+    private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
+        BuildBreedContractAsync(Covenants.BreedEscrowParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        var contract = Covenants.BreedEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey);
+        return (contract, serverInfo);
+    }
+
+    public async Task<BreedEscrowInfo> CreateBreedEscrowAsync(
+        string breedingId, string playerId, string parentAAssetId, string parentBAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        await EnsureTreasuryAsync(ct);
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var species = await EnsureSpeciesAssetAsync(ct);
+        var playerAddress = await GetPlayerAddressAsync(playerId, ct);
+        var isMain = serverInfo.Network == Network.Main;
+        var escrowSats = feeSats + 2 * serverInfo.Dust.Satoshi; // fee + two parent carriers
+
+        var parameters = new Covenants.BreedEscrowParams(
+            playerAddress, parentAAssetId, parentBAssetId, species,
+            _treasuryAddress!, feeSats, escrowSats, oraclePubKeyHex, breedingId, refundAfterUnixSeconds);
+        await SetKvAsync($"breed-escrow:{breedingId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+
+        var (contract, _) = await BuildBreedContractAsync(parameters, ct);
+        var address = contract.GetArkAddress().ToString(isMain);
+        logger.LogInformation("Breed escrow for {BreedingId}: {Address} (fee {Fee}, refund after {Refund})",
+            breedingId, address, feeSats, refundAfterUnixSeconds);
+        return new BreedEscrowInfo(breedingId, address, feeSats, refundAfterUnixSeconds);
+    }
+
+    private async Task<Covenants.BreedEscrowParams> RequireBreedParamsAsync(string breedingId, CancellationToken ct)
+    {
+        var json = await GetKvAsync($"breed-escrow:{breedingId}", ct)
+                   ?? throw new InvalidOperationException($"No breed escrow recorded for {breedingId}.");
+        return System.Text.Json.JsonSerializer.Deserialize<Covenants.BreedEscrowParams>(json)!;
+    }
+
+    public async Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"breed-escrow:{breedingId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.BreedEscrowParams>(json);
+    }
+
+    private async Task<IReadOnlyList<ArkVtxo>> BreedEscrowVtxosAsync(Covenants.BreedEscrowParams parameters, CancellationToken ct)
+    {
+        var (contract, _) = await BuildBreedContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        return (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct)).DistinctBy(v => v.OutPoint).ToList();
+    }
+
+    public async Task<bool> IsBreedEscrowFundedAsync(string breedingId, CancellationToken ct = default)
+    {
+        var parameters = await RequireBreedParamsAsync(breedingId, ct);
+        var vtxos = await BreedEscrowVtxosAsync(parameters, ct);
+        bool Holds(string assetId) => vtxos.Any(v => v.Assets?.Any(a => a.AssetId == assetId) == true);
+        var totalSats = vtxos.Aggregate(0L, (s, v) => s + (long)v.Amount);
+        return Holds(parameters.ParentAId) && Holds(parameters.ParentBId) && totalSats >= parameters.FeeSats;
+    }
+
+    public async Task<HeroMintResult> ExecuteBreedCovenantAsync(
+        string breedingId, HeroMintData childData, byte[] oracleSignature64, CancellationToken ct = default)
+    {
+        var parameters = await RequireBreedParamsAsync(breedingId, ct);
+        var (contract, serverInfo) = await BuildBreedContractAsync(parameters, ct);
+        var vtxos = await BreedEscrowVtxosAsync(parameters, ct);
+
+        // Order inputs so parentA carrier is vin 0, parentB vin 1 (the builder
+        // preserves input order — ShuffleInputs=false), then any fee-only VTXOs.
+        int Idx(string assetId) => vtxos.ToList().FindIndex(v => v.Assets?.Any(a => a.AssetId == assetId) == true);
+        var iaSrc = Idx(parameters.ParentAId);
+        var ibSrc = Idx(parameters.ParentBId);
+        if (iaSrc < 0 || ibSrc < 0)
+            throw new InvalidOperationException($"Breed escrow {breedingId} is missing a parent.");
+        var ordered = new List<ArkVtxo> { vtxos[iaSrc], vtxos[ibSrc] };
+        ordered.AddRange(vtxos.Where((_, i) => i != iaSrc && i != ibSrc));
+
+        var species = global::NArk.Core.Assets.AssetId.FromString(parameters.SpeciesId);
+        var parentA = global::NArk.Core.Assets.AssetId.FromString(parameters.ParentAId);
+        var parentB = global::NArk.Core.Assets.AssetId.FromString(parameters.ParentBId);
+        var playerScript = ArkAddress.Parse(parameters.PlayerAddress).ScriptPubKey;
+        var treasuryScript = ArkAddress.Parse(parameters.TreasuryFeeAddress).ScriptPubKey;
+
+        // Packet: parents retained to the player (vins 0/1), child issued under
+        // the species with the oracle-attested metadata (group 2).
+        var childMeta = Covenants.BreedEscrowContracts.ChildMetadata(
+            childData.GenomeHex, childData.Generation, childData.ParentAId ?? "", childData.ParentBId ?? "",
+            childData.ServerSeedHex ?? "", childData.PlayerNonce ?? "");
+        var packet = global::NArk.Core.Assets.Packet.Create(
+        [
+            global::NArk.Core.Assets.AssetGroup.Create(parentA, null,
+                [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], []),
+            global::NArk.Core.Assets.AssetGroup.Create(parentB, null,
+                [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], []),
+            global::NArk.Core.Assets.AssetGroup.Create(null, global::NArk.Core.Assets.AssetRef.FromId(species),
+                [], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], childMeta),
+        ]);
+
+        var total = ordered.Aggregate(0L, (s, v) => s + (long)v.Amount);
+        var inputs = ordered.Select(v => new Covenants.CovenantSpender.CovenantInput(
+            contract, "breed",
+            Covenants.ArkadeCovenants.BreedWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
+
+        var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
+            transport, safetyService, walletProvider, intentStorage,
+            _treasuryWalletId!, new Uri(options.EmulatorUri), inputs,
+            [
+                new TxOut(Money.Satoshis(total - parameters.FeeSats), playerScript), // change + assets → player
+                new TxOut(Money.Satoshis(parameters.FeeSats), treasuryScript),        // fee → treasury (distinct)
+            ],
+            extraPackets: [packet], ct: ct);
+
+        // Child asset id = (breed txid, group index 2), NArk display form.
+        var breedTxId = NBitcoin.PSBT.Parse(response.SignedArkTx, serverInfo.Network)
+            .GetGlobalTransaction().GetHash().ToString();
+        var childAssetId = global::NArk.Core.Assets.AssetId.Create(breedTxId, 2).ToString();
+        logger.LogInformation("Breed {BreedingId} executed via covenant → child {Child} to player", breedingId, childAssetId);
+        return new HeroMintResult(childAssetId, breedTxId);
+    }
+
     // ── On-chain reads at the player's address ─────────────────────────
 
     public async Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

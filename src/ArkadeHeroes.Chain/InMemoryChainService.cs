@@ -265,6 +265,83 @@ public class InMemoryChainService : IChainService
         return Task.FromResult(NewId("sim-covenant-settle"));
     }
 
+    // ── Covenant breeding escrows (simulated) ──────────────────────────
+
+    private sealed record BreedEscrow(
+        string PlayerId, string ParentAId, string ParentBId, long FeeSats, string OraclePkHex, long RefundAfterUnixSeconds)
+    {
+        public bool Funded;
+        public bool Executed;
+    }
+
+    private readonly ConcurrentDictionary<string, BreedEscrow> _breedEscrows = new();
+
+    public async Task<BreedEscrowInfo> CreateBreedEscrowAsync(
+        string breedingId, string playerId, string parentAAssetId, string parentBAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        await GetPlayerAddressAsync(playerId, ct);
+        _breedEscrows[breedingId] = new BreedEscrow(
+            playerId, parentAAssetId, parentBAssetId, feeSats, oraclePubKeyHex, refundAfterUnixSeconds);
+        return new BreedEscrowInfo(breedingId, $"sim-breed-escrow-{breedingId}", feeSats, refundAfterUnixSeconds);
+    }
+
+    public Task<bool> IsBreedEscrowFundedAsync(string breedingId, CancellationToken ct = default)
+        => Task.FromResult(_breedEscrows.TryGetValue(breedingId, out var e) && e.Funded);
+
+    /// <summary>Simulated client-wallet deposit of both parents + fee into the breed escrow.</summary>
+    public void FundBreedEscrowFromPlayer(string playerId, string breedingId)
+    {
+        if (!_breedEscrows.TryGetValue(breedingId, out var escrow))
+            throw new InvalidOperationException($"Unknown breed escrow {breedingId}.");
+        if (escrow.PlayerId != playerId)
+            throw new InvalidOperationException("Not the breeding player.");
+        if (_assetHolders.GetValueOrDefault(escrow.ParentAId) != playerId
+            || _assetHolders.GetValueOrDefault(escrow.ParentBId) != playerId)
+            throw new InvalidOperationException("The player does not hold both parents.");
+        var paid = false;
+        _playerBalances.AddOrUpdate(playerId, _ => throw new InvalidOperationException("No wallet."),
+            (_, bal) => { if (bal < escrow.FeeSats) return bal; paid = true; return bal - escrow.FeeSats; });
+        if (!paid) throw new InvalidOperationException($"Insufficient balance for the {escrow.FeeSats}-sat fee.");
+        escrow.Funded = true;
+    }
+
+    public async Task<HeroMintResult> ExecuteBreedCovenantAsync(
+        string breedingId, HeroMintData childData, byte[] oracleSignature64, CancellationToken ct = default)
+    {
+        if (!_breedEscrows.TryGetValue(breedingId, out var escrow))
+            throw new InvalidOperationException($"Unknown breed escrow {breedingId}.");
+        if (!escrow.Funded) throw new InvalidOperationException($"Breed escrow {breedingId} is not funded.");
+        if (escrow.Executed) throw new InvalidOperationException("Breeding already executed.");
+
+        // Enforce the same oracle rule the covenant does: a BIP340 signature
+        // over the child's metadata Merkle root.
+        var root = Covenants.ArkadeCovenants.MetadataMerkleRoot(Covenants.BreedEscrowContracts.ChildMetadata(
+            childData.GenomeHex, childData.Generation, childData.ParentAId ?? "", childData.ParentBId ?? "",
+            childData.ServerSeedHex ?? "", childData.PlayerNonce ?? ""));
+        if (!NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(escrow.OraclePkHex), out var oraclePk)
+            || oraclePk is null
+            || !NBitcoin.Secp256k1.SecpSchnorrSignature.TryCreate(oracleSignature64, out var signature)
+            || signature is null
+            || !oraclePk.SigVerifyBIP340(signature, root))
+            throw new InvalidOperationException("Oracle signature does not authorize this breed.");
+
+        escrow.Executed = true;
+        // Parents retained (they stay with the player); child minted to player.
+        var assetId = NewId("sim-asset");
+        _assetHolders[assetId] = escrow.PlayerId;
+        await Task.CompletedTask;
+        return new HeroMintResult(assetId, NewId("sim-breed-covenant"));
+    }
+
+    public Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default)
+    {
+        if (!_breedEscrows.TryGetValue(breedingId, out var e)) return Task.FromResult<Covenants.BreedEscrowParams?>(null);
+        return Task.FromResult<Covenants.BreedEscrowParams?>(new Covenants.BreedEscrowParams(
+            $"sim-player-{e.PlayerId}", e.ParentAId, e.ParentBId, "sim-species",
+            "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, breedingId, e.RefundAfterUnixSeconds));
+    }
+
     // ── On-chain reads ─────────────────────────────────────────────────
 
     public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

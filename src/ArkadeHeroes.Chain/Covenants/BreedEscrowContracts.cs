@@ -21,6 +21,7 @@ public sealed record BreedEscrowParams(
     string SpeciesId,
     string TreasuryFeeAddress,
     long FeeSats,
+    long EscrowSats,
     string OraclePkHex,
     string BreedingId,
     long RefundAfterUnixSeconds);
@@ -43,7 +44,7 @@ public static class BreedEscrowContracts
     /// parents plus the fee here; the server assembles the covenant mint.
     /// </summary>
     public static ArkadeArtifactContract Build(
-        BreedEscrowParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex, long escrowSats)
+        BreedEscrowParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex)
     {
         var playerScript = ArkAddress.Parse(parameters.PlayerAddress).ScriptPubKey;
         var treasuryScript = ArkAddress.Parse(parameters.TreasuryFeeAddress).ScriptPubKey;
@@ -58,7 +59,7 @@ public static class BreedEscrowContracts
             [
                 new("breed", ArkadeCovenants.BreedAuthorized(
                     species, parentA, parentB, oraclePk, treasuryScript, parameters.FeeSats)),
-                new("refund", ArkadeCovenants.RefundTo(playerScript, escrowSats), refundLockTime),
+                new("refund", ArkadeCovenants.RefundTo(playerScript, parameters.EscrowSats), refundLockTime),
             ]);
     }
 

@@ -57,6 +57,13 @@ public record WagerEscrowInfo(
     long PotSats,
     long RefundAfterUnixSeconds);
 
+/// <summary>The address a player deposits both parents plus the fee into for a covenant breed, and the refund window.</summary>
+public record BreedEscrowInfo(
+    string BreedingId,
+    string EscrowAddress,
+    long FeeSats,
+    long RefundAfterUnixSeconds);
+
 /// <summary>
 /// The game's view of Arkade under the non-custodial mandate: players are
 /// known to the server ONLY as Arkade addresses they registered; the server's
@@ -124,6 +131,34 @@ public interface IChainService
     /// no covenant escrow (invoice mode or unknown match).
     /// </summary>
     Task<Covenants.WagerEscrowParams?> GetWagerEscrowParamsAsync(string matchId, CancellationToken ct = default);
+
+    // ── Covenant breeding escrows ──────────────────────────────────────
+
+    /// <summary>
+    /// Builds the breed escrow covenant (parents pinned, species control, fee,
+    /// oracle key, timelocked refund) and returns the address the player
+    /// deposits BOTH parents plus the fee into from their own wallet.
+    /// </summary>
+    Task<BreedEscrowInfo> CreateBreedEscrowAsync(
+        string breedingId, string playerId, string parentAAssetId, string parentBAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once both parents and the fee sit at the breed escrow address.</summary>
+    Task<bool> IsBreedEscrowFundedAsync(string breedingId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Executes the breeding through the covenant: the server assembles the
+    /// mint (parents retained to the player, child issued under the species
+    /// with <paramref name="childData"/>'s metadata, fee to the treasury) and
+    /// presents the oracle's BIP340 signature over the child's metadata root.
+    /// Returns the child's asset id. The covenant makes any other shape
+    /// unsignable.
+    /// </summary>
+    Task<HeroMintResult> ExecuteBreedCovenantAsync(
+        string breedingId, HeroMintData childData, byte[] oracleSignature64, CancellationToken ct = default);
+
+    /// <summary>The public breed-escrow parameters for trustless client rebuild + refund. Null when unknown/invoice-mode.</summary>
+    Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default);
 
     /// <summary>
     /// Settles the escrow through the covenant: presents the oracle's BIP340
