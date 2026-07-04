@@ -93,7 +93,7 @@ public static class EscrowRefundFlow
                     LockTime: new LockTime((uint)parameters.RefundAfterUnixSeconds)),
             ],
             [new TxOut(Money.Satoshis(parameters.StakeSats), myScript)],
-            ct);
+            ct: ct);
     }
 }
 

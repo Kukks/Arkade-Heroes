@@ -77,24 +77,30 @@ public static class CovenantSpender
         TxOut[] gameOutputs,
         CancellationToken ct = default)
         => SpendManyAsync(actor, emulatorUri,
-            [new CovenantInput(contract, functionName, functionWitness, vtxo)], gameOutputs, ct);
+            [new CovenantInput(contract, functionName, functionWitness, vtxo)], gameOutputs, ct: ct);
 
     /// <summary>
     /// Spends MULTIPLE covenant VTXOs in one Arkade transaction (e.g. the two
     /// wager stakes swept atomically). Packet entry vins follow input order.
+    /// <paramref name="extraPackets"/> (e.g. an asset issuance packet for a
+    /// covenant-gated mint) are composed into the SAME extension output as the
+    /// EmulatorPacket — arkd requires one extension output, and the builder's
+    /// asset-vin remap path rebuilds it from the asset packet alone, so input
+    /// order must stay deterministic (it does: ShuffleInputs=false).
     /// </summary>
     public static Task<EmulatorSubmitResponse> SpendManyAsync(
         SelfCustodyWallet actor,
         Uri emulatorUri,
         IReadOnlyList<CovenantInput> inputs,
         TxOut[] gameOutputs,
+        IReadOnlyList<IExtensionPacket>? extraPackets = null,
         CancellationToken ct = default)
         => SpendManyCoreAsync(
             actor.GetService<global::NArk.Core.Transport.IClientTransport>(),
             actor.GetService<ISafetyService>(),
             actor.GetService<IWalletProvider>(),
             actor.GetService<IIntentStorage>(),
-            actor.WalletId, emulatorUri, inputs, gameOutputs, ct);
+            actor.WalletId, emulatorUri, inputs, gameOutputs, extraPackets, ct);
 
     /// <summary>
     /// Service-level core of the covenant spend — usable from any NArk service
@@ -109,6 +115,7 @@ public static class CovenantSpender
         Uri emulatorUri,
         IReadOnlyList<CovenantInput> inputs,
         TxOut[] gameOutputs,
+        IReadOnlyList<IExtensionPacket>? extraPackets = null,
         CancellationToken ct = default)
     {
         var serverInfo = await transport.GetServerInfoAsync(ct);
@@ -134,7 +141,9 @@ public static class CovenantSpender
             entries.Add(new EmulatorEntry((ushort)i, input.Contract.ScriptFor(input.FunctionName), input.Witness));
         }
 
-        var extension = new Extension([new EmulatorPacket(entries)]);
+        var packets = new List<IExtensionPacket>(extraPackets ?? []);
+        packets.Add(new EmulatorPacket(entries));
+        var extension = new Extension(packets);
         TxOut[] outputs =
         [
             .. gameOutputs,

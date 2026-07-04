@@ -564,7 +564,7 @@ public class NArkChainService(
             new Uri(options.EmulatorUri),
             inputs,
             [new TxOut(Money.Satoshis(pot), ArkAddress.Parse(winnerAddress))],
-            ct);
+            ct: ct);
 
         logger.LogInformation("Escrow for {MatchId} settled to {Winner} via covenant ({Branch})",
             matchId, winnerAddress, branch);
