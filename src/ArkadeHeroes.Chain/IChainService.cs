@@ -99,18 +99,19 @@ public interface IChainService
     /// </summary>
     Task<WagerEscrowInfo> CreateWagerEscrowAsync(
         string matchId, string challengerPlayerId, string defenderPlayerId,
-        long stakeSats, byte[] seedCommitment32, CancellationToken ct = default);
+        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, CancellationToken ct = default);
 
     /// <summary>True once BOTH exact-stake VTXOs sit at the escrow address.</summary>
     Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default);
 
     /// <summary>
-    /// Settles the escrow through the covenant: reveals the seed and sweeps
-    /// both stakes atomically to the winner via the emulator. Returns the
-    /// co-signed Arkade transaction (reference).
+    /// Settles the escrow through the covenant: presents the oracle's BIP340
+    /// signature over the winning branch's settle message, reveals the seed,
+    /// and sweeps both stakes atomically to the winner via the emulator.
     /// </summary>
     Task<string> SettleWagerEscrowAsync(
-        string matchId, bool challengerWon, byte[] serverSeed, CancellationToken ct = default);
+        string matchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64,
+        CancellationToken ct = default);
 
     // ── On-chain reads (never DB trust) ────────────────────────────────
 

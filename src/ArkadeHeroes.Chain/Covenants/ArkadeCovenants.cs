@@ -111,6 +111,57 @@ public static class ArkadeCovenants
     public static byte[] SettleWithSeed(byte[] commitment32, Script winnerP2tr, long potSats, long stakeSats)
         => [.. Sha256Gate(commitment32), .. AtomicSweep(winnerP2tr, potSats, stakeSats)];
 
+    private const byte OpCheckSigFromStack = 0xcc;
+    private const byte OpVerify = 0x69;
+
+    /// <summary>
+    /// Oracle-authorization gate via OP_CHECKSIGFROMSTACK: the witness supplies
+    /// a BIP340 signature; the EXPECTED message and the oracle key are baked
+    /// into the script, so a signature over any other message (e.g. the other
+    /// settle branch) can never satisfy this branch.
+    ///
+    ///   Witness: [... , oracleSig]  (sig on top)
+    ///   Script:  &lt;message32&gt; &lt;oraclePk32&gt; CHECKSIGFROMSTACK VERIFY
+    ///   (CSFS pops pk, msg, sig — emulator opcode.go:2551)
+    /// </summary>
+    public static byte[] CheckSigFromStackGate(byte[] message32, byte[] oraclePk32)
+    {
+        if (message32.Length != 32) throw new ArgumentException("Message must be 32 bytes.", nameof(message32));
+        if (oraclePk32.Length != 32) throw new ArgumentException("Oracle key must be 32 bytes (x-only).", nameof(oraclePk32));
+        return
+        [
+            32, .. message32,
+            32, .. oraclePk32,
+            OpCheckSigFromStack,
+            OpVerify,
+        ];
+    }
+
+    /// <summary>
+    /// The canonical per-branch settle message: binds the oracle's authorization
+    /// to ONE match and ONE winner branch. This is what the game key signs at
+    /// settlement (the same key that signs the players' progression receipts).
+    /// </summary>
+    public static byte[] SettleMessage(string matchId, bool challengerWon)
+        => System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"arkade-heroes-settle-v1|{matchId}|{(challengerWon ? "challenger" : "defender")}"));
+
+    /// <summary>
+    /// The full oracle-authorized settle branch:
+    /// oracle signature over THIS branch's message + revealed seed + atomic sweep.
+    ///
+    ///   Witness: [outputIndex, otherInputIndex, serverSeed, oracleSig]  (sig on top)
+    /// </summary>
+    public static byte[] SettleAuthorized(
+        byte[] settleMessage32, byte[] oraclePk32,
+        byte[] commitment32, Script winnerP2tr, long potSats, long stakeSats)
+        =>
+        [
+            .. CheckSigFromStackGate(settleMessage32, oraclePk32),
+            .. SettleWithSeed(commitment32, winnerP2tr, potSats, stakeSats),
+        ];
+
     /// <summary>
     /// Encode a non-negative integer as the minimal script-num byte string the
     /// introspection opcodes read for indices (0 → empty).

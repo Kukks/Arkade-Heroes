@@ -450,7 +450,8 @@ public class NArkChainService(
     // ── Covenant wager escrows ─────────────────────────────────────────
 
     private sealed record EscrowParams(
-        string CommitmentHex, string ChallengerAddress, string DefenderAddress, long StakeSats);
+        string CommitmentHex, string ChallengerAddress, string DefenderAddress, long StakeSats,
+        string OraclePkHex, string MatchId);
 
     private async Task<string> RequireEmulatorSignerAsync(CancellationToken ct)
     {
@@ -466,29 +467,38 @@ public class NArkChainService(
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorKey = await RequireEmulatorSignerAsync(ct);
         var commitment = Convert.FromHexString(parameters.CommitmentHex);
+        var oraclePk = Convert.FromHexString(parameters.OraclePkHex);
         var challengerScript = ArkAddress.Parse(parameters.ChallengerAddress).ScriptPubKey;
         var defenderScript = ArkAddress.Parse(parameters.DefenderAddress).ScriptPubKey;
         var pot = parameters.StakeSats * 2;
+        // Each branch pins ITS OWN settle message, so the oracle's signature
+        // authorizes exactly one (match, winner) pair — no cross-branch replay.
         return new Covenants.ArkadeArtifactContract(
             "wager-escrow", serverInfo.SignerKey, emulatorKey,
             [
                 new Covenants.ArkadeContractFunction("settleToChallenger",
-                    Covenants.ArkadeCovenants.SettleWithSeed(commitment, challengerScript, pot, parameters.StakeSats)),
+                    Covenants.ArkadeCovenants.SettleAuthorized(
+                        Covenants.ArkadeCovenants.SettleMessage(parameters.MatchId, challengerWon: true), oraclePk,
+                        commitment, challengerScript, pot, parameters.StakeSats)),
                 new Covenants.ArkadeContractFunction("settleToDefender",
-                    Covenants.ArkadeCovenants.SettleWithSeed(commitment, defenderScript, pot, parameters.StakeSats)),
+                    Covenants.ArkadeCovenants.SettleAuthorized(
+                        Covenants.ArkadeCovenants.SettleMessage(parameters.MatchId, challengerWon: false), oraclePk,
+                        commitment, defenderScript, pot, parameters.StakeSats)),
             ]);
     }
 
     public async Task<WagerEscrowInfo> CreateWagerEscrowAsync(
         string matchId, string challengerPlayerId, string defenderPlayerId,
-        long stakeSats, byte[] seedCommitment32, CancellationToken ct = default)
+        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
         var parameters = new EscrowParams(
             Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
             await GetPlayerAddressAsync(challengerPlayerId, ct),
             await GetPlayerAddressAsync(defenderPlayerId, ct),
-            stakeSats);
+            stakeSats,
+            oraclePubKeyHex,
+            matchId);
 
         await SetKvAsync($"escrow:{matchId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
@@ -517,7 +527,8 @@ public class NArkChainService(
     }
 
     public async Task<string> SettleWagerEscrowAsync(
-        string matchId, bool challengerWon, byte[] serverSeed, CancellationToken ct = default)
+        string matchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64,
+        CancellationToken ct = default)
     {
         var parameters = await RequireEscrowParamsAsync(matchId, ct);
         var contract = await BuildEscrowContractAsync(parameters, ct);
@@ -534,13 +545,14 @@ public class NArkChainService(
         var winnerAddress = challengerWon ? parameters.ChallengerAddress : parameters.DefenderAddress;
         var pot = parameters.StakeSats * 2;
 
+        // Witness: [outputIndex, otherInputIndex, serverSeed, oracleSig] — sig on top.
         Covenants.CovenantSpender.CovenantInput[] inputs =
         [
             new(contract, branch,
-                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(1), serverSeed],
+                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(1), serverSeed, oracleSignature64],
                 stakes[0]),
             new(contract, branch,
-                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(0), serverSeed],
+                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(0), serverSeed, oracleSignature64],
                 stakes[1]),
         ];
 

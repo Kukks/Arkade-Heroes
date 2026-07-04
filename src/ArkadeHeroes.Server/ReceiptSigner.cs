@@ -41,4 +41,16 @@ public class ReceiptSigner
         var withKey = unsigned with { GameSignerKeyHex = PublicKeyHex, SignatureHex = "" };
         return withKey with { SignatureHex = ReceiptVerifier.Sign(withKey, _key) };
     }
+
+    /// <summary>
+    /// BIP340 signature over an arbitrary 32-byte digest with the same game key
+    /// — used as the on-chain oracle authorization in covenant settle branches.
+    /// </summary>
+    public byte[] SignDigest(byte[] digest32)
+    {
+        var signature = _key.SignBIP340(digest32);
+        var bytes = new byte[64];
+        signature.WriteToSpan(bytes);
+        return bytes;
+    }
 }

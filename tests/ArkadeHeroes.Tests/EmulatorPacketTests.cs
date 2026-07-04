@@ -28,6 +28,23 @@ public class EmulatorPacketTests
     }
 
     [Fact]
+    public void LargeLengthsUseCompactSizeNotLeb128()
+    {
+        // A 200-byte script: CompactSize(200) = single byte 0xC8; LEB128 would
+        // emit 0xC8 0x01 and desynchronize the Go reader — the exact bug that
+        // broke oracle-authorized settles once scripts grew past 127 bytes.
+        var script = Enumerable.Repeat((byte)0x51, 200).ToArray();
+        var bytes = new EmulatorPacket([new EmulatorEntry(0, script, [])]).SerializePacketData();
+
+        Assert.Equal(0x01, bytes[0]);   // count
+        Assert.Equal(0x00, bytes[1]);   // vin LE
+        Assert.Equal(0x00, bytes[2]);
+        Assert.Equal(0xC8, bytes[3]);   // script length: ONE CompactSize byte
+        Assert.Equal(0x51, bytes[4]);   // script starts immediately
+        Assert.Equal(200 + 4 + 2, bytes.Length); // + witnessLen 0x01 + count 0x00
+    }
+
+    [Fact]
     public void ValidationRejectsBadPackets()
     {
         Assert.Throws<ArgumentException>(() => new EmulatorPacket([]));

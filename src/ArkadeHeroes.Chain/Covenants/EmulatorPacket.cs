@@ -49,22 +49,56 @@ public sealed class EmulatorPacket : IExtensionPacket
 
     public byte[] SerializePacketData()
     {
+        // CRITICAL framing detail: the packet's INNER fields use Bitcoin
+        // CompactSize (Go `wire.WriteVarInt` / `psbt.WriteTxWitness`), NOT the
+        // LEB128 varints NArk's BufferWriter/Extension use for the outer TLV.
+        // The two encodings coincide below 128, which hides the difference
+        // until scripts/witnesses grow (observed as emulator-side
+        // "unexpected EOF" / garbage execution).
         var writer = new BufferWriter();
-        writer.WriteVarInt((ulong)Entries.Count);
+        WriteCompactSize(writer, (ulong)Entries.Count);
         foreach (var entry in Entries)
         {
             writer.WriteUint16LE(entry.Vin);
-            writer.WriteVarSlice(entry.Script);
+            WriteCompactSize(writer, (ulong)entry.Script.Length);
+            writer.Write(entry.Script);
 
-            // Witness serialized exactly like psbt.WriteTxWitness: varint item
-            // count, then varint-length-prefixed items — and that whole blob is
-            // itself varint-length-prefixed in the entry.
+            // Witness serialized exactly like psbt.WriteTxWitness: CompactSize
+            // item count, then CompactSize-length-prefixed items — and that
+            // whole blob is itself CompactSize-length-prefixed in the entry.
             var witness = new BufferWriter();
-            witness.WriteVarInt((ulong)entry.Witness.Count);
+            WriteCompactSize(witness, (ulong)entry.Witness.Count);
             foreach (var item in entry.Witness)
-                witness.WriteVarSlice(item);
-            writer.WriteVarSlice(witness.ToBytes());
+            {
+                WriteCompactSize(witness, (ulong)item.Length);
+                witness.Write(item);
+            }
+            var witnessBytes = witness.ToBytes();
+            WriteCompactSize(writer, (ulong)witnessBytes.Length);
+            writer.Write(witnessBytes);
         }
         return writer.ToBytes();
+    }
+
+    private static void WriteCompactSize(BufferWriter writer, ulong value)
+    {
+        switch (value)
+        {
+            case < 0xfd:
+                writer.WriteByte((byte)value);
+                break;
+            case <= 0xffff:
+                writer.WriteByte(0xfd);
+                writer.WriteUint16LE((ushort)value);
+                break;
+            case <= 0xffffffff:
+                writer.WriteByte(0xfe);
+                writer.Write(BitConverter.GetBytes((uint)value));
+                break;
+            default:
+                writer.WriteByte(0xff);
+                writer.Write(BitConverter.GetBytes(value));
+                break;
+        }
     }
 }

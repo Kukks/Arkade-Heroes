@@ -54,6 +54,48 @@ public class ArkadeCovenantsTests
     }
 
     [Fact]
+    public void CheckSigFromStackGatePinsMessageAndKey()
+    {
+        var message = Enumerable.Repeat((byte)3, 32).ToArray();
+        var key = Enumerable.Repeat((byte)9, 32).ToArray();
+        var script = ArkadeCovenants.CheckSigFromStackGate(message, key);
+
+        Assert.Equal(32, script[0]);              // push message
+        Assert.Equal(message, script[1..33]);
+        Assert.Equal(32, script[33]);             // push oracle key
+        Assert.Equal(key, script[34..66]);
+        Assert.Equal(0xcc, script[66]);           // CHECKSIGFROMSTACK
+        Assert.Equal(0x69, script[67]);           // VERIFY
+    }
+
+    [Fact]
+    public void SettleMessageBindsMatchAndBranch()
+    {
+        var challenger = ArkadeCovenants.SettleMessage("m1", true);
+        Assert.Equal(32, challenger.Length);
+        Assert.Equal(Convert.ToHexString(challenger),
+            Convert.ToHexString(ArkadeCovenants.SettleMessage("m1", true))); // deterministic
+        Assert.NotEqual(Convert.ToHexString(challenger),
+            Convert.ToHexString(ArkadeCovenants.SettleMessage("m1", false))); // branch-bound
+        Assert.NotEqual(Convert.ToHexString(challenger),
+            Convert.ToHexString(ArkadeCovenants.SettleMessage("m2", true))); // match-bound
+    }
+
+    [Fact]
+    public void SettleAuthorizedComposesCsfsThenSeedThenSweep()
+    {
+        var message = ArkadeCovenants.SettleMessage("m", true);
+        var oracle = Enumerable.Repeat((byte)5, 32).ToArray();
+        var commitment = Enumerable.Repeat((byte)7, 32).ToArray();
+        var script = ArkadeCovenants.SettleAuthorized(message, oracle, commitment, SomeP2Tr(), 10_000, 5_000);
+
+        var gate = ArkadeCovenants.CheckSigFromStackGate(message, oracle);
+        Assert.Equal(gate, script[..gate.Length]);
+        Assert.Equal(ArkadeCovenants.SettleWithSeed(commitment, SomeP2Tr(), 10_000, 5_000),
+            script[gate.Length..]);
+    }
+
+    [Fact]
     public void SettleWithSeedComposesGateThenSweep()
     {
         var commitment = Enumerable.Repeat((byte)7, 32).ToArray();

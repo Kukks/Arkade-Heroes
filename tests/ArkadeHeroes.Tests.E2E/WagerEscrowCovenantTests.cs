@@ -62,10 +62,18 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
 
         // Match open: the server commits to a seed BEFORE stakes are funded —
-        // the commitment is baked into the escrow contract itself.
+        // the commitment, the players, AND the oracle key are baked into the
+        // escrow contract itself.
         var serverSeed = CommitReveal.NewSeed();
         var commitment = Convert.FromHexString(CommitReveal.Commit(serverSeed));
 
+        var oracleKey = NBitcoin.Secp256k1.ECPrivKey.Create(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        Span<byte> oraclePkSpan = stackalloc byte[32];
+        oracleKey.CreateXOnlyPubKey().WriteToSpan(oraclePkSpan);
+        var oraclePk = oraclePkSpan.ToArray();
+
+        const string matchId = "e2e-covenant-match";
         var challengerPkScript = ArkAddress.Parse(_challenger.Address).ScriptPubKey;
         var defenderPkScript = ArkAddress.Parse(_defender.Address).ScriptPubKey;
 
@@ -73,9 +81,13 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
             "wager-escrow", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
             [
                 new ArkadeContractFunction("settleToChallenger",
-                    ArkadeCovenants.SettleWithSeed(commitment, challengerPkScript, Pot, Stake)),
+                    ArkadeCovenants.SettleAuthorized(
+                        ArkadeCovenants.SettleMessage(matchId, challengerWon: true), oraclePk,
+                        commitment, challengerPkScript, Pot, Stake)),
                 new ArkadeContractFunction("settleToDefender",
-                    ArkadeCovenants.SettleWithSeed(commitment, defenderPkScript, Pot, Stake)),
+                    ArkadeCovenants.SettleAuthorized(
+                        ArkadeCovenants.SettleMessage(matchId, challengerWon: false), oraclePk,
+                        commitment, defenderPkScript, Pot, Stake)),
             ]);
         var escrowAddress = escrow.GetArkAddress().ToString(serverInfo.Network == Network.Main);
 
@@ -84,35 +96,59 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         await _defender.SendAsync(escrowAddress, Stake);
         var stakes = await CovenantSpender.WaitForVtxosAsync(_challenger, escrow, 2, TimeSpan.FromSeconds(45));
 
-        // Say the challenger won the (replayable) battle. Per-entry witness:
-        // [outputIndex, otherInputIndex, serverSeed] — seed on top.
-        CovenantSpender.CovenantInput[] SettleInputs(byte[] seed) =>
+        // The oracle (game key) signs ONLY the true outcome's branch message.
+        byte[] SignSettle(NBitcoin.Secp256k1.ECPrivKey key, bool challengerWon)
+        {
+            var signature = key.SignBIP340(ArkadeCovenants.SettleMessage(matchId, challengerWon));
+            var bytes = new byte[64];
+            signature.WriteToSpan(bytes);
+            return bytes;
+        }
+        var honestSig = SignSettle(oracleKey, challengerWon: true);
+
+        // Witness: [outputIndex, otherInputIndex, serverSeed, oracleSig] — sig on top.
+        CovenantSpender.CovenantInput[] SettleInputs(byte[] seed, byte[] oracleSig) =>
         [
             new(escrow, "settleToChallenger",
-                [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(1), seed], stakes[0]),
+                [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(1), seed, oracleSig], stakes[0]),
             new(escrow, "settleToChallenger",
-                [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(0), seed], stakes[1]),
+                [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(0), seed, oracleSig], stakes[1]),
         ];
 
-        // 1. Wrong seed — the commit gate fails, the emulator refuses.
+        // 1. FORGED oracle signature (an attacker's key) — refused.
+        var forgerKey = NBitcoin.Secp256k1.ECPrivKey.Create(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var forged = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, SettleInputs(serverSeed, SignSettle(forgerKey, true)),
+            [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
+        Assert.Contains("Emulator rejected", forged.Message);
+
+        // 2. CROSS-BRANCH replay: the oracle's signature for the DEFENDER
+        //    branch cannot authorize the challenger branch.
+        var crossBranch = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, SettleInputs(serverSeed, SignSettle(oracleKey, challengerWon: false)),
+            [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
+        Assert.Contains("Emulator rejected", crossBranch.Message);
+
+        // 3. Wrong seed — the commit gate fails even with a valid oracle sig.
         var wrongSeed = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, SettleInputs(CommitReveal.NewSeed()),
+            _challenger, EmulatorUri, SettleInputs(CommitReveal.NewSeed(), honestSig),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
         Assert.Contains("Emulator rejected", wrongSeed.Message);
 
-        // 2. Short pot — pays the winner less than the pot, siphoning the rest.
+        // 4. Short pot — pays the winner less than the pot, siphoning the rest.
         var shortPot = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, SettleInputs(serverSeed),
+            _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
             [
                 new TxOut(Money.Satoshis(Pot - 2_000), challengerPkScript),
                 new TxOut(Money.Satoshis(2_000), defenderPkScript),
             ]));
         Assert.Contains("Emulator rejected", shortPot.Message);
 
-        // 3. Honest settle: reveal the committed seed, sweep both stakes to the winner.
+        // 5. Honest settle: oracle-authorized branch, revealed seed, full pot.
         var balanceBefore = await _challenger.GetBalanceSatsAsync();
         var response = await CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, SettleInputs(serverSeed),
+            _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]);
         Assert.False(string.IsNullOrEmpty(response.SignedArkTx));
         Assert.Equal(2, response.SignedCheckpointTxs.Length);

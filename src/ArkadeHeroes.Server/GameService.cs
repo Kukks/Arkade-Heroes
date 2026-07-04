@@ -240,11 +240,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         {
             if (mode == "covenant")
             {
-                // The escrow covenant bakes in THIS match's seed commitment and
-                // both players' addresses; the emulator will enforce settlement.
+                // The escrow covenant bakes in THIS match's seed commitment,
+                // both players' addresses, AND the game oracle key — the same
+                // key that signs progression receipts authorizes settlement.
                 var escrow = await chain.CreateWagerEscrowAsync(
                     matchId, player.Id, defender.OwnerId, wagerSats,
-                    Convert.FromHexString(commitmentHex), ct);
+                    Convert.FromHexString(commitmentHex), receipts.PublicKeyHex, ct);
                 escrowAddress = escrow.EscrowAddress;
             }
             else
@@ -368,7 +369,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             winnerPayout = session.WagerSats * 2;
             if (session.Mode == "covenant")
             {
-                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, ct);
+                // The oracle authorization: the game key signs exactly one
+                // (match, winner-branch) message the covenant script pins.
+                var settleMessage = Chain.Covenants.ArkadeCovenants.SettleMessage(session.Id, challengerWon);
+                var oracleSignature = receipts.SignDigest(settleMessage);
+                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, oracleSignature, ct);
             }
             else
             {
