@@ -109,4 +109,37 @@ public class ClientGameLoopTests : IDisposable
         var moved = (await HeroesAsync()).Single(h => h.Id == aliceHero.Id);
         Assert.Equal(bobId, moved.OwnerId);
     }
+
+    [Fact]
+    public async Task WageredDuel_ThroughTheClient_ResolvesTheStakedMatch()
+    {
+        await using var alice = NewClient(FreshHome());
+        await alice.ExecuteAsync(["register", "LoopDuelA"]);
+        await alice.ExecuteAsync(["starter"]);
+        var aliceId = (await HeroesAsync())[0].OwnerId;
+
+        await using var bob = NewClient(FreshHome());
+        await bob.ExecuteAsync(["register", "LoopDuelB"]);
+        await bob.ExecuteAsync(["starter"]);
+
+        var all = await HeroesAsync();
+        var aliceHero = all.First(h => h.OwnerId == aliceId);
+        var bobHero = all.First(h => h.OwnerId != aliceId);
+
+        // The marquee flow end-to-end through the client: challenge auto-stakes
+        // (invoice mode → dev pay-invoice), bob accepts (auto-stakes his side),
+        // alice resolves the duel — the whole staked lifecycle over the real
+        // command dispatch, not just the server API.
+        await alice.ExecuteAsync(["heroes"]);
+        await alice.ExecuteAsync(["challenge", aliceHero.Id, bobHero.Id, "1000"]);
+
+        var opened = Assert.Single(await _observer.GetFromJsonAsync<List<MatchDto>>("/api/matches") ?? []);
+        await bob.ExecuteAsync(["accept", opened.MatchId]);
+        await alice.ExecuteAsync(["duel", opened.MatchId]);
+
+        var resolved = Assert.Single(await _observer.GetFromJsonAsync<List<MatchDto>>("/api/matches") ?? []);
+        Assert.Equal("resolved", resolved.Status);
+        Assert.Equal(1000, resolved.WagerSats);
+        Assert.NotNull(resolved.Result);
+    }
 }
