@@ -19,6 +19,7 @@ namespace ArkadeHeroes.Tests.E2E;
 public class CovenantOfferProbeTests : IAsyncLifetime
 {
     private static readonly Uri EmulatorUri = new("http://localhost:7073/");
+    private const string EsploraApi = "http://localhost:8999/api/v1";
 
     private SelfCustodyWallet _seller = null!;
     private SelfCustodyWallet _buyer = null!;
@@ -194,5 +195,60 @@ public class CovenantOfferProbeTests : IAsyncLifetime
 
         await multiBuyer.WaitForAssetAsync(itemId, TimeSpan.FromSeconds(60));
         await _seller.WaitForBalanceAsync(sellerBefore + ask, TimeSpan.FromSeconds(60));
+    }
+
+    private async Task<ulong> SellerItemBalanceAsync(string itemId)
+        => (await _seller.GetAssetsAsync()).Where(a => a.AssetId == itemId).Aggregate(0UL, (s, a) => s + a.Amount);
+
+    /// <summary>
+    /// The seller's liveness path: an UNSOLD offer is reclaimable after its
+    /// window with no buyer and no server — the timelocked <c>reclaim</c> leaf
+    /// returns the item to the seller (asset passthrough, gated on the chain
+    /// clock, submitted exactly once per the poisoned-txid discipline). This is
+    /// the one covenant path the marketplace shipped that had only InMemory +
+    /// client-dispatch coverage; here it is proven live.
+    /// </summary>
+    [Fact]
+    public async Task RestingOffer_SellerReclaimsUnsoldItemAfterExpiry()
+    {
+        var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        const long ask = 8_000;
+
+        var itemId = await MintItemToSellerAsync(serverInfo, emulatorInfo);
+
+        // Short reclaim window so the unsold offer becomes reclaimable in-test.
+        var refundAfter = DateTimeOffset.UtcNow.AddSeconds(8).ToUnixTimeSeconds();
+        var offer = new OfferParams(_seller.Address, itemId, ask, serverInfo.Dust.Satoshi, "offer-reclaim", refundAfter);
+        var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        await _seller.SendAssetAsync(contract.GetArkAddress().ToString(isMain), itemId, 1);
+        await CovenantSpender.WaitForVtxosAsync(_seller, contract, 1, TimeSpan.FromSeconds(45));
+
+        // The item unit now sits in the offer, not the seller's wallet.
+        var heldAfterResting = await SellerItemBalanceAsync(itemId);
+
+        using var esploraHttp = new HttpClient();
+
+        // Pre-expiry: the flow refuses WITHOUT submitting (the canonical reclaim
+        // txid must never see a refused submission — arkd poisons it).
+        await Assert.ThrowsAsync<RefundNotYetDueException>(() => OfferReclaimFlow.ReclaimAsync(
+            _seller, EmulatorUri, offer,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct)));
+
+        // Let the CHAIN's clock pass expiry, then reclaim once.
+        await RegtestHelper.WaitForChainTimeAsync(refundAfter, TimeSpan.FromSeconds(120));
+        var reclaim = await OfferReclaimFlow.ReclaimAsync(
+            _seller, EmulatorUri, offer,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
+        Assert.False(string.IsNullOrEmpty(reclaim.SignedArkTx));
+
+        // The item unit returned to the seller's wallet.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+        while (DateTime.UtcNow < deadline && await SellerItemBalanceAsync(itemId) < heldAfterResting + 1)
+            await Task.Delay(1000);
+        Assert.True(await SellerItemBalanceAsync(itemId) >= heldAfterResting + 1,
+            "the reclaimed item unit did not return to the seller");
     }
 }
