@@ -20,7 +20,13 @@ Everything below exists to make that walkthrough pass. What already passes today
 duels (covenant mode, adversarial-tested), refunds (player-facing), transfers, equipment,
 receipts. What follows is the gap list.
 
-## 1. Finish covenant breeding — task 19, rungs 4–6 (IN FLIGHT, largest item)
+## 1. Covenant breeding — task 19, rungs 1–6 — ✅ DONE (SHIPPED live)
+
+All six rungs proven on regtest and committed: `BreedAuthorized` covenant gate (parents retained via `0xf2`, child controlled by species via `0xe7`, fee via `PayTo`, oracle CSFS over the `0xe9`-read metadata root — honest breed co-signed, cheats refused); the breed ESCROW game flow (player deposits parents+fee, server assembles the emulator-enforced mint, `GetBreedEscrowParamsAsync` for trustless rebuild); InMemory sim + server `mode: covenant` + live E2E (`CovenantBreedFlowE2ETests` — parents retained, child minted under species, all in the player's wallet). Two hard-won rules pinned in `19-backlog.md`: `0xe7` ctrl_txid is reversed order, and the fee output must pay a distinct address (the builder coalesces same-script outputs). Gate at completion: 74 unit + 14 E2E. **Remaining before MVP-complete: items 2–7 below.** The original rung spec is retained below for reference.
+
+<details><summary>Original rung 4–6 spec (reference)</summary>
+
+### (was) Finish covenant breeding — task 19, rungs 4–6
 
 Rungs 1–3 are PROVEN (see `19-backlog.md` §19: issuance/controlled-issuance under covenants,
 metadata-root parity via `ArkadeCovenants.MetadataMerkleRoot`, rows 0xe5/0xe7/0xe9/0xf1 live,
@@ -72,6 +78,8 @@ passes. Done = all six probes green + committed.
 covenant challenges); `refund <breedingId>` (share the refund flow, keyed by escrow params
 endpoint); full-game-loop E2E gains the covenant-breed leg; adversarial E2E for the flow.
 Done = walkthrough leg passes + client can reclaim an abandoned breed escrow.
+
+</details>
 
 ## 2. XP as on-chain assets — task 20 (small, after breeding)
 
