@@ -93,19 +93,35 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
         if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
-        player.StarterClaimed = true;
+        player.StarterClaimed = true; // reserve first so concurrent claims can't double-mint
 
-        var heroes = new List<Hero>();
-        for (var i = 0; i < 2; i++)
+        // Idempotent under retry: mint only the shortfall to reach two gen-0
+        // starters. If a prior attempt minted one hero then failed (e.g. the
+        // treasury wasn't funded yet), it stays owned and a re-claim tops up.
+        var owned = store.Heroes.Values
+            .Where(h => h.OwnerId == player.Id && h.Generation == 0 && h.ParentAId is null)
+            .ToList();
+        try
         {
-            var entropy = RandomNumberGenerator.GetBytes(32);
-            var genome = Genome.NewGen0(entropy);
-            heroes.Add(await MintHeroAsync(player, genome, generation: 0,
-                parentA: null, parentB: null,
-                serverSeedHex: Convert.ToHexString(entropy).ToLowerInvariant(),
-                playerNonce: null, entropyHex: null, ct));
+            var minted = new List<Hero>();
+            for (var i = owned.Count; i < 2; i++)
+            {
+                var entropy = RandomNumberGenerator.GetBytes(32);
+                var genome = Genome.NewGen0(entropy);
+                minted.Add(await MintHeroAsync(player, genome, generation: 0,
+                    parentA: null, parentB: null,
+                    serverSeedHex: Convert.ToHexString(entropy).ToLowerInvariant(),
+                    playerNonce: null, entropyHex: null, ct));
+            }
+            return [.. owned, .. minted];
         }
-        return heroes;
+        catch
+        {
+            // Release the reservation so the player can retry rather than be
+            // stranded hero-less; already-minted heroes remain owned.
+            player.StarterClaimed = false;
+            throw;
+        }
     }
 
     private async Task<Hero> MintHeroAsync(
