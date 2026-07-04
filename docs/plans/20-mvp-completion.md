@@ -89,20 +89,56 @@ to the hero owner's address. Reuse the item-asset pipeline (lazy issuance in
 as assets in the winner's wallet in the walkthrough; InMemory parity; receipts remain the
 verification root.
 
-## 3. Marketplace — task 21 (medium) — DESIGN NOTE
+## 3. Marketplace — task 21 (medium) — ✅ DONE (SHIPPED live)
 
-**Funding-model decision (found while scoping):** `ConstructArkTransaction` takes explicit coins+outputs and does NOT auto-source the actor's wallet to balance a shortfall (`TransactionHelpers.cs:57`). The proven `OfferFulfillCovenantTests` paid the seller from the OFFER VTXO's own sats (taker keeps the spread) — a bounty shape, not a buyer-pays item sale. A real item sale (offer VTXO carries the ITEM; buyer pays `ask` from THEIR funds; buyer takes the item) needs the BUYER's coin added as a second input to the covenant spend. The offer VTXO is script-addressed (emulator co-signs it), so the buyer's own `SpendingService` can't spend it — only `CovenantSpender` (emulator path) can, and it currently builds coins ONLY from covenant inputs. **So the marketplace requires extending `CovenantSpender.SpendManyCoreAsync` to also accept the actor's plain funding coins (buyer's VTXO + signer descriptor + collaborative spending-script builder), co-signed by the buyer alongside the emulator's covenant co-sign.** This is the honest design; it is deferred behind the reliable small wins (leaderboard, warts) and then implemented. Original sketch below.
+Banco-style item offers, buyer-funded and covenant-enforced, wired end-to-end and committed
+(`bd2f75b` primitive, `c29c7e7` plumbing).
 
-### (was) Marketplace — task 21
+**The hard part — buyer-funded covenant spend (`bd2f75b`).** `CovenantSpender.SpendManyAsync`
+gained an optional `fundingCoins` param: the actor's OWN wallet coins (a buyer paying an
+offer's ask), appended after the covenant inputs with real signer descriptors so
+`ConstructArkTransaction` signs them with the buyer's key while the emulator co-signs only the
+covenant input. Packet survival across NArk's asset-vin remap was the trap: NBitcoin orders
+ark-tx inputs by BIP69 outpoint (not our coin order), so NArk rebuilds the extension from the
+ASSET packet alone and silently drops the co-resident `EmulatorPacket` ("no emulator packet
+found"). Fixed POST-construction: rebuild the extension with the EmulatorPacket's vins pointing
+at each covenant input's ACTUAL position (via its checkpoint's ark-tx index), read back NArk's
+already-remapped asset packet, then re-sign the funding inputs over the corrected outputs
+(reconstructing each funding coin's internal checkpoint coin exactly as NArk does, since the
+ark tx spends CHECKPOINT outputs; the emulator verifies non-arkd sigs on ALL checkpoints, so
+funding checkpoints are buyer-signed too).
 
-Banco-style offers, primitive already proven live (`OfferFulfillCovenantTests`):
-- **Item sale (MVP scope):** seller rests an offer VTXO (item asset + `PayTo(seller, ask)`
-  fulfill leaf + timelocked reclaim leaf reusing refund machinery); buyer fulfills in one tx.
-  Asset-side check with `0xf0/0xf2` (asset actually delivered) — semantics all pinned.
-- Server = index only (`/api/offers` list/create/my-offers); the CHAIN is the truth; client
-  `sell <itemId> <price>` / `buyoffer <offerId>` / `cancel <offerId>`.
-- **Hero sale is OUT of MVP** (same primitive, more metadata care — parking lot).
-Done = walkthrough sells one item between the two players; cancel/reclaim tested.
+**Contracts + flows.** `OfferContracts.Build` — resting-offer covenant: `fulfill` leaf
+(`PayTo(seller, ask)`; emulator refuses underpayment) + timelocked `reclaim` leaf
+(`RefundTo(seller, offerValue)`, refund machinery reused). `OfferFulfillFlow` (buyer rebuilds
+the contract locally, funds the ask, takes the item via an asset passthrough packet).
+`OfferReclaimFlow` (seller cancel — mirrors the proven `EscrowRefundFlow`: rebuild, find the
+resting VTXO, MTP-gate, submit-once).
+
+**Server = discovery index only; every covenant op is client-side from the actor's own wallet.**
+`IChainService` offer surface (`CreateOfferAsync`/`IsOfferFundedAsync`/`GetOfferParamsAsync`);
+NArk impl resolves the game item id → the shared species-controlled item asset, persists params
+in KV, sets `OfferValueSats = serverInfo.Dust`. `GameStore.OfferListing` (pending → active →
+closed, reconciled from on-chain truth); `GameService.CreateOfferAsync` (free-unit check:
+held − equipped − pending-reserved, seller's own listings reconciled first). Endpoints: `POST
+/api/offers`, `GET /api/offers`, `GET /api/offers/{id}`, `GET /api/offers/{id}/params` (buyer's
+trustless rebuild basis) + InMemory dev hooks. Client `sell` / `offers` / `buyoffer` /
+`canceloffer`. **Hero sale OUT of MVP** (parking lot).
+
+**Coverage.** Live on regtest: `CovenantOfferProbeTests` — honest buyer-funded fulfilment
+(seller paid, item to buyer) AND adversarial underpayment refused (buyer shorts the seller →
+emulator refuses to co-sign, item never moves), both with the input-order correction running;
+`OfferFulfillCovenantTests` — the sats-only bounty shape (pre-existing). InMemory:
+`MarketplaceOfferTests` (8) — full lifecycle, reserve accounting, cancel, broke-buyer refused,
+params rebuildable + 404. **Not included: a server-driven live E2E that has the seller re-spend
+a treasury-DELIVERED item asset VTXO into the offer** — that path hits an arkd `VTXO_RECOVERABLE`
+state (the treasury-delivered asset VTXO is not offchain-spendable from the seller's wallet
+shortly after delivery, independent of tree expiry); it is an arkd/NArk wallet-settlement quirk,
+NOT marketplace logic. `CovenantOfferProbe` proves the identical fulfilment path live using a
+clean covenant-MINTED item (which spends fine), so covenant fairness is fully proven; the server
+offer-index methods are structural mirrors of the proven breed-escrow live path and were
+exercised successfully (correct offer address + asset id + pending reconciliation) before that
+downstream arkd artifact. Gate at completion: **85 unit + 16 E2E green.**
 
 ## 4. Leaderboard — ✅ DONE (receipts-computed; GET /api/leaderboard + client top)
 
