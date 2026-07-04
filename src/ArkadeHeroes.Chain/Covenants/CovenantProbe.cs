@@ -94,13 +94,14 @@ public static class CovenantSpender
         IReadOnlyList<CovenantInput> inputs,
         TxOut[] gameOutputs,
         IReadOnlyList<IExtensionPacket>? extraPackets = null,
+        IReadOnlyList<ArkCoin>? fundingCoins = null,
         CancellationToken ct = default)
         => SpendManyCoreAsync(
             actor.GetService<global::NArk.Core.Transport.IClientTransport>(),
             actor.GetService<ISafetyService>(),
             actor.GetService<IWalletProvider>(),
             actor.GetService<IIntentStorage>(),
-            actor.WalletId, emulatorUri, inputs, gameOutputs, extraPackets, ct);
+            actor.WalletId, emulatorUri, inputs, gameOutputs, extraPackets, fundingCoins, ct);
 
     /// <summary>
     /// Service-level core of the covenant spend — usable from any NArk service
@@ -116,6 +117,7 @@ public static class CovenantSpender
         IReadOnlyList<CovenantInput> inputs,
         TxOut[] gameOutputs,
         IReadOnlyList<IExtensionPacket>? extraPackets = null,
+        IReadOnlyList<ArkCoin>? fundingCoins = null,
         CancellationToken ct = default)
     {
         var serverInfo = await transport.GetServerInfoAsync(ct);
@@ -141,9 +143,16 @@ public static class CovenantSpender
             entries.Add(new EmulatorEntry((ushort)i, input.Contract.ScriptFor(input.FunctionName), input.Witness));
         }
 
-        var packets = new List<IExtensionPacket>(extraPackets ?? []);
-        packets.Add(new EmulatorPacket(entries));
-        var extension = new Extension(packets);
+        // The actor's own funding coins (e.g. a buyer paying an offer's ask) are
+        // appended after the covenant inputs. They carry real signer descriptors,
+        // so ConstructArkTransaction signs them with the actor's key while the
+        // emulator co-signs only the covenant inputs.
+        if (fundingCoins is { Count: > 0 })
+            coins.AddRange(fundingCoins);
+
+        var packetList = new List<IExtensionPacket>(extraPackets ?? []);
+        packetList.Add(new EmulatorPacket(entries));
+        var extension = new Extension(packetList);
         TxOut[] outputs =
         [
             .. gameOutputs,
@@ -168,6 +177,82 @@ public static class CovenantSpender
             var relocked = PSBT.FromTransaction(gtx, serverInfo.Network, PSBTVersion.PSBTv0);
             relocked.UpdateFrom(arkTx);
             arkTx = relocked;
+        }
+
+        // Mixed covenant + actor-funding spends: NBitcoin orders the ark tx's
+        // inputs by outpoint (BIP69), not by our coin order, so NArk's asset-vin
+        // remap fires and rebuilds the extension output from the ASSET packet
+        // alone — silently dropping the EmulatorPacket. Its input order is only
+        // known AFTER construction, so we correct the extension here (rebuild it
+        // with the EmulatorPacket's vins pointing at each covenant input's ACTUAL
+        // position) and then re-sign the funding inputs over the fixed outputs.
+        if (fundingCoins is { Count: > 0 })
+        {
+            var gtx = arkTx.GetGlobalTransaction();
+
+            // Each covenant input's actual vin: its checkpoint's ark-tx index.
+            var actualVin = new ushort[inputs.Count];
+            for (var i = 0; i < inputs.Count; i++)
+            {
+                var cp = checkpoints.First(c =>
+                    c.Psbt.GetGlobalTransaction().Inputs[0].PrevOut == inputs[i].Vtxo.OutPoint);
+                actualVin[i] = (ushort)cp.Index;
+            }
+            var fixedEntries = entries.Select((e, i) => new EmulatorEntry(actualVin[i], e.Script, e.Witness)).ToList();
+
+            // Rebuild the extension: the asset packet NArk already remapped (read
+            // it back from the tx) + the corrected EmulatorPacket.
+            var currentExt = Extension.FromTransaction(gtx);
+            var assetPacket = currentExt?.GetAssetPacket();
+            var rebuilt = new List<IExtensionPacket>();
+            if (assetPacket is not null) rebuilt.Add(assetPacket);
+            rebuilt.Add(new EmulatorPacket(fixedEntries));
+            var newExtScript = Script.FromBytesUnsafe(new Extension(rebuilt).Serialize());
+
+            var extIdx = gtx.Outputs.FindIndex(o => Extension.IsExtension(o.ScriptPubKey));
+            if (extIdx < 0) throw new InvalidOperationException("BUG: extension output vanished before correction.");
+            gtx.Outputs[extIdx].ScriptPubKey = newExtScript;
+
+            var rebuiltTx = PSBT.FromTransaction(gtx, serverInfo.Network, PSBTVersion.PSBTv0);
+            rebuiltTx.UpdateFrom(arkTx);
+            arkTx = rebuiltTx;
+
+            // Re-sign the funding inputs over the corrected outputs, and sign
+            // their checkpoints (the emulator verifies non-arkd sigs on ALL
+            // checkpoints; the covenant checkpoints it signs itself).
+            var signer = await walletProvider.GetSignerAsync(walletId, ct)
+                ?? throw new InvalidOperationException($"Cannot sign offer funding input: wallet '{walletId}' has no signer.");
+            var arkPrevouts = arkTx.Inputs.Select(inp => inp.GetTxOut()!).ToArray();
+            var arkPrecomputed = arkTx.GetGlobalTransaction().PrecomputeTransactionData(arkPrevouts);
+            foreach (var fundingCoin in fundingCoins)
+            {
+                var cp = checkpoints.First(c =>
+                    c.Psbt.GetGlobalTransaction().Inputs[0].PrevOut == fundingCoin.Outpoint);
+                var cpGtx = cp.Psbt.GetGlobalTransaction();
+
+                // 1. Sign the funding coin's own checkpoint (input 0 = the VTXO).
+                var cpPrecomputed = cpGtx.PrecomputeTransactionData([fundingCoin.TxOut]);
+                await global::NArk.Abstractions.Helpers.PsbtHelpers.SignAndFillPsbt(
+                    signer, fundingCoin, cp.Psbt, cpPrecomputed, cancellationToken: ct);
+
+                // 2. Re-sign the ark-tx input that spends this funding coin's
+                // CHECKPOINT output (the outputs changed when we fixed the
+                // extension, invalidating ConstructArkTransaction's signature).
+                // Reconstruct the checkpoint coin exactly as NArk does internally.
+                var checkpointContract = new global::NArk.Core.Contracts.GenericArkContract(
+                    fundingCoin.Contract.Server!,
+                    [fundingCoin.SpendingScriptBuilder, serverInfo.CheckpointTapScript]);
+                var cpScript = checkpointContract.GetArkAddress().ScriptPubKey;
+                var cpOutIndex = cpGtx.Outputs.FindIndex(o => o.ScriptPubKey == cpScript);
+                var checkpointCoin = new global::NArk.Abstractions.ArkCoin(
+                    fundingCoin.WalletIdentifier, checkpointContract, fundingCoin.Birth,
+                    fundingCoin.ExpiresAt, fundingCoin.ExpiresAtHeight,
+                    new OutPoint(cpGtx, cpOutIndex), cpGtx.Outputs[cpOutIndex],
+                    fundingCoin.SignerDescriptor, fundingCoin.SpendingScriptBuilder,
+                    null, null, null, fundingCoin.Swept, fundingCoin.Unrolled);
+                await global::NArk.Abstractions.Helpers.PsbtHelpers.SignAndFillPsbt(
+                    signer, checkpointCoin, arkTx, arkPrecomputed, cancellationToken: ct);
+            }
         }
 
         var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));
