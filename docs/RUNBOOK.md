@@ -129,15 +129,43 @@ transfer 1 <bob-playerId>                  # your wallet signs; the Arkade asset
 mine                                       # the transferred hero now appears here
 ```
 
+## 8. Marketplace — sell an item, buy an offer (Alice → Bob)
+
+Banco-style resting offers: the seller rests one item unit behind a covenant that
+pays her the ask; ANYONE fulfils it by paying that exact ask from their OWN wallet
+(the emulator refuses underpayment), or the seller reclaims it after the window.
+The server is only the discovery index — the buyer rebuilds the offer covenant
+locally and can verify its address before paying.
+```
+# Alice:
+buy lucky-feather          # a spare item unit to sell
+sell lucky-feather 4000    # rests the offer; deposits the item into its covenant address
+offers                     # your resting offer is listed (copy the offerId)
+# Bob:
+offers                     # discovers Alice's offer
+buyoffer <offerId>         # funds the 4000-sat ask from HIS wallet, takes the item
+wallet                     # Bob now holds the lucky-feather unit; Alice was paid 4000
+# (to cancel an unsold offer instead of selling — after the reclaim window:)
+# Alice: canceloffer <offerId>    # rebuilds the covenant locally, reclaims the item
+```
+Regtest note: if `sell` fails with a `VTXO_RECOVERABLE` error, that is a known
+arkd/regtest quirk when re-spending a freshly treasury-delivered item VTXO (batch
+timing, not the game — mainnet's long horizons avoid it). The buyer-funded
+fulfilment itself is covenant-proven live (`CovenantOfferProbeTests`).
+
 ## What just happened (trust model)
 
 Every value-bearing action was either **covenant-enforced** (breeding fairness,
-duel settlement, refunds — the emulator refuses to co-sign an invalid shape) or
-**client-verifiable** (commit–reveal fairness audits, signed portable receipts,
-the receipts-recomputed leaderboard). The server never held your keys, and
-never had the authority to mint a wrong-genome child, settle a duel to the wrong
-winner, steal a stake, or forge progression. That is the whole point.
+duel settlement, refunds, and marketplace sales — the emulator refuses to co-sign
+an invalid shape, e.g. a buyer who underpays the seller) or **client-verifiable**
+(commit–reveal fairness audits, signed portable receipts, the receipts-recomputed
+leaderboard). The server never held your keys, and never had the authority to mint
+a wrong-genome child, settle a duel to the wrong winner, steal a stake, take an
+item without paying the ask, or forge progression. That is the whole point.
 
-Not in this MVP (parking lot): the item marketplace (needs a buyer-funded
-covenant spend — see `docs/plans/20-mvp-completion.md`), hero sales, wallet-file
-encryption.
+Optional: set `ARKADE_HEROES_WALLET_PASSPHRASE` before starting a client to
+encrypt that wallet's mnemonic at rest (AES-256-GCM); the same passphrase is then
+required to reopen it.
+
+Not in this MVP (parking lot): hero sales (same offer primitive, more metadata
+care) — see `docs/plans/20-mvp-completion.md`.
