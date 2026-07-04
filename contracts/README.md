@@ -22,6 +22,7 @@ The script bytecode itself travels in an **Emulator Packet** (TLV `0x01` inside 
 ## Status
 
 - **All three contracts compile** with `arkade-os/compiler` (`arkadec`); artifacts are committed under `contracts/build/`. Rebuild: `arkadec contracts/<name>.ark -o contracts/build/<name>.json`. The `uint64le` vs `scriptnum` implicit-conversion warnings match the compiler's own shipped kitties example.
+- **The enforcement pipeline is proven on regtest** (`tests/ArkadeHeroes.Tests.E2E/CovenantSpendTests.cs` + `src/ArkadeHeroes.Chain/Covenants/CovenantProbe.cs`): covenant VTXO (script-tweaked emulator key + operator key leaf) funded from a self-custody wallet, spent through the emulator with the packet attached — passing script co-signed, failing script refused. Next: drive the *compiled artifacts'* asm (constructor arg + witness resolution) through the same pipeline for breeding/wagers/offers.
 - The **transaction shapes** (asset groups, deltas, metadata hashes, output bindings) are live today — the NArk-backed server already produces them; these sources pin them down.
 - **Grammar findings** (fixed in source, kept for the next contract author):
   - There is **no pubkey-equality predicate** (`pk == otherPk` doesn't parse in `require`). `wager_escrow` therefore settles branch-per-party (`settleToChallenger` / `settleToDefender`, `refundChallenger` / `refundDefender`) with the oracle co-signing only the true branch.

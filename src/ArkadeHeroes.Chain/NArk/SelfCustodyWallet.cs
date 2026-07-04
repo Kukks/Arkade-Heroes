@@ -44,6 +44,16 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
     public string Mnemonic { get; }
     public string Address { get; }
 
+    /// <summary>The wallet's NArk wallet id (informational; keys never leave this process).</summary>
+    public string WalletId => _walletId;
+
+    /// <summary>
+    /// Advanced escape hatch into the wallet's isolated NArk service graph
+    /// (transport, storage, tx builder deps) — used by covenant tooling that
+    /// composes raw transactions on top of this wallet.
+    /// </summary>
+    public T GetService<T>() where T : notnull => _services.GetRequiredService<T>();
+
     private SelfCustodyWallet(ServiceProvider services, string walletId, string mnemonic, string address)
     {
         _services = services;

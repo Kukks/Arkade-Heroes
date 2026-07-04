@@ -80,8 +80,8 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 
 ### Covenant activation roadmap (contracts are written; this is the wiring order)
 
-1. **Compiler wiring**: run `contracts/*.ark` through `arkade-os/compiler`, consume the artifact JSON (constructor args, per-function witness order, tapleaf asm) — see `contracts/README.md` for which constructs are already compile-verified vs. pending.
-2. **Emulator Packet builder** (TLV `0x01` in the ARK extension OP_RETURN) on top of NArk's existing `Extension`/`Packet` encoders — the last missing piece between `EmulatorClient.SubmitTxAsync` and a real covenant spend.
+1. ~~**Compiler wiring**~~ **DONE**: all three contracts compile with `arkade-os/compiler`; artifacts in `contracts/build/`.
+2. ~~**Emulator Packet builder**~~ **DONE**: `EmulatorPacket` (TLV `0x01`) rides NArk's `Extension`, wire-format-tested. **The full pipeline is PROVEN live** (`CovenantSpendTests` on regtest): a VTXO whose only leaf is `<tweakedEmulatorKey> CHECKSIGVERIFY <serverKey> CHECKSIG` was funded from a self-custody wallet and spent via `EmulatorClient.SubmitTxAsync` with the packet revealing the script — the emulator co-signed a passing script and **refused a failing one**. Covenant enforcement is script execution, not goodwill.
 3. **Breeding + transfer** move onto `arkade_heroes.ark` tapleaves (oracle = game key; emulator co-signs).
 4. **Wagered matches** move onto `wager_escrow.ark` two-stake escrows with pre-built forfeit/refund PSBTs handed to clients at open/accept (coinflip's recovery model).
 5. **Item offers** become resting `item_offer.ark` VTXOs — the shop works with the server offline, and the same covenant is the player-to-player marketplace.
