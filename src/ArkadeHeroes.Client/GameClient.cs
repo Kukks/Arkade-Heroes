@@ -183,7 +183,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "mine": await ListHeroesAsync(mineOnly: true); break;
             case "heroes": await ListHeroesAsync(mineOnly: false); break;
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
-            case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB>"), Arg(parts, 2, "breed <parentA> <parentB>")); break;
+            case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB> [covenant]"), Arg(parts, 2, "breed <parentA> <parentB> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
             case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats> [covenant]"), parts.Length > 4 && parts[4].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "matches": await ListMatchesAsync(); break;
@@ -221,7 +221,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           mine                   list your heroes
           heroes                 list all heroes (find opponents)
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
-          breed <a> <b>          breed two of your heroes (commit-reveal, audited)
+          breed <a> <b> [covenant]  breed two heroes; 'covenant' = emulator-enforced escrow mint
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
           challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
@@ -425,16 +425,25 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             """);
     }
 
-    private async Task BreedAsync(string refA, string refB)
+    private async Task BreedAsync(string refA, string refB, bool covenant)
     {
         RequireSession();
         var parentA = ResolveHero(refA);
         var parentB = ResolveHero(refB);
 
         var commit = await PostAsync<BreedCommitResponse>("/api/breeding/commit",
-            new BreedCommitRequest(parentA.Id, parentB.Id));
-        Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)} (fee invoice {commit.Invoice.AmountSats} sats)");
-        await SettleInvoiceAsync(commit.Invoice);
+            new BreedCommitRequest(parentA.Id, parentB.Id, covenant ? "covenant" : "invoice"));
+
+        if (covenant)
+        {
+            Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)}  [covenant breed escrow]");
+            await DepositBreedEscrowAsync(commit.BreedingId, commit.EscrowAddress!, commit.EscrowFeeSats, parentA, parentB);
+        }
+        else
+        {
+            Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)} (fee invoice {commit.Invoice!.AmountSats} sats)");
+            await SettleInvoiceAsync(commit.Invoice);
+        }
 
         var nonce = NewNonce();
         var reveal = await RetryUntilObservedAsync(
@@ -524,6 +533,22 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         else if (open.StakeInvoice is not null)
             await SettleInvoiceAsync(open.StakeInvoice);
         Console.WriteLine($"    opponent runs 'accept {open.MatchId}', then you run 'duel {open.MatchId}'");
+    }
+
+    /// <summary>Deposits BOTH parents + the fee into a breed escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
+    private async Task DepositBreedEscrowAsync(string breedingId, string escrowAddress, long feeSats, HeroDto parentA, HeroDto parentB)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fund-breed-escrow", new { BreedingId = breedingId });
+            Console.WriteLine("    deposited both parents + fee into the breed escrow (simulated wallet)");
+            return;
+        }
+        var wallet = await WalletAsync();
+        await wallet.SendAssetAsync(escrowAddress, parentA.AssetId ?? parentA.Id, 1);
+        await wallet.SendAssetAsync(escrowAddress, parentB.AssetId ?? parentB.Id, 1);
+        await wallet.SendAsync(escrowAddress, feeSats);
+        Console.WriteLine($"    deposited both parents + {feeSats}-sat fee into the breed escrow from your wallet");
     }
 
     /// <summary>Stakes into a covenant escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>

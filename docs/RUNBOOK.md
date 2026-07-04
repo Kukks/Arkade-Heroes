@@ -1,0 +1,143 @@
+# Playing Arkade Heroes on regtest — the MVP walkthrough
+
+A complete two-player session on local regtest that exercises every shipped
+covenant feature: non-custodial wallets, **covenant breeding** (parents
+retained, child minted under the species with an oracle-attested genome),
+**covenant wagered duels** (emulator-enforced escrow settlement), **timelocked
+refunds** (reclaim an abandoned stake with no server), hero transfers, the
+receipts-computed leaderboard, and on-chain XP. Runs in three terminals: one
+server, two players.
+
+Everything below is proven by the E2E suite (`tests/ArkadeHeroes.Tests.E2E`);
+this is the same story a human can drive by hand.
+
+## 0. Prerequisites
+
+- Docker running, Node ≥ 18, .NET SDK 10.
+- The regtest stack up (arkd + Arkade Script emulator + bitcoin):
+  ```bash
+  node regtest/regtest.mjs start --profile ark --profile emulator
+  ```
+  Verify: `docker ps` shows `arkd`, `emulator`, `bitcoin`. Faucet password is
+  `secret`. (Ports: arkd `:7070`, emulator `:7073`.)
+- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 77 passing.
+
+## 1. Start the server (NArk mode, covenants + XP on)
+
+```bash
+# bash
+Chain__Mode=NArk Game__DeliverXpAssetsOnChain=true Game__WagerEscrowRefundAfter=00:00:20 \
+  dotnet run --project src/ArkadeHeroes.Server
+# PowerShell
+$env:Chain__Mode="NArk"; $env:Game__DeliverXpAssetsOnChain="true"; $env:Game__WagerEscrowRefundAfter="00:00:20"
+dotnet run --project src/ArkadeHeroes.Server
+```
+
+The server listens on `http://localhost:5210`. `Game__WagerEscrowRefundAfter=00:00:20`
+makes the refund demo (step 6) reachable in seconds instead of 24h.
+
+Fund the treasury (its address is in the server log, or `GET /api/chain/info`):
+```bash
+node regtest/regtest.mjs ark send --to <treasury tark1…> --amount 400000 --password secret
+```
+
+## 2. Two players (separate wallets)
+
+Each player runs their own client with a distinct wallet home. Terminal A:
+```bash
+ARKADE_HEROES_HOME=./play/alice dotnet run --project src/ArkadeHeroes.Client
+```
+Terminal B:
+```bash
+ARKADE_HEROES_HOME=./play/bob dotnet run --project src/ArkadeHeroes.Client
+```
+
+In each client:
+```
+register Alice        # (Bob in terminal B) — binds your self-custody wallet address
+wallet                # shows your tark1… address and (zero) balance
+```
+Fund each player's address from the faucet (address shown by `wallet`/`register`):
+```bash
+node regtest/regtest.mjs ark send --to <alice tark1…> --amount 100000 --password secret
+node regtest/regtest.mjs ark send --to <bob tark1…>   --amount 100000 --password secret
+```
+Then claim starters in each client:
+```
+starter               # two generation-0 heroes minted straight into your wallet
+mine                  # list them (note the two hero numbers, e.g. 1 and 2)
+```
+
+## 3. Covenant breeding (Alice)
+
+Breed Alice's two starters under the covenant — the parents are retained and
+the child is minted under the species with an oracle-attested genome; an invalid
+breed is unsignable:
+```
+breed 1 2 covenant    # deposits both parents + the fee into the breed escrow,
+                      # then reveals; prints 'fairness ✓' and the child hero
+mine                  # the two parents are STILL here, plus the new child
+```
+(Omit `covenant` for the invoice-mode breed — treasury mint, fee invoice.)
+
+## 4. Equip (Alice)
+
+```
+shop                  # list items
+buy rusty-blade       # delivers one fungible item-asset unit to your wallet
+equip 3 rusty-blade   # equip it on hero 3 (the child)
+show 3                # sheet shows the equipped weapon
+```
+
+## 5. Covenant wagered duel (Alice vs Bob)
+
+Alice challenges Bob for a stake, settled by the emulator-enforced escrow:
+```
+# Alice:
+challenge 3 <bob-hero-id> 5000 covenant   # opens a covenant match; auto-stakes
+matches                                    # note the matchId
+# Bob:
+accept <matchId>                           # auto-stakes into his own escrow
+# Alice:
+duel <matchId>                             # resolves; the pot sweeps to the winner
+top                                        # leaderboard now ranks the winner first
+```
+Both players: `verify-receipts` → every match/breed receipt verifies against the
+game key. `me` / `wallet` show the updated balances; the winner's XP asset
+balance grew (`GET /api/players/xp`).
+
+## 6. Timelocked refund (abandoned match)
+
+Show the liveness guarantee — a stake is reclaimable with no counterparty and no
+server cooperation:
+```
+# Alice:
+challenge 1 <bob-hero-id> 5000 covenant   # opens + stakes
+# ...Bob never accepts. After the refund window (20s here) passes on the chain
+# clock, Alice reclaims her own stake straight from the covenant:
+refund <matchId>                           # rebuilds the escrow locally, waits
+                                           # for chain time, reclaims once
+wallet                                     # the 5000 sats are back
+```
+
+## 7. Transfer a hero (Alice → Bob)
+
+```
+# Alice:
+transfer 1 <bob-playerId>                  # your wallet signs; the Arkade asset moves
+# Bob:
+mine                                       # the transferred hero now appears here
+```
+
+## What just happened (trust model)
+
+Every value-bearing action was either **covenant-enforced** (breeding fairness,
+duel settlement, refunds — the emulator refuses to co-sign an invalid shape) or
+**client-verifiable** (commit–reveal fairness audits, signed portable receipts,
+the receipts-recomputed leaderboard). The server never held your keys, and
+never had the authority to mint a wrong-genome child, settle a duel to the wrong
+winner, steal a stake, or forge progression. That is the whole point.
+
+Not in this MVP (parking lot): the item marketplace (needs a buyer-funded
+covenant spend — see `docs/plans/20-mvp-completion.md`), hero sales, wallet-file
+encryption.
