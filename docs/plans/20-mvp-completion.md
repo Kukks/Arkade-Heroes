@@ -130,15 +130,20 @@ trustless rebuild basis) + InMemory dev hooks. Client `sell` / `offers` / `buyof
 emulator refuses to co-sign, item never moves), both with the input-order correction running;
 `OfferFulfillCovenantTests` — the sats-only bounty shape (pre-existing). InMemory:
 `MarketplaceOfferTests` (8) — full lifecycle, reserve accounting, cancel, broke-buyer refused,
-params rebuildable + 404. **Not included: a server-driven live E2E that has the seller re-spend
-a treasury-DELIVERED item asset VTXO into the offer** — that path hits an arkd `VTXO_RECOVERABLE`
-state (the treasury-delivered asset VTXO is not offchain-spendable from the seller's wallet
-shortly after delivery, independent of tree expiry); it is an arkd/NArk wallet-settlement quirk,
-NOT marketplace logic. `CovenantOfferProbe` proves the identical fulfilment path live using a
-clean covenant-MINTED item (which spends fine), so covenant fairness is fully proven; the server
-offer-index methods are structural mirrors of the proven breed-escrow live path and were
-exercised successfully (correct offer address + asset id + pending reconciliation) before that
-downstream arkd artifact. Gate at completion: **85 unit + 16 E2E green.**
+params rebuildable + 404. **Not included: a server-driven live E2E that has the seller deposit a
+treasury-BOUGHT item into the offer** — that step fails at `SendAssetAsync` with arkd
+`VTXO_RECOVERABLE`. A throwaway diagnostic (verified, then removed) corrected the first read:
+received/transferred asset VTXOs re-spend FINE (mint→send→re-spend = success; the item VTXO is
+`swept=False`, `preconfirmed=True`, expiry ~67 min out — neither swept nor expired in-window), so
+it is NOT the item VTXO and NOT simple expiry (`IsRecoverable = Swept || IsExpired`). The true
+trigger was not isolated but is almost certainly a recoverable *sats* coin (old-batch ancestor)
+pulled into coin-selection for the deposit — i.e. NArk coin-selection including recoverable coins,
+an SDK-layer concern, NOT marketplace logic. `CovenantOfferProbe` proves the identical
+buyer-funded fulfilment live (covenant fairness fully proven); the NArk offer-index methods are
+structural mirrors of the proven breed-escrow live path and ran successfully (correct offer
+address + asset id + pending reconciliation) before that downstream arkd artifact. Robust fix
+(refresh/settle coins before spend, or filter selection to spendable-offchain) is parked. Gate at
+completion: **85 unit + 16 E2E green.**
 
 ## 4. Leaderboard — ✅ DONE (receipts-computed; GET /api/leaderboard + client top)
 
@@ -195,7 +200,10 @@ recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-wei
 matchmaking, wallet import/restore UX, **expired-session bookkeeping** (mark abandoned covenant
 matches `expired` via a per-party escrow-funded probe + an abandonment window, so `GET
 /api/matches` drops refunded rows — see item 6; needs per-party state to avoid mis-marking live
-pending matches).
+pending matches), **coin-selection recoverable-coin filter** (a treasury-bought item's offer
+deposit can fail `SendAssetAsync` with `VTXO_RECOVERABLE` — the diagnostic in item 3 shows it's a
+recoverable *sats* coin pulled into selection, not the asset; refresh/settle coins before spend
+or exclude non-`CanSpendOffchain` coins — likely an upstream NArk fix).
 
 ## Working rules reminder (unchanged)
 
