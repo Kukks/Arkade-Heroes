@@ -103,9 +103,15 @@ Covenant/protocol traps live in **`contracts/README.md`** (authoritative, incl. 
 
 Implemented and gated (69 unit + 7 E2E). Design record: **`docs/plans/18-client-refund.md`**. The next task is covenant breeding — start from `docs/plans/19-backlog.md` §19 (pinned opcode semantics + probe list).
 
-## 7. Backlog after 18 (priority order under the mandate)
+## 7. Remaining work — the MVP completion map
 
-Sketches in `docs/plans/19-backlog.md`. Order: **covenant breeding** (arkade_heroes.ark structural checks via `ArkadeArtifactContract` — the largest remaining server-trust surface) → XP-as-assets (progression on-chain, receipts already carry the facts) → banco-style marketplace (item/hero offers — `PayTo` covenant already proven by `OfferFulfillCovenantTests`) → leaderboard (server-side, low trust stakes) → wallet-file encryption (tracked follow-up; mnemonic currently plaintext in the wallet DB) → upstream arkd poisoned-txid bug report.
+**`docs/plans/20-mvp-completion.md` is the authoritative remaining-work list**, with the
+acceptance bar (a two-player MVP walkthrough E2E + human runbook) and per-item
+definitions-of-done. Current position: task 19 (covenant breeding) rungs 1–3 PROVEN, rung 4
+(`BreedAuthorized` composition) is next — pinned semantics and the byte-order rule live in
+`docs/plans/19-backlog.md` §19. After breeding: XP-assets → item marketplace → leaderboard →
+wallet encryption → warts → the walkthrough. Parking lot (do not start early): CI, upstream
+arkd bug report, hero marketplace, VRF.
 
 ## 8. Working agreements recap
 
