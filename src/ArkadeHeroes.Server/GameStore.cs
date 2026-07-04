@@ -52,7 +52,13 @@ public class MatchSession
     /// <summary>Stake each side escrows with the treasury; 0 = friendly match.</summary>
     public long WagerSats { get; init; }
 
-    /// <summary>Stake invoices the players' own wallets must pay (null for friendly matches).</summary>
+    /// <summary>"invoice" or "covenant" — how stakes are held and settled.</summary>
+    public string Mode { get; init; } = "invoice";
+
+    /// <summary>Covenant mode: the escrow address both players stake into.</summary>
+    public string? EscrowAddress { get; set; }
+
+    /// <summary>Stake invoices the players' own wallets must pay (invoice mode; null for friendly matches).</summary>
     public string? ChallengerInvoiceId { get; init; }
     public string? DefenderInvoiceId { get; set; }
 

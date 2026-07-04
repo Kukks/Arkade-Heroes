@@ -72,14 +72,34 @@ public static class CovenantSpender
     /// Spends MULTIPLE covenant VTXOs in one Arkade transaction (e.g. the two
     /// wager stakes swept atomically). Packet entry vins follow input order.
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> SpendManyAsync(
+    public static Task<EmulatorSubmitResponse> SpendManyAsync(
         SelfCustodyWallet actor,
         Uri emulatorUri,
         IReadOnlyList<CovenantInput> inputs,
         TxOut[] gameOutputs,
         CancellationToken ct = default)
+        => SpendManyCoreAsync(
+            actor.GetService<global::NArk.Core.Transport.IClientTransport>(),
+            actor.GetService<ISafetyService>(),
+            actor.GetService<IWalletProvider>(),
+            actor.GetService<IIntentStorage>(),
+            actor.WalletId, emulatorUri, inputs, gameOutputs, ct);
+
+    /// <summary>
+    /// Service-level core of the covenant spend — usable from any NArk service
+    /// graph (a player wallet or the game server's own DI container).
+    /// </summary>
+    public static async Task<EmulatorSubmitResponse> SpendManyCoreAsync(
+        global::NArk.Core.Transport.IClientTransport transport,
+        ISafetyService safetyService,
+        IWalletProvider walletProvider,
+        IIntentStorage intentStorage,
+        string walletId,
+        Uri emulatorUri,
+        IReadOnlyList<CovenantInput> inputs,
+        TxOut[] gameOutputs,
+        CancellationToken ct = default)
     {
-        var transport = actor.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
 
         var coins = new List<ArkCoin>();
@@ -88,7 +108,7 @@ public static class CovenantSpender
         {
             var input = inputs[i];
             coins.Add(new ArkCoin(
-                actor.WalletId, input.Contract, input.Vtxo.CreatedAt, input.Vtxo.ExpiresAt, input.Vtxo.ExpiresAtHeight,
+                walletId, input.Contract, input.Vtxo.CreatedAt, input.Vtxo.ExpiresAt, input.Vtxo.ExpiresAtHeight,
                 input.Vtxo.OutPoint, input.Vtxo.TxOut,
                 signerDescriptor: null,
                 spendingScriptBuilder: input.Contract.LeafFor(input.FunctionName),
@@ -106,10 +126,7 @@ public static class CovenantSpender
         ];
 
         var builder = new TransactionHelpers.ArkTransactionBuilder(
-            transport,
-            actor.GetService<ISafetyService>(),
-            actor.GetService<IWalletProvider>(),
-            actor.GetService<IIntentStorage>());
+            transport, safetyService, walletProvider, intentStorage);
         var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
 
         var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));

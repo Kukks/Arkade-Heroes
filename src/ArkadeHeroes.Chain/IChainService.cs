@@ -43,6 +43,9 @@ public record HeroMintResult(string AssetId, string ArkTxId);
 
 public record ItemDeliveryResult(string ItemAssetId, string ArkTxId);
 
+/// <summary>A per-match covenant escrow both players stake into from their own wallets.</summary>
+public record WagerEscrowInfo(string MatchId, string EscrowAddress, long StakeSats, long PotSats);
+
 /// <summary>
 /// The game's view of Arkade under the non-custodial mandate: players are
 /// known to the server ONLY as Arkade addresses they registered; the server's
@@ -86,6 +89,28 @@ public interface IChainService
 
     /// <summary>Pays out from the treasury to the player's registered address (wager winnings). Returns a payment reference.</summary>
     Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default);
+
+    // ── Covenant wager escrows (emulator-enforced settlement) ──────────
+
+    /// <summary>
+    /// Builds the per-match escrow covenant (settle branches bound to the
+    /// match's seed commitment and both players' registered addresses) and
+    /// returns the address both players stake into from their own wallets.
+    /// </summary>
+    Task<WagerEscrowInfo> CreateWagerEscrowAsync(
+        string matchId, string challengerPlayerId, string defenderPlayerId,
+        long stakeSats, byte[] seedCommitment32, CancellationToken ct = default);
+
+    /// <summary>True once BOTH exact-stake VTXOs sit at the escrow address.</summary>
+    Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Settles the escrow through the covenant: reveals the seed and sweeps
+    /// both stakes atomically to the winner via the emulator. Returns the
+    /// co-signed Arkade transaction (reference).
+    /// </summary>
+    Task<string> SettleWagerEscrowAsync(
+        string matchId, bool challengerWon, byte[] serverSeed, CancellationToken ct = default);
 
     // ── On-chain reads (never DB trust) ────────────────────────────────
 

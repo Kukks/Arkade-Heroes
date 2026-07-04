@@ -227,6 +227,45 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         var infoNow = (await anonymous.GetFromJsonAsync<ChainInfoDto>("/api/chain/info"))!;
         Assert.Equal(infoNow.GameSignerKey, duel.Receipt!.GameSignerKeyHex);
 
+        // ── Covenant-mode wagered match: emulator-enforced escrow ──────
+        const long covenantWager = 3_000;
+        var covenantOpen = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, covenantWager, "covenant"));
+        Assert.NotNull(covenantOpen.EscrowAddress);
+        Assert.Null(covenantOpen.StakeInvoice);
+
+        // Both players stake into the escrow from their OWN wallets.
+        await aliceWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
+        var covenantAccept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{covenantOpen.MatchId}/accept");
+        Assert.Equal(covenantOpen.EscrowAddress, covenantAccept.EscrowAddress);
+        await bobWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
+
+        var aliceBeforeSettle = await aliceWallet.GetBalanceSatsAsync();
+        var bobBeforeSettle = await bobWallet.GetBalanceSatsAsync();
+
+        FightResponse? covenantDuel = null;
+        await PollUntilAsync(async () =>
+        {
+            var response = await alice.PostAsJsonAsync($"/api/matches/{covenantOpen.MatchId}/fight",
+                new FightRequest("e2e-covenant-duel"));
+            if (!response.IsSuccessStatusCode) return false;
+            covenantDuel = JsonSerializer.Deserialize<FightResponse>(
+                await response.Content.ReadAsStringAsync(), Web);
+            return true;
+        }, TimeSpan.FromSeconds(60), "escrow funding to be observed and the covenant duel to settle");
+
+        Assert.Equal(covenantWager * 2, covenantDuel!.WinnerPayoutSats);
+        var (covOk, covDetail) = FairnessAudit.VerifyMatch(
+            covenantOpen.MatchId, "e2e-covenant-duel", covenantOpen.CommitmentHex, covenantDuel);
+        Assert.True(covOk, covDetail);
+
+        // The pot arrived at the WINNER'S own wallet, swept from the escrow by
+        // the emulator-co-signed covenant transaction.
+        var covenantChallengerWon = covenantDuel.Result.WinnerId == aliceHeroes[0].Id;
+        var winnerWallet = covenantChallengerWon ? aliceWallet : bobWallet;
+        var winnerBefore = covenantChallengerWon ? aliceBeforeSettle : bobBeforeSettle;
+        await winnerWallet.WaitForBalanceAsync(winnerBefore + covenantWager * 2, TimeSpan.FromSeconds(45));
+
         // ── Shop: invoice → Alice pays → claim → the unit is in HER wallet ─
         var itemInvoice = (await PostOkAsync<ItemInvoiceResponse>(alice, "/api/items/rusty-blade/buy")).Invoice;
         await aliceWallet.SendAsync(itemInvoice.PayToAddress, itemInvoice.AmountSats);

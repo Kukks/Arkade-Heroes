@@ -185,7 +185,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB>"), Arg(parts, 2, "breed <parentA> <parentB>")); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
-            case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats>"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats>"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats>")); break;
+            case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats> [covenant]"), parts.Length > 4 && parts[4].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "matches": await ListMatchesAsync(); break;
             case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
@@ -221,7 +221,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
           breed <a> <b>          breed two of your heroes (commit-reveal, audited)
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
-          challenge <m> <t> <w>  open a wagered match (w sats escrowed each side)
+          challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
@@ -462,7 +462,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
                           $"  (levels now {fight.ChallengerHero.Level}/{fight.DefenderHero.Level})");
     }
 
-    private async Task ChallengeAsync(string mineRef, string theirsRef, string wagerText)
+    private async Task ChallengeAsync(string mineRef, string theirsRef, string wagerText, bool covenant)
     {
         RequireSession();
         if (!long.TryParse(wagerText, out var wager) || wager <= 0)
@@ -471,12 +471,28 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         var theirs = ResolveHero(theirsRef);
 
         var open = await PostAsync<OpenMatchResponse>("/api/matches/open",
-            new OpenMatchRequest(mine.Id, theirs.Id, wager));
-        Console.WriteLine($"  ✓ challenge opened: {open.MatchId}");
+            new OpenMatchRequest(mine.Id, theirs.Id, wager, covenant ? "covenant" : "invoice"));
+        Console.WriteLine($"  ✓ challenge opened: {open.MatchId}{(covenant ? "  [covenant escrow]" : "")}");
         Console.WriteLine($"    wager {open.WagerSats} sats; commitment {ShortId(open.CommitmentHex)}");
-        if (open.StakeInvoice is not null)
+        if (open.EscrowAddress is not null)
+            await StakeEscrowAsync(open.MatchId, open.EscrowAddress, open.EscrowStakeSats);
+        else if (open.StakeInvoice is not null)
             await SettleInvoiceAsync(open.StakeInvoice);
         Console.WriteLine($"    opponent runs 'accept {open.MatchId}', then you run 'duel {open.MatchId}'");
+    }
+
+    /// <summary>Stakes into a covenant escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
+    private async Task StakeEscrowAsync(string matchId, string escrowAddress, long stakeSats)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/stake-escrow", new { MatchId = matchId });
+            Console.WriteLine($"    staked {stakeSats} sats into the escrow (simulated wallet)");
+            return;
+        }
+        var wallet = await WalletAsync();
+        var txid = await wallet.SendAsync(escrowAddress, stakeSats);
+        Console.WriteLine($"    staked {stakeSats} sats into the covenant escrow from your wallet (tx {ShortId(txid)})");
     }
 
     private async Task DuelResolveAsync(string matchId)
@@ -517,8 +533,16 @@ public class GameClient(string serverUrl) : IAsyncDisposable
     {
         RequireSession();
         var response = await PostAsync<AcceptMatchResponse>($"/api/matches/{matchId}/accept");
-        Console.WriteLine($"  ✓ accepted — stake invoice {response.StakeInvoice.AmountSats} sats");
-        await SettleInvoiceAsync(response.StakeInvoice);
+        if (response.EscrowAddress is not null)
+        {
+            Console.WriteLine($"  ✓ accepted — covenant escrow stake {response.EscrowStakeSats} sats");
+            await StakeEscrowAsync(response.Match.MatchId, response.EscrowAddress, response.EscrowStakeSats);
+        }
+        else if (response.StakeInvoice is not null)
+        {
+            Console.WriteLine($"  ✓ accepted — stake invoice {response.StakeInvoice.AmountSats} sats");
+            await SettleInvoiceAsync(response.StakeInvoice);
+        }
         Console.WriteLine($"    challenger resolves with 'duel {response.Match.MatchId}'");
     }
 

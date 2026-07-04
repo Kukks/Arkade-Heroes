@@ -67,13 +67,17 @@ public record BreedRevealResponse(
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
-public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0);
+/// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>
+public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0, string Mode = "invoice");
 
 public record OpenMatchResponse(
     string MatchId, string CommitmentHex, long WagerSats, string Status,
-    FeeInvoiceDto? StakeInvoice = null);
+    FeeInvoiceDto? StakeInvoice = null,
+    // Covenant mode: both players stake by paying this escrow address directly.
+    string? EscrowAddress = null,
+    long EscrowStakeSats = 0);
 
-public record AcceptMatchResponse(MatchDto Match, FeeInvoiceDto StakeInvoice);
+public record AcceptMatchResponse(MatchDto Match, FeeInvoiceDto? StakeInvoice, string? EscrowAddress = null, long EscrowStakeSats = 0);
 
 public record FightRequest(string Nonce);
 

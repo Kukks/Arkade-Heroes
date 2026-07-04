@@ -214,7 +214,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
 
     public async Task<(MatchSession Session, FeeInvoice? Invoice)> OpenMatchAsync(
-        Player player, string challengerHeroId, string defenderHeroId, long wagerSats, CancellationToken ct)
+        Player player, string challengerHeroId, string defenderHeroId, long wagerSats,
+        string mode, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
@@ -224,21 +225,45 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             throw new GameRuleException("Wager cannot be negative.");
         if (wagerSats > 0 && defender.OwnerId == player.Id)
             throw new GameRuleException("Wagered matches need an opponent — you own both heroes.");
-
-        FeeInvoice? invoice = null;
-        if (wagerSats > 0)
-            invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:challenger", wagerSats, ct);
+        if (mode is not ("invoice" or "covenant"))
+            throw new GameRuleException("Match mode must be 'invoice' or 'covenant'.");
+        if (mode == "covenant" && wagerSats <= 0)
+            throw new GameRuleException("Covenant matches are for wagers — set WagerSats.");
 
         var seed = CommitReveal.NewSeed();
+        var commitmentHex = CommitReveal.Commit(seed);
+        var matchId = NewId("match");
+
+        FeeInvoice? invoice = null;
+        string? escrowAddress = null;
+        if (wagerSats > 0)
+        {
+            if (mode == "covenant")
+            {
+                // The escrow covenant bakes in THIS match's seed commitment and
+                // both players' addresses; the emulator will enforce settlement.
+                var escrow = await chain.CreateWagerEscrowAsync(
+                    matchId, player.Id, defender.OwnerId, wagerSats,
+                    Convert.FromHexString(commitmentHex), ct);
+                escrowAddress = escrow.EscrowAddress;
+            }
+            else
+            {
+                invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:challenger", wagerSats, ct);
+            }
+        }
+
         var session = new MatchSession
         {
-            Id = NewId("match"),
+            Id = matchId,
             ChallengerPlayerId = player.Id,
             ChallengerHeroId = challenger.Id,
             DefenderHeroId = defender.Id,
             ServerSeed = seed,
-            CommitmentHex = CommitReveal.Commit(seed),
+            CommitmentHex = commitmentHex,
             WagerSats = wagerSats,
+            Mode = mode,
+            EscrowAddress = escrowAddress,
             ChallengerInvoiceId = invoice?.InvoiceId,
             DefenderPlayerId = defender.OwnerId,
         };
@@ -246,8 +271,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (session, invoice);
     }
 
-    /// <summary>Defender's owner accepts a wagered match and receives their stake invoice.</summary>
-    public async Task<(MatchSession Session, FeeInvoice Invoice)> AcceptMatchAsync(
+    /// <summary>
+    /// Defender's owner accepts a wagered match. Invoice mode: they receive
+    /// their stake invoice. Covenant mode: acceptance is consent — they stake
+    /// by paying the escrow address from their own wallet.
+    /// </summary>
+    public async Task<(MatchSession Session, FeeInvoice? Invoice)> AcceptMatchAsync(
         Player player, string matchId, CancellationToken ct)
     {
         if (!store.Matches.TryGetValue(matchId, out var session))
@@ -261,8 +290,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (defender.OwnerId != player.Id)
             throw new GameRuleException("Only the defender hero's owner can accept this match.");
 
-        var invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:defender:{matchId}", session.WagerSats, ct);
-        session.DefenderInvoiceId = invoice.InvoiceId;
+        FeeInvoice? invoice = null;
+        if (session.Mode == "invoice")
+        {
+            invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:defender:{matchId}", session.WagerSats, ct);
+            session.DefenderInvoiceId = invoice.InvoiceId;
+        }
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
         return (session, invoice);
@@ -283,13 +316,23 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 : "Match already resolved.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
-        // Wagered: both stakes must actually sit at the invoice addresses on-chain.
+        // Wagered: both stakes must actually sit on-chain — at the invoice
+        // addresses (invoice mode) or at the escrow covenant (covenant mode).
         if (session.WagerSats > 0)
         {
-            if (!await chain.IsInvoicePaidAsync(session.ChallengerInvoiceId!, ct))
-                throw new GameRuleException("Your stake invoice is unpaid — pay it from your wallet first.");
-            if (session.DefenderInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderInvoiceId, ct))
-                throw new GameRuleException("The defender's stake invoice is unpaid.");
+            if (session.Mode == "covenant")
+            {
+                if (!await chain.IsEscrowFundedAsync(session.Id, ct))
+                    throw new GameRuleException(
+                        $"The escrow is not fully funded — both players must pay {session.WagerSats} sats to {session.EscrowAddress}.");
+            }
+            else
+            {
+                if (!await chain.IsInvoicePaidAsync(session.ChallengerInvoiceId!, ct))
+                    throw new GameRuleException("Your stake invoice is unpaid — pay it from your wallet first.");
+                if (session.DefenderInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderInvoiceId, ct))
+                    throw new GameRuleException("The defender's stake invoice is unpaid.");
+            }
         }
 
         var challenger = GetHero(session.ChallengerHeroId);
@@ -316,14 +359,22 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
-        // Wager settlement: winner's owner takes the whole pot, paid by the
-        // treasury to their registered address.
+        // Wager settlement: covenant mode sweeps the escrow to the winner via
+        // the emulator-enforced covenant (revealing the committed seed);
+        // invoice mode pays out from the treasury.
         long winnerPayout = 0;
         if (session.WagerSats > 0)
         {
             winnerPayout = session.WagerSats * 2;
-            var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
-            await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
+            if (session.Mode == "covenant")
+            {
+                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, ct);
+            }
+            else
+            {
+                var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
+                await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
+            }
         }
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();

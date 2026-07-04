@@ -28,6 +28,9 @@ public class NArkChainService(
     SpendingService spendingService,
     global::NArk.Core.Transport.IClientTransport transport,
     VtxoSynchronizationService vtxoSync,
+    global::NArk.Abstractions.Safety.ISafetyService safetyService,
+    IWalletProvider walletProvider,
+    global::NArk.Abstractions.Intents.IIntentStorage intentStorage,
     IDbContextFactory<GameArkDbContext> dbFactory,
     NArkChainOptions options,
     ILogger<NArkChainService> logger) : IChainService
@@ -442,6 +445,119 @@ public class NArkChainService(
         ], cancellationToken: ct), ct);
         logger.LogInformation("Payout {Amount} sats ({Memo}) → {PlayerId}: {TxId}", amountSats, memo, toPlayerId, txId);
         return txId.ToString();
+    }
+
+    // ── Covenant wager escrows ─────────────────────────────────────────
+
+    private sealed record EscrowParams(
+        string CommitmentHex, string ChallengerAddress, string DefenderAddress, long StakeSats);
+
+    private async Task<string> RequireEmulatorSignerAsync(CancellationToken ct)
+    {
+        await GetInfoAsync(ct); // probes the emulator once
+        return _emulatorSignerKey
+               ?? throw new InvalidOperationException(
+                   $"Covenant matches need the Arkade Script emulator at {options.EmulatorUri} — it is not reachable.");
+    }
+
+    private async Task<Covenants.ArkadeArtifactContract> BuildEscrowContractAsync(
+        EscrowParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        var commitment = Convert.FromHexString(parameters.CommitmentHex);
+        var challengerScript = ArkAddress.Parse(parameters.ChallengerAddress).ScriptPubKey;
+        var defenderScript = ArkAddress.Parse(parameters.DefenderAddress).ScriptPubKey;
+        var pot = parameters.StakeSats * 2;
+        return new Covenants.ArkadeArtifactContract(
+            "wager-escrow", serverInfo.SignerKey, emulatorKey,
+            [
+                new Covenants.ArkadeContractFunction("settleToChallenger",
+                    Covenants.ArkadeCovenants.SettleWithSeed(commitment, challengerScript, pot, parameters.StakeSats)),
+                new Covenants.ArkadeContractFunction("settleToDefender",
+                    Covenants.ArkadeCovenants.SettleWithSeed(commitment, defenderScript, pot, parameters.StakeSats)),
+            ]);
+    }
+
+    public async Task<WagerEscrowInfo> CreateWagerEscrowAsync(
+        string matchId, string challengerPlayerId, string defenderPlayerId,
+        long stakeSats, byte[] seedCommitment32, CancellationToken ct = default)
+    {
+        await EnsureTreasuryAsync(ct);
+        var parameters = new EscrowParams(
+            Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
+            await GetPlayerAddressAsync(challengerPlayerId, ct),
+            await GetPlayerAddressAsync(defenderPlayerId, ct),
+            stakeSats);
+
+        await SetKvAsync($"escrow:{matchId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+
+        var contract = await BuildEscrowContractAsync(parameters, ct);
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var address = contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
+        logger.LogInformation("Wager escrow for {MatchId}: {Address} (stake {Stake})", matchId, address, stakeSats);
+        return new WagerEscrowInfo(matchId, address, stakeSats, stakeSats * 2);
+    }
+
+    private async Task<EscrowParams> RequireEscrowParamsAsync(string matchId, CancellationToken ct)
+    {
+        var json = await GetKvAsync($"escrow:{matchId}", ct)
+                   ?? throw new InvalidOperationException($"No covenant escrow recorded for match {matchId}.");
+        return System.Text.Json.JsonSerializer.Deserialize<EscrowParams>(json)!;
+    }
+
+    public async Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)
+    {
+        var parameters = await RequireEscrowParamsAsync(matchId, ct);
+        var contract = await BuildEscrowContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var vtxos = await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct);
+        return vtxos.Count(v => (long)v.Amount == parameters.StakeSats) >= 2;
+    }
+
+    public async Task<string> SettleWagerEscrowAsync(
+        string matchId, bool challengerWon, byte[] serverSeed, CancellationToken ct = default)
+    {
+        var parameters = await RequireEscrowParamsAsync(matchId, ct);
+        var contract = await BuildEscrowContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var stakes = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct))
+            .Where(v => (long)v.Amount == parameters.StakeSats)
+            .Take(2).ToList();
+        if (stakes.Count < 2)
+            throw new InvalidOperationException($"Escrow for {matchId} is not fully funded ({stakes.Count}/2 stakes).");
+
+        var branch = challengerWon ? "settleToChallenger" : "settleToDefender";
+        var winnerAddress = challengerWon ? parameters.ChallengerAddress : parameters.DefenderAddress;
+        var pot = parameters.StakeSats * 2;
+
+        Covenants.CovenantSpender.CovenantInput[] inputs =
+        [
+            new(contract, branch,
+                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(1), serverSeed],
+                stakes[0]),
+            new(contract, branch,
+                [Covenants.ArkadeCovenants.EncodeIndex(0), Covenants.ArkadeCovenants.EncodeIndex(0), serverSeed],
+                stakes[1]),
+        ];
+
+        var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
+            transport,
+            safetyService,
+            walletProvider,
+            intentStorage,
+            _treasuryWalletId!,
+            new Uri(options.EmulatorUri),
+            inputs,
+            [new TxOut(Money.Satoshis(pot), ArkAddress.Parse(winnerAddress))],
+            ct);
+
+        logger.LogInformation("Escrow for {MatchId} settled to {Winner} via covenant ({Branch})",
+            matchId, winnerAddress, branch);
+        return string.IsNullOrEmpty(response.SignedArkTx) ? "settled" : "covenant-settled";
     }
 
     // ── On-chain reads at the player's address ─────────────────────────

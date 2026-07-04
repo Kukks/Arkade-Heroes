@@ -141,6 +141,72 @@ public class InMemoryChainService : IChainService
             throw new InvalidOperationException($"Asset {assetId} is not held by {fromPlayerId}.");
     }
 
+    // ── Covenant wager escrows (simulated) ─────────────────────────────
+
+    private sealed record Escrow(string ChallengerId, string DefenderId, long StakeSats)
+    {
+        public bool ChallengerStaked;
+        public bool DefenderStaked;
+        public bool Settled;
+    }
+
+    private readonly ConcurrentDictionary<string, Escrow> _escrows = new();
+
+    public async Task<WagerEscrowInfo> CreateWagerEscrowAsync(
+        string matchId, string challengerPlayerId, string defenderPlayerId,
+        long stakeSats, byte[] seedCommitment32, CancellationToken ct = default)
+    {
+        await GetPlayerAddressAsync(challengerPlayerId, ct);
+        await GetPlayerAddressAsync(defenderPlayerId, ct);
+        _escrows[matchId] = new Escrow(challengerPlayerId, defenderPlayerId, stakeSats);
+        return new WagerEscrowInfo(matchId, $"sim-escrow-{matchId}", stakeSats, stakeSats * 2);
+    }
+
+    public Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)
+        => Task.FromResult(_escrows.TryGetValue(matchId, out var escrow)
+                           && escrow is { ChallengerStaked: true, DefenderStaked: true });
+
+    /// <summary>Simulated client-wallet stake into the escrow (the InMemory stand-in for paying the escrow address).</summary>
+    public void StakeEscrowFromPlayer(string playerId, string matchId)
+    {
+        if (!_escrows.TryGetValue(matchId, out var escrow))
+            throw new InvalidOperationException($"Unknown escrow {matchId}.");
+        var isChallenger = escrow.ChallengerId == playerId;
+        var isDefender = escrow.DefenderId == playerId;
+        if (!isChallenger && !isDefender)
+            throw new InvalidOperationException("Not a party to this escrow.");
+
+        var paid = false;
+        _playerBalances.AddOrUpdate(playerId,
+            _ => throw new InvalidOperationException($"Player {playerId} has no wallet."),
+            (_, balance) =>
+            {
+                if (balance < escrow.StakeSats) return balance;
+                paid = true;
+                return balance - escrow.StakeSats;
+            });
+        if (!paid)
+            throw new InvalidOperationException($"Insufficient simulated balance for the {escrow.StakeSats}-sat stake.");
+        if (isChallenger) escrow.ChallengerStaked = true;
+        else escrow.DefenderStaked = true;
+    }
+
+    public Task<string> SettleWagerEscrowAsync(
+        string matchId, bool challengerWon, byte[] serverSeed, CancellationToken ct = default)
+    {
+        if (!_escrows.TryGetValue(matchId, out var escrow))
+            throw new InvalidOperationException($"Unknown escrow {matchId}.");
+        if (!escrow.ChallengerStaked || !escrow.DefenderStaked)
+            throw new InvalidOperationException($"Escrow for {matchId} is not fully funded.");
+        if (escrow.Settled)
+            throw new InvalidOperationException("Escrow already settled.");
+        escrow.Settled = true;
+
+        var winner = challengerWon ? escrow.ChallengerId : escrow.DefenderId;
+        _playerBalances.AddOrUpdate(winner, escrow.StakeSats * 2, (_, b) => b + escrow.StakeSats * 2);
+        return Task.FromResult(NewId("sim-covenant-settle"));
+    }
+
     // ── On-chain reads ─────────────────────────────────────────────────
 
     public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

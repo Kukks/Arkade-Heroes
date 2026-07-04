@@ -128,16 +128,17 @@ api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, 
 {
     var player = game.Authenticate(BearerToken(http));
     var (session, invoice) = await game.OpenMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId,
-        request.WagerSats, ct);
+        request.WagerSats, request.Mode, ct);
     return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status,
-        invoice?.ToDto()));
+        invoice?.ToDto(), session.EscrowAddress, session.EscrowAddress is null ? 0 : session.WagerSats));
 });
 
 api.MapPost("/matches/{matchId}/accept", async (string matchId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
     var (session, invoice) = await game.AcceptMatchAsync(player, matchId, ct);
-    return Results.Ok(new AcceptMatchResponse(ToMatchDto(session), invoice.ToDto()));
+    return Results.Ok(new AcceptMatchResponse(ToMatchDto(session), invoice?.ToDto(),
+        session.EscrowAddress, session.EscrowAddress is null ? 0 : session.WagerSats));
 });
 
 api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -246,6 +247,13 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         ((InMemoryChainService)chain).TransferAssetFromPlayer(player.Id, request.ToPlayerId, request.AssetId);
         return Results.Ok(new { transferred = true });
     });
+
+    dev.MapPost("/stake-escrow", (StakeEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        ((InMemoryChainService)chain).StakeEscrowFromPlayer(player.Id, request.MatchId);
+        return Results.Ok(new { staked = true });
+    });
 }
 
 app.Run();
@@ -266,6 +274,9 @@ public record PayInvoiceDevRequest(string InvoiceId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet asset transfer.</summary>
 public record TransferAssetDevRequest(string AssetId, string ToPlayerId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet escrow stake.</summary>
+public record StakeEscrowDevRequest(string MatchId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;
