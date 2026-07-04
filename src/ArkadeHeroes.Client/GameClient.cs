@@ -15,17 +15,35 @@ public class GameClientException(string message) : Exception(message);
 /// the client re-derives genomes and replays battles instead of trusting the
 /// server's word.
 /// </summary>
-public class GameClient(string serverUrl) : IAsyncDisposable
+public class GameClient : IAsyncDisposable
 {
-    private readonly HttpClient _http = new() { BaseAddress = new Uri(serverUrl) };
+    private readonly string _serverUrl;
+    private readonly HttpClient _http;
+    private readonly bool _ownsHttp;
 
-    /// <summary>Per-player data dir (session + wallet). Override with ARKADE_HEROES_HOME to run several players side by side.</summary>
-    private static readonly string HomeDir =
-        Environment.GetEnvironmentVariable("ARKADE_HEROES_HOME") ?? AppContext.BaseDirectory;
+    /// <summary>Per-player data dir (session + wallet + receipts). Override with ARKADE_HEROES_HOME to run several players side by side.</summary>
+    private readonly string HomeDir;
+    private readonly string SessionFile;
+    private readonly string WalletDbFile;
+    private readonly string ReceiptsFile;
 
-    private static readonly string SessionFile = Path.Combine(HomeDir, "arkade-heroes-session.json");
-    private static readonly string WalletDbFile = Path.Combine(HomeDir, "arkade-heroes-wallet.db");
-    private static readonly string ReceiptsFile = Path.Combine(HomeDir, "arkade-heroes-receipts.json");
+    /// <summary>
+    /// <paramref name="httpClient"/> and <paramref name="homeDir"/> are injectable
+    /// for tests (drive the client against an in-memory server with an isolated
+    /// data dir); production passes neither, keeping today's behaviour — an own
+    /// <see cref="HttpClient"/> for <paramref name="serverUrl"/> and the
+    /// <c>ARKADE_HEROES_HOME</c> data dir.
+    /// </summary>
+    public GameClient(string serverUrl, HttpClient? httpClient = null, string? homeDir = null)
+    {
+        _serverUrl = serverUrl;
+        _http = httpClient ?? new HttpClient { BaseAddress = new Uri(serverUrl) };
+        _ownsHttp = httpClient is null;
+        HomeDir = homeDir ?? Environment.GetEnvironmentVariable("ARKADE_HEROES_HOME") ?? AppContext.BaseDirectory;
+        SessionFile = Path.Combine(HomeDir, "arkade-heroes-session.json");
+        WalletDbFile = Path.Combine(HomeDir, "arkade-heroes-wallet.db");
+        ReceiptsFile = Path.Combine(HomeDir, "arkade-heroes-receipts.json");
+    }
 
     // ── Progression receipts: player-held, server-signed facts ─────────
 
@@ -97,7 +115,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_wallet is not null) await _wallet.DisposeAsync();
-        _http.Dispose();
+        if (_ownsHttp) _http.Dispose(); // an injected client is owned by the caller
     }
 
     private async Task<string> ChainModeAsync()
@@ -165,7 +183,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         try
         {
             var session = JsonSerializer.Deserialize<SessionState>(await File.ReadAllTextAsync(SessionFile));
-            if (session?.Token is null || session.ServerUrl != serverUrl) return;
+            if (session?.Token is null || session.ServerUrl != _serverUrl) return;
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
             _me = await GetAsync<PlayerDto>("/api/players/me");
             Console.WriteLine($"  resumed session as {_me.Name} ({_me.BalanceSats} sats)\n");
@@ -183,7 +201,7 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         // session before any wallet op that would create it — ensure it first.
         Directory.CreateDirectory(HomeDir);
         await File.WriteAllTextAsync(SessionFile,
-            JsonSerializer.Serialize(new SessionState(serverUrl, token)));
+            JsonSerializer.Serialize(new SessionState(_serverUrl, token)));
     }
 
     private record SessionState(string ServerUrl, string Token);

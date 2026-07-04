@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ArkadeHeroes.Core\ArkadeHeroes.Core.csproj" />
     <ProjectReference Include="..\..\src\ArkadeHeroes.Chain\ArkadeHeroes.Chain.csproj" />
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Client\ArkadeHeroes.Client.csproj" />
     <ProjectReference Include="..\..\src\ArkadeHeroes.Server\ArkadeHeroes.Server.csproj" />
     <ProjectReference Include="..\..\src\ArkadeHeroes.Shared\ArkadeHeroes.Shared.csproj" />
   </ItemGroup>
