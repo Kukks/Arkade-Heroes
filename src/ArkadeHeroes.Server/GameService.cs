@@ -617,4 +617,83 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             throw new GameRuleException($"{hero.Name} has nothing equipped in {slot}.");
         return hero;
     }
+
+    // ── Marketplace: resting item offers (covenant-enforced, buyer-funded) ──
+
+    /// <summary>
+    /// Lists one spare unit of an item for sale: builds the resting-offer
+    /// covenant and returns the address the seller deposits the item into. The
+    /// covenant pins the seller as payee and enforces the ask, so fulfilment is
+    /// trustless — the server is only the discovery index.
+    /// </summary>
+    public async Task<(OfferListing Listing, OfferInfo Info)> CreateOfferAsync(
+        Player player, string itemId, long askSats, CancellationToken ct)
+    {
+        var item = Core.Equipment.ItemCatalog.Find(itemId)
+            ?? throw new GameRuleException($"Unknown item '{itemId}'.");
+        if (askSats <= 0) throw new GameRuleException("The ask must be a positive number of sats.");
+
+        // Reconcile this seller's existing listings first, so a just-deposited
+        // offer is counted as active (item already gone from their wallet) rather
+        // than pending (item still reserved in it).
+        foreach (var existing in store.Offers.Values
+                     .Where(o => o.SellerId == player.Id && o.ItemId == item.Id && o.Status != "closed").ToList())
+            await ReconcileOfferAsync(existing, ct);
+
+        // The seller must hold a FREE unit — not one already equipped, nor one
+        // reserved in a PENDING offer (its item is still in their wallet, so it
+        // is counted in `held`; a funded/active offer's item already left).
+        var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
+        var equipped = (ulong)store.Heroes.Values.Count(h =>
+            h.OwnerId == player.Id && h.Equipment.Slots.Values.Contains(item.Id));
+        var reserved = (ulong)store.Offers.Values.Count(o =>
+            o.SellerId == player.Id && o.ItemId == item.Id && o.Status == "pending");
+        if (held <= equipped + reserved)
+            throw new GameRuleException(
+                $"You hold {held} unit(s) of {item.Name}; {equipped} equipped and {reserved} awaiting deposit — none free to sell.");
+
+        var offerId = NewId("offer");
+        var info = await chain.CreateOfferAsync(offerId, player.Id, item.Id, askSats,
+            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+        var listing = new OfferListing
+        {
+            Id = offerId, SellerId = player.Id, ItemId = item.Id, AskSats = askSats,
+            OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
+            OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+        };
+        store.Offers[offerId] = listing;
+        return (listing, info);
+    }
+
+    /// <summary>Active (funded, buyable) offers, each reconciled against on-chain truth first.</summary>
+    public async Task<IReadOnlyList<OfferListing>> ListOffersAsync(CancellationToken ct)
+    {
+        foreach (var offer in store.Offers.Values.Where(o => o.Status != "closed").ToList())
+            await ReconcileOfferAsync(offer, ct);
+        return store.Offers.Values.Where(o => o.Status == "active")
+            .OrderBy(o => o.CreatedAt).ToList();
+    }
+
+    /// <summary>One offer's current listing, reconciled against on-chain truth.</summary>
+    public async Task<OfferListing> GetOfferAsync(string offerId, CancellationToken ct)
+    {
+        if (!store.Offers.TryGetValue(offerId, out var offer))
+            throw new GameRuleException($"Unknown offer '{offerId}'.");
+        await ReconcileOfferAsync(offer, ct);
+        return offer;
+    }
+
+    /// <summary>
+    /// Drives the listing's status from on-chain truth: once the item is
+    /// observed at the offer address it is <c>active</c>; when it later leaves
+    /// (fulfilled by a buyer or reclaimed by the seller) it becomes <c>closed</c>.
+    /// </summary>
+    private async Task ReconcileOfferAsync(OfferListing offer, CancellationToken ct)
+    {
+        if (offer.Status == "closed") return;
+        if (await chain.IsOfferFundedAsync(offer.Id, ct))
+            offer.Status = "active";
+        else if (offer.Status == "active")
+            offer.Status = "closed";
+    }
 }

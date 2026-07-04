@@ -353,6 +353,85 @@ public class InMemoryChainService : IChainService
             "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, breedingId, e.RefundAfterUnixSeconds));
     }
 
+    // ── Covenant item offers (simulated) ───────────────────────────────
+
+    /// <summary>Carrier dust deposited with a resting offer's item unit (the sim's stand-in for serverInfo.Dust).</summary>
+    private const long SimOfferDust = 660;
+
+    private sealed record ItemOffer(
+        string SellerId, string ItemId, long AskSats, long OfferValueSats, long RefundAfterUnixSeconds)
+    {
+        public bool Funded;
+        public bool Closed; // fulfilled or reclaimed
+    }
+
+    private readonly ConcurrentDictionary<string, ItemOffer> _offers = new();
+
+    public async Task<OfferInfo> CreateOfferAsync(
+        string offerId, string sellerPlayerId, string itemId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
+        await GetPlayerAddressAsync(sellerPlayerId, ct);
+        var assetId = _itemAssets.GetOrAdd(itemId, _ => NewId("sim-item"));
+        _offers[offerId] = new ItemOffer(sellerPlayerId, itemId, askSats, SimOfferDust, refundAfterUnixSeconds);
+        return new OfferInfo(offerId, $"sim-offer-{offerId}", assetId, askSats, SimOfferDust, refundAfterUnixSeconds);
+    }
+
+    public Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default)
+        => Task.FromResult(_offers.TryGetValue(offerId, out var o) && o.Funded && !o.Closed);
+
+    public Task<Covenants.OfferParams?> GetOfferParamsAsync(string offerId, CancellationToken ct = default)
+    {
+        if (!_offers.TryGetValue(offerId, out var o)) return Task.FromResult<Covenants.OfferParams?>(null);
+        var assetId = _itemAssets.GetValueOrDefault(o.ItemId, $"sim-item-{o.ItemId}");
+        return Task.FromResult<Covenants.OfferParams?>(new Covenants.OfferParams(
+            $"sim-player-{o.SellerId}", assetId, o.AskSats, o.OfferValueSats, offerId, o.RefundAfterUnixSeconds));
+    }
+
+    /// <summary>Simulated seller-wallet deposit of one item unit (+ carrier dust) into the offer.</summary>
+    public void FundOfferFromSeller(string sellerPlayerId, string offerId)
+    {
+        if (!_offers.TryGetValue(offerId, out var offer))
+            throw new InvalidOperationException($"Unknown offer {offerId}.");
+        if (offer.SellerId != sellerPlayerId) throw new InvalidOperationException("Not the offer's seller.");
+        if (offer.Funded) throw new InvalidOperationException("Offer already funded.");
+        var moved = false;
+        _itemHoldings.AddOrUpdate((sellerPlayerId, offer.ItemId), _ => throw new InvalidOperationException("Seller holds none of this item."),
+            (_, count) => { if (count < 1) return count; moved = true; return count - 1; });
+        if (!moved) throw new InvalidOperationException("Seller holds none of this item to sell.");
+        offer.Funded = true;
+    }
+
+    /// <summary>Simulated buyer-wallet fulfilment: pays the seller the ask and takes the item unit.</summary>
+    public void FulfillOfferFromBuyer(string buyerPlayerId, string offerId)
+    {
+        if (!_offers.TryGetValue(offerId, out var offer))
+            throw new InvalidOperationException($"Unknown offer {offerId}.");
+        if (!offer.Funded) throw new InvalidOperationException("Offer is not funded.");
+        if (offer.Closed) throw new InvalidOperationException("Offer already fulfilled or reclaimed.");
+        if (offer.SellerId == buyerPlayerId) throw new InvalidOperationException("Cannot buy your own offer.");
+        var paid = false;
+        _playerBalances.AddOrUpdate(buyerPlayerId, _ => throw new InvalidOperationException("Buyer has no wallet."),
+            (_, bal) => { if (bal < offer.AskSats) return bal; paid = true; return bal - offer.AskSats; });
+        if (!paid) throw new InvalidOperationException($"Insufficient balance for the {offer.AskSats}-sat ask.");
+        _playerBalances.AddOrUpdate(offer.SellerId, offer.AskSats, (_, bal) => bal + offer.AskSats);
+        _itemHoldings.AddOrUpdate((buyerPlayerId, offer.ItemId), 1UL, (_, count) => count + 1);
+        offer.Closed = true;
+    }
+
+    /// <summary>Simulated seller reclaim of an unsold offer after expiry — the item unit returns to the seller.</summary>
+    public void ReclaimOfferToSeller(string sellerPlayerId, string offerId)
+    {
+        if (!_offers.TryGetValue(offerId, out var offer))
+            throw new InvalidOperationException($"Unknown offer {offerId}.");
+        if (offer.SellerId != sellerPlayerId) throw new InvalidOperationException("Not the offer's seller.");
+        if (!offer.Funded) throw new InvalidOperationException("Offer is not funded.");
+        if (offer.Closed) throw new InvalidOperationException("Offer already fulfilled or reclaimed.");
+        _itemHoldings.AddOrUpdate((sellerPlayerId, offer.ItemId), 1UL, (_, count) => count + 1);
+        offer.Closed = true;
+    }
+
     // ── On-chain reads ─────────────────────────────────────────────────
 
     public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

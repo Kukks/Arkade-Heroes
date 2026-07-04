@@ -146,6 +146,26 @@ public record EquipResponse(HeroDto Hero);
 
 public record UnequipRequest(string Slot);
 
+// ── Marketplace: resting item offers (covenant-enforced, buyer-funded) ─────
+
+/// <summary>List one spare unit of an item for sale at a fixed ask (sats).</summary>
+public record CreateOfferRequest(string ItemId, long AskSats);
+
+/// <summary>
+/// The offer address the seller deposits the item unit (+ carrier dust) into
+/// from their own wallet, plus the ask and refund window. Once deposited the
+/// offer becomes buyable; the covenant pins the seller as payee.
+/// </summary>
+public record CreateOfferResponse(
+    string OfferId, string OfferAddress, string ItemAssetId,
+    long AskSats, long OfferValueSats, long RefundAfterUnixSeconds);
+
+/// <summary>A resting offer in the discovery index. Status: pending → active → closed.</summary>
+public record OfferDto(
+    string OfferId, string SellerId, string ItemId, string ItemName,
+    long AskSats, string OfferAddress, string ItemAssetId,
+    long OfferValueSats, long RefundAfterUnixSeconds, string Status);
+
 // ── Chain / misc ───────────────────────────────────────────────────────────
 
 public record ChainInfoDto(

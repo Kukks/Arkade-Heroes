@@ -102,4 +102,60 @@ public class CovenantOfferProbeTests : IAsyncLifetime
         await _buyer.WaitForAssetAsync(itemId, TimeSpan.FromSeconds(60));
         await _seller.WaitForBalanceAsync(sellerBefore + ask, TimeSpan.FromSeconds(60));
     }
+
+    /// <summary>
+    /// The covenant's core fairness guarantee for the buyer-funded item shape: a
+    /// greedy buyer who funds the transaction but pays the seller LESS than the
+    /// ask cannot get the emulator to co-sign — the offer is unspendable except
+    /// on the seller's terms. (The sats-only shape is covered by
+    /// OfferFulfillCovenantTests; this proves it holds with buyer funding + an
+    /// asset passthrough, where the input-order correction also runs.)
+    /// </summary>
+    [Fact]
+    public async Task RestingOffer_UnderpaymentIsRefused()
+    {
+        var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        const long ask = 8_000;
+
+        var itemId = await MintItemToSellerAsync(serverInfo, emulatorInfo);
+
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var offer = new OfferParams(_seller.Address, itemId, ask, serverInfo.Dust.Satoshi, "offer-underpay", refundAfter);
+        var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        await _seller.SendAssetAsync(contract.GetArkAddress().ToString(isMain), itemId, 1);
+        var offerVtxo = (await CovenantSpender.WaitForVtxosAsync(_buyer, contract, 1, TimeSpan.FromSeconds(45)))
+            .First(v => v.Assets?.Any(a => a.AssetId == itemId) == true);
+
+        // The greedy buyer funds the tx from their own wallet but shorts the
+        // seller by 1_000 sats, keeping the difference as change.
+        var sellerScript = global::NArk.Abstractions.ArkAddress.Parse(_seller.Address).ScriptPubKey;
+        var buyerScript = global::NArk.Abstractions.ArkAddress.Parse(_buyer.Address).ScriptPubKey;
+        var item = AssetId.FromString(itemId);
+        var spending = _buyer.GetService<global::NArk.Core.Services.ISpendingService>();
+        var funding = (await spending.GetAvailableCoins(_buyer.WalletId, CancellationToken.None))
+            .Where(c => c.Assets is null or { Count: 0 })
+            .OrderByDescending(c => c.Amount).Take(1).ToList();
+        var offerDust = (long)offerVtxo.Amount;
+        var fundedSats = funding.Sum(c => c.Amount.Satoshi);
+        const long shortfall = 1_000;
+        var packet = Packet.Create(
+            [AssetGroup.Create(item, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(1, 1)], [])]);
+
+        var underpay = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _buyer, EmulatorUri,
+            [new CovenantSpender.CovenantInput(contract, "fulfill", [ArkadeCovenants.EncodeIndex(0)], offerVtxo)],
+            [
+                new TxOut(Money.Satoshis(ask - shortfall), sellerScript),                       // seller SHORTED
+                new TxOut(Money.Satoshis(offerDust + fundedSats - (ask - shortfall)), buyerScript),
+            ],
+            extraPackets: [packet],
+            fundingCoins: funding));
+        Assert.Contains("Emulator rejected", underpay.Message);
+
+        // And the buyer walked away with nothing — the item never moved.
+        Assert.DoesNotContain(await _buyer.GetAssetsAsync(), a => a.AssetId == itemId && a.Amount > 0);
+    }
 }

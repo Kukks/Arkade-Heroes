@@ -65,6 +65,20 @@ public record BreedEscrowInfo(
     long RefundAfterUnixSeconds);
 
 /// <summary>
+/// A resting item offer: the address the seller deposits one item unit (plus
+/// carrier dust) into, and the ask ANYONE may pay to take it. The seller is
+/// pinned as the covenant's sole payee; the buyer funds the ask from their own
+/// wallet. Recoverable by the seller after <see cref="RefundAfterUnixSeconds"/>.
+/// </summary>
+public record OfferInfo(
+    string OfferId,
+    string OfferAddress,
+    string ItemAssetId,
+    long AskSats,
+    long OfferValueSats,
+    long RefundAfterUnixSeconds);
+
+/// <summary>
 /// The game's view of Arkade under the non-custodial mandate: players are
 /// known to the server ONLY as Arkade addresses they registered; the server's
 /// treasury signs its own outputs (mints, deliveries, payouts) and verifies
@@ -171,6 +185,31 @@ public interface IChainService
 
     /// <summary>The public breed-escrow parameters for trustless client rebuild + refund. Null when unknown/invoice-mode.</summary>
     Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default);
+
+    // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
+
+    /// <summary>
+    /// Builds the resting-offer covenant for one unit of a game item's asset
+    /// (seller pinned as payee, ask enforced, timelocked reclaim to the seller)
+    /// and returns the address the seller deposits the item + carrier dust into
+    /// from their own wallet. ANYONE may then fulfil it by paying the seller the
+    /// ask in the same transaction — the emulator refuses underpayment.
+    /// </summary>
+    Task<OfferInfo> CreateOfferAsync(
+        string offerId, string sellerPlayerId, string itemId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once the item unit (plus carrier dust) sits at the offer address.</summary>
+    Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The public offer parameters for trustless client rebuild — everything a
+    /// BUYER needs to reconstruct the offer covenant (via
+    /// <see cref="Covenants.OfferContracts.Build"/>), verify the address matches
+    /// the listing, and fulfil it, or the SELLER needs to reclaim after expiry.
+    /// Null when the offer is unknown.
+    /// </summary>
+    Task<Covenants.OfferParams?> GetOfferParamsAsync(string offerId, CancellationToken ct = default);
 
     /// <summary>
     /// Settles the escrow through the covenant: presents the oracle's BIP340

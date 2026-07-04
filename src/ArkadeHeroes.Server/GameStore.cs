@@ -76,6 +76,27 @@ public class MatchSession
     public string? Nonce { get; set; }
 }
 
+/// <summary>
+/// A resting item offer in the discovery index. The covenant lives on-chain (the
+/// seller deposits the item into the offer address; a buyer fulfils it from their
+/// own wallet); this record is the server's searchable listing, reconciled
+/// against on-chain truth. Status: pending (created, item not yet deposited) →
+/// active (funded, buyable) → closed (sold or reclaimed).
+/// </summary>
+public class OfferListing
+{
+    public required string Id { get; init; }
+    public required string SellerId { get; init; }
+    public required string ItemId { get; init; }
+    public required long AskSats { get; init; }
+    public required string OfferAddress { get; init; }
+    public required string ItemAssetId { get; init; }
+    public required long OfferValueSats { get; init; }
+    public required long RefundAfterUnixSeconds { get; init; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public string Status { get; set; } = "pending";
+}
+
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
 public class GameStore
 {
@@ -85,6 +106,7 @@ public class GameStore
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
+    public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
 
     /// <summary>Server-side receipt cache, keyed by hero id (receipts are signed public facts; players hold their own copies).</summary>
     public ConcurrentDictionary<string, List<Shared.ProgressionReceiptDto>> ReceiptsByHero { get; } = new();

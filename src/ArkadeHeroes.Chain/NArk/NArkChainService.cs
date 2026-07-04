@@ -754,6 +754,60 @@ public class NArkChainService(
         return new HeroMintResult(childAssetId, breedTxId);
     }
 
+    // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
+
+    private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
+        BuildOfferContractAsync(Covenants.OfferParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        var contract = Covenants.OfferContracts.Build(parameters, serverInfo.SignerKey, emulatorKey);
+        return (contract, serverInfo);
+    }
+
+    public async Task<OfferInfo> CreateOfferAsync(
+        string offerId, string sellerPlayerId, string itemId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var sellerAddress = await GetPlayerAddressAsync(sellerPlayerId, ct);
+        var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
+            ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — nothing to sell.");
+        // The carrier dust the seller deposits with the item is exactly what the
+        // reclaim leaf pays back, so it must match serverInfo.Dust (what
+        // SendAssetAsync deposits).
+        var offerValue = serverInfo.Dust.Satoshi;
+
+        var parameters = new Covenants.OfferParams(
+            sellerAddress, assetId, askSats, offerValue, offerId, refundAfterUnixSeconds);
+        await SetKvAsync($"offer:{offerId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+
+        var (contract, _) = await BuildOfferContractAsync(parameters, ct);
+        var isMain = serverInfo.Network == Network.Main;
+        var address = contract.GetArkAddress().ToString(isMain);
+        logger.LogInformation("Item offer {OfferId}: {Address} (item {Item}, ask {Ask}, refund after {Refund})",
+            offerId, address, itemId, askSats, refundAfterUnixSeconds);
+        return new OfferInfo(offerId, address, assetId, askSats, offerValue, refundAfterUnixSeconds);
+    }
+
+    public async Task<Covenants.OfferParams?> GetOfferParamsAsync(string offerId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"offer:{offerId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.OfferParams>(json);
+    }
+
+    public async Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default)
+    {
+        var parameters = await GetOfferParamsAsync(offerId, ct);
+        if (parameters is null) return false;
+        var (contract, _) = await BuildOfferContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var vtxos = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct)).DistinctBy(v => v.OutPoint).ToList();
+        return vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.ItemAssetId) == true);
+    }
+
     // ── On-chain reads at the player's address ─────────────────────────
 
     public async Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

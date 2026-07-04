@@ -234,6 +234,31 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
     return Results.Ok(new EquipResponse(hero.ToDto()));
 });
 
+// ── Marketplace: resting item offers (covenant-enforced, buyer-funded) ─────
+
+api.MapPost("/offers", async (CreateOfferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (_, info) = await game.CreateOfferAsync(player, request.ItemId, request.AskSats, ct);
+    return Results.Ok(new CreateOfferResponse(info.OfferId, info.OfferAddress, info.ItemAssetId,
+        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds));
+});
+
+api.MapGet("/offers", async (GameService game, CancellationToken ct) =>
+    Results.Ok((await game.ListOffersAsync(ct)).Select(ToOfferDto).ToList()));
+
+api.MapGet("/offers/{offerId}", async (string offerId, GameService game, CancellationToken ct) =>
+{
+    try { return Results.Ok(ToOfferDto(await game.GetOfferAsync(offerId, ct))); }
+    catch (GameRuleException) { return Results.NotFound(); }
+});
+
+// Public offer parameters: everything a BUYER needs to rebuild the offer
+// covenant locally, verify the address matches the listing, and fulfil it (or
+// the SELLER to reclaim after expiry). 404 for unknown offers.
+api.MapGet("/offers/{offerId}/params", async (string offerId, IChainService chain, CancellationToken ct) =>
+    await chain.GetOfferParamsAsync(offerId, ct) is { } p ? Results.Ok(p) : Results.NotFound());
+
 // ── Chain / health ─────────────────────────────────────────────────────────
 
 api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config, CancellationToken ct) =>
@@ -322,6 +347,32 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { funded = true });
     });
+
+    // Marketplace: the seller deposits the item, a buyer fulfils, or the seller
+    // reclaims — each stands in for the corresponding client-wallet covenant op.
+    dev.MapPost("/fund-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).FundOfferFromSeller(player.Id, request.OfferId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { funded = true });
+    });
+
+    dev.MapPost("/fulfill-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).FulfillOfferFromBuyer(player.Id, request.OfferId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { fulfilled = true });
+    });
+
+    dev.MapPost("/reclaim-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).ReclaimOfferToSeller(player.Id, request.OfferId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { reclaimed = true });
+    });
 }
 
 app.Run();
@@ -337,6 +388,11 @@ static MatchDto ToMatchDto(MatchSession session) => new(
     session.Status, session.CommitmentHex, session.Result?.ToDto(),
     session.WagerSats, session.DefenderPlayerId);
 
+static OfferDto ToOfferDto(OfferListing o) => new(
+    o.Id, o.SellerId, o.ItemId,
+    ArkadeHeroes.Core.Equipment.ItemCatalog.Find(o.ItemId)?.Name ?? o.ItemId,
+    o.AskSats, o.OfferAddress, o.ItemAssetId, o.OfferValueSats, o.RefundAfterUnixSeconds, o.Status);
+
 /// <summary>Dev-only (InMemory mode): simulated client-wallet invoice payment.</summary>
 public record PayInvoiceDevRequest(string InvoiceId);
 
@@ -351,6 +407,9 @@ public record RefundEscrowDevRequest(string MatchId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of both parents + fee into a breed escrow.</summary>
 public record FundBreedEscrowDevRequest(string BreedingId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet offer op (deposit / fulfil / reclaim), keyed by offer.</summary>
+public record OfferDevRequest(string OfferId);
 
 /// <summary>Exposed for WebApplicationFactory-based integration tests.</summary>
 public partial class Program;

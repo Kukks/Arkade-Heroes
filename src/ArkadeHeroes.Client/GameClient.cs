@@ -200,6 +200,10 @@ public class GameClient(string serverUrl) : IAsyncDisposable
             case "shop": await ShopAsync(); break;
             case "buy": await BuyAsync(Arg(parts, 1, "buy <itemId>")); break;
             case "claim": await ClaimAsync(Arg(parts, 1, "claim <invoiceId>")); break;
+            case "sell": await SellAsync(Arg(parts, 1, "sell <itemId> <askSats>"), Arg(parts, 2, "sell <itemId> <askSats>")); break;
+            case "offers": await ListOffersAsync(); break;
+            case "buyoffer": await BuyOfferAsync(Arg(parts, 1, "buyoffer <offerId>")); break;
+            case "canceloffer": await CancelOfferAsync(Arg(parts, 1, "canceloffer <offerId>")); break;
             case "equip": await EquipAsync(Arg(parts, 1, "equip <hero> <itemId>"), Arg(parts, 2, "equip <hero> <itemId>")); break;
             case "unequip": await UnequipAsync(Arg(parts, 1, "unequip <hero> <slot>"), Arg(parts, 2, "unequip <hero> <slot>")); break;
             case "info": await ChainInfoAsync(); break;
@@ -239,6 +243,10 @@ public class GameClient(string serverUrl) : IAsyncDisposable
           buy <itemId>           buy an item (delivers a fungible Arkade asset unit)
           equip <hero> <itemId>  equip a held item unit
           unequip <hero> <slot>  free an item unit (Weapon/Armor/Trinket)
+          sell <itemId> <ask>    list a spare item for sale (covenant-enforced offer)
+          offers                 browse resting item offers
+          buyoffer <offerId>     buy an offer; you pay the seller directly (covenant-enforced)
+          canceloffer <offerId>  reclaim your unsold offer after expiry (no server trust)
           info                   chain backend info
           quit                   exit
         heroes can be referenced by list number (1, 2, …) or id prefix.
@@ -804,6 +812,117 @@ public class GameClient(string serverUrl) : IAsyncDisposable
         var hero = ResolveHero(heroRef);
         var result = await PostAsync<EquipResponse>($"/api/heroes/{hero.Id}/unequip", new UnequipRequest(slot));
         Console.WriteLine($"  ✓ {result.Hero.Name} unequipped {slot} — the item unit is free for another hero");
+    }
+
+    // ── Marketplace: resting item offers (covenant-enforced, buyer-funded) ──
+
+    /// <summary>Lists a spare item unit for sale, then deposits it into the offer address from the player's own wallet.</summary>
+    private async Task SellAsync(string itemId, string askText)
+    {
+        RequireSession();
+        if (!long.TryParse(askText, out var ask) || ask <= 0)
+            throw new GameClientException("ask must be a positive number of sats");
+        var offer = await PostAsync<CreateOfferResponse>("/api/offers", new CreateOfferRequest(itemId, ask));
+        Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for one {itemId}");
+        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
+        Console.WriteLine($"    listed — buyers run 'offers' then 'buyoffer {offer.OfferId}'");
+    }
+
+    /// <summary>Deposits one item unit into the offer address from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
+    private async Task DepositOfferAsync(string offerId, string offerAddress, string itemAssetId)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fund-offer", new { OfferId = offerId });
+            Console.WriteLine("    deposited the item unit into the offer (simulated wallet)");
+            return;
+        }
+        var wallet = await WalletAsync();
+        var txid = await wallet.SendAssetAsync(offerAddress, itemAssetId, 1);
+        Console.WriteLine($"    deposited one item unit into the offer address from your wallet (tx {ShortId(txid)})");
+    }
+
+    private async Task ListOffersAsync()
+    {
+        var offers = await GetAsync<List<OfferDto>>("/api/offers");
+        if (offers.Count == 0)
+        {
+            Console.WriteLine("  no offers resting — list one with 'sell <itemId> <askSats>'");
+            return;
+        }
+        Console.WriteLine("  offer              item              ask       seller");
+        foreach (var o in offers)
+            Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}");
+        Console.WriteLine("  'buyoffer <offerId>' to buy — you pay the seller directly; the covenant enforces the exact ask");
+    }
+
+    /// <summary>
+    /// Buys a resting offer. In NArk mode the buyer rebuilds the offer covenant
+    /// LOCALLY from its public params, funds the ask from their OWN wallet, and
+    /// takes the item through the emulator — the server is only consulted for the
+    /// (verifiable) params, and the covenant refuses any underpayment.
+    /// </summary>
+    private async Task BuyOfferAsync(string offerId)
+    {
+        RequireSession();
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fulfill-offer", new { OfferId = offerId });
+            Console.WriteLine($"  ✓ bought offer {ShortId(offerId)} — item delivered, seller paid (simulated wallet)");
+            return;
+        }
+
+        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
+        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
+            ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
+
+        var wallet = await WalletAsync();
+        Console.WriteLine($"    rebuilding the offer covenant locally (ask {offer.AskSats} sats to {ShortId(offer.SellerAddress)})…");
+        await Chain.Covenants.OfferFulfillFlow.FulfillAsync(wallet, new Uri(emulatorUri), offer);
+        Console.WriteLine("    fulfilment co-signed — waiting for the item to land in your wallet…");
+        await wallet.WaitForAssetAsync(offer.ItemAssetId, TimeSpan.FromSeconds(90));
+        Console.WriteLine($"  ✓ bought offer {ShortId(offerId)} — you paid {offer.AskSats} sats and now hold the item");
+    }
+
+    /// <summary>
+    /// Cancels an unsold offer, reclaiming the item after the covenant's expiry.
+    /// In NArk mode the contract is rebuilt LOCALLY and the reclaim is spent by
+    /// the seller's own wallet through the emulator (gated on the chain clock).
+    /// </summary>
+    private async Task CancelOfferAsync(string offerId)
+    {
+        RequireSession();
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/reclaim-offer", new { OfferId = offerId });
+            Console.WriteLine($"  ✓ offer {ShortId(offerId)} cancelled — item returned (simulated wallet)");
+            return;
+        }
+
+        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
+        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
+            ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
+        var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
+            ?? throw new GameClientException("no esplora API for chain time — set ARKADE_HEROES_ESPLORA (e.g. http://localhost:8999/api/v1)");
+
+        var wallet = await WalletAsync();
+        Console.WriteLine($"    rebuilding the offer covenant locally (reclaim unlocks at chain time {offer.RefundAfterUnixSeconds})…");
+        try
+        {
+            await Chain.Covenants.OfferReclaimFlow.ReclaimAsync(
+                wallet, new Uri(emulatorUri), offer,
+                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct));
+        }
+        catch (Chain.Covenants.RefundNotYetDueException ex)
+        {
+            Console.WriteLine($"    not yet: reclaim unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
+            return;
+        }
+        Console.WriteLine("    reclaim co-signed — waiting for the item to return to your wallet…");
+        await wallet.WaitForAssetAsync(offer.ItemAssetId, TimeSpan.FromSeconds(90));
+        Console.WriteLine($"  ✓ offer {ShortId(offerId)} cancelled — the item is back in your wallet");
     }
 
     private async Task ChainInfoAsync()
