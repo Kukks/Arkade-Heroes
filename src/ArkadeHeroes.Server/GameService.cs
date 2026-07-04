@@ -235,18 +235,21 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var matchId = NewId("match");
 
         FeeInvoice? invoice = null;
-        string? escrowAddress = null;
+        string? escrowChallenger = null;
+        string? escrowDefender = null;
         if (wagerSats > 0)
         {
             if (mode == "covenant")
             {
-                // The escrow covenant bakes in THIS match's seed commitment,
-                // both players' addresses, AND the game oracle key — the same
-                // key that signs progression receipts authorizes settlement.
+                // The per-party escrow covenants bake in THIS match's seed
+                // commitment, both players' addresses, the game oracle key
+                // (the receipt key), and a timelocked refund leaf per party.
                 var escrow = await chain.CreateWagerEscrowAsync(
                     matchId, player.Id, defender.OwnerId, wagerSats,
-                    Convert.FromHexString(commitmentHex), receipts.PublicKeyHex, ct);
-                escrowAddress = escrow.EscrowAddress;
+                    Convert.FromHexString(commitmentHex), receipts.PublicKeyHex,
+                    DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+                escrowChallenger = escrow.ChallengerEscrowAddress;
+                escrowDefender = escrow.DefenderEscrowAddress;
             }
             else
             {
@@ -264,7 +267,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             CommitmentHex = commitmentHex,
             WagerSats = wagerSats,
             Mode = mode,
-            EscrowAddress = escrowAddress,
+            EscrowChallengerAddress = escrowChallenger,
+            EscrowDefenderAddress = escrowDefender,
             ChallengerInvoiceId = invoice?.InvoiceId,
             DefenderPlayerId = defender.OwnerId,
         };
@@ -325,7 +329,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             {
                 if (!await chain.IsEscrowFundedAsync(session.Id, ct))
                     throw new GameRuleException(
-                        $"The escrow is not fully funded — both players must pay {session.WagerSats} sats to {session.EscrowAddress}.");
+                        $"The escrow is not fully funded — each player must stake {session.WagerSats} sats to their own escrow address.");
             }
             else
             {

@@ -43,8 +43,19 @@ public record HeroMintResult(string AssetId, string ArkTxId);
 
 public record ItemDeliveryResult(string ItemAssetId, string ArkTxId);
 
-/// <summary>A per-match covenant escrow both players stake into from their own wallets.</summary>
-public record WagerEscrowInfo(string MatchId, string EscrowAddress, long StakeSats, long PotSats);
+/// <summary>
+/// A per-match covenant escrow: PER-PARTY stake addresses (coinflip's shape).
+/// Each party stakes into their own escrow VTXO; the settle branches sweep
+/// both atomically, and each escrow carries a timelocked refund leaf paying
+/// ONLY its own party — liveness without the server.
+/// </summary>
+public record WagerEscrowInfo(
+    string MatchId,
+    string ChallengerEscrowAddress,
+    string DefenderEscrowAddress,
+    long StakeSats,
+    long PotSats,
+    long RefundAfterUnixSeconds);
 
 /// <summary>
 /// The game's view of Arkade under the non-custodial mandate: players are
@@ -99,7 +110,8 @@ public interface IChainService
     /// </summary>
     Task<WagerEscrowInfo> CreateWagerEscrowAsync(
         string matchId, string challengerPlayerId, string defenderPlayerId,
-        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, CancellationToken ct = default);
+        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex,
+        long refundAfterUnixSeconds, CancellationToken ct = default);
 
     /// <summary>True once BOTH exact-stake VTXOs sit at the escrow address.</summary>
     Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default);

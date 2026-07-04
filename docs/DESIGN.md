@@ -109,5 +109,6 @@ Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile 
 | Genome derivation | server, commit–reveal auditable + client-recomputed | covenant + oracle/VRF |
 | Match outcome | server, commit–reveal auditable + client-replayable | covenant escrow, emulator-enforced |
 | Progression (XP/levels) | **signed receipts, player-held, replayable by anyone** (`ReceiptVerifier`; server DB is a cache) | + XP as on-chain asset deliveries |
-| Fees/wagers | client-paid invoices, on-chain verified; **wagered matches offer covenant mode: per-match escrow (seed commitment baked in), player-staked, emulator-settled — live in the game flow** | oracle-authorized branches (CHECKSIGFROMSTACK over receipts), forfeit/refund tapleaves |
+| Fees/wagers | client-paid invoices, on-chain verified; **wagered matches offer covenant mode: per-match escrow (seed commitment baked in), player-staked, emulator-settled — live in the game flow**; settle branches are **oracle-authorized** (per-branch CHECKSIGFROMSTACK message signed by the game key) | + oracle messages derived from receipts |
+| Wager liveness (abandoned match) | **per-party escrows with timelocked refund leaves — after expiry the staker reclaims with no oracle, no counterparty, no server** (CLTV tapleaf; submit-once after chain time passes expiry — see contracts/README timelock invariants) | client `refund` command + watchtower-friendly pre-built claims |
 | Custody | player self-custody of heroes + funds (embedded wallet) | same, plus unilateral exit |

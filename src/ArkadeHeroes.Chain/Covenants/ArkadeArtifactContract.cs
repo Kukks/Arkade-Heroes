@@ -2,12 +2,20 @@ using NArk.Abstractions.Contracts;
 using NArk.Abstractions.Extensions;
 using NArk.Abstractions.Scripts;
 using NArk.Core.Scripts;
+using NBitcoin;
 using NBitcoin.Scripting;
 
 namespace ArkadeHeroes.Chain.Covenants;
 
-/// <summary>One named covenant spending path: its Arkade Script bytecode (fixed at instantiation — the tweak binds to these exact bytes) and the witness the packet entry expects at spend time.</summary>
-public sealed record ArkadeContractFunction(string Name, byte[] ArkadeScript);
+/// <summary>
+/// One named covenant spending path: its Arkade Script bytecode (fixed at
+/// instantiation — the tweak binds to these exact bytes) and the witness the
+/// packet entry expects at spend time. An optional <paramref name="LockTime"/>
+/// puts a CLTV gate INTO THE TAPLEAF (enforced on the checkpoint spend by the
+/// operator) — arkade-script-level CLTV is unusable because arkd derives the
+/// canonical ark tx with locktime 0.
+/// </summary>
+public sealed record ArkadeContractFunction(string Name, byte[] ArkadeScript, LockTime? LockTime = null);
 
 /// <summary>
 /// An Arkade covenant contract instantiated from compiled/authored artifact
@@ -44,7 +52,10 @@ public class ArkadeArtifactContract : ArkContract
             var tweaked = ArkadeScriptTweak
                 .ComputeCovenantPublicKey(emulatorSignerKeyHex, function.ArkadeScript)
                 .ToXOnlyPubKey();
-            var leaf = new CollaborativePathArkTapScript(serverKey, new NofNMultisigTapScript([tweaked]));
+            ScriptBuilder condition = new NofNMultisigTapScript([tweaked]);
+            if (function.LockTime is { } lockTime)
+                condition = new CompositeTapScript(new LockTimeTapScript(lockTime), condition);
+            var leaf = new CollaborativePathArkTapScript(serverKey, condition);
             _functions[function.Name] = (function, leaf);
         }
     }

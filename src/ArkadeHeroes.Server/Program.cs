@@ -129,16 +129,18 @@ api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, 
     var player = game.Authenticate(BearerToken(http));
     var (session, invoice) = await game.OpenMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId,
         request.WagerSats, request.Mode, ct);
+    // The challenger stakes into THEIR escrow address.
     return Results.Ok(new OpenMatchResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status,
-        invoice?.ToDto(), session.EscrowAddress, session.EscrowAddress is null ? 0 : session.WagerSats));
+        invoice?.ToDto(), session.EscrowChallengerAddress, session.EscrowChallengerAddress is null ? 0 : session.WagerSats));
 });
 
 api.MapPost("/matches/{matchId}/accept", async (string matchId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
     var (session, invoice) = await game.AcceptMatchAsync(player, matchId, ct);
+    // The defender stakes into THEIR escrow address.
     return Results.Ok(new AcceptMatchResponse(ToMatchDto(session), invoice?.ToDto(),
-        session.EscrowAddress, session.EscrowAddress is null ? 0 : session.WagerSats));
+        session.EscrowDefenderAddress, session.EscrowDefenderAddress is null ? 0 : session.WagerSats));
 });
 
 api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>

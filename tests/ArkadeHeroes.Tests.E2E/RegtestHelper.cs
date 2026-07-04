@@ -74,6 +74,46 @@ public static class RegtestHelper
         }
     }
 
+    /// <summary>
+    /// Mines n regtest blocks. Needed by timelocked (CLTV) spends: finality is
+    /// judged against the chain's median-time-past, which only advances with
+    /// fresh blocks — on a quiet regtest chain MTP lags wall-clock badly.
+    /// </summary>
+    public static Task<string> MineAsync(int blocks, CancellationToken ct = default)
+        => RegtestCli(["mine", blocks.ToString()], ct);
+
+    /// <summary>
+    /// The chain's median-time-past (getblockchaininfo.mediantime). Consensus
+    /// guarantees tip time &gt; MTP, so waiting for MTP ≥ a CLTV expiry is
+    /// sufficient for arkd's forfeit-closure gate under either blocktime
+    /// semantic (tip time or MTP).
+    /// </summary>
+    public static async Task<long> GetMedianTimeAsync(CancellationToken ct = default)
+    {
+        var json = await RegtestCli(["rpc", "getblockchaininfo"], ct);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("mediantime").GetInt64();
+    }
+
+    /// <summary>
+    /// Mines one block at a time until the chain's median-time-past reaches
+    /// <paramref name="unixSeconds"/>. Timelocked covenant spends must wait for
+    /// this BEFORE submitting: arkd records a failure event for a refused
+    /// submission, which permanently poisons that (deterministic) txid's event
+    /// stream — a later accepted resubmission is never projected to the VTXO set.
+    /// </summary>
+    public static async Task WaitForChainTimeAsync(long unixSeconds, TimeSpan timeout, CancellationToken ct = default)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await GetMedianTimeAsync(ct) >= unixSeconds) return;
+            await MineAsync(1, ct);
+            await Task.Delay(500, ct);
+        }
+        throw new TimeoutException($"Chain median time did not reach {unixSeconds} within {timeout}.");
+    }
+
     /// <summary>Waits until arkd reports ready (wallet unlocked and synced).</summary>
     public static async Task WaitForArkdReadyAsync(TimeSpan timeout)
     {

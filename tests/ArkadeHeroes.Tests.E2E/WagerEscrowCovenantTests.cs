@@ -76,25 +76,38 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         const string matchId = "e2e-covenant-match";
         var challengerPkScript = ArkAddress.Parse(_challenger.Address).ScriptPubKey;
         var defenderPkScript = ArkAddress.Parse(_defender.Address).ScriptPubKey;
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(); // refunds not in play here
 
-        var escrow = new ArkadeArtifactContract(
-            "wager-escrow", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
-            [
-                new ArkadeContractFunction("settleToChallenger",
-                    ArkadeCovenants.SettleAuthorized(
-                        ArkadeCovenants.SettleMessage(matchId, challengerWon: true), oraclePk,
-                        commitment, challengerPkScript, Pot, Stake)),
-                new ArkadeContractFunction("settleToDefender",
-                    ArkadeCovenants.SettleAuthorized(
-                        ArkadeCovenants.SettleMessage(matchId, challengerWon: false), oraclePk,
-                        commitment, defenderPkScript, Pot, Stake)),
-            ]);
-        var escrowAddress = escrow.GetArkAddress().ToString(serverInfo.Network == Network.Main);
+        // Per-party escrows (coinflip shape): both carry both settle branches;
+        // each carries a refund leaf paying only its own party.
+        ArkadeContractFunction[] SettleBranches() =>
+        [
+            new("settleToChallenger",
+                ArkadeCovenants.SettleAuthorized(
+                    ArkadeCovenants.SettleMessage(matchId, challengerWon: true), oraclePk,
+                    commitment, challengerPkScript, Pot, Stake)),
+            new("settleToDefender",
+                ArkadeCovenants.SettleAuthorized(
+                    ArkadeCovenants.SettleMessage(matchId, challengerWon: false), oraclePk,
+                    commitment, defenderPkScript, Pot, Stake)),
+        ];
+        var challengerEscrow = new ArkadeArtifactContract(
+            "escrow-challenger", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [.. SettleBranches(), new("refund", ArkadeCovenants.RefundTo(challengerPkScript, Stake), new LockTime((uint)refundAfter))]);
+        var defenderEscrow = new ArkadeArtifactContract(
+            "escrow-defender", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [.. SettleBranches(), new("refund", ArkadeCovenants.RefundTo(defenderPkScript, Stake), new LockTime((uint)refundAfter))]);
+        var isMain = serverInfo.Network == Network.Main;
 
-        // Each player stakes from their OWN wallet into the shared escrow.
-        await _challenger.SendAsync(escrowAddress, Stake);
-        await _defender.SendAsync(escrowAddress, Stake);
-        var stakes = await CovenantSpender.WaitForVtxosAsync(_challenger, escrow, 2, TimeSpan.FromSeconds(45));
+        // Each player stakes from their OWN wallet into THEIR OWN escrow.
+        await _challenger.SendAsync(challengerEscrow.GetArkAddress().ToString(isMain), Stake);
+        await _defender.SendAsync(defenderEscrow.GetArkAddress().ToString(isMain), Stake);
+        var stakes = new[]
+        {
+            await CovenantSpender.WaitForVtxoAsync(_challenger, challengerEscrow, TimeSpan.FromSeconds(45)),
+            await CovenantSpender.WaitForVtxoAsync(_challenger, defenderEscrow, TimeSpan.FromSeconds(45)),
+        };
+        var escrows = new[] { challengerEscrow, defenderEscrow };
 
         // The oracle (game key) signs ONLY the true outcome's branch message.
         byte[] SignSettle(NBitcoin.Secp256k1.ECPrivKey key, bool challengerWon)
@@ -109,9 +122,9 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         // Witness: [outputIndex, otherInputIndex, serverSeed, oracleSig] — sig on top.
         CovenantSpender.CovenantInput[] SettleInputs(byte[] seed, byte[] oracleSig) =>
         [
-            new(escrow, "settleToChallenger",
+            new(escrows[0], "settleToChallenger",
                 [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(1), seed, oracleSig], stakes[0]),
-            new(escrow, "settleToChallenger",
+            new(escrows[1], "settleToChallenger",
                 [ArkadeCovenants.EncodeIndex(0), ArkadeCovenants.EncodeIndex(0), seed, oracleSig], stakes[1]),
         ];
 
@@ -154,5 +167,56 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         Assert.Equal(2, response.SignedCheckpointTxs.Length);
 
         await _challenger.WaitForBalanceAsync(balanceBefore + Pot, TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public async Task AbandonedStakeIsRefundableAfterExpiry_WithoutTheServer()
+    {
+        var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+
+        // A match nobody ever accepted: the challenger staked, the defender
+        // vanished. The refund leaf lets the challenger reclaim after expiry
+        // with NO oracle, NO defender, NO game server — pure covenant.
+        var challengerPkScript = ArkAddress.Parse(_challenger.Address).ScriptPubKey;
+        var refundAfter = DateTimeOffset.UtcNow.AddSeconds(8).ToUnixTimeSeconds();
+
+        var escrow = new ArkadeArtifactContract(
+            "escrow-refund-probe", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
+            [new ArkadeContractFunction("refund",
+                ArkadeCovenants.RefundTo(challengerPkScript, Stake), new LockTime((uint)refundAfter))]);
+        var isMain = serverInfo.Network == Network.Main;
+
+        await _challenger.SendAsync(escrow.GetArkAddress().ToString(isMain), Stake);
+        var stake = await CovenantSpender.WaitForVtxoAsync(_challenger, escrow, TimeSpan.FromSeconds(45));
+
+        CovenantSpender.CovenantInput[] RefundInputs(long txLockTime) =>
+        [
+            new(escrow, "refund", [ArkadeCovenants.EncodeIndex(0)], stake,
+                LockTime: new LockTime((uint)txLockTime)),
+        ];
+        TxOut[] refundOutputs = [new TxOut(Money.Satoshis(Stake), challengerPkScript)];
+
+        // Before expiry: refused by arkd's forfeit-closure gate (the leaf's
+        // CLTV is judged against chain blocktime). The probe deliberately uses
+        // a NON-canonical tx locktime (expiry+1): arkd records a failure event
+        // under the submitted txid, permanently poisoning that txid's event
+        // stream on this arkd version — a disposable probe txid keeps the
+        // canonical refund txid clean for the real claim below.
+        var early = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, RefundInputs(refundAfter + 1), refundOutputs));
+        Assert.False(early is TimeoutException, $"expected a refusal, got: {early.Message}");
+
+        // Wait until the CHAIN's clock (not the wall clock) passes expiry,
+        // then submit the canonical refund exactly ONCE. Never submit early
+        // and retry: each refusal would poison the canonical txid forever.
+        await RegtestHelper.WaitForChainTimeAsync(refundAfter, TimeSpan.FromSeconds(120));
+        var balanceBefore = await _challenger.GetBalanceSatsAsync();
+        var refund = await CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, RefundInputs(refundAfter), refundOutputs);
+        Assert.False(string.IsNullOrEmpty(refund.SignedArkTx));
+
+        await _challenger.WaitForBalanceAsync(balanceBefore + Stake, TimeSpan.FromSeconds(90));
     }
 }

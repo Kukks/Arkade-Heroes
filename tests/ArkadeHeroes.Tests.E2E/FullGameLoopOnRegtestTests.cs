@@ -237,8 +237,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         // Both players stake into the escrow from their OWN wallets.
         await aliceWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
         var covenantAccept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{covenantOpen.MatchId}/accept");
-        Assert.Equal(covenantOpen.EscrowAddress, covenantAccept.EscrowAddress);
-        await bobWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
+        // Per-party escrows: the defender stakes into their OWN address.
+        Assert.NotNull(covenantAccept.EscrowAddress);
+        Assert.NotEqual(covenantOpen.EscrowAddress, covenantAccept.EscrowAddress);
+        await bobWallet.SendAsync(covenantAccept.EscrowAddress!, covenantWager);
 
         var aliceBeforeSettle = await aliceWallet.GetBalanceSatsAsync();
         var bobBeforeSettle = await bobWallet.GetBalanceSatsAsync();

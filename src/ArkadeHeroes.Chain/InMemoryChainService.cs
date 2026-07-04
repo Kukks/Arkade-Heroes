@@ -154,12 +154,15 @@ public class InMemoryChainService : IChainService
 
     public async Task<WagerEscrowInfo> CreateWagerEscrowAsync(
         string matchId, string challengerPlayerId, string defenderPlayerId,
-        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, CancellationToken ct = default)
+        long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex,
+        long refundAfterUnixSeconds, CancellationToken ct = default)
     {
         await GetPlayerAddressAsync(challengerPlayerId, ct);
         await GetPlayerAddressAsync(defenderPlayerId, ct);
         _escrows[matchId] = new Escrow(challengerPlayerId, defenderPlayerId, stakeSats, oraclePubKeyHex);
-        return new WagerEscrowInfo(matchId, $"sim-escrow-{matchId}", stakeSats, stakeSats * 2);
+        return new WagerEscrowInfo(matchId,
+            $"sim-escrow-{matchId}-challenger", $"sim-escrow-{matchId}-defender",
+            stakeSats, stakeSats * 2, refundAfterUnixSeconds);
     }
 
     public Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default)

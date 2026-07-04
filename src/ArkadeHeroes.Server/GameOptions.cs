@@ -11,4 +11,7 @@ public class GameOptions
 
     /// <summary>Fixed 32-byte hex key for signing progression receipts; ephemeral per process when unset.</summary>
     public string? ReceiptKeyHex { get; set; }
+
+    /// <summary>How long after a covenant match opens its escrow refund leaves unlock (player liveness).</summary>
+    public TimeSpan WagerEscrowRefundAfter { get; set; } = TimeSpan.FromHours(24);
 }

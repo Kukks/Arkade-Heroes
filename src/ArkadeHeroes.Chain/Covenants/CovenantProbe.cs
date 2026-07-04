@@ -45,12 +45,23 @@ public static class CovenantSpender
         throw new TimeoutException($"Expected {count} VTXO(s) at the covenant address within {timeout}.");
     }
 
-    /// <summary>One covenant input of a multi-input spend: which contract/function/witness spends which VTXO.</summary>
+    /// <summary>
+    /// One covenant input of a multi-input spend: which contract/function/witness
+    /// spends which VTXO. Timelocked functions set LockTime (tx-level) and a
+    /// non-final Sequence.
+    /// WARNING (timelocked spends): submit only when the chain's blocktime has
+    /// passed the leaf's CLTV. A refused submission poisons the canonical txid's
+    /// event stream on arkd (v0.9.9-rc.1) — a later accepted resubmission of the
+    /// SAME txid finalizes but its VTXOs are never created. See
+    /// <see cref="ArkadeCovenants.RefundTo"/>.
+    /// </summary>
     public sealed record CovenantInput(
         ArkadeArtifactContract Contract,
         string FunctionName,
         IReadOnlyList<byte[]> Witness,
-        ArkVtxo Vtxo);
+        ArkVtxo Vtxo,
+        LockTime? LockTime = null,
+        Sequence? Sequence = null);
 
     /// <summary>
     /// Spends a covenant VTXO through the named function. <paramref name="gameOutputs"/>
@@ -107,13 +118,18 @@ public static class CovenantSpender
         for (var i = 0; i < inputs.Count; i++)
         {
             var input = inputs[i];
+            // Timelocked leaves: LockTime/Sequence flow into the coin so the
+            // CHECKPOINT transaction (which spends the leaf) carries them —
+            // that is where the operator enforces the CLTV.
+            var sequence = input.Sequence
+                ?? (input.LockTime is { } lt && lt != LockTime.Zero ? new Sequence(0xFFFFFFFE) : null);
             coins.Add(new ArkCoin(
                 walletId, input.Contract, input.Vtxo.CreatedAt, input.Vtxo.ExpiresAt, input.Vtxo.ExpiresAtHeight,
                 input.Vtxo.OutPoint, input.Vtxo.TxOut,
                 signerDescriptor: null,
                 spendingScriptBuilder: input.Contract.LeafFor(input.FunctionName),
                 spendingConditionWitness: null,
-                lockTime: null, sequence: null,
+                lockTime: input.LockTime, sequence: sequence,
                 input.Vtxo.Swept, input.Vtxo.Unrolled, input.Vtxo.Assets));
             entries.Add(new EmulatorEntry((ushort)i, input.Contract.ScriptFor(input.FunctionName), input.Witness));
         }
@@ -128,6 +144,22 @@ public static class CovenantSpender
         var builder = new TransactionHelpers.ArkTransactionBuilder(
             transport, safetyService, walletProvider, intentStorage);
         var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
+
+        // Timelocked leaves: arkd requires the CHECKPOINT and the ARK tx to
+        // carry the SAME locktime (each side's canonical form is derived from
+        // the other — mismatches surface as CHECKPOINT_MISMATCH/ARK_TX_MISMATCH).
+        // The checkpoint got it from coin.LockTime; apply it to the ark tx too.
+        var lockTime = inputs.Max(i => i.LockTime?.Value ?? 0);
+        if (lockTime > 0)
+        {
+            var gtx = arkTx.GetGlobalTransaction();
+            gtx.LockTime = new LockTime(lockTime);
+            foreach (var txin in gtx.Inputs)
+                txin.Sequence = new Sequence(0xFFFFFFFE);
+            var relocked = PSBT.FromTransaction(gtx, serverInfo.Network, PSBTVersion.PSBTv0);
+            relocked.UpdateFrom(arkTx);
+            arkTx = relocked;
+        }
 
         var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));
         return await emulator.SubmitTxAsync(new EmulatorSubmitRequest(

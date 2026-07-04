@@ -163,6 +163,30 @@ public static class ArkadeCovenants
         ];
 
     /// <summary>
+    /// Refund covenant: the stake can be reclaimed ONLY to the party's own
+    /// address (payTo pins it), so anyone (the party, a watchtower) may
+    /// trigger the refund without being able to steal. The TIME gate lives in
+    /// the tapleaf (a CLTV condition on the leaf, enforced on the checkpoint
+    /// spend by the operator) — pass the expiry as the function's LockTime.
+    /// Arkade-script CLTV cannot gate the ark tx: arkd derives the canonical
+    /// ark transaction with locktime 0 (ARK_TX_MISMATCH otherwise).
+    ///
+    /// SUBMIT-ONCE DISCIPLINE: the canonical refund tx is fully deterministic
+    /// (arkd rebuilds it with locktime = the leaf's CLTV and sequence
+    /// 0xFFFFFFFE — zero degrees of freedom). arkd records a failure event for
+    /// every refused submission under the submitted txid, and its event replay
+    /// treats the failed flag as sticky: a later ACCEPTED resubmission of the
+    /// same txid finalizes at the RPC level but is never projected into the
+    /// VTXO set (arkd v0.9.9-rc.1, internal/core/domain/offchain_tx.go). So
+    /// wait for the CHAIN's clock to pass the expiry, then submit exactly once
+    /// — never submit early and retry.
+    ///
+    ///   Witness: [outputIndex]
+    /// </summary>
+    public static byte[] RefundTo(Script partyP2tr, long stakeSats)
+        => PayTo(partyP2tr, stakeSats);
+
+    /// <summary>
     /// Encode a non-negative integer as the minimal script-num byte string the
     /// introspection opcodes read for indices (0 → empty).
     /// </summary>

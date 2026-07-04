@@ -55,8 +55,9 @@ public class MatchSession
     /// <summary>"invoice" or "covenant" — how stakes are held and settled.</summary>
     public string Mode { get; init; } = "invoice";
 
-    /// <summary>Covenant mode: the escrow address both players stake into.</summary>
-    public string? EscrowAddress { get; set; }
+    /// <summary>Covenant mode: PER-PARTY escrow addresses each player stakes into.</summary>
+    public string? EscrowChallengerAddress { get; set; }
+    public string? EscrowDefenderAddress { get; set; }
 
     /// <summary>Stake invoices the players' own wallets must pay (invoice mode; null for friendly matches).</summary>
     public string? ChallengerInvoiceId { get; init; }

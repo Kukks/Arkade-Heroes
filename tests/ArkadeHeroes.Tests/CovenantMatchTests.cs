@@ -41,7 +41,9 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
         var accept = (await (await bob.PostAsync($"/api/matches/{open.MatchId}/accept", null))
             .Content.ReadFromJsonAsync<AcceptMatchResponse>())!;
         Assert.Null(accept.StakeInvoice);
-        Assert.Equal(open.EscrowAddress, accept.EscrowAddress);
+        // Per-party escrows: each side stakes into their OWN address.
+        Assert.NotNull(accept.EscrowAddress);
+        Assert.NotEqual(open.EscrowAddress, accept.EscrowAddress);
 
         var underfunded = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
             new FightRequest("early"));
