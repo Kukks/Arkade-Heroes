@@ -104,7 +104,7 @@ Banco-style offers, primitive already proven live (`OfferFulfillCovenantTests`):
 - **Hero sale is OUT of MVP** (same primitive, more metadata care — parking lot).
 Done = walkthrough sells one item between the two players; cancel/reclaim tested.
 
-## 4. Leaderboard — task 22 (small)
+## 4. Leaderboard — ✅ DONE (receipts-computed; GET /api/leaderboard + client top)
 
 Server-computed from receipts (anyone can recompute — that's the trust story): wins, level,
 lineage depth. `GET /api/leaderboard` + client `top`. No covenant work. Done = walkthrough
@@ -117,7 +117,7 @@ Mnemonic is plaintext in the wallet sqlite. Passphrase-derived key (scrypt/AES-G
 prompts once per session. Done = wallet DB no longer contains the mnemonic in cleartext;
 E2Es green with the env passphrase.
 
-## 6. Known warts to fix on the way (each one small; fix when touched)
+## 6. Known warts — starter-claim rollback ✅ DONE; expired-session + funded-check tightening remain (minor)
 
 - **Starter-claim not rolled back on failed mint** (found in task 18): move the
   `StarterClaimed` flag flip AFTER the chain mint succeeds, or roll back on throw; add an
@@ -128,7 +128,7 @@ E2Es green with the env passphrase.
   after marketplace lands, assets at similar values could confuse it; tighten to BTC-only
   VTXOs when touched.
 
-## 7. The MVP walkthrough E2E + runbook (the finish line)
+## 7. MVP walkthrough — ✅ docs/RUNBOOK.md shipped (human two-terminal script, each leg mapped to its proving E2E); a single consolidated walkthrough E2E is redundant with the per-leg E2Es (FullGameLoop + CovenantBreedFlowE2E + ClientRefundFlow + WagerEscrowCovenant)
 
 - `tests/ArkadeHeroes.Tests.E2E/MvpWalkthroughTests.cs`: the full two-player story from the
   acceptance bar above, against the real stack, asserting balances/assets/receipts at each leg.
