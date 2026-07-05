@@ -123,7 +123,16 @@ closed, reconciled from on-chain truth); `GameService.CreateOfferAsync` (free-un
 held − equipped − pending-reserved, seller's own listings reconciled first). Endpoints: `POST
 /api/offers`, `GET /api/offers`, `GET /api/offers/{id}`, `GET /api/offers/{id}/params` (buyer's
 trustless rebuild basis) + InMemory dev hooks. Client `sell` / `offers` / `buyoffer` /
-`canceloffer`. **Hero sale OUT of MVP** (parking lot).
+`canceloffer`. **Hero sales SHIPPED (post-MVP extension)** — the offer covenant is asset-agnostic,
+so selling a HERO (a unique supply-1 asset) reuses it wholesale: `CreateHeroOfferAsync` (factored
+`CreateOfferForAssetAsync` core), `POST /api/offers/hero`, buyer `ClaimPurchasedHeroAsync` (verify
+the buyer holds the hero asset → reassign the record + strip equipment, like transfer), client
+`sellhero` / `buyhero`. Proven: `HeroSaleTests` (4, InMemory lifecycle + guards),
+`ClientGameLoopTests` (hero sale through the real client), and live
+`RestingOffer_SellsAWholeUniqueAsset` (a supply-1 asset rests whole + sells, seller ends with
+none). A server-driven live hero-sale E2E is NOT added: the seller depositing a treasury-minted
+hero would hit the same `VTXO_RECOVERABLE` coin-selection artifact as an item resale (documented
+below), while the covenant itself is proven asset-agnostic.
 
 **Coverage.** Live on regtest: `CovenantOfferProbeTests` — honest buyer-funded fulfilment
 (seller paid, item to buyer) AND adversarial underpayment refused (buyer shorts the seller →
@@ -195,8 +204,8 @@ against the client's actual command output.
 ## 8. Post-MVP parking lot (explicitly OUT of scope — do not start before 1–7)
 
 CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
-poisoned-txid bug report (`19-backlog.md` §24 has the trace), hero marketplace, pre-built
-recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
+poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
+item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
 matchmaking, wallet import/restore UX, **expired-session bookkeeping** (mark abandoned covenant
 matches `expired` via a per-party escrow-funded probe + an abandonment window, so `GET
 /api/matches` drops refunded rows — see item 6; needs per-party state to avoid mis-marking live
