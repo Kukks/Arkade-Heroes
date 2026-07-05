@@ -235,8 +235,10 @@ against the client's actual command output.
 
 ## 8. Post-MVP parking lot (explicitly OUT of scope — do not start before 1–7)
 
-CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
-poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
+~~CI (GitHub Actions: unit always; E2E behind a regtest service container)~~ (✅ SHIPPED —
+`.github/workflows/ci.yml`, unit gate on push/PR + manual E2E), ~~upstream arkd
+poisoned-txid bug report~~ (📄 DRAFTED — `docs/upstream/arkd-poisoned-txid.md`, ready to file to
+`arkade-os/arkd`; NOT yet filed), ~~hero marketplace~~ (SHIPPED — see
 item 3), ~~pre-built recovery PSBTs/watchtower handoff~~ (📄 DOCUMENTED — `docs/RECOVERY.md`: Layers 1–2
 (seed restore + covenant refund/reclaim) shipped + live-tested; Layer 3 unilateral exit + watchtower
 is NArk-provided (`UnilateralExitService`/`ExitWatchtowerService`), design + exact DI wiring
