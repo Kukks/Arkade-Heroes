@@ -54,6 +54,15 @@ public readonly struct Genome : IEquatable<Genome>
     public byte AppearanceTitleGene => Bytes[14];
     public byte AppearancePaletteGene => Bytes[15];
 
+    /// <summary>Base offset of the trait-category block in the reserved region.</summary>
+    private const int TraitBase = 16;
+
+    /// <summary>The EXPRESSED (visible) gene of a trait category — byte 16 + c*2.</summary>
+    public byte DominantGene(TraitCategory category) => Bytes[TraitBase + (int)category * 2];
+
+    /// <summary>The HIDDEN (recessive) gene of a trait category — byte 16 + c*2 + 1.</summary>
+    public byte RecessiveGene(TraitCategory category) => Bytes[TraitBase + (int)category * 2 + 1];
+
     public string ToHex() => Convert.ToHexString(Bytes).ToLowerInvariant();
 
     public static Genome FromHex(string hex)
