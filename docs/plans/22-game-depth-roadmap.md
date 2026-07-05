@@ -73,17 +73,33 @@ escrow-params endpoint serves a trustless rebuild; the only remaining gap is a c
 refund COMMAND, a cross-cutting feature NEITHER breed nor merge escrows have yet (only
 wager/match escrows do via `refund <matchId>`).
 
-### 4. Hardcore death-match covenant — hero sink + PvP depth — 📋 TODO (needs the foundation)
+### 4. Hardcore death-match covenant — hero sink + PvP depth — ✅ SHIPPED (both rungs, covenant live)
 
-A winner-takes-all match where BOTH players stake their HERO. The loser's hero may
-PERMANENTLY DIE (burned); the winner gets much more XP, the loser's EQUIPMENT, and
-absorbs one of the loser's traits into an open category. Because a hero is a
-non-custodial asset, the loser must stake + consent up front — the covenant enforces
-"on the oracle-signed settle, the loser's hero (+ gear) burns/transfers to the winner."
-Open forks: is death guaranteed or a survival roll?; exactly what transfers (equipment
-always; a trait absorb into an empty slot); the covenant (both stake heroes, reuse the
-wager-escrow settle shape, enforce burn + transfer). The biggest and most novel covenant
-piece — the mandate's showpiece for consent-based, covenant-enforced stakes.
+A winner-takes-all match where BOTH players stake their HERO; consent is structural (you
+opt in by staking into your own per-party escrow, reclaimable via a timelocked refund
+leaf). Brainstorm decisions (2026-07-05): permadeath is GUARANTEED (the loser's hero
+always burns — the truest supply sink; survival-roll + capture rejected); matchmaking is
+OPEN-BUT-WARNED (any pairing, but the client shows the level gap + `Matchmaking.Favor`
+favored/even/underdog before you stake); a death-match awards NO XP (the reward is the
+permakill; the risk is your own hero). The fight is the normal deterministic `BattleEngine`
+duel (`FairnessAudit` replays it → the winner is client-verifiable). Rung 1 = escrow/
+InMemory, client-audited. **Rung 2 = the LIVE settle covenant:** per-party
+`DeathMatchEscrowContracts` (mirrors `WagerEscrowContracts`) with two oracle-signed settle
+branches built on a NEW `ArkadeCovenants.SettleAuthorizedNoPot` (`CheckSigFromStackGate` +
+`Sha256Gate` + `OP_1` — NO sats `PayTo`, since the "pot" is heroes, routed by the packet;
+the `OP_1` leaves the single truthy stack result the arkade VM requires) + a timelocked
+refund leaf; `NArkChainService.SettleDeathMatchAsync` spends BOTH per-party escrows in one
+emulator-co-signed tx whose asset packet passes the winner's hero through to the winner and
+BURNS the loser's hero (input, no output — the merge true-burn). Client
+`deathmatch`/`accept-death`/`settle-death` with the pre-stake burn warning. Tests:
+`MatchmakingTests.Favor` + InMemory `DeathMatchFlowTests` + live `CovenantDeathMatchE2ETests`
+(loser hero gone from every wallet, winner retained, client-verifiable). **Follow-ups
+(parked):** covenant-staked GEAR transfer to the winner (the chosen spoil — deferred to
+keep rung 2 focused on the novel two-escrow burn/return; gear = fungible item units, staked
++ routed in the settle packet); the trait absorb (v2 — forces re-minting the winner since
+genomes are immutable); a client-facing death-match refund command; the structural
+`INSPECTOUTASSETLOOKUP` unification (script-enforce the burn/return, shared with breed/
+merge/offer).
 
 ### Parked ideas (from the 2026-07-05 brainstorm — don't lose)
 
