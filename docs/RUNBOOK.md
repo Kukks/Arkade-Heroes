@@ -148,6 +148,18 @@ wallet                     # Bob now holds the lucky-feather unit; Alice was pai
 # (to cancel an unsold offer instead of selling — after the reclaim window:)
 # Alice: canceloffer <offerId>    # rebuilds the covenant locally, reclaims the item
 ```
+Selling a HERO works the same way — the offer covenant is asset-agnostic, so a
+character (a unique asset) rests and sells through the identical machinery. After
+buying, the new owner claims game-side ownership (the hero moves to them with its
+equipment stripped, just like a transfer):
+```
+# Alice:
+sellhero 2 25000           # list hero #2 for sale; deposits the hero asset into the offer
+offers                     # your hero offer is listed as kind 'hero' (copy the offerId)
+# Bob:
+buyhero <offerId>          # funds the 25000-sat ask from HIS wallet, takes + claims the hero
+mine                       # the hero now appears among Bob's heroes
+```
 Regtest note: if `sell` fails with a `VTXO_RECOVERABLE` error, that is a known
 arkd/regtest quirk when re-spending a freshly treasury-delivered item VTXO (batch
 timing, not the game — mainnet's long horizons avoid it). The buyer-funded
