@@ -740,10 +740,10 @@ public class NArkChainService(
         var species = await EnsureSpeciesAssetAsync(ct);
         var playerAddress = await GetPlayerAddressAsync(playerId, ct);
         var isMain = serverInfo.Network == Network.Main;
-        // fee + two input carriers (base, sacrifice) + one fresh carrier for the fused
-        // hero: it lands on the PLAYER output, separate from the retired inputs (which go
-        // to the treasury sink), so — unlike breeding's shared child output — it needs its own dust.
-        var escrowSats = feeSats + 3 * serverInfo.Dust.Satoshi;
+        // fee + two input carriers (base, sacrifice). Same deposit shape as breeding:
+        // the player sends feeSats + the two hero VTXOs (each carrying dust). Execution
+        // splits that dust across the fused hero's output and the retired-inputs sink.
+        var escrowSats = feeSats + 2 * serverInfo.Dust.Satoshi;
 
         var parameters = new Covenants.MergeEscrowParams(
             playerAddress, baseAssetId, sacrificeAssetId, species,
@@ -831,7 +831,10 @@ public class NArkChainService(
         ]);
 
         var total = ordered.Aggregate(0L, (s, v) => s + (long)v.Amount);
-        var sinkSats = 2 * serverInfo.Dust.Satoshi;   // carriers for the two retired inputs
+        // One shared dust carrier holds BOTH retired inputs — Ark's dust minimum is
+        // per-output, not per-asset (breeding rides 3 assets on one output). That leaves
+        // the fused hero its own dust carrier on the player output from the same escrow.
+        var sinkSats = serverInfo.Dust.Satoshi;
         var inputs = ordered.Select(v => new Covenants.CovenantSpender.CovenantInput(
             contract, "merge",
             Covenants.ArkadeCovenants.BreedWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
