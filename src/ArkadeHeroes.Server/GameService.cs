@@ -256,6 +256,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // (their combined breed count) — a supply-side sats sink.
         var breedFee = BreedingPolicy.FeeSats(_options.BreedingFeeSats, parentA.BreedCount + parentB.BreedCount);
 
+        // Rarity-derived sterility: the rarest heroes can be born unable to breed,
+        // capping the supply of legendary lines. Deterministic from the genome.
+        if (Sterility.IsSterile(parentA.Genome))
+            throw new GameRuleException($"{parentA.Name} is sterile — it cannot breed.");
+        if (Sterility.IsSterile(parentB.Genome))
+            throw new GameRuleException($"{parentB.Name} is sterile — it cannot breed.");
+
         if (BreedingService.Validate(parentA, parentB, DateTimeOffset.UtcNow) is { } error)
             throw new GameRuleException(error);
 

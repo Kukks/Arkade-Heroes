@@ -190,4 +190,32 @@ public class TraitsAndRarityTests
         Assert.Equal("rare", board[0].Id); // the legendary sits on top
         Assert.Equal("Legendary", board[0].Rarity!.Tier);
     }
+
+    [Fact]
+    public void Sterility_CommonAndGen0_AreNeverSterile()
+    {
+        Assert.False(ArkadeHeroes.Core.Progression.Sterility.IsSterile(Blank())); // gen-0 / Common
+        Assert.Equal(0, ArkadeHeroes.Core.Progression.Sterility.ChancePercent(RarityTier.Common));
+        Assert.Equal(50, ArkadeHeroes.Core.Progression.Sterility.ChancePercent(RarityTier.Legendary));
+    }
+
+    [Fact]
+    public void Sterility_LegendariesRollBothWays_Deterministically()
+    {
+        int sterile = 0, fertile = 0;
+        Genome? oneSterile = null;
+        for (byte m = 0; m < 40; m++)
+        {
+            var b = new byte[32];
+            b[16 + (int)TraitCategory.Aura * 2] = 255; // Legendary
+            b[0] = m;
+            var g = new Genome(b);
+            if (ArkadeHeroes.Core.Progression.Sterility.IsSterile(g)) { sterile++; oneSterile ??= g; }
+            else fertile++;
+        }
+        Assert.True(sterile > 0 && fertile > 0, $"legendaries should roll both ways (sterile {sterile}, fertile {fertile})");
+        // Deterministic: the same genome always gives the same answer.
+        Assert.True(ArkadeHeroes.Core.Progression.Sterility.IsSterile(oneSterile!.Value));
+        Assert.True(ArkadeHeroes.Core.Progression.Sterility.IsSterile(oneSterile.Value));
+    }
 }

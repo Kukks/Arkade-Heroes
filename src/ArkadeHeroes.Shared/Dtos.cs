@@ -72,7 +72,8 @@ public record HeroDto(
     string? AssetId,
     string? MintArkTxId,
     ProvenanceDto? Provenance,
-    RarityDto? Rarity = null);
+    RarityDto? Rarity = null,
+    bool IsSterile = false);
 
 public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 

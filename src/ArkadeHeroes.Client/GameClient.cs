@@ -528,6 +528,7 @@ public class GameClient : IAsyncDisposable
                 Console.WriteLine("    carries   " + string.Join(", ",
                     rarity.CarriedRecessives.Select(t => $"{t.Category} [{t.Tier}]")) + "  (breeding potential)");
         }
+        if (hero.IsSterile) Console.WriteLine("    sterile   this hero cannot breed (a finite line)");
     }
 
     private async Task BreedAsync(string refA, string refB, bool covenant)
@@ -875,7 +876,8 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine("  #   hero            tier        score  gen");
         var rank = 1;
         foreach (var h in board)
-            Console.WriteLine($"  {rank++,-3} {h.Name,-15} {h.Rarity?.Tier,-11} {h.Rarity?.Score,5}  {h.Generation,3}");
+            Console.WriteLine($"  {rank++,-3} {h.Name,-15} {h.Rarity?.Tier,-11} {h.Rarity?.Score,5}  {h.Generation,3}" +
+                              (h.IsSterile ? "  (sterile)" : ""));
     }
 
     private async Task ListReceiptsAsync()

@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
+using ArkadeHeroes.Core.Progression;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -148,5 +151,34 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
                 new BreedCommitRequest(heroes[0].Id, heroes[1].Id)))
             .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
         Assert.Equal(4000, bred.Invoice!.AmountSats);
+    }
+
+    [Fact]
+    public async Task SterileHero_CannotBreed()
+    {
+        var (alice, _) = await _factory.RegisterAsync("Sterile-Alice");
+        var heroes = await alice.ClaimStartersAsync();
+        var store = _factory.Services.GetRequiredService<ArkadeHeroes.Server.GameStore>();
+
+        // Find a Legendary genome that rolls sterile (~50% chance → found fast).
+        Genome? sterileGenome = null;
+        for (byte m = 0; m < 200 && sterileGenome is null; m++)
+        {
+            var b = new byte[32];
+            b[16 + (int)TraitCategory.Aura * 2] = 255; // Legendary
+            b[0] = m;
+            var g = new Genome(b);
+            if (Sterility.IsSterile(g)) sterileGenome = g;
+        }
+        Assert.NotNull(sterileGenome);
+
+        // Inject the sterile hero, owned by Alice (OwnerId from a claimed starter).
+        store.Heroes["sterile"] = new Hero
+            { Id = "sterile", OwnerId = heroes[0].OwnerId, Name = "TheLast", Genome = sterileGenome!.Value, Generation = 3 };
+
+        var resp = await alice.PostAsJsonAsync("/api/breeding/commit",
+            new BreedCommitRequest("sterile", heroes[0].Id));
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Contains("sterile", await resp.Content.ReadAsStringAsync());
     }
 }

@@ -35,13 +35,17 @@ but is FLAT. Escalate it with breed count — mirror the doubling cooldown in
 sats: a real sats sink that complements the escalating cooldown. Independent of the
 trait foundation; can ship anytime.
 
-### 2. Sterility trait — hero sink — 📋 TODO (needs the foundation)
+### 2. Sterility — hero sink — ✅ SHIPPED (rarity-derived)
 
-A heritable trait (a foundation category, or a dedicated gene) that makes a hero
-STERILE with some probability, capping a lineage's breeding output — a supply brake.
-Open forks: deterministic vs probabilistic; downside-only, or a collectible tradeoff
-(a sterile hero is finite → potentially rarer/stronger, so it becomes a deliberate
-breeding endpoint). Interacts with rarity: a sterile legendary can never be reproduced.
+Rather than spend scarce genome space on a fertility gene, sterility is DERIVED from
+rarity: `Sterility.IsSterile(genome)` gives each hero a tier-scaled chance of being born
+unable to breed (Common 0% → Legendary 50%), rolled deterministically from a
+domain-separated hash of the (committed) genome — so it's verifiable, and Common/gen-0
+heroes are always fertile. `CommitBreedingAsync` refuses a sterile parent, so the rarest
+lines are self-limiting in supply (a sterile Legendary is truly finite — strong
+collectible value). Surfaced as `HeroDto.IsSterile` in `show`/`rarest`. No genome or
+covenant change. Tests: Sterility unit (bands, deterministic, rolls-both-ways) +
+`SterileHero_CannotBreed` integration.
 
 ### 3. Hero merging / fusion — hero sink — 📋 TODO (needs the foundation)
 
