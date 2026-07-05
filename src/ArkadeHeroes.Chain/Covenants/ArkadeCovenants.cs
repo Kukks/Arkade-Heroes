@@ -147,6 +147,12 @@ public static class ArkadeCovenants
             System.Text.Encoding.UTF8.GetBytes(
                 $"arkade-heroes-settle-v1|{matchId}|{(challengerWon ? "challenger" : "defender")}"));
 
+    /// <summary>The death-match settle message the oracle signs for the winning branch — a DISTINCT tag from wager settles (no cross-protocol replay). Byte-identical in the InMemory sim, the server signer, and the rung-2 covenant.</summary>
+    public static byte[] DeathMatchSettleMessage(string deathMatchId, bool challengerWon)
+        => System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"arkade-heroes-deathmatch-v1|{deathMatchId}|{(challengerWon ? "challenger" : "defender")}"));
+
     /// <summary>
     /// The full oracle-authorized settle branch:
     /// oracle signature over THIS branch's message + revealed seed + atomic sweep.

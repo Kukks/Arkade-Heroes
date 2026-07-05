@@ -849,6 +849,22 @@ public class NArkChainService(
         return new HeroMintResult(fusedAssetId, mergeTxId);
     }
 
+    // ── Covenant death-match escrows (live impl lands in rung 2) ───────
+
+    public Task<string> CreateDeathMatchEscrowAsync(
+        string deathMatchId, string playerId, string heroAssetId, IReadOnlyList<string> gearAssetIds,
+        string role, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+        => throw new NotSupportedException("Live death-match covenant lands in rung 2; run death-matches on the InMemory chain for now.");
+
+    public Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, string role, CancellationToken ct = default)
+        => throw new NotSupportedException("Live death-match covenant lands in rung 2.");
+
+    public Task<string> SettleDeathMatchAsync(string deathMatchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default)
+        => throw new NotSupportedException("Live death-match covenant lands in rung 2.");
+
+    public Task<Covenants.DeathMatchEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, string role, CancellationToken ct = default)
+        => throw new NotSupportedException("Live death-match covenant lands in rung 2.");
+
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
     private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>

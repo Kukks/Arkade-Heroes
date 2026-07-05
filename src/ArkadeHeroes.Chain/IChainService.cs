@@ -206,6 +206,27 @@ public interface IChainService
     /// <summary>The public merge-escrow parameters for trustless client rebuild + refund. Null when unknown.</summary>
     Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default);
 
+    // ── Covenant death-match escrows ───────────────────────────────────
+
+    /// <summary>Builds a player's death-match escrow (their hero pinned, oracle key, timelocked refund) and returns the address they deposit their hero into. role = "challenger"|"defender".</summary>
+    Task<string> CreateDeathMatchEscrowAsync(
+        string deathMatchId, string playerId, string heroAssetId, IReadOnlyList<string> gearAssetIds,
+        string role, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once this party's hero sits at their death-match escrow.</summary>
+    Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, string role, CancellationToken ct = default);
+
+    /// <summary>
+    /// Executes the death-match settle: the LOSER's hero is BURNED and the winner's
+    /// hero returns to the winner. Gated on the oracle's BIP340 signature over the
+    /// winning branch's settle message. Returns the settle tx id.
+    /// </summary>
+    Task<string> SettleDeathMatchAsync(
+        string deathMatchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default);
+
+    /// <summary>Public death-match escrow params for a trustless refund rebuild. Null when unknown.</summary>
+    Task<Covenants.DeathMatchEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, string role, CancellationToken ct = default);
+
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
     /// <summary>
