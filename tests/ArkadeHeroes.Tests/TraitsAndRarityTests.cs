@@ -100,4 +100,35 @@ public class TraitsAndRarityTests
         Assert.True(introduced is > 0 and < 150,
             $"mutation should introduce traits rarely, not never or always (got {introduced}/300)");
     }
+
+    [Fact]
+    public void Rarity_ScoresExpressedTraits_AndPicksTierFromHighest()
+    {
+        var g = WithTraitGenes(TraitCategory.Aura, 255, 0);   // Legendary expressed
+        var r = ArkadeHeroes.Core.Progression.Rarity.Of(g);
+        Assert.Equal(RarityTier.Legendary, r.Tier);
+        Assert.True(r.Score >= 50);
+        Assert.Single(r.Expressed);
+    }
+
+    [Fact]
+    public void Rarity_CarriedRecessives_DoNotInflateTheVisibleTier()
+    {
+        // Plain dominant, Legendary recessive: visible tier stays Common, but the
+        // recessive is reported as breeding potential.
+        var g = WithTraitGenes(TraitCategory.Aura, 0, 255);
+        var r = ArkadeHeroes.Core.Progression.Rarity.Of(g);
+        Assert.Equal(RarityTier.Common, r.Tier);
+        Assert.Empty(r.Expressed);
+        Assert.Single(r.CarriedRecessives);
+        Assert.Equal(RarityTier.Legendary, r.CarriedRecessives[0].Tier);
+    }
+
+    [Fact]
+    public void Rarity_IsMonotonic_InExpressedRarity()
+    {
+        var common = ArkadeHeroes.Core.Progression.Rarity.Of(WithTraitGenes(TraitCategory.Aura, 100, 0));
+        var epic = ArkadeHeroes.Core.Progression.Rarity.Of(WithTraitGenes(TraitCategory.Aura, 253, 0));
+        Assert.True(epic.Score > common.Score);
+    }
 }
