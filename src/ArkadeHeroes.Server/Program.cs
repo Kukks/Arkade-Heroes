@@ -144,6 +144,22 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
     return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt));
 });
 
+// ── Merge / fusion (commit → deposit base+sacrifice+fee → reveal) ───────────
+
+api.MapPost("/merge/commit", async (MergeCommitRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, escrow) = await game.CommitMergeAsync(player, request.BaseId, request.SacrificeId, request.Mode, ct);
+    return Results.Ok(new MergeCommitResponse(session.Id, session.CommitmentHex, escrow, session.FeeSats));
+});
+
+api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (fused, serverSeedHex, entropyHex, receipt) = await game.RevealMergeAsync(player, mergeId, request.Nonce, ct);
+    return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt));
+});
+
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -396,6 +412,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         return Results.Ok(new { funded = true });
     });
 
+    dev.MapPost("/fund-merge-escrow", (FundMergeEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).FundMergeEscrowFromPlayer(player.Id, request.MergeId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { funded = true });
+    });
+
     // Marketplace: the seller deposits the item, a buyer fulfils, or the seller
     // reclaims — each stands in for the corresponding client-wallet covenant op.
     dev.MapPost("/fund-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
@@ -463,6 +487,9 @@ public record RefundEscrowDevRequest(string MatchId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of both parents + fee into a breed escrow.</summary>
 public record FundBreedEscrowDevRequest(string BreedingId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of base + sacrifice + fee into the merge escrow.</summary>
+public record FundMergeEscrowDevRequest(string MergeId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet offer op (deposit / fulfil / reclaim), keyed by offer.</summary>
 public record OfferDevRequest(string OfferId);

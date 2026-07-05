@@ -35,6 +35,26 @@ public class BreedingSession
     public string? ChildHeroId { get; set; }
 }
 
+/// <summary>A hero merge (fusion) awaiting its escrow deposit. Base + sacrifice + fee are deposited into the escrow; reveal retires the inputs and mints the fused hero.</summary>
+public class MergeSession
+{
+    public required string Id { get; init; }
+    public required string PlayerId { get; init; }
+    public required string BaseId { get; init; }
+    public required string SacrificeId { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    /// <summary>"treasury" (rung 1, server-executed) or "covenant" (rung 2, emulator-enforced mint).</summary>
+    public string Mode { get; init; } = "treasury";
+    /// <summary>Merge escrow address the player deposits base + sacrifice + fee into.</summary>
+    public string? EscrowAddress { get; set; }
+    /// <summary>The flat merge fee for this session (sats) — paid via the merge escrow.</summary>
+    public long FeeSats { get; init; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public bool Completed { get; set; }
+    public string? FusedHeroId { get; set; }
+}
+
 /// <summary>An item purchase awaiting its invoice payment. Status: pending → delivering → claimed (delivery failures return to pending so a paid purchase is always claimable).</summary>
 public class ItemPurchase
 {
@@ -121,6 +141,8 @@ public class GameStore
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
     public ConcurrentDictionary<string, Hero> Heroes { get; } = new();
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
+
+    public ConcurrentDictionary<string, MergeSession> Merges { get; } = new();
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();

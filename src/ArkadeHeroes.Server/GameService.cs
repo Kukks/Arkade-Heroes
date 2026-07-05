@@ -378,6 +378,97 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (child, serverSeedHex, entropyHex, receipt);
     }
 
+    // ── Merge / fusion: commit (escrow deposit) → reveal ───────────────
+
+    public async Task<(MergeSession Session, string EscrowAddress)> CommitMergeAsync(
+        Player player, string baseId, string sacrificeId, string mode, CancellationToken ct)
+    {
+        if (baseId == sacrificeId)
+            throw new GameRuleException("The base and the sacrifice must be two different heroes.");
+        var baseHero = GetOwnedHero(player, baseId);
+        var sacrificeHero = GetOwnedHero(player, sacrificeId);
+        // Sterility does NOT gate being an input — a sterile Legendary is a great
+        // sacrifice (feed its rare trait in), which gives sterile rares a use.
+
+        var seed = CommitReveal.NewSeed();
+        var sessionId = NewId("merge");
+        // Both inputs plus the fee go into the merge escrow; execution retires the two
+        // inputs to the treasury (the sink) and mints the fused hero to the player.
+        var escrow = await chain.CreateMergeEscrowAsync(
+            sessionId, player.Id, baseHero.AssetId!, sacrificeHero.AssetId!,
+            _options.MergeFeeSats, receipts.PublicKeyHex,
+            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+
+        var session = new MergeSession
+        {
+            Id = sessionId, PlayerId = player.Id, BaseId = baseId, SacrificeId = sacrificeId,
+            ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+            Mode = mode, EscrowAddress = escrow, FeeSats = _options.MergeFeeSats,
+        };
+        store.Merges[session.Id] = session;
+        return (session, escrow);
+    }
+
+    public async Task<(Hero Fused, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> RevealMergeAsync(
+        Player player, string mergeId, string nonce, CancellationToken ct)
+    {
+        if (!store.Merges.TryGetValue(mergeId, out var session) || session.PlayerId != player.Id)
+            throw new GameRuleException($"Unknown merge session '{mergeId}'.");
+        if (session.Completed) throw new GameRuleException("Merge already completed.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        // The deposit must be present: base + sacrifice + fee sitting in the merge escrow.
+        if (!await chain.IsMergeEscrowFundedAsync(session.Id, ct))
+            throw new GameRuleException("Deposit the base, the sacrifice, and the fee into the merge escrow, then reveal.");
+
+        var baseHero = GetOwnedHero(player, session.BaseId);
+        var sacrificeHero = GetOwnedHero(player, session.SacrificeId);
+
+        session.Completed = true;
+
+        // Entropy-seeded fusion: concentration almost always succeeds, but the fused
+        // genome (hence its sterility) can't be precomputed — the gamble that keeps
+        // sterility meaningful. Deterministic given (seed, ids, nonce).
+        var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.BaseId, session.SacrificeId, nonce);
+        var fusedGenome = Fusion.Fuse(baseHero.Genome, sacrificeHero.Genome, entropy);
+        var fusedGeneration = Math.Max(baseHero.Generation, sacrificeHero.Generation) + 1;
+
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+
+        // The oracle (game key) attests the fused hero's metadata Merkle root; rung 2's
+        // covenant binds the on-chain mint (inputs retired, fused issued) to this attestation.
+        var fusedData = new HeroMintData(
+            fusedGenome.ToHex(), fusedGeneration, session.BaseId, session.SacrificeId, serverSeedHex, nonce);
+        var root = Chain.Covenants.ArkadeCovenants.MetadataMerkleRoot(
+            Chain.Covenants.BreedEscrowContracts.ChildMetadata(
+                fusedData.GenomeHex, fusedData.Generation, fusedData.ParentAId ?? "", fusedData.ParentBId ?? "",
+                fusedData.ServerSeedHex ?? "", fusedData.PlayerNonce ?? ""));
+        var oracleSig = receipts.SignDigest(root);
+        var mint = await chain.ExecuteMergeAsync(session.Id, fusedData, oracleSig, ct);
+
+        var fused = BuildAndStoreHero(player, mint, fusedGenome, fusedGeneration,
+            session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex);
+        // The fused hero inherits the base's level (you keep your progression); its genesis
+        // level is attested by the merge receipt below so ReplayLevel stays consistent.
+        fused.Level = baseHero.Level;
+        session.FusedHeroId = fused.Id;
+
+        // Both inputs are consumed: drop their server-side records (their assets are
+        // on-chain-retired to the treasury by ExecuteMergeAsync).
+        store.Heroes.TryRemove(session.BaseId, out _);
+        store.Heroes.TryRemove(session.SacrificeId, out _);
+
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "merge", session.Id, session.BaseId, session.SacrificeId, fused.Id,
+                serverSeedHex, nonce, session.CommitmentHex,
+                0, 0, baseHero.Level, sacrificeHero.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            session.BaseId, session.SacrificeId, fused.Id);
+
+        return (fused, serverSeedHex, entropyHex, receipt);
+    }
+
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
 
     public async Task<(MatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> OpenMatchAsync(
