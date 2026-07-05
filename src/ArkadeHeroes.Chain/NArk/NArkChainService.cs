@@ -720,19 +720,139 @@ public class NArkChainService(
         return new HeroMintResult(childAssetId, breedTxId);
     }
 
-    // ── Covenant merge / fusion escrows (live impl lands in rung 2) ─────
+    // ── Covenant merge / fusion escrows ────────────────────────────────
 
-    public Task<string> CreateMergeEscrowAsync(
+    private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
+        BuildMergeContractAsync(Covenants.MergeEscrowParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        var contract = Covenants.MergeEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey);
+        return (contract, serverInfo);
+    }
+
+    public async Task<string> CreateMergeEscrowAsync(
         string mergeId, string playerId, string baseAssetId, string sacrificeAssetId,
         long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
-        => throw new NotSupportedException("Live merge covenant lands in rung 2; run merges on the InMemory chain for now.");
+    {
+        await EnsureTreasuryAsync(ct);
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var species = await EnsureSpeciesAssetAsync(ct);
+        var playerAddress = await GetPlayerAddressAsync(playerId, ct);
+        var isMain = serverInfo.Network == Network.Main;
+        // fee + two input carriers (base, sacrifice) + one fresh carrier for the fused
+        // hero: it lands on the PLAYER output, separate from the retired inputs (which go
+        // to the treasury sink), so — unlike breeding's shared child output — it needs its own dust.
+        var escrowSats = feeSats + 3 * serverInfo.Dust.Satoshi;
 
-    public Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default)
-        => throw new NotSupportedException("Live merge covenant lands in rung 2.");
+        var parameters = new Covenants.MergeEscrowParams(
+            playerAddress, baseAssetId, sacrificeAssetId, species,
+            _treasuryAddress!, feeSats, escrowSats, oraclePubKeyHex, mergeId, refundAfterUnixSeconds);
+        await SetKvAsync($"merge-escrow:{mergeId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
-    public Task<HeroMintResult> ExecuteMergeAsync(
+        var (contract, _) = await BuildMergeContractAsync(parameters, ct);
+        var address = contract.GetArkAddress().ToString(isMain);
+        logger.LogInformation("Merge escrow for {MergeId}: {Address} (fee {Fee}, refund after {Refund})",
+            mergeId, address, feeSats, refundAfterUnixSeconds);
+        return address;
+    }
+
+    private async Task<Covenants.MergeEscrowParams> RequireMergeParamsAsync(string mergeId, CancellationToken ct)
+    {
+        var json = await GetKvAsync($"merge-escrow:{mergeId}", ct)
+                   ?? throw new InvalidOperationException($"No merge escrow recorded for {mergeId}.");
+        return System.Text.Json.JsonSerializer.Deserialize<Covenants.MergeEscrowParams>(json)!;
+    }
+
+    public async Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"merge-escrow:{mergeId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.MergeEscrowParams>(json);
+    }
+
+    private async Task<IReadOnlyList<ArkVtxo>> MergeEscrowVtxosAsync(Covenants.MergeEscrowParams parameters, CancellationToken ct)
+    {
+        var (contract, _) = await BuildMergeContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        return (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct)).DistinctBy(v => v.OutPoint).ToList();
+    }
+
+    public async Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default)
+    {
+        var parameters = await RequireMergeParamsAsync(mergeId, ct);
+        var vtxos = await MergeEscrowVtxosAsync(parameters, ct);
+        bool Holds(string assetId) => vtxos.Any(v => v.Assets?.Any(a => a.AssetId == assetId) == true);
+        var totalSats = vtxos.Aggregate(0L, (s, v) => s + (long)v.Amount);
+        return Holds(parameters.BaseId) && Holds(parameters.SacrificeId) && totalSats >= parameters.FeeSats;
+    }
+
+    public async Task<HeroMintResult> ExecuteMergeAsync(
         string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default)
-        => throw new NotSupportedException("Live merge covenant lands in rung 2.");
+    {
+        var parameters = await RequireMergeParamsAsync(mergeId, ct);
+        var (contract, serverInfo) = await BuildMergeContractAsync(parameters, ct);
+        var vtxos = await MergeEscrowVtxosAsync(parameters, ct);
+
+        // Order inputs so the base carrier is vin 0, sacrifice vin 1, then fee-only VTXOs.
+        int Idx(string assetId) => vtxos.ToList().FindIndex(v => v.Assets?.Any(a => a.AssetId == assetId) == true);
+        var baseSrc = Idx(parameters.BaseId);
+        var sacSrc = Idx(parameters.SacrificeId);
+        if (baseSrc < 0 || sacSrc < 0)
+            throw new InvalidOperationException($"Merge escrow {mergeId} is missing an input hero.");
+        var ordered = new List<ArkVtxo> { vtxos[baseSrc], vtxos[sacSrc] };
+        ordered.AddRange(vtxos.Where((_, i) => i != baseSrc && i != sacSrc));
+
+        var species = global::NArk.Core.Assets.AssetId.FromString(parameters.SpeciesId);
+        var baseAsset = global::NArk.Core.Assets.AssetId.FromString(parameters.BaseId);
+        var sacrificeAsset = global::NArk.Core.Assets.AssetId.FromString(parameters.SacrificeId);
+        var playerScript = ArkAddress.Parse(parameters.PlayerAddress).ScriptPubKey;
+        var treasuryFeeScript = ArkAddress.Parse(parameters.TreasuryFeeAddress).ScriptPubKey;
+
+        // A DISTINCT treasury-controlled address for the retired inputs — a separate
+        // script from the fee output, so the builder doesn't coalesce them (coalescing
+        // would inflate the fee output past feeSats and fail the covenant's PayTo check).
+        var sinkContract = await contractService.DeriveContract(_treasuryWalletId!, NextContractPurpose.Receive, cancellationToken: ct);
+        var sinkScript = sinkContract.GetArkAddress().ScriptPubKey;
+
+        // Packet: base + sacrifice RETIRED to the treasury sink (output 2); the fused hero
+        // issued under the species with the oracle-attested metadata → the player (output 0).
+        var fusedMeta = Covenants.BreedEscrowContracts.ChildMetadata(
+            fusedData.GenomeHex, fusedData.Generation, fusedData.ParentAId ?? "", fusedData.ParentBId ?? "",
+            fusedData.ServerSeedHex ?? "", fusedData.PlayerNonce ?? "");
+        var packet = global::NArk.Core.Assets.Packet.Create(
+        [
+            global::NArk.Core.Assets.AssetGroup.Create(baseAsset, null,
+                [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [global::NArk.Core.Assets.AssetOutput.Create(2, 1)], []),
+            global::NArk.Core.Assets.AssetGroup.Create(sacrificeAsset, null,
+                [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [global::NArk.Core.Assets.AssetOutput.Create(2, 1)], []),
+            global::NArk.Core.Assets.AssetGroup.Create(null, global::NArk.Core.Assets.AssetRef.FromId(species),
+                [], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], fusedMeta),
+        ]);
+
+        var total = ordered.Aggregate(0L, (s, v) => s + (long)v.Amount);
+        var sinkSats = 2 * serverInfo.Dust.Satoshi;   // carriers for the two retired inputs
+        var inputs = ordered.Select(v => new Covenants.CovenantSpender.CovenantInput(
+            contract, "merge",
+            Covenants.ArkadeCovenants.BreedWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
+
+        var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
+            transport, safetyService, walletProvider, intentStorage,
+            _treasuryWalletId!, new Uri(options.EmulatorUri), inputs,
+            [
+                new TxOut(Money.Satoshis(total - parameters.FeeSats - sinkSats), playerScript), // change + fused → player
+                new TxOut(Money.Satoshis(parameters.FeeSats), treasuryFeeScript),               // fee → treasury (distinct)
+                new TxOut(Money.Satoshis(sinkSats), sinkScript),                                // retired inputs → treasury sink
+            ],
+            extraPackets: [packet], ct: ct);
+
+        // Fused asset id = (merge txid, group index 2), NArk display form.
+        var mergeTxId = NBitcoin.PSBT.Parse(response.SignedArkTx, serverInfo.Network)
+            .GetGlobalTransaction().GetHash().ToString();
+        var fusedAssetId = global::NArk.Core.Assets.AssetId.Create(mergeTxId, 2).ToString();
+        logger.LogInformation("Merge {MergeId} executed via covenant → fused {Fused} to player; inputs retired to treasury", mergeId, fusedAssetId);
+        return new HeroMintResult(fusedAssetId, mergeTxId);
+    }
 
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
