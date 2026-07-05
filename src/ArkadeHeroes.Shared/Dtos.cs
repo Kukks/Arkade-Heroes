@@ -46,6 +46,12 @@ public record SkillDto(
 public record ProvenanceDto(
     string? CommitmentHex, string? ServerSeedHex, string? PlayerNonce, string? EntropyHex);
 
+/// <summary>A single expressed or carried trait for display.</summary>
+public record TraitDto(string Category, int Value, string Tier);
+
+/// <summary>A hero's rarity: visible tier + score, expressed traits, and carried recessives (breeding potential). All recomputable from the genome.</summary>
+public record RarityDto(string Tier, int Score, IReadOnlyList<TraitDto> Expressed, IReadOnlyList<TraitDto> CarriedRecessives);
+
 public record HeroDto(
     string Id,
     string Name,
@@ -65,7 +71,8 @@ public record HeroDto(
     string? ParentBId,
     string? AssetId,
     string? MintArkTxId,
-    ProvenanceDto? Provenance);
+    ProvenanceDto? Provenance,
+    RarityDto? Rarity = null);
 
 public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
@@ -197,7 +204,7 @@ public record OfferDto(
     string OfferId, string SellerId, string ItemId, string ItemName,
     long AskSats, string OfferAddress, string ItemAssetId,
     long OfferValueSats, long RefundAfterUnixSeconds, string Status,
-    string Kind = "item", string? HeroId = null);
+    string Kind = "item", string? HeroId = null, string? RarityTier = null);
 
 // ── Chain / misc ───────────────────────────────────────────────────────────
 

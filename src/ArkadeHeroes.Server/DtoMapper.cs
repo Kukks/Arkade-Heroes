@@ -39,7 +39,16 @@ public static class DtoMapper
             hero.MintArkTxId,
             hero.EntropyHex is null && hero.ServerSeedHex is null
                 ? null
-                : new ProvenanceDto(commitmentHex, hero.ServerSeedHex, hero.PlayerNonce, hero.EntropyHex));
+                : new ProvenanceDto(commitmentHex, hero.ServerSeedHex, hero.PlayerNonce, hero.EntropyHex),
+            ToRarityDto(hero.Genome));
+    }
+
+    public static RarityDto ToRarityDto(Core.Genetics.Genome genome)
+    {
+        var r = Core.Progression.Rarity.Of(genome);
+        static TraitDto Map(Core.Genetics.TraitVariant t) => new(t.Category.ToString(), t.Value, t.Tier.ToString());
+        return new RarityDto(r.Tier.ToString(), r.Score,
+            r.Expressed.Select(Map).ToList(), r.CarriedRecessives.Select(Map).ToList());
     }
 
     public static SkillDto ToDto(this Skill skill) => new(

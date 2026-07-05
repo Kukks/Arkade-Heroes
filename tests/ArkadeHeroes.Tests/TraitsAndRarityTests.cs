@@ -1,4 +1,5 @@
 using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
 
 namespace ArkadeHeroes.Tests;
 
@@ -148,5 +149,21 @@ public class TraitsAndRarityTests
         var cosmetic = new byte[32];
         cosmetic[16 + (int)TraitCategory.Aura * 2] = 255;
         Assert.Equal(1.0, Traits.AffinityModifier(new Genome(cosmetic)));
+    }
+
+    [Fact]
+    public void ToDto_PopulatesRarity_FromTheGenome()
+    {
+        var b = new byte[32];
+        b[16 + (int)TraitCategory.Aura * 2] = 255; // Legendary Aura
+        var hero = new Hero
+        {
+            Id = "h", Name = "Rare One", OwnerId = "p",
+            Genome = new Genome(b), Generation = 1, Level = 1,
+        };
+        var dto = ArkadeHeroes.Server.DtoMapper.ToDto(hero);
+        Assert.NotNull(dto.Rarity);
+        Assert.Equal("Legendary", dto.Rarity!.Tier);
+        Assert.Contains(dto.Rarity.Expressed, t => t.Category == "Aura");
     }
 }
