@@ -506,7 +506,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (session, escrow, favor);
     }
 
-    public async Task<(DeathMatchSession Session, string EscrowAddress)> AcceptDeathMatchAsync(
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender)> AcceptDeathMatchAsync(
         Player player, string deathMatchId, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -523,7 +523,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             Convert.FromHexString(session.CommitmentHex), receipts.PublicKeyHex, refundAfter, ct);
         session.DefenderEscrowAddress = escrow;
         session.Accepted = true;
-        return (session, escrow);
+        return (session, escrow, defender);
     }
 
     public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(

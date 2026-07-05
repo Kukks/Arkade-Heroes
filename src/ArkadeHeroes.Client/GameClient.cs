@@ -751,8 +751,8 @@ public class GameClient : IAsyncDisposable
     {
         RequireSession();
         var accept = await PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept", null);
-        Console.WriteLine("  ⚠ accepting a death-match — if your hero loses, it is BURNED.");
-        await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, hero: null);
+        Console.WriteLine($"  ⚠ accepting a death-match — if {accept.DefenderHero.Name} loses, it is BURNED.");
+        await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, accept.DefenderHero);
         Console.WriteLine($"  ✓ staked. The challenger runs 'settle-death {deathMatchId}'.");
     }
 

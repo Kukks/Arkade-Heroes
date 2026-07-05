@@ -117,7 +117,8 @@ public record DeathMatchOpenRequest(string ChallengerHeroId, string DefenderHero
 /// <summary>The challenger deposits their hero into <see cref="EscrowAddress"/>; heed <see cref="Favorability"/> — losing BURNS your hero.</summary>
 public record DeathMatchOpenResponse(string DeathMatchId, string CommitmentHex, string EscrowAddress, FavorabilityDto Favorability);
 
-public record DeathMatchAcceptResponse(string EscrowAddress);
+/// <summary><see cref="DefenderHero"/> is the challenged hero the defender must stake (covenant deposit needs its asset id).</summary>
+public record DeathMatchAcceptResponse(string EscrowAddress, HeroDto DefenderHero);
 
 public record DeathMatchSettleRequest(string Nonce);
 

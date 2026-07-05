@@ -177,8 +177,8 @@ api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContex
 api.MapPost("/deathmatch/{id}/accept", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (_, escrow) = await game.AcceptDeathMatchAsync(player, id, ct);
-    return Results.Ok(new DeathMatchAcceptResponse(escrow));
+    var (_, escrow, defender) = await game.AcceptDeathMatchAsync(player, id, ct);
+    return Results.Ok(new DeathMatchAcceptResponse(escrow, defender.ToDto()));
 });
 
 api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest request, HttpContext http, GameService game, CancellationToken ct) =>
