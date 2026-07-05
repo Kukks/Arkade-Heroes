@@ -93,6 +93,20 @@ public record BreedRevealResponse(
     HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef,
     ProgressionReceiptDto? Receipt = null);
 
+// ── Merge / fusion (two-phase commit–reveal, escrow-funded) ────────────────
+
+/// <summary>Consume base + sacrifice to mint one trait-concentrated hero. Mode "treasury" (rung 1, server-executed) or "covenant".</summary>
+public record MergeCommitRequest(string BaseId, string SacrificeId, string Mode = "treasury");
+
+/// <summary>The player deposits base + sacrifice + the fee into <see cref="EscrowAddress"/> before revealing.</summary>
+public record MergeCommitResponse(string MergeId, string CommitmentHex, string EscrowAddress, long FeeSats);
+
+public record MergeRevealRequest(string Nonce);
+
+/// <summary><see cref="EntropyHex"/> is the revealed commit–reveal entropy — the client recomputes Fusion.Fuse from it to audit the mint.</summary>
+public record MergeRevealResponse(
+    HeroDto Hero, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt = null);
+
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
 /// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>

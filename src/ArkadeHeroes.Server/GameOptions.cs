@@ -6,6 +6,9 @@ public class GameOptions
 
     public long BreedingFeeSats { get; set; } = 1_000;
 
+    /// <summary>Flat sats fee to merge two heroes into one — a sats sink on top of the hero burn.</summary>
+    public long MergeFeeSats { get; set; } = 1_000;
+
     /// <summary>Base unit for breeding cooldowns. Short by default so regtest play loops stay fast.</summary>
     public TimeSpan BreedingCooldownBaseUnit { get; set; } = TimeSpan.FromSeconds(30);
 
