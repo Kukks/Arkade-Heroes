@@ -741,8 +741,8 @@ public class NArkChainService(
         var playerAddress = await GetPlayerAddressAsync(playerId, ct);
         var isMain = serverInfo.Network == Network.Main;
         // fee + two input carriers (base, sacrifice). Same deposit shape as breeding:
-        // the player sends feeSats + the two hero VTXOs (each carrying dust). Execution
-        // splits that dust across the fused hero's output and the retired-inputs sink.
+        // the player sends feeSats + the two hero VTXOs (each carrying dust). On execution
+        // the inputs are burned and their carrier dust funds the fused hero's output.
         var escrowSats = feeSats + 2 * serverInfo.Dust.Satoshi;
 
         var parameters = new Covenants.MergeEscrowParams(
@@ -809,32 +809,25 @@ public class NArkChainService(
         var playerScript = ArkAddress.Parse(parameters.PlayerAddress).ScriptPubKey;
         var treasuryFeeScript = ArkAddress.Parse(parameters.TreasuryFeeAddress).ScriptPubKey;
 
-        // A DISTINCT treasury-controlled address for the retired inputs — a separate
-        // script from the fee output, so the builder doesn't coalesce them (coalescing
-        // would inflate the fee output past feeSats and fail the covenant's PayTo check).
-        var sinkContract = await contractService.DeriveContract(_treasuryWalletId!, NextContractPurpose.Receive, cancellationToken: ct);
-        var sinkScript = sinkContract.GetArkAddress().ScriptPubKey;
-
-        // Packet: base + sacrifice RETIRED to the treasury sink (output 2); the fused hero
+        // Packet: base + sacrifice BURNED — each declared as an input with NO output, so
+        // arkd destroys the asset (a true sink, not a treasury pile-up). The fused hero is
         // issued under the species with the oracle-attested metadata → the player (output 0).
+        // The burned inputs' carrier dust flows into the player output (funding the fused
+        // hero's carrier), so the layout is breeding's exact 2-output shape.
         var fusedMeta = Covenants.BreedEscrowContracts.ChildMetadata(
             fusedData.GenomeHex, fusedData.Generation, fusedData.ParentAId ?? "", fusedData.ParentBId ?? "",
             fusedData.ServerSeedHex ?? "", fusedData.PlayerNonce ?? "");
         var packet = global::NArk.Core.Assets.Packet.Create(
         [
             global::NArk.Core.Assets.AssetGroup.Create(baseAsset, null,
-                [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [global::NArk.Core.Assets.AssetOutput.Create(2, 1)], []),
+                [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [], []),      // burned: input, no output
             global::NArk.Core.Assets.AssetGroup.Create(sacrificeAsset, null,
-                [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [global::NArk.Core.Assets.AssetOutput.Create(2, 1)], []),
+                [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [], []),      // burned: input, no output
             global::NArk.Core.Assets.AssetGroup.Create(null, global::NArk.Core.Assets.AssetRef.FromId(species),
-                [], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], fusedMeta),
+                [], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], fusedMeta),  // fused issuance → player
         ]);
 
         var total = ordered.Aggregate(0L, (s, v) => s + (long)v.Amount);
-        // One shared dust carrier holds BOTH retired inputs — Ark's dust minimum is
-        // per-output, not per-asset (breeding rides 3 assets on one output). That leaves
-        // the fused hero its own dust carrier on the player output from the same escrow.
-        var sinkSats = serverInfo.Dust.Satoshi;
         var inputs = ordered.Select(v => new Covenants.CovenantSpender.CovenantInput(
             contract, "merge",
             Covenants.ArkadeCovenants.BreedWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
@@ -843,9 +836,8 @@ public class NArkChainService(
             transport, safetyService, walletProvider, intentStorage,
             _treasuryWalletId!, new Uri(options.EmulatorUri), inputs,
             [
-                new TxOut(Money.Satoshis(total - parameters.FeeSats - sinkSats), playerScript), // change + fused → player
-                new TxOut(Money.Satoshis(parameters.FeeSats), treasuryFeeScript),               // fee → treasury (distinct)
-                new TxOut(Money.Satoshis(sinkSats), sinkScript),                                // retired inputs → treasury sink
+                new TxOut(Money.Satoshis(total - parameters.FeeSats), playerScript), // change + fused → player
+                new TxOut(Money.Satoshis(parameters.FeeSats), treasuryFeeScript),     // fee → treasury (distinct)
             ],
             extraPackets: [packet], ct: ct);
 

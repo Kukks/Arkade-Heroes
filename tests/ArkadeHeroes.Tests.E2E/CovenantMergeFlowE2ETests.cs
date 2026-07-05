@@ -11,10 +11,11 @@ namespace ArkadeHeroes.Tests.E2E;
 /// <summary>
 /// Covenant merge (fusion) end-to-end against the real stack: the player deposits
 /// BOTH input heroes (base + sacrifice) plus the fee into a merge escrow, and the
-/// server assembles the emulator-enforced mint — the two inputs RETIRED to the
-/// treasury (the sink), the fused hero issued under the species with an
-/// oracle-attested genome, the fee to the treasury. The covenant makes any other
-/// shape unsignable; the fused genome is client-recomputable (Fusion.Fuse).
+/// server assembles the emulator-enforced mint — the two inputs BURNED (declared
+/// in the asset packet with no output, so arkd destroys them — a true sink), the
+/// fused hero issued under the species with an oracle-attested genome, the fee to
+/// the treasury. The covenant makes any other shape unsignable; the fused genome
+/// is client-recomputable (Fusion.Fuse).
 /// </summary>
 public class CovenantMergeFlowE2ETests : IAsyncLifetime
 {
@@ -149,7 +150,7 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         // The fused hero asset lands in Alice's own wallet.
         await _alice.WaitForAssetAsync(reveal.Hero.AssetId!, TimeSpan.FromSeconds(60));
 
-        // The sink: both inputs are GONE from Alice's wallet — retired to the treasury,
+        // The sink: both inputs are GONE from Alice's wallet — BURNED (destroyed on-chain),
         // never returned to her (she gave up two heroes to mint one concentrated hero).
         var mineDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (true)

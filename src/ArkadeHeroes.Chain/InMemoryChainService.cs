@@ -346,10 +346,7 @@ public class InMemoryChainService : IChainService
             "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, breedingId, e.RefundAfterUnixSeconds));
     }
 
-    // ── Merge / fusion escrows (simulated) — inputs retired, fused minted ──
-
-    /// <summary>The sim's stand-in holder for assets retired to the treasury (removed from the player).</summary>
-    private const string SimTreasuryHolder = "__treasury__";
+    // ── Merge / fusion escrows (simulated) — inputs burned, fused minted ──
 
     private sealed record MergeEscrow(
         string PlayerId, string BaseAssetId, string SacrificeAssetId, long FeeSats, string OraclePkHex, long RefundAfterUnixSeconds)
@@ -412,9 +409,9 @@ public class InMemoryChainService : IChainService
             throw new InvalidOperationException("Oracle signature does not authorize this merge.");
 
         escrow.Executed = true;
-        // Both inputs RETIRED to the treasury (the sink); the fused hero minted to the player.
-        _assetHolders[escrow.BaseAssetId] = SimTreasuryHolder;
-        _assetHolders[escrow.SacrificeAssetId] = SimTreasuryHolder;
+        // Both inputs BURNED (removed entirely — a true sink); the fused hero minted to the player.
+        _assetHolders.TryRemove(escrow.BaseAssetId, out _);
+        _assetHolders.TryRemove(escrow.SacrificeAssetId, out _);
         var assetId = NewId("sim-asset");
         _assetHolders[assetId] = escrow.PlayerId;
         await Task.CompletedTask;

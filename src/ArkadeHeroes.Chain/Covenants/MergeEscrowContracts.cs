@@ -17,9 +17,9 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// Note: the covenant gate is <see cref="ArkadeCovenants.BreedAuthorized"/> —
 /// byte-identical to breeding's (both inputs present, one hero issued under the
 /// species, fee to the treasury, oracle sig over the metadata root). Merge
-/// differs only in EXECUTION (the packet retires the inputs to the treasury
-/// instead of retaining them to the player), which the covenant — like breed's
-/// parent retention — leaves to the tx-builder + asset conservation.
+/// differs only in EXECUTION (the packet BURNS the inputs — declared with no
+/// output — instead of retaining them to the player), which the covenant — like
+/// breed's parent retention — leaves to the tx-builder.
 /// </summary>
 public sealed record MergeEscrowParams(
     string PlayerAddress,
@@ -47,9 +47,9 @@ public static class MergeEscrowContracts
     /// fused hero controlled by the species, fee paid to the treasury, oracle
     /// sig over the fused hero's metadata root) and a timelocked <c>refund</c>
     /// leaf paying the escrow value back to the player after expiry (the inputs
-    /// ride the output; task 17/18 machinery reused). The player deposits base +
-    /// sacrifice plus the fee here; the server assembles the covenant mint,
-    /// retiring both inputs to the treasury.
+    /// ride the refund output home; task 17/18 machinery reused). The player
+    /// deposits base + sacrifice plus the fee here; the server assembles the
+    /// covenant mint, BURNING both inputs.
     /// </summary>
     public static ArkadeArtifactContract Build(
         MergeEscrowParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex)

@@ -195,10 +195,10 @@ public interface IChainService
     Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default);
 
     /// <summary>
-    /// Executes the merge: the two input heroes are RETIRED to the treasury
-    /// (the sink) and the fused hero is issued under the species with
-    /// <paramref name="fusedData"/>'s metadata, gated on the oracle's BIP340
-    /// signature over the fused-genome metadata root. Returns the fused asset id.
+    /// Executes the merge: the two input heroes are BURNED (declared in the asset
+    /// packet with no output — a true sink) and the fused hero is issued under the
+    /// species with <paramref name="fusedData"/>'s metadata, gated on the oracle's
+    /// BIP340 signature over the fused-genome metadata root. Returns the fused asset id.
     /// </summary>
     Task<HeroMintResult> ExecuteMergeAsync(
         string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default);
