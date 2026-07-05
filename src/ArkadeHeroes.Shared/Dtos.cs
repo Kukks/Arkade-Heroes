@@ -107,6 +107,25 @@ public record MergeRevealRequest(string Nonce);
 public record MergeRevealResponse(
     HeroDto Hero, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt = null);
 
+// ── Death-match (winner-takes-all, both stake a hero) ──────────────────────
+
+/// <summary>Coarse pre-stake favorability from the challenger's view. LevelGap is signed (theirs − mine).</summary>
+public record FavorabilityDto(int LevelGap, string Label);
+
+public record DeathMatchOpenRequest(string ChallengerHeroId, string DefenderHeroId);
+
+/// <summary>The challenger deposits their hero into <see cref="EscrowAddress"/>; heed <see cref="Favorability"/> — losing BURNS your hero.</summary>
+public record DeathMatchOpenResponse(string DeathMatchId, string CommitmentHex, string EscrowAddress, FavorabilityDto Favorability);
+
+public record DeathMatchAcceptResponse(string EscrowAddress);
+
+public record DeathMatchSettleRequest(string Nonce);
+
+/// <summary>The fight result + the burned loser + the audit trail (the client replays the fight to verify the winner).</summary>
+public record DeathMatchSettleResponse(
+    BattleResultDto Result, string WinnerHeroId, string LoserHeroId,
+    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt);
+
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
 /// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>
