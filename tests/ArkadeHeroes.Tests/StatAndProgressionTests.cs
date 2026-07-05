@@ -75,4 +75,46 @@ public class StatAndProgressionTests
         Assert.Equal(Leveling.MaxLevel, level);
         Assert.Equal(0, xp);
     }
+
+    [Fact]
+    public void ApplyDelevelsOnNegativeDelta()
+    {
+        // Climb to level 3, then take a loss large enough to give back a level.
+        var (level, xp, _) = Leveling.Apply(1, 0, Leveling.XpToNext(1) + Leveling.XpToNext(2) + 5);
+        Assert.Equal(3, level);
+
+        var (dropped, _, changed) = Leveling.Apply(level, xp, -(Leveling.XpToNext(2) + xp + 1));
+        Assert.True(dropped < 3, $"expected a delevel from 3, stayed at {dropped}");
+        Assert.True(changed < 0);
+    }
+
+    [Fact]
+    public void DelevelFloorsAtLevelOneAndZeroXp()
+    {
+        // A crushing negative delta can only fall to the floor, never below it.
+        var (level, xp, changed) = Leveling.Apply(5, 10, -1_000_000);
+        Assert.Equal(1, level);
+        Assert.Equal(0, xp);
+        Assert.Equal(-4, changed);
+    }
+
+    [Fact]
+    public void XpTransferIsDifferenceBased_ConservedAndClampedAtZero()
+    {
+        // A peer fight moves the base amount; conserved because the loser's delta
+        // is the exact negation of this single value at the call site.
+        Assert.Equal(Leveling.BaseTransfer, Leveling.XpTransfer(3, 3));
+        // Beating a far weaker hero transfers nothing — no farming down the ladder.
+        Assert.Equal(0, Leveling.XpTransfer(20, 1));
+        // An upset over a higher hero strips off (and awards) more than the base.
+        Assert.True(Leveling.XpTransfer(2, 6) > Leveling.BaseTransfer);
+    }
+
+    [Fact]
+    public void MatchFeeScalesWithLevel()
+    {
+        Assert.Equal(Leveling.MatchFeePerLevel, Leveling.MatchFee(1));
+        Assert.Equal(Leveling.MatchFeePerLevel * 10, Leveling.MatchFee(10));
+        Assert.True(Leveling.MatchFee(5) > Leveling.MatchFee(4));
+    }
 }

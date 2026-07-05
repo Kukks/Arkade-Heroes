@@ -79,13 +79,6 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed));
 });
 
-// The player's on-chain XP-asset balance (progression mirrored on-chain).
-api.MapGet("/players/xp", async (HttpContext http, GameService game, IChainService chain, CancellationToken ct) =>
-{
-    var player = game.Authenticate(BearerToken(http));
-    return Results.Ok(new { xp = await chain.GetXpBalanceAsync(player.Id, ct) });
-});
-
 // Public profile: players are addresses, and addresses are public — this is
 // what a sender needs to transfer a hero to another player wallet-to-wallet.
 api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChainService chain, CancellationToken ct) =>

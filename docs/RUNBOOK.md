@@ -20,16 +20,16 @@ this is the same story a human can drive by hand.
   ```
   Verify: `docker ps` shows `arkd`, `emulator`, `bitcoin`. Faucet password is
   `secret`. (Ports: arkd `:7070`, emulator `:7073`.)
-- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 77 passing.
+- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 113 passing.
 
-## 1. Start the server (NArk mode, covenants + XP on)
+## 1. Start the server (NArk mode, covenants on)
 
 ```bash
 # bash
-Chain__Mode=NArk Game__DeliverXpAssetsOnChain=true Game__WagerEscrowRefundAfter=00:00:20 \
+Chain__Mode=NArk Game__WagerEscrowRefundAfter=00:00:20 \
   dotnet run --project src/ArkadeHeroes.Server
 # PowerShell
-$env:Chain__Mode="NArk"; $env:Game__DeliverXpAssetsOnChain="true"; $env:Game__WagerEscrowRefundAfter="00:00:20"
+$env:Chain__Mode="NArk"; $env:Game__WagerEscrowRefundAfter="00:00:20"
 dotnet run --project src/ArkadeHeroes.Server
 ```
 
@@ -103,8 +103,9 @@ duel <matchId>                             # resolves; the pot sweeps to the win
 top                                        # leaderboard now ranks the winner first
 ```
 Both players: `verify-receipts` → every match/breed receipt verifies against the
-game key. `me` / `wallet` show the updated balances; the winner's XP asset
-balance grew (`GET /api/players/xp`).
+game key, and each hero's level replays from its receipt chain alone. `me` /
+`wallet` show the updated balances; the staked win moved XP from the loser to the
+winner — a conserved transfer, so the loser's level can fall.
 
 ## 6. Timelocked refund (abandoned match)
 

@@ -14,13 +14,4 @@ public class GameOptions
 
     /// <summary>How long after a covenant match opens its escrow refund leaves unlock (player liveness).</summary>
     public TimeSpan WagerEscrowRefundAfter { get; set; } = TimeSpan.FromHours(24);
-
-    /// <summary>
-    /// Mirror earned XP on-chain as a fungible XP-asset delivery per resolved
-    /// match. OFF by default: on-chain delivery is a treasury spend, and the
-    /// signed receipts already carry XP portably — enable it where the on-chain
-    /// balance is wanted (the walkthrough) and the extra treasury load is
-    /// acceptable. In-memory play always mirrors it (no treasury cost).
-    /// </summary>
-    public bool DeliverXpAssetsOnChain { get; set; } = false;
 }

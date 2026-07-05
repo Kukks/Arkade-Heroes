@@ -19,7 +19,7 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
         return new ProgressionReceiptDto(
             "match", "match-1", "hero-a", "hero-b", "hero-a",
             Convert.ToHexString(seed).ToLowerInvariant(), "nonce-1", CommitReveal.Commit(seed),
-            72, 24, 2, 1, 1_760_000_000, "", "");
+            40, -40, 1, 1, 1_760_000_000, "", "");
     }
 
     [Fact]
@@ -41,25 +41,37 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public void ReplayLevelMatchesLevelingMath()
+    public void ReplayLevel_FoldsSignedDeltas_IncludingDelevelOnLoss()
     {
-        // Three wins for hero-x against level-1 opponents.
-        var receipts = Enumerable.Range(0, 3).Select(i =>
+        // A receipt records the SIGNED XP delta the fight applied: the winner's is
+        // positive, the loser's (HeroB) is the exact mirror — XP is conserved.
+        ProgressionReceiptDto Match(int i, long heroXDelta, long ts)
         {
             var seed = CommitReveal.NewSeed();
             return new ProgressionReceiptDto(
-                "match", $"m{i}", "hero-x", $"opp{i}", "hero-x",
+                "match", $"m{i}", "hero-x", $"opp{i}", heroXDelta >= 0 ? "hero-x" : $"opp{i}",
                 Convert.ToHexString(seed).ToLowerInvariant(), "n", CommitReveal.Commit(seed),
-                Leveling.WinnerAward(1), Leveling.LoserAward(1), 1, 1, 1000 + i, "k", "s");
-        }).ToList();
+                heroXDelta, -heroXDelta, 1, 1, ts, "k", "s");
+        }
 
-        var expectedLevel = 1;
-        long xp = 0;
-        for (var i = 0; i < 3; i++)
-            (expectedLevel, xp, _) = Leveling.Apply(expectedLevel, xp, Leveling.WinnerAward(1));
+        // A staked win big enough to reach level 2, then a loss of equal size.
+        var swing = Leveling.XpToNext(1) + 30;
+        var afterWin = new[] { Match(0, swing, 1000) };
+        var afterWinThenLoss = new[] { Match(0, swing, 1000), Match(1, -swing, 1001) };
 
-        Assert.Equal(expectedLevel, ReceiptVerifier.ReplayLevel("hero-x", receipts));
-        Assert.Equal(1 + 0, ReceiptVerifier.ReplayLevel("unknown-hero", receipts) - 0 - 0); // no receipts → level 1
+        // Replay == a manual fold of the same signed deltas via the leveling math.
+        var lvl = 1; long xp = 0;
+        (lvl, xp, _) = Leveling.Apply(lvl, xp, swing);
+        Assert.Equal(2, lvl); // the win reached level 2
+        Assert.Equal(lvl, ReceiptVerifier.ReplayLevel("hero-x", afterWin));
+
+        // The losable ladder: the following loss pulls the level back down.
+        Assert.True(ReceiptVerifier.ReplayLevel("hero-x", afterWinThenLoss)
+                    < ReceiptVerifier.ReplayLevel("hero-x", afterWin));
+        Assert.Equal(1, ReceiptVerifier.ReplayLevel("hero-x", afterWinThenLoss));
+
+        // The empty chain (an unknown hero) holds at the starting level.
+        Assert.Equal(1, ReceiptVerifier.ReplayLevel("unknown-hero", afterWinThenLoss));
     }
 
     [Fact]

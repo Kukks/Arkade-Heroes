@@ -510,17 +510,17 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var challengerWon = result.WinnerId == challenger.Id;
         var (winner, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
-        var winnerAward = Leveling.WinnerAward(loser.Level);
-        var loserAward = Leveling.LoserAward(winner.Level);
-        ApplyXp(winner, winnerAward);
-        ApplyXp(loser, loserAward);
-        // Mirror the earned XP on-chain as a spendable asset balance (the
-        // receipts remain the verification root). Delivered in the BACKGROUND:
-        // an on-chain XP delivery is a treasury spend that must not add its
-        // latency to the duel response, and a hiccup must not fail the resolved
-        // match. Uses CancellationToken.None — it outlives the request.
-        DeliverXpInBackground(winner.OwnerId, (ulong)winnerAward);
-        DeliverXpInBackground(loser.OwnerId, (ulong)loserAward);
+        // Staked fights only: XP is a CONSERVED transfer from loser to winner,
+        // scaled by the level gap (pre-fight levels). Friendly fights are
+        // practice — no XP. The loser can DELEVEL, so a champion is held by
+        // winning, not bought. No on-chain XP mirror: a losable ladder can't be a
+        // non-custodial asset you'd have to claw back — progression stays
+        // receipt-based (the receipts are the audit trail; the server is the ledger).
+        var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(winner.Level, loser.Level) : 0;
+        ApplyXp(winner, transfer);
+        ApplyXp(loser, -transfer);
+        var challengerDelta = challengerWon ? transfer : -transfer;
+        var defenderDelta = -challengerDelta;
 
         session.Status = "resolved";
         session.Result = result;
@@ -553,8 +553,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "match", session.Id, challenger.Id, defender.Id, result.WinnerId,
                 serverSeedHexOut, nonce, session.CommitmentHex,
-                challengerWon ? winnerAward : loserAward,
-                challengerWon ? loserAward : winnerAward,
+                challengerDelta,
+                defenderDelta,
                 challenger.Level, defender.Level,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             challenger.Id, defender.Id);
@@ -562,8 +562,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (session, result,
             serverSeedHexOut,
             session.EntropyHex,
-            challengerWon ? winnerAward : loserAward,
-            challengerWon ? loserAward : winnerAward,
+            challengerDelta,
+            defenderDelta,
             challengerSnapshot, defenderSnapshot, winnerPayout, receipt);
     }
 
@@ -572,18 +572,6 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award);
         hero.Level = level;
         hero.Xp = xp;
-    }
-
-    private void DeliverXpInBackground(string playerId, ulong amount)
-    {
-        if (amount == 0 || !_options.DeliverXpAssetsOnChain) return;
-        // Fire-and-forget: chain is a singleton, so this safely outlives the
-        // request. The match is already resolved + receipted; XP is best-effort.
-        _ = Task.Run(async () =>
-        {
-            try { await chain.DeliverXpAsync(playerId, amount, CancellationToken.None); }
-            catch { /* best-effort on-chain mirror */ }
-        });
     }
 
     // ── Hero transfer: the player's wallet moves the asset; we verify ──

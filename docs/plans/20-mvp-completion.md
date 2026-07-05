@@ -81,13 +81,36 @@ Done = walkthrough leg passes + client can reclaim an abandoned breed escrow.
 
 </details>
 
-## 2. XP as on-chain assets — task 20 (small, after breeding)
+## 2. XP / anti-farming model — task 20 REWORKED (on-chain XP REMOVED)
 
-Receipts already carry signed progression; mirror level-ups as fungible XP-asset deliveries
-to the hero owner's address. Reuse the item-asset pipeline (lazy issuance in
-`NArkChainService`). Client `wallet` already lists assets. Done = duel/breed XP visibly lands
-as assets in the winner's wallet in the walkthrough; InMemory parity; receipts remain the
-verification root.
+The original task-20 approach (mirror level-ups as fungible on-chain XP-asset deliveries,
+shipped in `9794d9e`) was **reversed**: on-chain XP is fundamentally incompatible with the
+anti-farming model below, because that model makes levels **losable** and you cannot claw back
+a non-custodial asset. Removed: the XP asset + its delivery pipeline, the
+`DeliverXpAssetsOnChain` option, `GET /api/players/xp`, and the `IChainService` XP surface
+(`DeliverXpAsync`/`GetXpBalanceAsync`) with its InMemory + NArk implementations.
+
+**The locked model (Sybil-resistant, farming-resistant):**
+- **Friendly (wager-0) fights award no XP** — practice is free; free XP would be farmable.
+- **A staked win moves a CONSERVED, difference-scaled XP transfer** from loser to winner:
+  `transfer = max(0, 40 + 12·(loserLevel − winnerLevel))`, winner **+transfer**, loser
+  **−transfer**. The winner gains exactly what the loser loses, so self-play across any number
+  of wallets can only CONCENTRATE XP, never MINT it. The clamp kills farming down the ladder
+  (beating a far-weaker hero transfers 0); an upset over a higher hero transfers a lot.
+- **Levels are LOSABLE** — `Leveling.Apply` takes a SIGNED delta and can delevel to the floor
+  (level 1 / 0 XP), so a champion is held by winning, not bought once. Receipts record the
+  signed per-hero delta; `ReceiptVerifier.ReplayLevel` folds them (a loss pulls the level back
+  down), so the receipt chain stays the audit trail and the server is the ledger.
+- **The defender is protected by CONSENT** (`AcceptMatchAsync`), not by an asymmetric loss —
+  any "loser loses less than the winner gains" would mint XP and be farmable.
+
+Done (this rung): `Leveling` rewritten (conserved `XpTransfer`, signed/losable `Apply`);
+`FightAsync` applies the conserved transfer and records signed deltas; on-chain XP fully
+removed; gate **113 unit + 24 E2E green**. **Remaining — the per-character level-proportional
+match fee** (a sats sink so fielding/idle-training a high-level hero has a cost):
+`Leveling.MatchFee(level) = 20·level` is in place; wiring it into open/accept as a gated
+per-fighter fee (both fighters pay proportional to their OWN level before the fight resolves)
+is the next rung.
 
 ## 3. Marketplace — task 21 (medium) — ✅ DONE (SHIPPED live)
 
