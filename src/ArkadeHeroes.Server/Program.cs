@@ -180,13 +180,18 @@ api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest requ
         challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout, receipt));
 });
 
-api.MapGet("/matches", (string? status, GameStore store) =>
-    Results.Ok(store.Matches.Values
+api.MapGet("/matches", async (string? status, GameService game, GameStore store, CancellationToken ct) =>
+{
+    // Lazily expire abandoned covenant matches (e.g. a refunded stake) so they
+    // drop out of the open/accepted lists instead of lingering as stale rows.
+    await game.ReconcileAbandonedMatchesAsync(ct);
+    return Results.Ok(store.Matches.Values
         .Where(m => status is null || m.Status == status)
         .OrderByDescending(m => m.CreatedAt)
         .Take(50)
         .Select(ToMatchDto)
-        .ToList()));
+        .ToList());
+});
 
 api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
     store.Matches.TryGetValue(matchId, out var session)

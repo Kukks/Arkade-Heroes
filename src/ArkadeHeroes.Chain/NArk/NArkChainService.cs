@@ -533,6 +533,21 @@ public class NArkChainService(
                && defenderVtxos.Any(v => IsBtcStake(v, parameters.StakeSats));
     }
 
+    public async Task<WagerEscrowFunding?> GetWagerEscrowFundingAsync(string matchId, CancellationToken ct = default)
+    {
+        var parameters = await GetWagerEscrowParamsAsync(matchId, ct);
+        if (parameters is null) return null; // invoice-mode or unknown match
+        var (challengerContract, defenderContract) = await BuildEscrowContractsAsync(parameters, ct);
+        var challengerScript = challengerContract.GetArkAddress().ScriptPubKey.ToHex();
+        var defenderScript = defenderContract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { challengerScript, defenderScript });
+        var challengerVtxos = await vtxoStorage.GetVtxos(scripts: [challengerScript], cancellationToken: ct);
+        var defenderVtxos = await vtxoStorage.GetVtxos(scripts: [defenderScript], cancellationToken: ct);
+        return new WagerEscrowFunding(
+            challengerVtxos.Any(v => IsBtcStake(v, parameters.StakeSats)),
+            defenderVtxos.Any(v => IsBtcStake(v, parameters.StakeSats)));
+    }
+
     public async Task<string> SettleWagerEscrowAsync(
         string matchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64,
         CancellationToken ct = default)

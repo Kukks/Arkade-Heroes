@@ -394,6 +394,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         FeeInvoice? feeInvoice = null;
         string? escrowChallenger = null;
         string? escrowDefender = null;
+        long? refundAfterUnix = null;
         if (wagerSats > 0)
         {
             if (mode == "covenant")
@@ -407,6 +408,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                     DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
                 escrowChallenger = escrow.ChallengerEscrowAddress;
                 escrowDefender = escrow.DefenderEscrowAddress;
+                refundAfterUnix = escrow.RefundAfterUnixSeconds;
             }
             else
             {
@@ -435,6 +437,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             EscrowDefenderAddress = escrowDefender,
             ChallengerInvoiceId = invoice?.InvoiceId,
             ChallengerFeeInvoiceId = feeInvoice?.InvoiceId,
+            RefundAfterUnixSeconds = refundAfterUnix,
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
@@ -474,6 +477,32 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
         return (session, invoice, feeInvoice);
+    }
+
+    /// <summary>
+    /// Marks stale covenant matches 'expired' so the match list drops them: past
+    /// its refund window, an OPEN match whose challenger stake is gone (never
+    /// staked, or refunded) or an ACCEPTED match missing either stake is
+    /// abandoned. A still-fully-funded match stays visible — it can yet settle or
+    /// be refunded. Within the window nothing is touched, so a live pending match
+    /// is never mis-marked (this is why it needs PER-PARTY funding — a single
+    /// both-parties probe can't tell "defender hasn't staked yet" from "challenger
+    /// refunded"). Runs lazily on match listing; a no-op in invoice mode.
+    /// </summary>
+    public async Task ReconcileAbandonedMatchesAsync(CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        foreach (var m in store.Matches.Values)
+        {
+            if (m.Mode != "covenant" || m.Status is not ("open" or "accepted")) continue;
+            if (m.RefundAfterUnixSeconds is not { } refundAfter || now < refundAfter) continue;
+            var funding = await chain.GetWagerEscrowFundingAsync(m.Id, ct);
+            if (funding is null) continue;
+            var abandoned = m.Status == "open"
+                ? !funding.ChallengerFunded
+                : !(funding.ChallengerFunded && funding.DefenderFunded);
+            if (abandoned) m.Status = "expired";
+        }
     }
 
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,

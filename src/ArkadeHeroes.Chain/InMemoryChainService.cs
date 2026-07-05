@@ -172,6 +172,10 @@ public class InMemoryChainService : IChainService
         => Task.FromResult(_escrows.TryGetValue(matchId, out var escrow)
                            && escrow is { ChallengerStaked: true, DefenderStaked: true });
 
+    public Task<WagerEscrowFunding?> GetWagerEscrowFundingAsync(string matchId, CancellationToken ct = default)
+        => Task.FromResult(_escrows.TryGetValue(matchId, out var escrow)
+            ? new WagerEscrowFunding(escrow.ChallengerStaked, escrow.DefenderStaked) : null);
+
     public async Task<Covenants.WagerEscrowParams?> GetWagerEscrowParamsAsync(string matchId, CancellationToken ct = default)
     {
         if (!_escrows.TryGetValue(matchId, out var escrow)) return null;

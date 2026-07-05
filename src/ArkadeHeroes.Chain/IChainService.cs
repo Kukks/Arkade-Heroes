@@ -57,6 +57,9 @@ public record WagerEscrowInfo(
     long PotSats,
     long RefundAfterUnixSeconds);
 
+/// <summary>Which side of a covenant match's per-party escrows currently holds its stake on-chain — for detecting a refunded/abandoned match.</summary>
+public record WagerEscrowFunding(bool ChallengerFunded, bool DefenderFunded);
+
 /// <summary>The address a player deposits both parents plus the fee into for a covenant breed, and the refund window.</summary>
 public record BreedEscrowInfo(
     string BreedingId,
@@ -136,6 +139,9 @@ public interface IChainService
 
     /// <summary>True once BOTH exact-stake VTXOs sit at the escrow address.</summary>
     Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default);
+
+    /// <summary>Per-party funding of a covenant match's escrows — which side's stake currently sits on-chain. Null for invoice-mode or unknown matches.</summary>
+    Task<WagerEscrowFunding?> GetWagerEscrowFundingAsync(string matchId, CancellationToken ct = default);
 
     /// <summary>
     /// The public escrow parameters persisted for a covenant match — everything

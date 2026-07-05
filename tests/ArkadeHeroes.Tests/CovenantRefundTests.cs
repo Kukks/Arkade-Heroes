@@ -131,4 +131,28 @@ public class CovenantRefundTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, refund.StatusCode);
         Assert.Contains("already settled", await refund.Content.ReadAsStringAsync());
     }
+
+    [Fact]
+    public async Task RefundedMatch_IsExpiredAndDropped_FromTheOpenList()
+    {
+        var (alice, _, open) = await OpenCovenantMatchAsync("expire");
+        await alice.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
+
+        // Bob never accepts/stakes; before expiry the open match is live and listed
+        // (the challenger IS funded, so it isn't abandoned even past the window).
+        var listedBefore = (await alice.GetFromJsonAsync<List<MatchDto>>("/api/matches?status=open"))!;
+        Assert.Contains(listedBefore, m => m.MatchId == open.MatchId);
+
+        // Past expiry, Alice reclaims her stake — the challenger escrow is now empty.
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+        var refund = await alice.PostAsJsonAsync("/api/dev/refund-escrow", new { MatchId = open.MatchId });
+        Assert.Equal(HttpStatusCode.OK, refund.StatusCode);
+
+        // Listing reconciles per-party funding: the abandoned (refunded) match is
+        // marked 'expired' and drops out of the open list.
+        var listedAfter = (await alice.GetFromJsonAsync<List<MatchDto>>("/api/matches?status=open"))!;
+        Assert.DoesNotContain(listedAfter, m => m.MatchId == open.MatchId);
+        var expired = (await alice.GetFromJsonAsync<List<MatchDto>>("/api/matches?status=expired"))!;
+        Assert.Contains(expired, m => m.MatchId == open.MatchId);
+    }
 }

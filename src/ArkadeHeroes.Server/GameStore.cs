@@ -65,6 +65,9 @@ public class MatchSession
     public string? EscrowChallengerAddress { get; set; }
     public string? EscrowDefenderAddress { get; set; }
 
+    /// <summary>Covenant mode: when each party's timelocked refund unlocks — also the abandonment threshold for expiring a stale match. Null in invoice mode.</summary>
+    public long? RefundAfterUnixSeconds { get; set; }
+
     /// <summary>Stake invoices the players' own wallets must pay (invoice mode; null for friendly matches).</summary>
     public string? ChallengerInvoiceId { get; init; }
     public string? DefenderInvoiceId { get; set; }

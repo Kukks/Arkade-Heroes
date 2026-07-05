@@ -213,14 +213,15 @@ passwordless stays plaintext). E2E suite unaffected (no passphrase → pass-thro
   circulate, both the funded gate and the settle input-selection require a pure-BTC VTXO
   (`IsBtcStake`: `v.Assets is null or empty`), so an asset carrier at the same sat value can't be
   swept as a stake. WagerEscrowCovenant re-gated green.
-- **Match/breeding records after refund** — DEFERRED (documented minor limitation, not shipped).
-  An abandoned covenant match stays `open`/`accepted` in `GET /api/matches` after a client-side
-  refund (harmless staleness — the covenant is the truth; a stale row just can't be re-acted on
-  because the escrow is empty). NOT fixed because correct refund-detection needs PER-PARTY escrow
-  state: `IsEscrowFundedAsync` requires BOTH parties, so it can't distinguish "defender hasn't
-  staked yet" (live) from "challenger refunded" (dead), and a naive list-reconciliation would
-  mis-mark normal pending matches as expired — strictly worse than the current harmless staleness.
-  A correct fix (per-party funded probe + abandonment window) is post-MVP; logged in the parking lot.
+- **Match/breeding records after refund** — ✅ DONE (per-party funded probe + abandonment window).
+  `IChainService.GetWagerEscrowFundingAsync` reports each side's on-chain stake state SEPARATELY;
+  `GameService.ReconcileAbandonedMatchesAsync` (run lazily on `GET /api/matches`) marks a covenant
+  match `expired` once it is PAST its refund window AND its escrow is no longer intact — an `open`
+  match whose challenger stake is gone (never staked / refunded) or an `accepted` match missing
+  either stake. A still-funded match stays visible (it can yet settle or be refunded), and nothing
+  within the window is touched, so a live pending match is never mis-marked (exactly the failure a
+  both-parties `IsEscrowFundedAsync` couldn't avoid). A refunded match now drops out of the open/
+  accepted lists. Test: `CovenantRefundTests.RefundedMatch_IsExpiredAndDropped_FromTheOpenList`.
 
 ## 7. MVP walkthrough — ✅ docs/RUNBOOK.md shipped (human two-terminal script, each leg mapped to its proving E2E); a single consolidated walkthrough E2E is redundant with the per-leg E2Es (FullGameLoop + CovenantBreedFlowE2E + ClientRefundFlow + WagerEscrowCovenant)
 
@@ -237,10 +238,8 @@ against the client's actual command output.
 CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
 poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
 item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
-matchmaking, wallet import/restore UX, **expired-session bookkeeping** (mark abandoned covenant
-matches `expired` via a per-party escrow-funded probe + an abandonment window, so `GET
-/api/matches` drops refunded rows — see item 6; needs per-party state to avoid mis-marking live
-pending matches), **coin-selection recoverable-coin filter** (a treasury-bought item's offer
+matchmaking, wallet import/restore UX, ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
+**coin-selection recoverable-coin filter** (a treasury-bought item's offer
 deposit can fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
 `SpendingService.GetAvailableCoins` (SpendingService.cs:168) excludes only unconfirmed-onchain
 VTXOs, NOT recoverable (`Swept || Expired`) ones — so a recoverable coin is offered to selection
