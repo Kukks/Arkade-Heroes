@@ -241,7 +241,9 @@ item 3), ~~pre-built recovery PSBTs/watchtower handoff~~ (📄 DOCUMENTED — `d
 (seed restore + covenant refund/reclaim) shipped + live-tested; Layer 3 unilateral exit + watchtower
 is NArk-provided (`UnilateralExitService`/`ExitWatchtowerService`), design + exact DI wiring
 documented — deliberately not shipped as unverifiable safety-critical code, gated on L1-provider
-wiring + a live "operator gone" exit test), VRF entropy replacing commit–reveal, ~~XP-weighted
+wiring + a live "operator gone" exit test), ~~VRF entropy replacing commit–reveal~~ (📄 ANALYZED — no-go: `21-vrf-entropy-analysis.md`. The
+emulator can't verify a VRF, so replacing commit–reveal would downgrade covenant-enforced fairness
+to client-only; the player nonce already provides anti-grinding — keep commit–reveal), ~~XP-weighted
 matchmaking~~ (✅ SHIPPED: `GET /api/matchmaking/{heroId}` + client `opponents` — other players'
 heroes ranked by level proximity, each annotated with the conserved XP a staked win would gain
 and a loss would cost; `Core/Progression/Matchmaking`), ~~wallet import/restore UX~~ (✅ SHIPPED: `SelfCustodyWallet.ValidateMnemonic` — BIP39 word-count
