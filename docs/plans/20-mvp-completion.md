@@ -104,13 +104,21 @@ a non-custodial asset. Removed: the XP asset + its delivery pipeline, the
 - **The defender is protected by CONSENT** (`AcceptMatchAsync`), not by an asymmetric loss —
   any "loser loses less than the winner gains" would mint XP and be farmable.
 
-Done (this rung): `Leveling` rewritten (conserved `XpTransfer`, signed/losable `Apply`);
-`FightAsync` applies the conserved transfer and records signed deltas; on-chain XP fully
-removed; gate **113 unit + 24 E2E green**. **Remaining — the per-character level-proportional
-match fee** (a sats sink so fielding/idle-training a high-level hero has a cost):
-`Leveling.MatchFee(level) = 20·level` is in place; wiring it into open/accept as a gated
-per-fighter fee (both fighters pay proportional to their OWN level before the fight resolves)
-is the next rung.
+Done (XP rung, `e0e3922`): `Leveling` rewritten (conserved `XpTransfer`, signed/losable
+`Apply`); `FightAsync` applies the conserved transfer and records signed deltas; on-chain XP
+fully removed.
+
+Done (fee rung): the per-character match fee is wired end-to-end. Each fighter pays
+`Leveling.MatchFee(level) = 500 + 20·level` sats to the treasury to stage a STAKED match — a
+level-proportional sats sink so idle-training a high-level hero costs sats every fight. The
+fixed base clears Ark's 330-sat dust limit: the fee is a real VTXO, so a sub-dust amount can't
+land (a bug caught by the live E2E, invisible to the dust-free InMemory sim). The challenger's
+fee invoice is issued at open, the defender's at accept, and BOTH must be paid before
+`FightAsync` resolves — in invoice AND covenant modes, separate from the pot/escrow. The client
+pays it via the same `SettleInvoiceAsync` path as stakes; friendly (wager-0) matches have no fee.
+
+Gate: **113 unit + FullGameLoop E2E green live on regtest** (both invoice- and covenant-mode
+staked duels pay the fee; the covenant settle-balance assertion accounts for it). Item 2 COMPLETE.
 
 ## 3. Marketplace — task 21 (medium) — ✅ DONE (SHIPPED live)
 

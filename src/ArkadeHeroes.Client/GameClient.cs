@@ -622,6 +622,11 @@ public class GameClient : IAsyncDisposable
             await StakeEscrowAsync(open.MatchId, open.EscrowAddress, open.EscrowStakeSats);
         else if (open.StakeInvoice is not null)
             await SettleInvoiceAsync(open.StakeInvoice);
+        if (open.MatchFeeInvoice is not null)
+        {
+            Console.WriteLine($"    match fee {open.MatchFeeInvoice.AmountSats} sats (level-proportional entry cost)");
+            await SettleInvoiceAsync(open.MatchFeeInvoice);
+        }
         Console.WriteLine($"    opponent runs 'accept {open.MatchId}', then you run 'duel {open.MatchId}'");
     }
 
@@ -702,6 +707,11 @@ public class GameClient : IAsyncDisposable
         {
             Console.WriteLine($"  ✓ accepted — stake invoice {response.StakeInvoice.AmountSats} sats");
             await SettleInvoiceAsync(response.StakeInvoice);
+        }
+        if (response.MatchFeeInvoice is not null)
+        {
+            Console.WriteLine($"    match fee {response.MatchFeeInvoice.AmountSats} sats (level-proportional entry cost)");
+            await SettleInvoiceAsync(response.MatchFeeInvoice);
         }
         Console.WriteLine($"    challenger resolves with 'duel {response.Match.MatchId}'");
     }

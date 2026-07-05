@@ -369,7 +369,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
 
-    public async Task<(MatchSession Session, FeeInvoice? Invoice)> OpenMatchAsync(
+    public async Task<(MatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> OpenMatchAsync(
         Player player, string challengerHeroId, string defenderHeroId, long wagerSats,
         string mode, CancellationToken ct)
     {
@@ -391,6 +391,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var matchId = NewId("match");
 
         FeeInvoice? invoice = null;
+        FeeInvoice? feeInvoice = null;
         string? escrowChallenger = null;
         string? escrowDefender = null;
         if (wagerSats > 0)
@@ -411,6 +412,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             {
                 invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:challenger", wagerSats, ct);
             }
+
+            // The per-character match fee: a level-proportional sats sink the
+            // challenger pays to the treasury to stage the match (gated at fight,
+            // both modes). Separate from the pot — fielding a high-level hero costs
+            // sats every staked fight, whoever wins, so idle-training isn't free.
+            feeInvoice = await chain.CreateFeeInvoiceAsync(
+                $"match-fee:challenger:{matchId}", Leveling.MatchFee(challenger.Level), ct);
         }
 
         var session = new MatchSession
@@ -426,10 +434,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             EscrowChallengerAddress = escrowChallenger,
             EscrowDefenderAddress = escrowDefender,
             ChallengerInvoiceId = invoice?.InvoiceId,
+            ChallengerFeeInvoiceId = feeInvoice?.InvoiceId,
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
-        return (session, invoice);
+        return (session, invoice, feeInvoice);
     }
 
     /// <summary>
@@ -437,7 +446,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// their stake invoice. Covenant mode: acceptance is consent — they stake
     /// by paying the escrow address from their own wallet.
     /// </summary>
-    public async Task<(MatchSession Session, FeeInvoice? Invoice)> AcceptMatchAsync(
+    public async Task<(MatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> AcceptMatchAsync(
         Player player, string matchId, CancellationToken ct)
     {
         if (!store.Matches.TryGetValue(matchId, out var session))
@@ -457,9 +466,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             invoice = await chain.CreateFeeInvoiceAsync($"wager-stake:defender:{matchId}", session.WagerSats, ct);
             session.DefenderInvoiceId = invoice.InvoiceId;
         }
+        // The defender's per-character match fee, proportional to their OWN level
+        // (both modes) — the same sats sink the challenger paid at open.
+        var feeInvoice = await chain.CreateFeeInvoiceAsync(
+            $"match-fee:defender:{matchId}", Leveling.MatchFee(defender.Level), ct);
+        session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
-        return (session, invoice);
+        return (session, invoice, feeInvoice);
     }
 
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
@@ -494,6 +508,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 if (session.DefenderInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderInvoiceId, ct))
                     throw new GameRuleException("The defender's stake invoice is unpaid.");
             }
+
+            // Both fighters must have paid their per-character match fee (the
+            // level-proportional sats sink), whichever mode holds the stakes.
+            if (session.ChallengerFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.ChallengerFeeInvoiceId, ct))
+                throw new GameRuleException("Your match fee is unpaid — pay the per-character fee invoice from your wallet first.");
+            if (session.DefenderFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderFeeInvoiceId, ct))
+                throw new GameRuleException("The defender's match fee is unpaid.");
         }
 
         var challenger = GetHero(session.ChallengerHeroId);

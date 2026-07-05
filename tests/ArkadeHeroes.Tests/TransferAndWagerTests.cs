@@ -89,6 +89,9 @@ public class TransferAndWagerTests : IClassFixture<WebApplicationFactory<Program
         Assert.Equal(HttpStatusCode.BadRequest, unpaidFight.StatusCode);
 
         await bob.PayInvoiceAsync(accept.StakeInvoice.InvoiceId);
+        // Both fighters also pay their per-character match fee before the duel.
+        await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
+        await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
 
         // Duel: pot pays the winner's owner; replay audit still holds.
         var fightResponse = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
@@ -107,8 +110,12 @@ public class TransferAndWagerTests : IClassFixture<WebApplicationFactory<Program
         var (winnerBalance, loserBalance) = challengerWon
             ? (aliceFinal.BalanceSats, bobFinal.BalanceSats)
             : (bobFinal.BalanceSats, aliceFinal.BalanceSats);
-        Assert.Equal(start + wager, winnerBalance);
-        Assert.Equal(start - wager, loserBalance);
+        // Each fighter also paid their level-proportional match fee to the treasury.
+        var (winnerFee, loserFee) = challengerWon
+            ? (open.MatchFeeInvoice!.AmountSats, accept.MatchFeeInvoice!.AmountSats)
+            : (accept.MatchFeeInvoice!.AmountSats, open.MatchFeeInvoice!.AmountSats);
+        Assert.Equal(start + wager - winnerFee, winnerBalance);
+        Assert.Equal(start - wager - loserFee, loserBalance);
 
         // Settled matches can't be re-fought.
         var again = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",

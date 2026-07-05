@@ -118,8 +118,11 @@ public class CovenantRefundTests : IDisposable
     {
         var (alice, bob, open) = await OpenCovenantMatchAsync("settled");
         await alice.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
-        await bob.PostAsync($"/api/matches/{open.MatchId}/accept", null);
+        var accept = (await (await bob.PostAsync($"/api/matches/{open.MatchId}/accept", null))
+            .Content.ReadFromJsonAsync<AcceptMatchResponse>())!;
         await bob.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
+        await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
+        await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
         var fight = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight", new FightRequest("n"));
         Assert.Equal(HttpStatusCode.OK, fight.StatusCode);
 

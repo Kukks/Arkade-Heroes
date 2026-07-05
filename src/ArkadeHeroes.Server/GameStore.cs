@@ -69,6 +69,10 @@ public class MatchSession
     public string? ChallengerInvoiceId { get; init; }
     public string? DefenderInvoiceId { get; set; }
 
+    /// <summary>Per-character match-fee invoices (a level-proportional sats sink paid to the treasury); BOTH must be paid before a staked fight. Null for friendly matches.</summary>
+    public string? ChallengerFeeInvoiceId { get; set; }
+    public string? DefenderFeeInvoiceId { get; set; }
+
     /// <summary>Owner of the defender hero at open time (must accept wagered matches).</summary>
     public string? DefenderPlayerId { get; set; }
 

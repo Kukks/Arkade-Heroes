@@ -94,10 +94,10 @@ show 3                # sheet shows the equipped weapon
 Alice challenges Bob for a stake, settled by the emulator-enforced escrow:
 ```
 # Alice:
-challenge 3 <bob-hero-id> 5000 covenant   # opens a covenant match; auto-stakes
+challenge 3 <bob-hero-id> 5000 covenant   # opens a covenant match; auto-stakes + pays the match fee
 matches                                    # note the matchId
 # Bob:
-accept <matchId>                           # auto-stakes into his own escrow
+accept <matchId>                           # auto-stakes into his own escrow + pays his match fee
 # Alice:
 duel <matchId>                             # resolves; the pot sweeps to the winner
 top                                        # leaderboard now ranks the winner first
@@ -105,7 +105,9 @@ top                                        # leaderboard now ranks the winner fi
 Both players: `verify-receipts` → every match/breed receipt verifies against the
 game key, and each hero's level replays from its receipt chain alone. `me` /
 `wallet` show the updated balances; the staked win moved XP from the loser to the
-winner — a conserved transfer, so the loser's level can fall.
+winner — a conserved transfer, so the loser's level can fall. Each fighter also paid a
+level-proportional match fee (`500 + 20·level` sats) to the treasury to stage the duel — a
+sats sink that makes idle-training a high-level hero cost something every staked fight.
 
 ## 6. Timelocked refund (abandoned match)
 

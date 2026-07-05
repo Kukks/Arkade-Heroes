@@ -95,9 +95,14 @@ public record OpenMatchResponse(
     FeeInvoiceDto? StakeInvoice = null,
     // Covenant mode: both players stake by paying this escrow address directly.
     string? EscrowAddress = null,
-    long EscrowStakeSats = 0);
+    long EscrowStakeSats = 0,
+    // The challenger's per-character match fee (level-proportional treasury sink),
+    // paid before the fight in both modes; null for friendly matches.
+    FeeInvoiceDto? MatchFeeInvoice = null);
 
-public record AcceptMatchResponse(MatchDto Match, FeeInvoiceDto? StakeInvoice, string? EscrowAddress = null, long EscrowStakeSats = 0);
+public record AcceptMatchResponse(MatchDto Match, FeeInvoiceDto? StakeInvoice, string? EscrowAddress = null, long EscrowStakeSats = 0,
+    // The defender's per-character match fee, paid before the fight in both modes.
+    FeeInvoiceDto? MatchFeeInvoice = null);
 
 public record FightRequest(string Nonce);
 

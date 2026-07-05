@@ -111,10 +111,12 @@ public class StatAndProgressionTests
     }
 
     [Fact]
-    public void MatchFeeScalesWithLevel()
+    public void MatchFeeScalesWithLevel_AndClearsDust()
     {
-        Assert.Equal(Leveling.MatchFeePerLevel, Leveling.MatchFee(1));
-        Assert.Equal(Leveling.MatchFeePerLevel * 10, Leveling.MatchFee(10));
+        Assert.Equal(Leveling.MatchFeeBaseSats + Leveling.MatchFeePerLevel, Leveling.MatchFee(1));
+        Assert.Equal(Leveling.MatchFeeBaseSats + Leveling.MatchFeePerLevel * 10, Leveling.MatchFee(10));
         Assert.True(Leveling.MatchFee(5) > Leveling.MatchFee(4));
+        // Even a level-1 fee must exceed Ark's 330-sat dust limit to be payable.
+        Assert.True(Leveling.MatchFee(1) > 330);
     }
 }

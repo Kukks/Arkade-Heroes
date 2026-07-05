@@ -199,9 +199,12 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, wager));
         Assert.NotNull(open.StakeInvoice);
         await aliceWallet.SendAsync(open.StakeInvoice!.PayToAddress, open.StakeInvoice.AmountSats);
+        // Each fighter also pays their per-character match fee from their own wallet.
+        await aliceWallet.SendAsync(open.MatchFeeInvoice!.PayToAddress, open.MatchFeeInvoice.AmountSats);
 
         var accept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{open.MatchId}/accept");
         await bobWallet.SendAsync(accept.StakeInvoice.PayToAddress, accept.StakeInvoice.AmountSats);
+        await bobWallet.SendAsync(accept.MatchFeeInvoice!.PayToAddress, accept.MatchFeeInvoice.AmountSats);
 
         FightResponse? duel = null;
         await PollUntilAsync(async () =>
@@ -236,12 +239,17 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
 
         // Both players stake into the escrow from their OWN wallets.
         await aliceWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
+        // …plus their per-character match fee (a treasury invoice, separate from the escrow).
+        await aliceWallet.SendAsync(covenantOpen.MatchFeeInvoice!.PayToAddress, covenantOpen.MatchFeeInvoice.AmountSats);
         var covenantAccept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{covenantOpen.MatchId}/accept");
         // Per-party escrows: the defender stakes into their OWN address.
         Assert.NotNull(covenantAccept.EscrowAddress);
         Assert.NotEqual(covenantOpen.EscrowAddress, covenantAccept.EscrowAddress);
         await bobWallet.SendAsync(covenantAccept.EscrowAddress!, covenantWager);
+        await bobWallet.SendAsync(covenantAccept.MatchFeeInvoice!.PayToAddress, covenantAccept.MatchFeeInvoice.AmountSats);
 
+        // Snapshot AFTER both stakes and both fees have left each wallet, so the
+        // settle assertion below measures only the pot arriving at the winner.
         var aliceBeforeSettle = await aliceWallet.GetBalanceSatsAsync();
         var bobBeforeSettle = await bobWallet.GetBalanceSatsAsync();
 

@@ -51,6 +51,10 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
 
         await bob.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
 
+        // Both fighters also pay their per-character match fee before the duel.
+        await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
+        await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
+
         // Duel: settlement comes from the ESCROW, not a treasury payout.
         var fight = (await (await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
                 new FightRequest("covenant-duel")))
@@ -66,8 +70,12 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
         var (winnerBalance, loserBalance) = challengerWon
             ? (aliceFinal.BalanceSats, bobFinal.BalanceSats)
             : (bobFinal.BalanceSats, aliceFinal.BalanceSats);
-        Assert.Equal(start + wager, winnerBalance);
-        Assert.Equal(start - wager, loserBalance);
+        // Each fighter also paid their level-proportional match fee to the treasury.
+        var (winnerFee, loserFee) = challengerWon
+            ? (open.MatchFeeInvoice!.AmountSats, accept.MatchFeeInvoice!.AmountSats)
+            : (accept.MatchFeeInvoice!.AmountSats, open.MatchFeeInvoice!.AmountSats);
+        Assert.Equal(start + wager - winnerFee, winnerBalance);
+        Assert.Equal(start - wager - loserFee, loserBalance);
     }
 
     [Fact]

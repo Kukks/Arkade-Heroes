@@ -31,10 +31,15 @@ public static class Leveling
     // Each fighter pays to enter a staked match, proportional to its OWN level —
     // fielding a high-level hero always costs you, attacker or defender.
 
+    // A fixed base makes the fee clear Ark's on-chain dust limit (330 sats) even
+    // for a level-1 hero — the fee is paid as a real VTXO, so a sub-dust amount
+    // simply can't land. The per-level term is the "training surcharge" that makes
+    // fielding a higher-level hero cost progressively more.
+    public const long MatchFeeBaseSats = 500;
     public const long MatchFeePerLevel = 20;
 
-    /// <summary>Sats a hero's owner pays to stage a staked match, proportional to the hero's level.</summary>
-    public static long MatchFee(int level) => MatchFeePerLevel * Math.Max(1, level);
+    /// <summary>Sats a hero's owner pays to stage a staked match: a dust-clearing base plus a per-level surcharge.</summary>
+    public static long MatchFee(int level) => MatchFeeBaseSats + MatchFeePerLevel * Math.Max(1, level);
 
     /// <summary>
     /// Applies a SIGNED XP delta. Positive levels up across thresholds; NEGATIVE
