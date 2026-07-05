@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-unit-test:
+    name: Build + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules — brings the NArk SDK the game builds against)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore ArkadeHeroes.slnx
+
+      - name: Build (Release, whole solution — catches compile errors in every project)
+        run: dotnet build ArkadeHeroes.slnx --configuration Release --no-restore
+
+      # The unit/integration suite runs entirely against the in-memory chain
+      # (WebApplicationFactory + InMemoryChainService), so it needs NO regtest
+      # stack — this is the gate that guards every push.
+      - name: Unit tests
+        run: >
+          dotnet test tests/ArkadeHeroes.Tests
+          --configuration Release --no-build
+          --logger "trx;LogFileName=unit.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: TestResults/*.trx
+
+  # ── E2E on live regtest — MANUAL (workflow_dispatch) ────────────────────────
+  # The E2E suite drives real arkd + the Arkade Script emulator over the
+  # arkade-regtest docker stack. It is opt-in because it needs Docker, is slow
+  # (~2.5 min), and shares a faucet (the tests already run serially). This job is
+  # written but UNVERIFIED in Actions (the repo has no remote yet) — expect to
+  # tune stack-readiness/faucet timing on its first real run.
+  e2e-test:
+    name: E2E (regtest)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout (recursive — also brings the arkade-regtest harness)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node (runs the regtest harness)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Start the Arkade regtest stack (arkd + emulator + bitcoin)
+        run: node regtest/regtest.mjs start --profile ark --profile emulator
+
+      - name: Wait for arkd to report ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:7070/v1/info > /dev/null; then
+              echo "arkd is up"; exit 0
+            fi
+            echo "waiting for arkd ($i)…"; sleep 5
+          done
+          echo "arkd did not become ready in time"; exit 1
+
+      - name: E2E tests (serial — shared faucet)
+        run: dotnet test tests/ArkadeHeroes.Tests.E2E --configuration Release
+
+      - name: Tear down the regtest stack
+        if: always()
+        run: node regtest/regtest.mjs stop || true

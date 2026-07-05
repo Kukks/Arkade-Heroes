@@ -62,3 +62,7 @@ dotnet run --project src/ArkadeHeroes.Client
 If `ark send` reports "not enough funds", the faucet's VTXOs expired — renew with `node regtest/regtest.mjs ark settle --password secret`.
 
 The regtest E2E (`dotnet test tests/ArkadeHeroes.Tests.E2E`) runs this whole loop — mint, on-chain asset verification, breed, fight, shop — against live arkd and requires the stack from step 1.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` builds the whole solution and runs the unit/integration suite (in-memory chain, no regtest) on every push and PR to `main` — this is the gate that guards every change. The live-regtest E2E suite runs as a manual `workflow_dispatch` job that brings up the Arkade regtest stack; it's opt-in because it needs Docker and is slow (~2.5 min). The unit gate is validated locally with the same commands (`dotnet build ArkadeHeroes.slnx -c Release` → `dotnet test tests/ArkadeHeroes.Tests -c Release`).
