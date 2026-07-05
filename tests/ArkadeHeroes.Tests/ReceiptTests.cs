@@ -75,6 +75,29 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public void ReplayLevel_SeedsFromAMergeReceiptGenesisLevel()
+    {
+        // A merge receipt: fused hero "fused" is the RESULT (ResultHeroId), inheriting the
+        // base's level 7 — carried in LevelA (position 11). ReplayLevel ignores seed/commitment
+        // for level math, so dummy strings are fine here.
+        var merge = new ProgressionReceiptDto(
+            "merge", "mrg-1", "base", "sac", "fused",
+            "seed", "n", "commit",
+            0, 0, /*LevelA*/ 7, /*LevelB*/ 3, 1000, "key", "sig");
+        Assert.Equal(7, ReceiptVerifier.ReplayLevel("fused", [merge]));
+
+        // A hero with no merge-genesis receipt still starts at 1 (breeding/gen-0 unaffected).
+        Assert.Equal(1, ReceiptVerifier.ReplayLevel("someone-else", [merge]));
+
+        // A later match win folds ON TOP of the inherited genesis level, not from 1.
+        var win = new ProgressionReceiptDto(
+            "match", "m1", "fused", "opp", "fused",
+            "seed", "n", "commit",
+            Leveling.XpToNext(7) + 5, 0, 8, 1, 2000, "key", "sig");
+        Assert.True(ReceiptVerifier.ReplayLevel("fused", [merge, win]) > 7);
+    }
+
+    [Fact]
     public async Task FightIssuesAVerifiableReceipt_AndLevelsReplayFromTheChain()
     {
         var (alice, _) = await _factory.RegisterAsync("R-Alice");

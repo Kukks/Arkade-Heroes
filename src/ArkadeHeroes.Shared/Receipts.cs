@@ -14,11 +14,11 @@ namespace ArkadeHeroes.Shared;
 /// the server database is just a cache of receipt-provable state.
 /// </summary>
 public record ProgressionReceiptDto(
-    string Type,            // "match" | "breeding"
-    string Id,              // matchId / breedingId
-    string HeroAId,         // challenger / parentA
-    string HeroBId,         // defender / parentB
-    string? ResultHeroId,   // winner (match) / child (breeding)
+    string Type,            // "match" | "breeding" | "merge"
+    string Id,              // matchId / breedingId / mergeId
+    string HeroAId,         // challenger / parentA / base
+    string HeroBId,         // defender / parentB / sacrifice
+    string? ResultHeroId,   // winner (match) / child (breeding) / fused (merge)
     string ServerSeedHex,
     string Nonce,
     string CommitmentHex,
@@ -86,9 +86,13 @@ public static class ReceiptVerifier
     /// </summary>
     public static int ReplayLevel(string heroId, IEnumerable<ProgressionReceiptDto> receipts)
     {
-        var level = 1;
+        var all = receipts as IReadOnlyCollection<ProgressionReceiptDto> ?? receipts.ToList();
+        // A merged hero inherits its base's level at genesis, attested by its merge receipt
+        // (LevelA = the base's level). Non-merged heroes have no such receipt and start at 1.
+        var genesis = all.FirstOrDefault(r => r.Type == "merge" && r.ResultHeroId == heroId);
+        var level = genesis?.LevelA ?? 1;
         long xp = 0;
-        foreach (var receipt in receipts
+        foreach (var receipt in all
                      .Where(r => r.Type == "match" && (r.HeroAId == heroId || r.HeroBId == heroId))
                      .OrderBy(r => r.UnixSeconds)
                      .ThenBy(r => r.Id, StringComparer.Ordinal))
