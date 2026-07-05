@@ -1,0 +1,156 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Shared;
+using Microsoft.AspNetCore.Mvc.Testing;
+
+namespace ArkadeHeroes.Tests.E2E;
+
+/// <summary>
+/// Covenant death-match end-to-end against the real stack: two players each stake
+/// their hero into their own per-party death-match escrow; the emulator-enforced
+/// settle (oracle-signed winning branch, revealed seed) BURNS the loser's hero and
+/// RETURNS the winner's hero to the winner's wallet — no sats pot, the heroes are
+/// the stakes. The winner is client-verifiable (replay the deterministic fight).
+/// </summary>
+public class CovenantDeathMatchE2ETests : IAsyncLifetime
+{
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
+    private WebApplicationFactory<Program> _factory = null!;
+    private string _serverDbPath = null!;
+    private SelfCustodyWallet _alice = null!;
+    private SelfCustodyWallet _bob = null!;
+    private readonly List<string> _dbPaths = [];
+
+    public async Task InitializeAsync()
+    {
+        await RegtestHelper.WaitForArkdReadyAsync(TimeSpan.FromSeconds(30));
+        _serverDbPath = Path.Combine(Path.GetTempPath(), $"ah-dm-e2e-{Guid.NewGuid():N}.db");
+        Environment.SetEnvironmentVariable("Chain__Mode", "NArk");
+        Environment.SetEnvironmentVariable("Chain__NArk__ArkUri", "http://localhost:7070");
+        Environment.SetEnvironmentVariable("Chain__NArk__DbPath", _serverDbPath);
+        _factory = new WebApplicationFactory<Program>();
+        _alice = await NewWalletAsync();
+        _bob = await NewWalletAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _alice.DisposeAsync();
+        await _bob.DisposeAsync();
+        _factory.Dispose();
+        foreach (var p in _dbPaths.Append(_serverDbPath))
+            try { if (File.Exists(p)) File.Delete(p); } catch { /* windows lock */ }
+    }
+
+    private async Task<SelfCustodyWallet> NewWalletAsync()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"ah-dm-wallet-{Guid.NewGuid():N}.db");
+        _dbPaths.Add(dbPath);
+        return await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+        {
+            ArkUri = "http://localhost:7070",
+            DbPath = dbPath,
+        });
+    }
+
+    private async Task<HttpClient> RegisterAsync(string name, SelfCustodyWallet wallet)
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name, wallet.Address));
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
+        var player = JsonSerializer.Deserialize<PlayerDto>(body, Web)!;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        return client;
+    }
+
+    private static async Task<T> PostOkAsync<T>(HttpClient client, string path, object? payload = null)
+    {
+        var response = payload is null ? await client.PostAsync(path, null) : await client.PostAsJsonAsync(path, payload);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"{path} failed: {body}");
+        return JsonSerializer.Deserialize<T>(body, Web)!;
+    }
+
+    [Fact]
+    public async Task CovenantDeathMatch_LoserHeroBurned_WinnerRetained()
+    {
+        var alice = await RegisterAsync("DM-Alice", _alice);
+        var bob = await RegisterAsync("DM-Bob", _bob);
+
+        // Fund the treasury (fresh server DB), wait for indexer visibility.
+        var boot = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        await RegtestHelper.ArkSend(boot.TreasuryAddress, 300_000);
+        var probe = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var treasuryHex = global::NArk.Abstractions.ArkAddress.Parse(boot.TreasuryAddress).ScriptPubKey.ToHex();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        while (true)
+        {
+            var seen = 0L;
+            await foreach (var v in probe.GetVtxoByScriptsAsSnapshot(new HashSet<string> { treasuryHex }))
+                if (!v.IsSpent()) seen += (long)v.Amount;
+            if (seen >= 300_000) break;
+            Assert.True(DateTime.UtcNow < deadline, "treasury funding never appeared");
+            await Task.Delay(1500);
+        }
+
+        // Each player claims a starter hero into their own wallet.
+        var aliceHero = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes[0];
+        var bobHero = (await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter")).Heroes[0];
+        await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
+        await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
+
+        // Alice opens the death-match; both players stake their hero into their escrow.
+        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+            new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
+        await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
+
+        var accept = await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
+
+        // Settle: once both heroes are staked, the covenant burns the loser + returns the winner.
+        DeathMatchSettleResponse? settle = null;
+        var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+        while (settle is null)
+        {
+            var response = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
+                new DeathMatchSettleRequest("e2e-dm"));
+            if (response.IsSuccessStatusCode)
+            {
+                settle = JsonSerializer.Deserialize<DeathMatchSettleResponse>(await response.Content.ReadAsStringAsync(), Web);
+                break;
+            }
+            Assert.True(DateTime.UtcNow < revealDeadline,
+                $"covenant death-match never settled: {await response.Content.ReadAsStringAsync()}");
+            await Task.Delay(2000);
+        }
+
+        // The winner is client-verifiable (replay the deterministic fight).
+        var entropy = ArkadeHeroes.Core.Fairness.CommitReveal.DeriveEntropy(
+            Convert.FromHexString(settle!.ServerSeedHex), open.DeathMatchId, aliceHero.Id, bobHero.Id, "e2e-dm");
+        var replay = ArkadeHeroes.Core.Combat.BattleEngine.Fight(
+            FairnessAudit.RebuildHero(settle.ChallengerSnapshot), FairnessAudit.RebuildHero(settle.DefenderSnapshot), entropy);
+        Assert.Equal(settle.WinnerHeroId, replay.WinnerId);
+        Assert.NotNull(settle.Receipt);
+        Assert.Equal("deathmatch", settle.Receipt!.Type);
+
+        // Hero id == asset id (BuildAndStoreHero). The winner's hero returns to the winner's wallet.
+        var winnerWallet = settle.WinnerHeroId == aliceHero.Id ? _alice : _bob;
+        var loserWallet = settle.LoserHeroId == aliceHero.Id ? _alice : _bob;
+        await winnerWallet.WaitForAssetAsync(settle.WinnerHeroId, TimeSpan.FromSeconds(60));
+
+        // The loser's hero is BURNED — gone from BOTH wallets (destroyed, not transferred).
+        var mineDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+        while (true)
+        {
+            var winnerHeld = (await winnerWallet.GetAssetsAsync()).Select(a => a.AssetId).ToHashSet();
+            var loserHeld = (await loserWallet.GetAssetsAsync()).Select(a => a.AssetId).ToHashSet();
+            if (!winnerHeld.Contains(settle.LoserHeroId) && !loserHeld.Contains(settle.LoserHeroId)) break;
+            Assert.True(DateTime.UtcNow < mineDeadline, "loser's hero was not burned (still in a wallet)");
+            await Task.Delay(1500);
+        }
+    }
+}

@@ -499,8 +499,7 @@ public class InMemoryChainService : IChainService
             return Task.FromResult<Covenants.DeathMatchEscrowParams?>(null);
         return Task.FromResult<Covenants.DeathMatchEscrowParams?>(new Covenants.DeathMatchEscrowParams(
             $"sim-player-{e.PlayerId}", e.HeroAssetId, e.GearAssetIds, e.CommitmentHex,
-            $"sim-dm-escrow-{deathMatchId}-challenger", $"sim-dm-escrow-{deathMatchId}-defender",
-            e.OraclePkHex, deathMatchId, role, e.RefundAfterUnixSeconds));
+            e.OraclePkHex, deathMatchId, role, 330, e.RefundAfterUnixSeconds));
     }
 
     // ── Covenant offers (simulated) — fungible items and unique heroes ──

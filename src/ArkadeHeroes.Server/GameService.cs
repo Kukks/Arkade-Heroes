@@ -552,16 +552,17 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var challengerWon = result.WinnerId == challenger.Id;
         var (_, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
 
-        session.Completed = true;
-        session.WinnerHeroId = result.WinnerId;
-
         // The oracle (game key) signs the winning branch; rung 2's covenant binds the on-chain
         // burn of the loser's hero to exactly this attestation. A death-match awards NO XP —
         // the reward is the permakill (+ the loser's gear in rung 2); the risk is your own hero.
+        // Settle the chain FIRST: if the covenant spend throws, nothing is mutated (the fight is
+        // deterministic and re-runs identically), so a retry surfaces the real error, not "resolved".
         var settleMessage = Chain.Covenants.ArkadeCovenants.DeathMatchSettleMessage(session.Id, challengerWon);
         var oracleSig = receipts.SignDigest(settleMessage);
         await chain.SettleDeathMatchAsync(session.Id, challengerWon, session.ServerSeed, oracleSig, ct);
 
+        session.Completed = true;
+        session.WinnerHeroId = result.WinnerId;
         // The loser's hero is permanently DEAD — drop its server record (its asset is burned on-chain).
         store.Heroes.TryRemove(loser.Id, out _);
 

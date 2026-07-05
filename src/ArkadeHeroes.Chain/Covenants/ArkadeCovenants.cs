@@ -169,6 +169,24 @@ public static class ArkadeCovenants
         ];
 
     /// <summary>
+    /// A NO-POT settle branch (death-match): oracle-authorize the winning branch +
+    /// reveal the committed seed, but NO sats sweep — the stakes are heroes, routed
+    /// by the asset packet (winner's hero retained, loser's hero burned). The
+    /// AtomicSweep's output/other-input introspection is dropped, so the witness has
+    /// no index args.
+    ///
+    ///   Witness (bottom→top): [serverSeed, oracleSig]  (sig on top)
+    /// </summary>
+    public static byte[] SettleAuthorizedNoPot(byte[] settleMessage32, byte[] oraclePk32, byte[] commitment32)
+        =>
+        [
+            .. CheckSigFromStackGate(settleMessage32, oraclePk32),
+            .. Sha256Gate(commitment32),
+            Op1, // both gates end in *VERIFY (consume their result); the arkade VM requires the
+                 // script to leave EXACTLY ONE truthy item, so push OP_1 as the success result.
+        ];
+
+    /// <summary>
     /// Refund covenant: the stake can be reclaimed ONLY to the party's own
     /// address (payTo pins it), so anyone (the party, a watchtower) may
     /// trigger the refund without being able to steal. The TIME gate lives in
