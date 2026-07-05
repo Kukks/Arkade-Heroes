@@ -206,6 +206,15 @@ api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameServic
     return Results.Ok(game.SuggestOpponents(player, heroId));
 });
 
+// Rarity leaderboard: heroes ranked by their trustless, genome-derived rarity score.
+api.MapGet("/rarest", (GameStore store) =>
+    Results.Ok(store.Heroes.Values
+        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
+        .ThenByDescending(h => h.Generation)
+        .Take(20)
+        .Select(h => h.ToDto())
+        .ToList()));
+
 // Public escrow parameters of a covenant match: everything a player needs to
 // rebuild the per-party contracts locally (WagerEscrowContracts.Build) and
 // reclaim a timelocked refund WITHOUT trusting this server. 404 for
@@ -432,9 +441,12 @@ static OfferDto ToOfferDto(OfferListing o, GameStore store)
     var name = o.Kind == "hero"
         ? (store.Heroes.TryGetValue(o.HeroId ?? "", out var hero) ? hero.Name : o.HeroId ?? "hero")
         : (ArkadeHeroes.Core.Equipment.ItemCatalog.Find(o.ItemId)?.Name ?? o.ItemId);
+    var rarityTier = o.Kind == "hero" && store.Heroes.TryGetValue(o.HeroId ?? "", out var h)
+        ? ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Tier.ToString()
+        : null;
     return new OfferDto(o.Id, o.SellerId, o.ItemId, name,
         o.AskSats, o.OfferAddress, o.ItemAssetId, o.OfferValueSats, o.RefundAfterUnixSeconds, o.Status,
-        o.Kind, o.HeroId);
+        o.Kind, o.HeroId, rarityTier);
 }
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet invoice payment.</summary>
