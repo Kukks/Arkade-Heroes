@@ -66,9 +66,12 @@ instead of retained to the player, so the layout is breeding's exact 2-output sh
 flat `GameOptions.MergeFeeSats` sats sink on top. Client `merge <base> <sacrifice>
 [covenant]`. Tests: Core `FusionTests` (determinism, concentration, stats-from-base) +
 `ReplayLevel` genesis seeding + InMemory `MergeFlowTests` + live `CovenantMergeFlowE2ETests`
-(inputs burned + gone from the wallet, fused minted + audited). Follow-up (parked): >2
-inputs; escalating merge fee; a client-facing merge-escrow refund command (the refund LEAF
-already exists; only the reclaim tooling — mirroring breed's — is deferred).
+(inputs burned + gone from the wallet, fused minted + audited) + escrow rebuildable via
+`GET /api/merges/{id}/escrow`. Follow-up (parked): >2 inputs; escalating merge fee. The
+non-custodial refund is at breed parity — the timelocked refund LEAF is on-chain and the
+escrow-params endpoint serves a trustless rebuild; the only remaining gap is a client
+refund COMMAND, a cross-cutting feature NEITHER breed nor merge escrows have yet (only
+wager/match escrows do via `refund <matchId>`).
 
 ### 4. Hardcore death-match covenant — hero sink + PvP depth — 📋 TODO (needs the foundation)
 
