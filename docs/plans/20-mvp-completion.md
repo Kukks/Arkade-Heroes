@@ -237,7 +237,11 @@ against the client's actual command output.
 
 CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
 poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
-item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, ~~XP-weighted
+item 3), ~~pre-built recovery PSBTs/watchtower handoff~~ (📄 DOCUMENTED — `docs/RECOVERY.md`: Layers 1–2
+(seed restore + covenant refund/reclaim) shipped + live-tested; Layer 3 unilateral exit + watchtower
+is NArk-provided (`UnilateralExitService`/`ExitWatchtowerService`), design + exact DI wiring
+documented — deliberately not shipped as unverifiable safety-critical code, gated on L1-provider
+wiring + a live "operator gone" exit test), VRF entropy replacing commit–reveal, ~~XP-weighted
 matchmaking~~ (✅ SHIPPED: `GET /api/matchmaking/{heroId}` + client `opponents` — other players'
 heroes ranked by level proximity, each annotated with the conserved XP a staked win would gain
 and a loss would cost; `Core/Progression/Matchmaking`), ~~wallet import/restore UX~~ (✅ SHIPPED: `SelfCustodyWallet.ValidateMnemonic` — BIP39 word-count

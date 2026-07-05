@@ -20,6 +20,7 @@ A breeding + battling game powered by [Arkade](https://docs.arkadeos.com) covena
 | `external/dotnet-sdk` | [NArk](https://github.com/arkade-os/dotnet-sdk) submodule (brings `regtest/` denigiri harness) |
 | `docs/research/` | Findings from the Arkade ecosystem repos this design is grounded in |
 | `docs/DESIGN.md` | Game + covenant design |
+| `docs/RECOVERY.md` | **Non-custodial recovery** — restore from seed, covenant refund/reclaim, unilateral exit |
 | `docs/HANDOFF.md` | **Engineering handoff for the autonomous build** — verified state, runbook, traps, next-task specs (`docs/plans/`) |
 
 ## Getting started (offline, in-memory chain)
