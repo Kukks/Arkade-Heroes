@@ -55,6 +55,16 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
     public string Mnemonic { get; }
     public string Address { get; }
 
+    /// <summary>
+    /// The wallet's stable x-only LOGIN pubkey (hex): a keypair derived from the
+    /// mnemonic on a fixed path, separate from the ark spending keys. It survives
+    /// a restore (same words → same key) and is the "sign in with your wallet"
+    /// identity a player registers so they can resume a server session later.
+    /// </summary>
+    public string LoginPubKeyHex { get; }
+
+    private readonly global::NBitcoin.Secp256k1.ECPrivKey _loginKey;
+
     /// <summary>The wallet's NArk wallet id (informational; keys never leave this process).</summary>
     public string WalletId => _walletId;
 
@@ -71,6 +81,30 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         _walletId = walletId;
         Mnemonic = mnemonic;
         Address = address;
+
+        // Derive a dedicated login keypair from the mnemonic on a fixed hardened
+        // path (distinct from ark spending derivation), so it is deterministic
+        // across restores yet never doubles as a spending key.
+        var loginPriv = new Mnemonic(mnemonic).DeriveExtKey()
+            .Derive(new KeyPath("83696968'/0'/0'")).PrivateKey.ToBytes();
+        _loginKey = global::NBitcoin.Secp256k1.ECPrivKey.Create(loginPriv);
+        Span<byte> pub = stackalloc byte[32];
+        _loginKey.CreateXOnlyPubKey().WriteToSpan(pub);
+        LoginPubKeyHex = Convert.ToHexString(pub).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Signs a 32-byte login-challenge digest with the stable login key (BIP340),
+    /// returning the x-only pubkey + signature hex — proves control of the login
+    /// identity without revealing the key. The caller computes the digest (the
+    /// shared <c>LoginChallenge.Digest</c>) so the formula lives in one place.
+    /// </summary>
+    public (string PubKeyHex, string SignatureHex) SignLoginDigest(byte[] digest32)
+    {
+        var sig = _loginKey.SignBIP340(digest32);
+        var sigBytes = new byte[64];
+        sig.WriteToSpan(sigBytes);
+        return (LoginPubKeyHex, Convert.ToHexString(sigBytes).ToLowerInvariant());
     }
 
     public static async Task<SelfCustodyWallet> CreateAsync(SelfCustodyWalletOptions options, CancellationToken ct = default)

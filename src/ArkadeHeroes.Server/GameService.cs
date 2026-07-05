@@ -38,8 +38,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     // ── Players ────────────────────────────────────────────────────────
 
+    /// <summary>How long a login nonce is valid after issuance.</summary>
+    private static readonly TimeSpan LoginNonceTtl = TimeSpan.FromMinutes(5);
+
     public async Task<(Player Player, string Address, long Balance)> RegisterPlayerAsync(
-        string name, string arkadeAddress, CancellationToken ct)
+        string name, string arkadeAddress, string? loginPubKeyHex, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new GameRuleException("Player name is required.");
         if (string.IsNullOrWhiteSpace(arkadeAddress))
@@ -50,6 +53,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             Id = NewId("player"),
             Name = name.Trim(),
             Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
+            LoginPubKeyHex = string.IsNullOrWhiteSpace(loginPubKeyHex) ? null : loginPubKeyHex.Trim().ToLowerInvariant(),
         };
 
         try
@@ -72,6 +76,53 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (token is not null && store.PlayersByToken.TryGetValue(token, out var player))
             return player;
         throw new GameRuleException("Invalid or missing bearer token.");
+    }
+
+    /// <summary>Issues a fresh single-use login nonce (and prunes expired ones).</summary>
+    public string IssueLoginChallenge()
+    {
+        var cutoff = DateTimeOffset.UtcNow - LoginNonceTtl;
+        foreach (var (nonce, issued) in store.LoginNonces)
+            if (issued < cutoff) store.LoginNonces.TryRemove(nonce, out _);
+
+        var fresh = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        store.LoginNonces[fresh] = DateTimeOffset.UtcNow;
+        return fresh;
+    }
+
+    /// <summary>
+    /// "Sign in with your wallet": consumes the single-use nonce, verifies the
+    /// BIP340 signature over its domain-separated digest, and returns the player
+    /// registered with that login key — so a restored wallet resumes its existing
+    /// heroes without the server ever holding a key.
+    /// </summary>
+    public Player Login(string loginPubKeyHex, string nonceHex, string signatureHex)
+    {
+        // Single-use: consume the nonce whatever happens next.
+        if (!store.LoginNonces.TryRemove(nonceHex, out var issued))
+            throw new GameRuleException("Unknown or already-used login challenge — request a fresh one.");
+        if (DateTimeOffset.UtcNow - issued > LoginNonceTtl)
+            throw new GameRuleException("The login challenge expired — request a fresh one.");
+
+        var key = string.IsNullOrWhiteSpace(loginPubKeyHex) ? "" : loginPubKeyHex.Trim().ToLowerInvariant();
+        if (!VerifyLoginSignature(key, nonceHex, signatureHex))
+            throw new GameRuleException("Signature does not prove control of this login key.");
+
+        return store.Players.Values.FirstOrDefault(p =>
+                string.Equals(p.LoginPubKeyHex, key, StringComparison.OrdinalIgnoreCase))
+            ?? throw new GameRuleException("No player is registered with this login key.");
+    }
+
+    private static bool VerifyLoginSignature(string pubKeyHex, string nonceHex, string sigHex)
+    {
+        try
+        {
+            var digest = Shared.LoginChallenge.Digest(nonceHex); // 32-byte message
+            return NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(pubKeyHex), out var pk) && pk is not null
+                && NBitcoin.Secp256k1.SecpSchnorrSignature.TryCreate(Convert.FromHexString(sigHex), out var sig) && sig is not null
+                && pk.SigVerifyBIP340(sig, digest);
+        }
+        catch { return false; }
     }
 
     // ── Heroes ─────────────────────────────────────────────────────────

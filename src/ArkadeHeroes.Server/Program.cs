@@ -52,9 +52,23 @@ var api = app.MapGroup("/api");
 
 api.MapPost("/players", async (RegisterPlayerRequest request, GameService game, CancellationToken ct) =>
 {
-    var (player, address, balance) = await game.RegisterPlayerAsync(request.Name, request.ArkadeAddress, ct);
+    var (player, address, balance) = await game.RegisterPlayerAsync(
+        request.Name, request.ArkadeAddress, request.LoginPubKeyHex, ct);
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance,
         player.StarterClaimed, player.Token));
+});
+
+// "Sign in with your wallet" — resume an existing player after a restore: fetch a
+// single-use challenge, sign its digest with the wallet's login key, prove it here.
+api.MapGet("/players/login-challenge", (GameService game) =>
+    Results.Ok(new LoginChallengeResponse(game.IssueLoginChallenge())));
+
+api.MapPost("/players/login", async (LoginRequest request, GameService game, IChainService chain, CancellationToken ct) =>
+{
+    var player = game.Login(request.LoginPubKeyHex, request.NonceHex, request.SignatureHex);
+    var address = await chain.GetPlayerAddressAsync(player.Id, ct);
+    var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, player.Token));
 });
 
 api.MapGet("/players/me", async (HttpContext http, GameService game, IChainService chain, CancellationToken ct) =>

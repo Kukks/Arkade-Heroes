@@ -214,6 +214,7 @@ public class GameClient : IAsyncDisposable
         {
             case "help": PrintHelp(); break;
             case "register": await RegisterAsync(Arg(parts, 1, "register <name> [arkadeAddress]"), parts.Length > 2 ? parts[2] : null); break;
+            case "login": await LoginAsync(); break;
             case "me": await ShowMeAsync(); break;
             case "starter": await ClaimStarterAsync(); break;
             case "mine": await ListHeroesAsync(mineOnly: true); break;
@@ -259,6 +260,7 @@ public class GameClient : IAsyncDisposable
 
     private static void PrintHelp() => Console.WriteLine("""
           register <name>        create a player (wallet + faucet balance)
+          login                  resume an existing player by signing with your wallet
           me                     profile + sats balance
           starter                claim your two generation-0 heroes
           mine                   list your heroes
@@ -391,15 +393,25 @@ public class GameClient : IAsyncDisposable
     {
         // Non-custodial: registration binds YOUR address — in NArk mode it
         // comes from the embedded self-custody wallet automatically; in the
-        // InMemory simulation a local sim-address stands in for it.
+        // InMemory simulation a local sim-address stands in for it. In NArk mode
+        // we also register the wallet's login pubkey so a restored wallet can
+        // later resume this player via 'login' (sign in with your wallet).
+        string? loginPubKey = null;
         if (address is null)
         {
-            address = await ChainModeAsync() == "InMemory"
-                ? $"sim-wallet-{NewNonce()}"
-                : (await WalletAsync()).Address;
+            if (await ChainModeAsync() == "InMemory")
+            {
+                address = $"sim-wallet-{NewNonce()}";
+            }
+            else
+            {
+                var wallet = await WalletAsync();
+                address = wallet.Address;
+                loginPubKey = wallet.LoginPubKeyHex;
+            }
         }
 
-        var player = await PostAsync<PlayerDto>("/api/players", new RegisterPlayerRequest(name, address));
+        var player = await PostAsync<PlayerDto>("/api/players", new RegisterPlayerRequest(name, address, loginPubKey));
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
         _me = player;
         await SaveSessionAsync(player.Token!);
@@ -407,6 +419,28 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine($"    registered address: {player.ArkadeAddress}");
         Console.WriteLine($"    balance at address: {player.BalanceSats} sats");
         Console.WriteLine("    next: 'starter' to mint your first two heroes");
+    }
+
+    /// <summary>
+    /// "Sign in with your wallet": resume an existing player by signing a
+    /// server challenge with the wallet's login key. After a 'restore' on a new
+    /// machine this re-attaches you to your heroes — non-custodial auth, no
+    /// password, the server never holds a key.
+    /// </summary>
+    private async Task LoginAsync()
+    {
+        if (await ChainModeAsync() == "InMemory")
+            throw new GameClientException("InMemory mode has no wallet to sign in with");
+        var wallet = await WalletAsync();
+        var challenge = await GetAsync<LoginChallengeResponse>("/api/players/login-challenge");
+        var (pubKey, signature) = wallet.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
+        var player = await PostAsync<PlayerDto>("/api/players/login",
+            new LoginRequest(pubKey, challenge.NonceHex, signature));
+        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        _me = player;
+        await SaveSessionAsync(player.Token!);
+        Console.WriteLine($"  ✓ signed in as {player.Name} — session resumed with your wallet");
+        Console.WriteLine($"    address {player.ArkadeAddress}   balance {player.BalanceSats} sats");
     }
 
     private async Task ShowMeAsync()

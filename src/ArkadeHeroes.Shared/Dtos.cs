@@ -2,8 +2,19 @@ namespace ArkadeHeroes.Shared;
 
 // ── Players ────────────────────────────────────────────────────────────────
 
-/// <summary>Registration binds the player to THEIR wallet's address — keys never leave the client.</summary>
-public record RegisterPlayerRequest(string Name, string ArkadeAddress);
+/// <summary>
+/// Registration binds the player to THEIR wallet's address — keys never leave the
+/// client. <see cref="LoginPubKeyHex"/> (optional) is the wallet's stable login
+/// key, registered so the player can later resume by signing a challenge with it
+/// ("sign in with your wallet" after a restore).
+/// </summary>
+public record RegisterPlayerRequest(string Name, string ArkadeAddress, string? LoginPubKeyHex = null);
+
+/// <summary>A fresh single-use nonce to sign for wallet login.</summary>
+public record LoginChallengeResponse(string NonceHex);
+
+/// <summary>Prove control of a registered login key by signing the challenge's digest (BIP340).</summary>
+public record LoginRequest(string LoginPubKeyHex, string NonceHex, string SignatureHex);
 
 /// <summary>A fee/stake invoice: pay this exact treasury address from your own wallet.</summary>
 public record FeeInvoiceDto(string InvoiceId, string PayToAddress, long AmountSats, string Memo);

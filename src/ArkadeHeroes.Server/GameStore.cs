@@ -10,6 +10,8 @@ public class Player
     public required string Name { get; init; }
     public required string Token { get; init; }
     public bool StarterClaimed { get; set; }
+    /// <summary>The wallet's stable x-only login pubkey (hex), when registered — enables "sign in with your wallet" resume.</summary>
+    public string? LoginPubKeyHex { get; set; }
 }
 
 public class BreedingSession
@@ -113,6 +115,9 @@ public class GameStore
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
+
+    /// <summary>Outstanding single-use login nonces (hex) → issued time, for wallet-signature login.</summary>
+    public ConcurrentDictionary<string, DateTimeOffset> LoginNonces { get; } = new();
 
     /// <summary>Server-side receipt cache, keyed by hero id (receipts are signed public facts; players hold their own copies).</summary>
     public ConcurrentDictionary<string, List<Shared.ProgressionReceiptDto>> ReceiptsByHero { get; } = new();
