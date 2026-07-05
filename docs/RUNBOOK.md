@@ -165,6 +165,19 @@ arkd/regtest quirk when re-spending a freshly treasury-delivered item VTXO (batc
 timing, not the game — mainnet's long horizons avoid it). The buyer-funded
 fulfilment itself is covenant-proven live (`CovenantOfferProbeTests`).
 
+## 9. Recovery — lose the machine, keep your heroes (Alice)
+
+The non-custodial promise made concrete: your heroes and funds live in your
+wallet, and your 12 words bring them back.
+```
+# Alice, before:
+backup                     # write down the 12 words
+# ...the machine dies. On a NEW machine (fresh ARKADE_HEROES_HOME):
+restore <the 12 words>     # re-derives the SAME address; your on-chain heroes/funds are back
+login                      # signs a server challenge with your wallet → resumes your player
+mine                       # your heroes are here again — no password, no custodian
+```
+
 ## What just happened (trust model)
 
 Every value-bearing action was either **covenant-enforced** (breeding fairness,
