@@ -229,6 +229,7 @@ public class GameClient : IAsyncDisposable
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
+            case "restore": await RestoreWalletAsync(string.Join(' ', parts.Skip(1))); break;
             case "fund": await FundAsync(); break;
             case "top": await LeaderboardAsync(); break;
             case "receipts": await ListReceiptsAsync(); break;
@@ -273,6 +274,7 @@ public class GameClient : IAsyncDisposable
           transfer <hero> <pid>  send a hero (you sign; the Arkade asset moves wallets)
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
+          restore <12 words>     recover your wallet (heroes + funds) from your mnemonic
           fund                   how to fund your wallet address
           top                    leaderboard (wins/level, recomputed from receipts)
           receipts               your signed progression receipts (portable proof)
@@ -721,6 +723,52 @@ public class GameClient : IAsyncDisposable
         var wallet = await WalletAsync();
         Console.WriteLine("  ⚠ your mnemonic — anyone with these words controls your heroes and funds:");
         Console.WriteLine($"    {wallet.Mnemonic}");
+        Console.WriteLine("    write it down; 'restore <the 12 words>' brings your wallet back on any machine");
+    }
+
+    /// <summary>
+    /// Recovers a wallet from its mnemonic into a FRESH data dir — the
+    /// non-custodial guarantee made concrete: your heroes (on-chain assets) and
+    /// funds come back from your words ALONE, with no server or custodian. The
+    /// same 12 words always re-derive the same address, so the on-chain assets
+    /// sitting there are yours again.
+    /// </summary>
+    private async Task RestoreWalletAsync(string mnemonic)
+    {
+        if (await ChainModeAsync() == "InMemory")
+            throw new GameClientException("InMemory mode has no real wallet to restore");
+        if (_wallet is not null)
+            throw new GameClientException("a wallet is already open — restore into a fresh ARKADE_HEROES_HOME");
+        if (File.Exists(WalletDbFile))
+            throw new GameClientException($"a wallet already exists in {HomeDir} — restore into a fresh ARKADE_HEROES_HOME so it isn't overwritten");
+        mnemonic = mnemonic.Trim();
+        if (mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length is not (12 or 24))
+            throw new GameClientException("a mnemonic is 12 (or 24) words — paste all of them after 'restore'");
+
+        Directory.CreateDirectory(HomeDir);
+        Console.WriteLine("  restoring your wallet from the mnemonic (keys stay on this machine)…");
+        try
+        {
+            _wallet = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
+            {
+                ArkUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_ARK") ?? "http://localhost:7070",
+                DbPath = WalletDbFile,
+                Mnemonic = mnemonic,
+                Passphrase = Environment.GetEnvironmentVariable("ARKADE_HEROES_WALLET_PASSPHRASE"),
+            });
+        }
+        catch (Exception ex)
+        {
+            throw new GameClientException($"could not restore — is the mnemonic correct? ({ex.Message})");
+        }
+
+        Console.WriteLine($"  ✓ wallet restored — address {_wallet.Address}");
+        var balance = await _wallet.GetBalanceSatsAsync();
+        var assets = await _wallet.GetAssetsAsync();
+        Console.WriteLine($"    balance {balance} sats; {assets.Count} on-chain asset(s) recovered from your words alone");
+        foreach (var (assetId, amount) in assets)
+            Console.WriteLine($"    {ShortId(assetId)} × {amount}");
+        Console.WriteLine("    your heroes/items live in this wallet; 'register <name>' to (re)join a server with it");
     }
 
     private async Task LeaderboardAsync()
