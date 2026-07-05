@@ -526,7 +526,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (session, escrow);
     }
 
-    public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(
+    public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(
         Player player, string deathMatchId, string nonce, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -543,6 +543,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);
+        // Pre-fight snapshots — what the engine fights with — so the client can replay + verify the winner.
+        var challengerSnapshot = challenger.ToDto();
+        var defenderSnapshot = defender.ToDto();
 
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, challenger.Id, defender.Id, nonce);
         var result = BattleEngine.Fight(challenger, defender, entropy);
@@ -571,7 +574,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.ChallengerHeroId, session.DefenderHeroId);
 
-        return (result.ToDto(), result.WinnerId, loser.Id, serverSeedHex, entropyHex, receipt);
+        return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot, serverSeedHex, entropyHex, receipt);
     }
 
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────

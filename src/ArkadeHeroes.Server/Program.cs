@@ -184,8 +184,8 @@ api.MapPost("/deathmatch/{id}/accept", async (string id, HttpContext http, GameS
 api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (result, winner, loser, seed, entropy, receipt) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, seed, entropy, receipt));
+    var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt));
 });
 
 api.MapGet("/deathmatch/{id}/escrow/{role}", async (string id, string role, IChainService chain, CancellationToken ct) =>

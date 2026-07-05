@@ -222,6 +222,9 @@ public class GameClient : IAsyncDisposable
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB> [covenant]"), Arg(parts, 2, "breed <parentA> <parentB> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "merge": await MergeAsync(Arg(parts, 1, "merge <base> <sacrifice> [covenant]"), Arg(parts, 2, "merge <base> <sacrifice> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
+            case "deathmatch": await DeathMatchAsync(Arg(parts, 1, "deathmatch <mine> <theirs>"), Arg(parts, 2, "deathmatch <mine> <theirs>")); break;
+            case "accept-death": await AcceptDeathAsync(Arg(parts, 1, "accept-death <id>")); break;
+            case "settle-death": await SettleDeathAsync(Arg(parts, 1, "settle-death <id>")); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
             case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats> [covenant]"), parts.Length > 4 && parts[4].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "matches": await ListMatchesAsync(); break;
@@ -271,6 +274,9 @@ public class GameClient : IAsyncDisposable
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
           breed <a> <b> [covenant]  breed two heroes; 'covenant' = emulator-enforced escrow mint
           merge <base> <sac> [covenant]  fuse two heroes into one (both consumed); concentrates traits, may be born sterile
+          deathmatch <m> <t>     STAKE YOUR HERO — winner-takes-all; the LOSER'S HERO BURNS (permadeath)
+          accept-death <id>      accept a death-match (stakes your challenged hero)
+          settle-death <id>      fight the death-match; the loser's hero dies (replay-audited)
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
           challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
@@ -712,6 +718,80 @@ public class GameClient : IAsyncDisposable
         await wallet.SendAssetAsync(escrowAddress, sacrificeHero.AssetId ?? sacrificeHero.Id, 1);
         await wallet.SendAsync(escrowAddress, feeSats);
         Console.WriteLine($"    deposited base + sacrifice + {feeSats}-sat fee into the merge escrow from your wallet");
+    }
+
+    /// <summary>Open a death-match: STAKE YOUR HERO. Winner-takes-all; the loser's hero is permanently burned.</summary>
+    private async Task DeathMatchAsync(string mineRef, string theirsRef)
+    {
+        RequireSession();
+        var mine = ResolveHero(mineRef);
+        var theirs = ResolveHero(theirsRef);
+
+        var open = await PostAsync<DeathMatchOpenResponse>("/api/deathmatch/open",
+            new DeathMatchOpenRequest(mine.Id, theirs.Id));
+
+        // Informed consent: show the level gap before the hero is at risk.
+        var gap = Math.Abs(open.Favorability.LevelGap);
+        var dir = open.Favorability.LevelGap > 0 ? "above" : "below";
+        Console.WriteLine($"  ⚠ {open.Favorability.Label.ToUpperInvariant()} — the opponent is {gap} level(s) {dir} you.");
+        Console.WriteLine($"    LOSING BURNS {mine.Name} FOREVER. Type 'yes' to stake it:");
+        if ((Console.ReadLine() ?? "").Trim().ToLowerInvariant() != "yes")
+        {
+            Console.WriteLine("    cancelled — your hero is safe.");
+            return;
+        }
+
+        await StakeDeathMatchAsync(open.DeathMatchId, "challenger", open.EscrowAddress, mine);
+        Console.WriteLine($"  ✓ death-match opened: {open.DeathMatchId}  (commitment {ShortId(open.CommitmentHex)})");
+        Console.WriteLine($"    opponent runs 'accept-death {open.DeathMatchId}', then you run 'settle-death {open.DeathMatchId}'");
+    }
+
+    /// <summary>Accept a death-match — stakes your challenged hero (it burns if it loses).</summary>
+    private async Task AcceptDeathAsync(string deathMatchId)
+    {
+        RequireSession();
+        var accept = await PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept", null);
+        Console.WriteLine("  ⚠ accepting a death-match — if your hero loses, it is BURNED.");
+        await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, hero: null);
+        Console.WriteLine($"  ✓ staked. The challenger runs 'settle-death {deathMatchId}'.");
+    }
+
+    /// <summary>Fight + settle a funded death-match; the loser's hero dies. Replays the fight to verify the winner.</summary>
+    private async Task SettleDeathAsync(string deathMatchId)
+    {
+        RequireSession();
+        var nonce = NewNonce();
+        var settle = await RetryUntilObservedAsync(
+            () => PostAsync<DeathMatchSettleResponse>(
+                $"/api/deathmatch/{deathMatchId}/settle", new DeathMatchSettleRequest(nonce)),
+            "death-match settle");
+        await StoreReceiptAsync(settle.Receipt);
+
+        var winnerName = settle.WinnerHeroId == settle.ChallengerSnapshot.Id ? settle.ChallengerSnapshot.Name : settle.DefenderSnapshot.Name;
+        var loserName = settle.LoserHeroId == settle.ChallengerSnapshot.Id ? settle.ChallengerSnapshot.Name : settle.DefenderSnapshot.Name;
+        Console.WriteLine($"  ☠ {loserName} is DEAD — {winnerName} wins the death-match.");
+
+        // Replay the deterministic fight to verify the reported winner (client-audited).
+        // VerifyMatch reads only Result/seed/entropy/snapshots; the trailing wager/receipt fields default.
+        var fr = new FightResponse(settle.Result, settle.ServerSeedHex, settle.EntropyHex, 0, 0,
+            settle.ChallengerSnapshot, settle.DefenderSnapshot, settle.ChallengerSnapshot, settle.DefenderSnapshot);
+        var (ok, detail) = FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr);
+        Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
+    /// <summary>Stake a hero into a death-match escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
+    private async Task StakeDeathMatchAsync(string deathMatchId, string role, string escrowAddress, HeroDto? hero)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = deathMatchId, Role = role });
+            Console.WriteLine("    staked your hero into the death-match escrow (simulated wallet)");
+            return;
+        }
+        if (hero is null) throw new GameClientException("A covenant death-match deposit needs the hero (rung 2).");
+        var wallet = await WalletAsync();
+        await wallet.SendAssetAsync(escrowAddress, hero.AssetId ?? hero.Id, 1);
+        Console.WriteLine($"    staked {hero.Name} into the death-match escrow from your wallet");
     }
 
     /// <summary>Stakes into a covenant escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
