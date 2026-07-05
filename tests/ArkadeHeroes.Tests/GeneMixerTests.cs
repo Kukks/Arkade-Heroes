@@ -44,15 +44,16 @@ public class GeneMixerTests
     }
 
     [Fact]
-    public void ReservedBytesStayZero()
+    public void Gen0GenomesAreBlankOnTraits()
     {
-        var a = Genome.NewGen0([7]);
-        var b = Genome.NewGen0([8]);
-        for (var n = 0; n < 50; n++)
+        // Gen-0 heroes carry NO traits — bytes [16..31] are zeroed — so ALL rarity is
+        // breeding-earned. (Breeding now POPULATES [16..31] via GeneMixer's trait
+        // inheritance + mutation; that behavior is covered in TraitsAndRarityTests.)
+        for (byte n = 0; n < 20; n++)
         {
-            var child = GeneMixer.Mix(a, b, SHA256.HashData([(byte)n]));
+            var g = Genome.NewGen0([n]);
             for (var i = 16; i < 32; i++)
-                Assert.Equal(0, child[i]);
+                Assert.Equal(0, g[i]);
         }
     }
 

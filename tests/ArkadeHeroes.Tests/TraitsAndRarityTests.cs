@@ -40,4 +40,64 @@ public class TraitsAndRarityTests
         Assert.True(Traits.IsAffinity(TraitCategory.Temperament));
         Assert.False(Traits.IsAffinity(TraitCategory.Aura));
     }
+
+    private static Genome Blank() => new(new byte[32]);
+
+    private static Genome WithTraitGenes(TraitCategory cat, byte dom, byte rec)
+    {
+        var b = new byte[32];
+        b[16 + (int)cat * 2] = dom;
+        b[16 + (int)cat * 2 + 1] = rec;
+        return new Genome(b);
+    }
+
+    [Fact]
+    public void Mix_IsDeterministic_AcrossTraitBytes()
+    {
+        var a = WithTraitGenes(TraitCategory.Aura, 255, 0);
+        var b = WithTraitGenes(TraitCategory.Crest, 250, 0);
+        var entropy = new byte[32];
+        for (byte i = 0; i < 32; i++) entropy[i] = (byte)(i * 7 + 3);
+
+        var child1 = GeneMixer.Mix(a, b, entropy);
+        var child2 = GeneMixer.Mix(a, b, entropy);
+        Assert.Equal(child1.ToHex(), child2.ToHex()); // byte-identical — covenant-critical
+    }
+
+    [Fact]
+    public void Mix_InheritsAnExpressedTrait_FromAParent()
+    {
+        // A parent expressing a Legendary Aura should pass it to at least one child
+        // across a spread of entropy (dominant-favored inheritance).
+        var a = WithTraitGenes(TraitCategory.Aura, 255, 0);
+        var b = Blank();
+        var passed = false;
+        for (var seed = 0; seed < 40 && !passed; seed++)
+        {
+            var e = new byte[32];
+            for (var i = 0; i < 32; i++) e[i] = (byte)(seed * 31 + i);
+            var child = GeneMixer.Mix(a, b, e);
+            if (child.DominantGene(TraitCategory.Aura) == 255) passed = true;
+        }
+        Assert.True(passed, "an expressed Legendary should inherit under some entropy");
+    }
+
+    [Fact]
+    public void Mix_TwoBlankParents_MostlyStayBlank_ButMutationCanIntroduce()
+    {
+        // Blank parents: children are usually blank on traits, but a rare mutation
+        // can introduce a new trait — proving mutation is the only source of new rarity.
+        var a = Blank();
+        var b = Blank();
+        var introduced = 0;
+        for (var seed = 0; seed < 300; seed++)
+        {
+            var e = new byte[32];
+            for (var i = 0; i < 32; i++) e[i] = (byte)(seed * 13 + i * 5);
+            var child = GeneMixer.Mix(a, b, e);
+            if (Traits.Expressed(child).Count > 0) introduced++;
+        }
+        Assert.True(introduced is > 0 and < 150,
+            $"mutation should introduce traits rarely, not never or always (got {introduced}/300)");
+    }
 }

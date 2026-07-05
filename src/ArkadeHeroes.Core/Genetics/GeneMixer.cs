@@ -24,7 +24,7 @@ public static class GeneMixer
         (8, 1), (9, 1), (10, 1), (11, 1), (12, 1), // growth genes
         (13, 1),                                // cooldown
         (14, 1), (15, 1),                       // appearance
-        (16, 16),                               // reserved block inherits as one unit
+        // [16..31] are the trait categories — handled by MixTraits, not crossover regions.
     ];
 
     /// <summary>Mutation triggers when the selector byte is ≥ 248 — an 8/256 (1/32) chance per trait.</summary>
@@ -60,9 +60,9 @@ public static class GeneMixer
             }
         }
 
-        // v1 trait map: reserved bytes stay zero even through mutation, so all
-        // genomes remain forward-compatible until a trait-map version bump.
-        child[16..].Clear();
+        // Trait categories [16..31]: dominant/recessive inheritance + rare mutation,
+        // all seeded deterministically from the parents + entropy (covenant-critical).
+        MixTraits(parentA, parentB, entropy, child);
 
         return new Genome(child);
     }
@@ -78,6 +78,77 @@ public static class GeneMixer
         parentA.Bytes.CopyTo(preimage);
         parentB.Bytes.CopyTo(preimage[Genome.Size..]);
         entropy.CopyTo(preimage[(Genome.Size * 2)..]);
+        SHA256.HashData(preimage, destination);
+    }
+
+    /// <summary>Per-category mutation trigger: pool byte ≥ 250 → ~2.3% chance to introduce a new variant.</summary>
+    private const byte TraitMutationThreshold = 250;
+
+    private static void MixTraits(Genome a, Genome b, ReadOnlySpan<byte> entropy, Span<byte> child)
+    {
+        // Dedicated deterministic pool: 4 bytes per category (dom-select, rec-select,
+        // mutation-roll, mutation-variant). Domain-separated from the region pool.
+        Span<byte> pool = stackalloc byte[32];
+        ComputeTraitPool(a, b, entropy, pool);
+
+        for (var c = 0; c < Traits.CategoryCount; c++)
+        {
+            var cat = (TraitCategory)c;
+            var domSel = pool[c * 4 + 0];
+            var recSel = pool[c * 4 + 1];
+            var mutRoll = pool[c * 4 + 2];
+            var mutVar = pool[c * 4 + 3];
+
+            // Four candidate genes: both parents' dominant + recessive.
+            byte aDom = a.DominantGene(cat), aRec = a.RecessiveGene(cat);
+            byte bDom = b.DominantGene(cat), bRec = b.RecessiveGene(cat);
+
+            // Dominant-favored pick for the child's DOMINANT: dominants ~3/4, a hidden
+            // recessive surfaces ~1/4 (the mewtation moment).
+            byte childDom = domSel switch
+            {
+                < 96 => aDom,
+                < 192 => bDom,
+                < 224 => aRec,
+                _ => bRec,
+            };
+            // Recessive is carried forward, favoring the parents' recessives.
+            byte childRec = recSel switch
+            {
+                < 96 => aRec,
+                < 192 => bRec,
+                < 224 => aDom,
+                _ => bDom,
+            };
+
+            // Mutation introduces a NEW variant into the DOMINANT slot (rarity-weighted,
+            // biased common so legendaries are vanishingly rare).
+            if (mutRoll >= TraitMutationThreshold)
+                childDom = MutatedVariant(mutVar);
+
+            child[16 + c * 2] = childDom;
+            child[16 + c * 2 + 1] = childRec;
+        }
+    }
+
+    /// <summary>Maps a roll byte to a mutated variant value, biased toward common tiers so rare traits stay rare even when a mutation fires.</summary>
+    private static byte MutatedVariant(byte roll) => roll switch
+    {
+        < 176 => (byte)(1 + roll % 205),   // Common   1..205   (~69%)
+        < 232 => (byte)(206 + roll % 35),  // Uncommon 206..240
+        < 250 => (byte)(241 + roll % 12),  // Rare     241..252
+        < 254 => (byte)(253 + roll % 2),   // Epic     253..254
+        _ => 255,                          // Legendary          (~0.8%)
+    };
+
+    private static void ComputeTraitPool(Genome a, Genome b, ReadOnlySpan<byte> entropy, Span<byte> destination)
+    {
+        // Domain tag byte 0x54 ('T') separates this from ComputeMutationPool.
+        Span<byte> preimage = stackalloc byte[Genome.Size * 2 + 32 + 1];
+        a.Bytes.CopyTo(preimage);
+        b.Bytes.CopyTo(preimage[Genome.Size..]);
+        entropy.CopyTo(preimage[(Genome.Size * 2)..]);
+        preimage[^1] = 0x54;
         SHA256.HashData(preimage, destination);
     }
 }
