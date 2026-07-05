@@ -131,4 +131,22 @@ public class TraitsAndRarityTests
         var epic = ArkadeHeroes.Core.Progression.Rarity.Of(WithTraitGenes(TraitCategory.Aura, 253, 0));
         Assert.True(epic.Score > common.Score);
     }
+
+    [Fact]
+    public void AffinityModifier_IsCappedAndDerivedFromAffinityTraits()
+    {
+        Assert.Equal(1.0, Traits.AffinityModifier(Blank())); // no affinities → no nudge
+
+        // Two Legendary affinities → at the cap, never above.
+        var b = new byte[32];
+        b[16 + (int)TraitCategory.ElementAffinity * 2] = 255;
+        b[16 + (int)TraitCategory.Temperament * 2] = 255;
+        var maxed = Traits.AffinityModifier(new Genome(b));
+        Assert.True(maxed > 1.0 && maxed <= 1.05, $"expected (1.0, 1.05], got {maxed}");
+
+        // A cosmetic legendary does NOT move it.
+        var cosmetic = new byte[32];
+        cosmetic[16 + (int)TraitCategory.Aura * 2] = 255;
+        Assert.Equal(1.0, Traits.AffinityModifier(new Genome(cosmetic)));
+    }
 }

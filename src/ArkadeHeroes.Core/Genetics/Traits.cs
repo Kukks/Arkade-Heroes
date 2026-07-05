@@ -59,4 +59,30 @@ public static class Traits
         }
         return list;
     }
+
+    /// <summary>Total affinity contribution cap: a hero's expressed affinities can raise its damage by at most 5%.</summary>
+    public const double AffinityCap = 0.05;
+
+    /// <summary>
+    /// The capped combat multiplier from a hero's EXPRESSED AFFINITY traits (1.0..1.05).
+    /// Each affinity tier adds a small share; the sum is clamped to the cap so a
+    /// max-rolled hero is a nudge, never a trump card. Deterministic — pure genome function.
+    /// </summary>
+    public static double AffinityModifier(Genome genome)
+    {
+        double bonus = 0;
+        foreach (var trait in Expressed(genome))
+        {
+            if (!IsAffinity(trait.Category)) continue;
+            bonus += trait.Tier switch
+            {
+                RarityTier.Legendary => 0.030,
+                RarityTier.Epic => 0.020,
+                RarityTier.Rare => 0.012,
+                RarityTier.Uncommon => 0.006,
+                _ => 0.002,
+            };
+        }
+        return 1.0 + Math.Min(bonus, AffinityCap);
+    }
 }

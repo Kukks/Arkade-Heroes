@@ -113,7 +113,10 @@ public static class BattleEngine
         var crit = rng.Chance(actor.Stats.CritPercent);
 
         var raw = skill.Power * scale / (target.EffectiveDefense + 25.0);
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? 1.5 : 1.0)));
+        // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
+        // so replays stay verifiable.
+        var affinity = Traits.AffinityModifier(actor.Hero.Genome);
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? 1.5 : 1.0) * affinity));
 
         target.Hp = Math.Max(0, target.Hp - damage);
 
