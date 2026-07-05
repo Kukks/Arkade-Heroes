@@ -240,7 +240,9 @@ poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplac
 item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, ~~XP-weighted
 matchmaking~~ (✅ SHIPPED: `GET /api/matchmaking/{heroId}` + client `opponents` — other players'
 heroes ranked by level proximity, each annotated with the conserved XP a staked win would gain
-and a loss would cost; `Core/Progression/Matchmaking`), wallet import/restore UX, ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
+and a loss would cost; `Core/Progression/Matchmaking`), ~~wallet import/restore UX~~ (✅ SHIPPED: `SelfCustodyWallet.ValidateMnemonic` — BIP39 word-count
++ wordlist + checksum with a clear reason; client `restore` normalizes whitespace/case and rejects
+a typo'd phrase up front; `import` alias), ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
 ~~coin-selection recoverable-coin filter~~ (✅ SHIPPED game-side. A treasury-bought item's offer
 deposit could fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
 `SpendingService.GetAvailableCoins` (SpendingService.cs:168) excludes only unconfirmed-onchain

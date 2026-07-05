@@ -231,7 +231,7 @@ public class GameClient : IAsyncDisposable
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
-            case "restore": await RestoreWalletAsync(string.Join(' ', parts.Skip(1))); break;
+            case "restore" or "import": await RestoreWalletAsync(string.Join(' ', parts.Skip(1))); break;
             case "fund": await FundAsync(); break;
             case "top": await LeaderboardAsync(); break;
             case "receipts": await ListReceiptsAsync(); break;
@@ -278,7 +278,7 @@ public class GameClient : IAsyncDisposable
           transfer <hero> <pid>  send a hero (you sign; the Arkade asset moves wallets)
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
-          restore <12 words>     recover your wallet (heroes + funds) from your mnemonic
+          restore <12 words>     recover your wallet (heroes + funds) from your mnemonic (alias: import)
           fund                   how to fund your wallet address
           top                    leaderboard (wins/level, recomputed from receipts)
           receipts               your signed progression receipts (portable proof)
@@ -809,9 +809,12 @@ public class GameClient : IAsyncDisposable
             throw new GameClientException("a wallet is already open — restore into a fresh ARKADE_HEROES_HOME");
         if (File.Exists(WalletDbFile))
             throw new GameClientException($"a wallet already exists in {HomeDir} — restore into a fresh ARKADE_HEROES_HOME so it isn't overwritten");
-        mnemonic = mnemonic.Trim();
-        if (mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length is not (12 or 24))
-            throw new GameClientException("a mnemonic is 12 (or 24) words — paste all of them after 'restore'");
+        // Normalize whitespace + case, then reject a typo'd phrase up front with a
+        // clear reason (word count, an unknown word, or a bad checksum) rather than
+        // failing cryptically deep in wallet creation.
+        mnemonic = string.Join(' ', mnemonic.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+        if (SelfCustodyWallet.ValidateMnemonic(mnemonic) is { } reason)
+            throw new GameClientException(reason);
 
         Directory.CreateDirectory(HomeDir);
         Console.WriteLine("  restoring your wallet from the mnemonic (keys stay on this machine)…");

@@ -108,6 +108,30 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         return (LoginPubKeyHex, Convert.ToHexString(sigBytes).ToLowerInvariant());
     }
 
+    /// <summary>
+    /// Validates a BIP39 recovery phrase — the word count, that every word is in
+    /// the English wordlist, and the checksum — returning a human-readable reason
+    /// when it's wrong (null when valid). Lets a restore reject a typo'd phrase with
+    /// a clear message up front instead of failing deep in wallet creation. Expects
+    /// whitespace-normalized, lower-cased input.
+    /// </summary>
+    public static string? ValidateMnemonic(string mnemonic)
+    {
+        var words = mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length is not (12 or 15 or 18 or 21 or 24))
+            return $"a recovery phrase is 12 or 24 words — this has {words.Length}";
+        try
+        {
+            if (!new Mnemonic(mnemonic, Wordlist.English).IsValidChecksum)
+                return "every word is valid but the checksum isn't — check the word order or for a single typo";
+            return null;
+        }
+        catch (FormatException fx)
+        {
+            return $"not a valid BIP39 recovery phrase — {fx.Message}";
+        }
+    }
+
     public static async Task<SelfCustodyWallet> CreateAsync(SelfCustodyWalletOptions options, CancellationToken ct = default)
     {
         var services = new ServiceCollection();
