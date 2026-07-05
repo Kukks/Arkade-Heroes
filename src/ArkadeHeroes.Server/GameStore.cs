@@ -55,6 +55,24 @@ public class MergeSession
     public string? FusedHeroId { get; set; }
 }
 
+/// <summary>A death-match awaiting both stakes. Each player deposits their hero into their own escrow; on settle the loser's hero is permanently burned and the winner keeps theirs.</summary>
+public class DeathMatchSession
+{
+    public required string Id { get; init; }
+    public required string ChallengerPlayerId { get; init; }
+    public required string DefenderPlayerId { get; init; }
+    public required string ChallengerHeroId { get; init; }
+    public required string DefenderHeroId { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    public string? ChallengerEscrowAddress { get; set; }
+    public string? DefenderEscrowAddress { get; set; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public bool Accepted { get; set; }
+    public bool Completed { get; set; }
+    public string? WinnerHeroId { get; set; }
+}
+
 /// <summary>An item purchase awaiting its invoice payment. Status: pending → delivering → claimed (delivery failures return to pending so a paid purchase is always claimable).</summary>
 public class ItemPurchase
 {
@@ -143,6 +161,8 @@ public class GameStore
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
 
     public ConcurrentDictionary<string, MergeSession> Merges { get; } = new();
+
+    public ConcurrentDictionary<string, DeathMatchSession> DeathMatches { get; } = new();
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();

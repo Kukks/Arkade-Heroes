@@ -165,6 +165,32 @@ api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest
 api.MapGet("/merges/{mergeId}/escrow", async (string mergeId, IChainService chain, CancellationToken ct) =>
     await chain.GetMergeEscrowParamsAsync(mergeId, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
+// ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────
+
+api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, escrow, favor) = await game.OpenDeathMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId, ct);
+    return Results.Ok(new DeathMatchOpenResponse(session.Id, session.CommitmentHex, escrow, favor));
+});
+
+api.MapPost("/deathmatch/{id}/accept", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (_, escrow) = await game.AcceptDeathMatchAsync(player, id, ct);
+    return Results.Ok(new DeathMatchAcceptResponse(escrow));
+});
+
+api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (result, winner, loser, seed, entropy, receipt) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, seed, entropy, receipt));
+});
+
+api.MapGet("/deathmatch/{id}/escrow/{role}", async (string id, string role, IChainService chain, CancellationToken ct) =>
+    await chain.GetDeathMatchEscrowParamsAsync(id, role, ct) is { } p ? Results.Ok(p) : Results.NotFound());
+
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -425,6 +451,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         return Results.Ok(new { funded = true });
     });
 
+    dev.MapPost("/fund-deathmatch-escrow", (FundDeathMatchEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).FundDeathMatchEscrowFromPlayer(player.Id, request.DeathMatchId, request.Role); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { funded = true });
+    });
+
     // Marketplace: the seller deposits the item, a buyer fulfils, or the seller
     // reclaims — each stands in for the corresponding client-wallet covenant op.
     dev.MapPost("/fund-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
@@ -495,6 +529,9 @@ public record FundBreedEscrowDevRequest(string BreedingId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of base + sacrifice + fee into the merge escrow.</summary>
 public record FundMergeEscrowDevRequest(string MergeId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet stake of the staker's hero into their death-match escrow.</summary>
+public record FundDeathMatchEscrowDevRequest(string DeathMatchId, string Role);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet offer op (deposit / fulfil / reclaim), keyed by offer.</summary>
 public record OfferDevRequest(string OfferId);

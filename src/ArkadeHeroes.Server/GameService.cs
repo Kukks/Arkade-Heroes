@@ -469,6 +469,111 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (fused, serverSeedHex, entropyHex, receipt);
     }
 
+    // ── Death-match: open → both stake a hero → settle (loser's hero burns) ──
+
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability)> OpenDeathMatchAsync(
+        Player player, string challengerHeroId, string defenderHeroId, CancellationToken ct)
+    {
+        var challenger = GetOwnedHero(player, challengerHeroId);
+        var defender = GetHero(defenderHeroId);
+        if (challenger.Id == defender.Id)
+            throw new GameRuleException("A hero cannot death-match itself.");
+        if (defender.OwnerId == player.Id)
+            throw new GameRuleException("A death-match needs an opponent — you own both heroes.");
+
+        var seed = CommitReveal.NewSeed();
+        var id = NewId("dm");
+        var commitment = CommitReveal.Commit(seed);
+        var refundAfter = DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds();
+        // Rung 1: hero-only escrow (gear is covenant-staked + routed to the winner in rung 2).
+        var escrow = await chain.CreateDeathMatchEscrowAsync(
+            id, player.Id, challenger.AssetId!, Array.Empty<string>(), "challenger",
+            Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter, ct);
+
+        var session = new DeathMatchSession
+        {
+            Id = id,
+            ChallengerPlayerId = player.Id,
+            DefenderPlayerId = defender.OwnerId,
+            ChallengerHeroId = challengerHeroId,
+            DefenderHeroId = defenderHeroId,
+            ServerSeed = seed,
+            CommitmentHex = commitment,
+            ChallengerEscrowAddress = escrow,
+        };
+        store.DeathMatches[session.Id] = session;
+        var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
+        return (session, escrow, favor);
+    }
+
+    public async Task<(DeathMatchSession Session, string EscrowAddress)> AcceptDeathMatchAsync(
+        Player player, string deathMatchId, CancellationToken ct)
+    {
+        if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
+            throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
+        if (session.DefenderPlayerId != player.Id)
+            throw new GameRuleException("Only the challenged hero's owner can accept this death-match.");
+        if (session.Accepted) throw new GameRuleException("Death-match already accepted.");
+        if (session.Completed) throw new GameRuleException("Death-match already resolved.");
+        var defender = GetOwnedHero(player, session.DefenderHeroId);
+
+        var refundAfter = DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds();
+        var escrow = await chain.CreateDeathMatchEscrowAsync(
+            deathMatchId, player.Id, defender.AssetId!, Array.Empty<string>(), "defender",
+            Convert.FromHexString(session.CommitmentHex), receipts.PublicKeyHex, refundAfter, ct);
+        session.DefenderEscrowAddress = escrow;
+        session.Accepted = true;
+        return (session, escrow);
+    }
+
+    public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(
+        Player player, string deathMatchId, string nonce, CancellationToken ct)
+    {
+        if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
+            throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
+        if (session.ChallengerPlayerId != player.Id && session.DefenderPlayerId != player.Id)
+            throw new GameRuleException("Only a participant can settle this death-match.");
+        if (session.Completed) throw new GameRuleException("Death-match already resolved.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        // Both players must have staked their hero (their own escrow funded).
+        if (!await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, "challenger", ct)
+            || !await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, "defender", ct))
+            throw new GameRuleException("Both players must stake their hero before the death-match settles.");
+
+        var challenger = GetHero(session.ChallengerHeroId);
+        var defender = GetHero(session.DefenderHeroId);
+
+        var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, challenger.Id, defender.Id, nonce);
+        var result = BattleEngine.Fight(challenger, defender, entropy);
+        var challengerWon = result.WinnerId == challenger.Id;
+        var (_, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
+
+        session.Completed = true;
+        session.WinnerHeroId = result.WinnerId;
+
+        // The oracle (game key) signs the winning branch; rung 2's covenant binds the on-chain
+        // burn of the loser's hero to exactly this attestation. A death-match awards NO XP —
+        // the reward is the permakill (+ the loser's gear in rung 2); the risk is your own hero.
+        var settleMessage = Chain.Covenants.ArkadeCovenants.DeathMatchSettleMessage(session.Id, challengerWon);
+        var oracleSig = receipts.SignDigest(settleMessage);
+        await chain.SettleDeathMatchAsync(session.Id, challengerWon, session.ServerSeed, oracleSig, ct);
+
+        // The loser's hero is permanently DEAD — drop its server record (its asset is burned on-chain).
+        store.Heroes.TryRemove(loser.Id, out _);
+
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "deathmatch", session.Id, session.ChallengerHeroId, session.DefenderHeroId, result.WinnerId,
+                serverSeedHex, nonce, session.CommitmentHex,
+                0, 0, challenger.Level, defender.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            session.ChallengerHeroId, session.DefenderHeroId);
+
+        return (result.ToDto(), result.WinnerId, loser.Id, serverSeedHex, entropyHex, receipt);
+    }
+
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────
 
     public async Task<(MatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> OpenMatchAsync(
