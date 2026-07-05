@@ -62,4 +62,15 @@ public class MatchmakingTests : IDisposable
         Assert.Equal(Leveling.XpTransfer(5, 12), far.XpIfYouWin);   // upset win: a lot
         Assert.Equal(0, far.XpIfYouLose);                           // losing to the far hero costs nothing
     }
+
+    [Theory]
+    [InlineData(10, 10, "even")]
+    [InlineData(10, 12, "even")]    // within 2
+    [InlineData(10, 8, "even")]
+    [InlineData(10, 4, "favored")]  // 6 up
+    [InlineData(4, 10, "underdog")] // 6 down
+    [InlineData(10, 13, "underdog")] // 3 down
+    [InlineData(13, 10, "favored")]  // 3 up
+    public void Favor_LabelsByLevelGap(int mine, int theirs, string expected)
+        => Assert.Equal(expected, Matchmaking.Favor(mine, theirs));
 }

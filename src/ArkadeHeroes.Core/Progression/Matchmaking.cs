@@ -16,4 +16,12 @@ public static class Matchmaking
 
     /// <summary>XP the hero would LOSE if it lost to this opponent (0 when the opponent is far stronger — an upset costs the underdog nothing).</summary>
     public static long XpIfLose(int heroLevel, int opponentLevel) => Leveling.XpTransfer(opponentLevel, heroLevel);
+
+    /// <summary>Coarse pre-stake favorability from the challenger's view (combat has variance — no precise %). Threshold 3 levels.</summary>
+    public static string Favor(int heroLevel, int opponentLevel) => (heroLevel - opponentLevel) switch
+    {
+        >= 3 => "favored",
+        <= -3 => "underdog",
+        _ => "even",
+    };
 }
