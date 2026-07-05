@@ -199,7 +199,17 @@ public interface IChainService
         string offerId, string sellerPlayerId, string itemId, long askSats,
         long refundAfterUnixSeconds, CancellationToken ct = default);
 
-    /// <summary>True once the item unit (plus carrier dust) sits at the offer address.</summary>
+    /// <summary>
+    /// Builds a resting-offer covenant for a specific HERO asset (a unique
+    /// supply-1 asset, rather than a fungible item). The offer covenant is
+    /// asset-agnostic, so this shares the fulfil/reclaim machinery with item
+    /// offers — only the asset id (the hero's own mint asset) differs.
+    /// </summary>
+    Task<OfferInfo> CreateHeroOfferAsync(
+        string offerId, string sellerPlayerId, string heroAssetId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once the offered asset (plus carrier dust) sits at the offer address.</summary>
     Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default);
 
     /// <summary>

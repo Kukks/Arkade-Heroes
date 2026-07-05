@@ -244,12 +244,29 @@ api.MapPost("/offers", async (CreateOfferRequest request, HttpContext http, Game
         info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds));
 });
 
-api.MapGet("/offers", async (GameService game, CancellationToken ct) =>
-    Results.Ok((await game.ListOffersAsync(ct)).Select(ToOfferDto).ToList()));
-
-api.MapGet("/offers/{offerId}", async (string offerId, GameService game, CancellationToken ct) =>
+// Hero sales reuse the same offer covenant (a hero is a unique asset).
+api.MapPost("/offers/hero", async (CreateHeroOfferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
-    try { return Results.Ok(ToOfferDto(await game.GetOfferAsync(offerId, ct))); }
+    var player = game.Authenticate(BearerToken(http));
+    var (_, info) = await game.CreateHeroOfferAsync(player, request.HeroId, request.AskSats, ct);
+    return Results.Ok(new CreateOfferResponse(info.OfferId, info.OfferAddress, info.ItemAssetId,
+        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds));
+});
+
+// The buyer claims game-side ownership after fulfilling a hero offer from their
+// own wallet (the server verifies the chain shows them holding the hero asset).
+api.MapPost("/offers/{offerId}/claim-hero", async (string offerId, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(new TransferResponse((await game.ClaimPurchasedHeroAsync(player, offerId, ct)).ToDto()));
+});
+
+api.MapGet("/offers", async (GameService game, GameStore store, CancellationToken ct) =>
+    Results.Ok((await game.ListOffersAsync(ct)).Select(o => ToOfferDto(o, store)).ToList()));
+
+api.MapGet("/offers/{offerId}", async (string offerId, GameService game, GameStore store, CancellationToken ct) =>
+{
+    try { return Results.Ok(ToOfferDto(await game.GetOfferAsync(offerId, ct), store)); }
     catch (GameRuleException) { return Results.NotFound(); }
 });
 
@@ -388,10 +405,15 @@ static MatchDto ToMatchDto(MatchSession session) => new(
     session.Status, session.CommitmentHex, session.Result?.ToDto(),
     session.WagerSats, session.DefenderPlayerId);
 
-static OfferDto ToOfferDto(OfferListing o) => new(
-    o.Id, o.SellerId, o.ItemId,
-    ArkadeHeroes.Core.Equipment.ItemCatalog.Find(o.ItemId)?.Name ?? o.ItemId,
-    o.AskSats, o.OfferAddress, o.ItemAssetId, o.OfferValueSats, o.RefundAfterUnixSeconds, o.Status);
+static OfferDto ToOfferDto(OfferListing o, GameStore store)
+{
+    var name = o.Kind == "hero"
+        ? (store.Heroes.TryGetValue(o.HeroId ?? "", out var hero) ? hero.Name : o.HeroId ?? "hero")
+        : (ArkadeHeroes.Core.Equipment.ItemCatalog.Find(o.ItemId)?.Name ?? o.ItemId);
+    return new OfferDto(o.Id, o.SellerId, o.ItemId, name,
+        o.AskSats, o.OfferAddress, o.ItemAssetId, o.OfferValueSats, o.RefundAfterUnixSeconds, o.Status,
+        o.Kind, o.HeroId);
+}
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet invoice payment.</summary>
 public record PayInvoiceDevRequest(string InvoiceId);

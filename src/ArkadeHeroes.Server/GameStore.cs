@@ -87,9 +87,15 @@ public class OfferListing
 {
     public required string Id { get; init; }
     public required string SellerId { get; init; }
+    /// <summary>"item" (a fungible equipment unit) or "hero" (a unique character asset).</summary>
+    public string Kind { get; init; } = "item";
+    /// <summary>Game item id for item offers; empty for hero offers.</summary>
     public required string ItemId { get; init; }
+    /// <summary>Game hero id for hero offers; null for item offers.</summary>
+    public string? HeroId { get; init; }
     public required long AskSats { get; init; }
     public required string OfferAddress { get; init; }
+    /// <summary>The on-chain asset resting in the offer — the item's shared asset, or the hero's own unique asset.</summary>
     public required string ItemAssetId { get; init; }
     public required long OfferValueSats { get; init; }
     public required long RefundAfterUnixSeconds { get; init; }

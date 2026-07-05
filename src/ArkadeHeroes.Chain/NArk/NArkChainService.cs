@@ -779,12 +779,29 @@ public class NArkChainService(
         string offerId, string sellerPlayerId, string itemId, long askSats,
         long refundAfterUnixSeconds, CancellationToken ct = default)
     {
+        var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
+            ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — nothing to sell.");
+        return await CreateOfferForAssetAsync(offerId, sellerPlayerId, assetId, askSats, refundAfterUnixSeconds, ct);
+    }
+
+    public Task<OfferInfo> CreateHeroOfferAsync(
+        string offerId, string sellerPlayerId, string heroAssetId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct = default)
+        => CreateOfferForAssetAsync(offerId, sellerPlayerId, heroAssetId, askSats, refundAfterUnixSeconds, ct);
+
+    /// <summary>
+    /// The asset-agnostic core: rest an offer for a specific asset id (a fungible
+    /// item's shared asset, or a hero's own unique asset). The offer covenant only
+    /// ever sees an asset id, so items and heroes share this path.
+    /// </summary>
+    private async Task<OfferInfo> CreateOfferForAssetAsync(
+        string offerId, string sellerPlayerId, string assetId, long askSats,
+        long refundAfterUnixSeconds, CancellationToken ct)
+    {
         if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var sellerAddress = await GetPlayerAddressAsync(sellerPlayerId, ct);
-        var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
-            ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — nothing to sell.");
-        // The carrier dust the seller deposits with the item is exactly what the
+        // The carrier dust the seller deposits with the asset is exactly what the
         // reclaim leaf pays back, so it must match serverInfo.Dust (what
         // SendAssetAsync deposits).
         var offerValue = serverInfo.Dust.Satoshi;
@@ -794,10 +811,9 @@ public class NArkChainService(
         await SetKvAsync($"offer:{offerId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
         var (contract, _) = await BuildOfferContractAsync(parameters, ct);
-        var isMain = serverInfo.Network == Network.Main;
-        var address = contract.GetArkAddress().ToString(isMain);
-        logger.LogInformation("Item offer {OfferId}: {Address} (item {Item}, ask {Ask}, refund after {Refund})",
-            offerId, address, itemId, askSats, refundAfterUnixSeconds);
+        var address = contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
+        logger.LogInformation("Offer {OfferId}: {Address} (asset {Asset}, ask {Ask}, refund after {Refund})",
+            offerId, address, assetId, askSats, refundAfterUnixSeconds);
         return new OfferInfo(offerId, address, assetId, askSats, offerValue, refundAfterUnixSeconds);
     }
 

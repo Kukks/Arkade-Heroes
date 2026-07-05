@@ -142,4 +142,31 @@ public class ClientGameLoopTests : IDisposable
         Assert.Equal(1000, resolved.WagerSats);
         Assert.NotNull(resolved.Result);
     }
+
+    [Fact]
+    public async Task HeroSale_ThroughTheClient_TransfersOwnershipToTheBuyer()
+    {
+        await using var seller = NewClient(FreshHome());
+        await seller.ExecuteAsync(["register", "LoopSellHeroA"]);
+        await seller.ExecuteAsync(["starter"]);
+        await seller.ExecuteAsync(["mine"]); // populate the client's list for the hero ref
+        var sellerId = (await HeroesAsync())[0].OwnerId;
+        var hero = (await HeroesAsync()).First(h => h.OwnerId == sellerId);
+
+        await seller.ExecuteAsync(["sellhero", hero.Id, "15000"]);
+
+        var offer = Assert.Single(await _observer.GetFromJsonAsync<List<OfferDto>>("/api/offers") ?? []);
+        Assert.Equal("hero", offer.Kind);
+        Assert.Equal(hero.Name, offer.ItemName);
+
+        await using var buyer = NewClient(FreshHome());
+        await buyer.ExecuteAsync(["register", "LoopSellHeroB"]);
+        await buyer.ExecuteAsync(["buyhero", offer.OfferId]);
+
+        // Ownership moved off the seller (to the buyer, who ran buyhero + claimed).
+        var moved = (await HeroesAsync()).Single(h => h.Id == hero.Id);
+        Assert.NotEqual(sellerId, moved.OwnerId);
+        Assert.DoesNotContain(await _observer.GetFromJsonAsync<List<OfferDto>>("/api/offers") ?? [],
+            o => o.OfferId == offer.OfferId);
+    }
 }

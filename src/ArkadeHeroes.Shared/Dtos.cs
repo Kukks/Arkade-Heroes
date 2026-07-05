@@ -151,6 +151,9 @@ public record UnequipRequest(string Slot);
 /// <summary>List one spare unit of an item for sale at a fixed ask (sats).</summary>
 public record CreateOfferRequest(string ItemId, long AskSats);
 
+/// <summary>List one of your heroes for sale at a fixed ask (sats).</summary>
+public record CreateHeroOfferRequest(string HeroId, long AskSats);
+
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
 /// from their own wallet, plus the ask and refund window. Once deposited the
@@ -160,11 +163,16 @@ public record CreateOfferResponse(
     string OfferId, string OfferAddress, string ItemAssetId,
     long AskSats, long OfferValueSats, long RefundAfterUnixSeconds);
 
-/// <summary>A resting offer in the discovery index. Status: pending → active → closed.</summary>
+/// <summary>
+/// A resting offer in the discovery index (an item unit or a hero). Status:
+/// pending → active → closed. <see cref="ItemName"/> carries the display name for
+/// either kind (the item name, or the hero name for <c>Kind == "hero"</c>).
+/// </summary>
 public record OfferDto(
     string OfferId, string SellerId, string ItemId, string ItemName,
     long AskSats, string OfferAddress, string ItemAssetId,
-    long OfferValueSats, long RefundAfterUnixSeconds, string Status);
+    long OfferValueSats, long RefundAfterUnixSeconds, string Status,
+    string Kind = "item", string? HeroId = null);
 
 // ── Chain / misc ───────────────────────────────────────────────────────────
 

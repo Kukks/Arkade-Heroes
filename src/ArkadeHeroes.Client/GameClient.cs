@@ -237,8 +237,10 @@ public class GameClient : IAsyncDisposable
             case "buy": await BuyAsync(Arg(parts, 1, "buy <itemId>")); break;
             case "claim": await ClaimAsync(Arg(parts, 1, "claim <invoiceId>")); break;
             case "sell": await SellAsync(Arg(parts, 1, "sell <itemId> <askSats>"), Arg(parts, 2, "sell <itemId> <askSats>")); break;
+            case "sellhero": await SellHeroAsync(Arg(parts, 1, "sellhero <hero> <askSats>"), Arg(parts, 2, "sellhero <hero> <askSats>")); break;
             case "offers": await ListOffersAsync(); break;
             case "buyoffer": await BuyOfferAsync(Arg(parts, 1, "buyoffer <offerId>")); break;
+            case "buyhero": await BuyHeroAsync(Arg(parts, 1, "buyhero <offerId>")); break;
             case "canceloffer": await CancelOfferAsync(Arg(parts, 1, "canceloffer <offerId>")); break;
             case "equip": await EquipAsync(Arg(parts, 1, "equip <hero> <itemId>"), Arg(parts, 2, "equip <hero> <itemId>")); break;
             case "unequip": await UnequipAsync(Arg(parts, 1, "unequip <hero> <slot>"), Arg(parts, 2, "unequip <hero> <slot>")); break;
@@ -280,8 +282,10 @@ public class GameClient : IAsyncDisposable
           equip <hero> <itemId>  equip a held item unit
           unequip <hero> <slot>  free an item unit (Weapon/Armor/Trinket)
           sell <itemId> <ask>    list a spare item for sale (covenant-enforced offer)
-          offers                 browse resting item offers
-          buyoffer <offerId>     buy an offer; you pay the seller directly (covenant-enforced)
+          sellhero <hero> <ask>  list one of your heroes for sale (same covenant)
+          offers                 browse resting offers (items and heroes)
+          buyoffer <offerId>     buy an item offer; you pay the seller directly (covenant-enforced)
+          buyhero <offerId>      buy a hero offer, then claim ownership (covenant-enforced)
           canceloffer <offerId>  reclaim your unsold offer after expiry (no server trust)
           info                   chain backend info
           quit                   exit
@@ -875,7 +879,51 @@ public class GameClient : IAsyncDisposable
         }
         var wallet = await WalletAsync();
         var txid = await wallet.SendAssetAsync(offerAddress, itemAssetId, 1);
-        Console.WriteLine($"    deposited one item unit into the offer address from your wallet (tx {ShortId(txid)})");
+        Console.WriteLine($"    deposited one unit into the offer address from your wallet (tx {ShortId(txid)})");
+    }
+
+    /// <summary>Lists one of your HEROES for sale (unique asset), then deposits it into the offer address.</summary>
+    private async Task SellHeroAsync(string heroRef, string askText)
+    {
+        RequireSession();
+        if (!long.TryParse(askText, out var ask) || ask <= 0)
+            throw new GameClientException("ask must be a positive number of sats");
+        var hero = ResolveHero(heroRef);
+        var offer = await PostAsync<CreateOfferResponse>("/api/offers/hero", new CreateHeroOfferRequest(hero.Id, ask));
+        Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for {hero.Name}");
+        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
+        Console.WriteLine($"    {hero.Name} listed — buyers run 'offers' then 'buyhero {offer.OfferId}'");
+    }
+
+    /// <summary>
+    /// Buys a resting HERO offer: fulfils the covenant from the buyer's own wallet
+    /// (same trustless rebuild as an item offer), then claims game-side ownership
+    /// — the server verifies the chain shows the buyer holding the hero asset and
+    /// reassigns the record (equipment stays with the seller).
+    /// </summary>
+    private async Task BuyHeroAsync(string offerId)
+    {
+        RequireSession();
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fulfill-offer", new { OfferId = offerId });
+            var simClaim = await PostAsync<TransferResponse>($"/api/offers/{offerId}/claim-hero");
+            Console.WriteLine($"  ✓ bought {simClaim.Hero.Name} — hero delivered, seller paid (simulated wallet)");
+            return;
+        }
+
+        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
+        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
+            ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
+
+        var wallet = await WalletAsync();
+        Console.WriteLine($"    rebuilding the offer covenant locally (ask {offer.AskSats} sats to {ShortId(offer.SellerAddress)})…");
+        await Chain.Covenants.OfferFulfillFlow.FulfillAsync(wallet, new Uri(emulatorUri), offer);
+        Console.WriteLine("    fulfilment co-signed — waiting for the hero to land in your wallet…");
+        await wallet.WaitForAssetAsync(offer.ItemAssetId, TimeSpan.FromSeconds(90));
+        var claimed = await PostAsync<TransferResponse>($"/api/offers/{offerId}/claim-hero");
+        Console.WriteLine($"  ✓ bought {claimed.Hero.Name} — you paid {offer.AskSats} sats and now own the hero");
     }
 
     private async Task ListOffersAsync()
@@ -886,10 +934,10 @@ public class GameClient : IAsyncDisposable
             Console.WriteLine("  no offers resting — list one with 'sell <itemId> <askSats>'");
             return;
         }
-        Console.WriteLine("  offer              item              ask       seller");
+        Console.WriteLine("  offer              kind  name              ask       seller");
         foreach (var o in offers)
-            Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}");
-        Console.WriteLine("  'buyoffer <offerId>' to buy — you pay the seller directly; the covenant enforces the exact ask");
+            Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.Kind,-5} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}");
+        Console.WriteLine("  buy with 'buyoffer <id>' (item) or 'buyhero <id>' (hero) — you pay the seller directly; the covenant enforces the ask");
     }
 
     /// <summary>

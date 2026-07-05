@@ -696,4 +696,61 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         else if (offer.Status == "active")
             offer.Status = "closed";
     }
+
+    // ── Marketplace: hero sales (unique-asset offers) ──────────────────
+
+    /// <summary>
+    /// Lists one of the player's HEROES for sale: the hero is a unique asset, so
+    /// this reuses the same offer covenant as items — the seller deposits the
+    /// hero asset into the offer address, any buyer pays the ask to take it. The
+    /// buyer then claims game-side ownership via <see cref="ClaimPurchasedHeroAsync"/>.
+    /// </summary>
+    public async Task<(OfferListing Listing, OfferInfo Info)> CreateHeroOfferAsync(
+        Player player, string heroId, long askSats, CancellationToken ct)
+    {
+        var hero = GetOwnedHero(player, heroId); // verifies the seller owns it
+        if (askSats <= 0) throw new GameRuleException("The ask must be a positive number of sats.");
+        if (string.IsNullOrEmpty(hero.AssetId))
+            throw new GameRuleException($"{hero.Name} has no on-chain asset to sell.");
+        if (store.Offers.Values.Any(o => o.Kind == "hero" && o.HeroId == heroId && o.Status is "pending" or "active"))
+            throw new GameRuleException($"{hero.Name} is already listed for sale.");
+
+        var offerId = NewId("offer");
+        var info = await chain.CreateHeroOfferAsync(offerId, player.Id, hero.AssetId!, askSats,
+            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+        var listing = new OfferListing
+        {
+            Id = offerId, SellerId = player.Id, Kind = "hero", ItemId = "", HeroId = heroId,
+            AskSats = askSats, OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
+            OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+        };
+        store.Offers[offerId] = listing;
+        return (listing, info);
+    }
+
+    /// <summary>
+    /// The buyer claims game-side ownership after fulfilling a hero offer from
+    /// their own wallet: non-custodial, so the server only VERIFIES the chain now
+    /// shows the buyer holding the hero asset, then reassigns the hero record and
+    /// strips its equipment (loadouts stay in the seller's wallet, as on transfer).
+    /// </summary>
+    public async Task<Hero> ClaimPurchasedHeroAsync(Player buyer, string offerId, CancellationToken ct)
+    {
+        if (!store.Offers.TryGetValue(offerId, out var offer) || offer.Kind != "hero")
+            throw new GameRuleException($"Unknown hero offer '{offerId}'.");
+        if (offer.SellerId == buyer.Id)
+            throw new GameRuleException("You can't buy your own hero.");
+        var hero = GetHero(offer.HeroId!);
+
+        var held = await chain.VerifyHeroOwnershipAsync(buyer.Id, hero.AssetId ?? hero.Id, ct);
+        if (!held)
+            throw new GameRuleException(
+                "The chain does not show you holding this hero yet — fulfil the offer from your wallet first, then claim.");
+
+        foreach (var slot in hero.Equipment.Slots.Keys.ToList())
+            hero.Equipment.Unequip(slot);
+        hero.OwnerId = buyer.Id;
+        offer.Status = "closed";
+        return hero;
+    }
 }
