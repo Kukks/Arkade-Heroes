@@ -239,15 +239,19 @@ CI (GitHub Actions: unit always; E2E behind a regtest service container), upstre
 poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
 item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
 matchmaking, wallet import/restore UX, ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
-**coin-selection recoverable-coin filter** (a treasury-bought item's offer
-deposit can fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
+~~coin-selection recoverable-coin filter~~ (✅ SHIPPED game-side. A treasury-bought item's offer
+deposit could fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
 `SpendingService.GetAvailableCoins` (SpendingService.cs:168) excludes only unconfirmed-onchain
 VTXOs, NOT recoverable (`Swept || Expired`) ones — so a recoverable coin is offered to selection
 and dooms the spend. INFERRED (not reproduced): that such a coin is actually present in the
-failing flow. Fix = filter selection to `CanSpendOffchain`, or settle/refresh coins before spend;
-the auto-selecting `Spend(walletId, outputs)` overload can't inject the filter, so a game-side fix
-would need the explicit-coins `Spend(walletId, coins, outputs)` overload + local selection — most
-cleanly an upstream NArk change to `GetAvailableCoins`).
+failing flow. FIX: `SelfCustodyWallet.SendAsync`/`SendAssetAsync` now select EXPLICIT inputs
+filtered to `CanSpendOffchain` (SDK fallback chain-time `(now, height 0)` catches swept +
+time-expiry) — asset carriers per output asset, then the largest pure-BTC coins with headroom —
+and spend via the explicit-coins `Spend(walletId, coins, outputs)` overload, which computes BTC +
+asset change. So recoverable coins never reach the game's own selection. Validated across all send
+paths by the full 24-test E2E suite green; the pathological trigger stays unreproduced. A modified
+submodule isn't cleanly distributable, so the one-line upstream fix to `GetAvailableCoins` (filter
+`CanSpendOffchain`) remains the cleaner long-term home — worth an upstream NArk PR.)
 
 ## Working rules reminder (unchanged)
 

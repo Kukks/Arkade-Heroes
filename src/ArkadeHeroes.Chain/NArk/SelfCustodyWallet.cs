@@ -14,6 +14,7 @@ using NArk.Hosting;
 using NArk.Safety.AsyncKeyedLock;
 using NArk.Storage.EfCore.Hosting;
 using NArk.Storage.EfCore.Storage;
+using NArk.Abstractions.Blockchain;
 using NBitcoin;
 
 namespace ArkadeHeroes.Chain.NArk;
@@ -227,14 +228,75 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
             .ToList();
     }
 
+    /// <summary>
+    /// Selects the wallet's SPENDABLE coins as explicit inputs, EXCLUDING
+    /// recoverable ones (swept or past expiry). NArk's automatic selection
+    /// (<c>Spend(outputs)</c>) offers recoverable coins to selection, and a spend
+    /// that lands on one is rejected by arkd with <c>VTXO_RECOVERABLE</c>; the
+    /// explicit-inputs overload computes change, so a filtered set spends cleanly.
+    /// Picks the asset carriers for each output asset, then the largest pure-BTC
+    /// coins to cover the sats plus one for headroom (the proven "carrier + largest
+    /// BTC coin" shape). Uses the SDK's fallback chain time (now, height 0), which
+    /// catches both swept and time-expired coins.
+    /// </summary>
+    private async Task<ArkCoin[]> SelectSpendableCoinsAsync(ArkTxOut[] outputs, CancellationToken ct)
+    {
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var spendable = (await Spending.GetAvailableCoins(_walletId, ct))
+            .Where(c => c.CanSpendOffchain(now))
+            .ToList();
+        var selected = new HashSet<ArkCoin>();
+
+        static ulong AssetHeld(ArkCoin c, string assetId) =>
+            c.Assets?.Where(a => a.AssetId == assetId).Aggregate(0UL, (s, a) => s + a.Amount) ?? 0;
+
+        // 1. Cover each output asset with the coins that carry it (most first).
+        var neededAssets = outputs
+            .Where(o => o.Assets is { Count: > 0 })
+            .SelectMany(o => o.Assets!)
+            .GroupBy(a => a.AssetId)
+            .ToDictionary(g => g.Key, g => g.Aggregate(0UL, (s, a) => s + a.Amount));
+        foreach (var (assetId, needed) in neededAssets)
+        {
+            ulong held = 0;
+            foreach (var coin in spendable.Where(c => AssetHeld(c, assetId) > 0)
+                         .OrderByDescending(c => AssetHeld(c, assetId)))
+            {
+                if (held >= needed) break;
+                if (selected.Add(coin)) held += AssetHeld(coin, assetId);
+            }
+            if (held < needed)
+                throw new InvalidOperationException(
+                    $"Wallet has no spendable coins for {needed} unit(s) of asset {assetId} (recoverable coins excluded).");
+        }
+
+        // 2. Cover the sats total with the largest PURE-BTC coins (so a sats send
+        //    doesn't drag in unrelated asset VTXOs), plus one for headroom — the
+        //    offchain fee and a clean change output.
+        long required = outputs.Sum(o => o.Value.Satoshi);
+        var btc = spendable
+            .Where(c => !selected.Contains(c) && c.Assets is null or { Count: 0 })
+            .OrderByDescending(c => c.TxOut.Value.Satoshi).ToList();
+        var i = 0;
+        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
+            selected.Add(btc[i++]);
+        if (i < btc.Count) selected.Add(btc[i]); // headroom for the fee / change
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
+            throw new InvalidOperationException(
+                $"Wallet lacks {required} spendable sats (recoverable coins excluded).");
+
+        return [.. selected];
+    }
+
     /// <summary>Pays sats to an address (fee invoices, stakes) — signed locally.</summary>
     public async Task<string> SendAsync(string toAddress, long amountSats, CancellationToken ct = default)
     {
         await SyncAsync(ct);
-        var txId = await Spending.Spend(_walletId,
+        ArkTxOut[] outputs =
         [
             new ArkTxOut(ArkTxOutType.Vtxo, Money.Satoshis(amountSats), ArkAddress.Parse(toAddress)),
-        ], cancellationToken: ct);
+        ];
+        var txId = await Spending.Spend(_walletId, await SelectSpendableCoinsAsync(outputs, ct), outputs, ct);
         return txId.ToString();
     }
 
@@ -243,13 +305,14 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
     {
         await SyncAsync(ct);
         var serverInfo = await Transport.GetServerInfoAsync(ct);
-        var txId = await Spending.Spend(_walletId,
+        ArkTxOut[] outputs =
         [
             new ArkTxOut(ArkTxOutType.Vtxo, serverInfo.Dust, ArkAddress.Parse(toAddress))
             {
                 Assets = [new ArkTxOutAsset(assetId, amount)],
             },
-        ], cancellationToken: ct);
+        ];
+        var txId = await Spending.Spend(_walletId, await SelectSpendableCoinsAsync(outputs, ct), outputs, ct);
         return txId.ToString();
     }
 
