@@ -47,14 +47,28 @@ collectible value). Surfaced as `HeroDto.IsSterile` in `show`/`rarest`. No genom
 covenant change. Tests: Sterility unit (bands, deterministic, rolls-both-ways) +
 `SterileHero_CannotBreed` integration.
 
-### 3. Hero merging / fusion — hero sink — 📋 TODO (needs the foundation)
+### 3. Hero merging / fusion — hero sink — ✅ SHIPPED (both rungs, covenant live)
 
-Burn N heroes → one "better" hero: better stats (existing stat/growth genes) + combined
-or upgraded traits + a rarity boost. A burn-and-mint COVENANT — the player's own wallet
-consumes the input hero assets and mints the fused hero (like breeding, but consuming
-the inputs rather than retaining them). Open forks: input count; how stats/traits
-combine (best-of / weighted / a fusion roll); species/element constraints; the exact
-covenant shape (burn inputs, mint one output under the species).
+Consume a **base + a sacrifice** (2 inputs) to mint ONE hero that CONCENTRATES their
+traits toward the rarest — but as a commit–reveal GAMBLE, so it can't trivially defeat
+sterility. `Fusion.Fuse(base, sacrifice, entropy)` keeps the base's stats (no
+power-creep), and per trait category takes the rarer of the two dominants ~85% of the
+time (entropy-seeded); the fused genome — hence its genome-derived rarity + sterility —
+is unpredictable, so pushing toward Legendary risks a sterile dead-end ("inbreeding
+depression"). Both inputs are BURNED — declared in the asset packet with NO output, so
+arkd destroys them (a true sink, not a treasury pile-up); the fused hero inherits the
+base's LEVEL (receipt-attested via a `merge` genesis level that `ReplayLevel` seeds from)
+and `max(gen)+1`. Rung 1 = escrow/treasury mode, client-audited (`VerifyMerge` recomputes
+the fused genome). Rung 2 = the `MergeAuthorized` covenant — reuses breeding's proven gate
+(both inputs present, one hero under the species `0xe7`, fee to treasury, oracle sig over
+the fused-metadata root `0xe9`+CSFS); execution differs only in the packet (inputs burned
+instead of retained to the player, so the layout is breeding's exact 2-output shape). A
+flat `GameOptions.MergeFeeSats` sats sink on top. Client `merge <base> <sacrifice>
+[covenant]`. Tests: Core `FusionTests` (determinism, concentration, stats-from-base) +
+`ReplayLevel` genesis seeding + InMemory `MergeFlowTests` + live `CovenantMergeFlowE2ETests`
+(inputs burned + gone from the wallet, fused minted + audited). Follow-up (parked): >2
+inputs; escalating merge fee; a client-facing merge-escrow refund command (the refund LEAF
+already exists; only the reclaim tooling — mirroring breed's — is deferred).
 
 ### 4. Hardcore death-match covenant — hero sink + PvP depth — 📋 TODO (needs the foundation)
 
