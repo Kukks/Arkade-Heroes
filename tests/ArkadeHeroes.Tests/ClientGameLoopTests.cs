@@ -60,6 +60,28 @@ public class ClientGameLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Merge_ThroughTheClient_FusesTwoHeroesIntoOne()
+    {
+        var home = FreshHome();
+        await using var alice = NewClient(home);
+        await alice.ExecuteAsync(["register", "LoopMergeA"]);
+        await alice.ExecuteAsync(["starter"]);
+        await alice.ExecuteAsync(["mine"]); // populate the client's list for the '1'/'2' refs
+        var before = (await HeroesAsync()).Select(h => h.Id).ToHashSet();
+        Assert.Equal(2, before.Count);
+
+        await alice.ExecuteAsync(["merge", "1", "2"]);
+
+        // Both starters are consumed; exactly one NEW fused hero remains (fresh server).
+        var after = await HeroesAsync();
+        var fused = Assert.Single(after);
+        Assert.DoesNotContain(fused.Id, before);
+        // The client stored the signed merge receipt locally.
+        Assert.True(File.Exists(Path.Combine(home, "arkade-heroes-receipts.json")),
+            "the merge receipt should be stored in the client's data dir");
+    }
+
+    [Fact]
     public async Task FriendlyFight_ThroughTheClient_ResolvesWithAReceipt()
     {
         var aliceHome = FreshHome();
