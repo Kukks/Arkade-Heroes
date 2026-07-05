@@ -43,8 +43,9 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (key, pubHex) = NewKey();
         var client = _factory.CreateClient();
+        var nonce = await ChallengeAsync(client); // proof-of-possession
         var resp = await client.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest(name, $"sim-login-{Guid.NewGuid():N}", pubHex));
+            new RegisterPlayerRequest(name, $"sim-login-{Guid.NewGuid():N}", pubHex, nonce, Sign(key, nonce)));
         resp.EnsureSuccessStatusCode();
         return ((await resp.Content.ReadFromJsonAsync<PlayerDto>())!, key, pubHex);
     }
@@ -102,6 +103,48 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
 
         var resp = await client.PostAsJsonAsync("/api/players/login",
             new LoginRequest(pubHex, madeUpNonce, Sign(key, madeUpNonce)));
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    // ── Registration hardening (the flagged account-confusion fix) ──────
+
+    [Fact]
+    public async Task Register_LoginKeyWithoutProofOfPossession_Refused()
+    {
+        var (_, pubHex) = NewKey();
+        var client = _factory.CreateClient();
+        // Claims a login key but supplies no signed challenge.
+        var resp = await client.PostAsJsonAsync("/api/players",
+            new RegisterPlayerRequest("WL-NoPoP", $"sim-login-{Guid.NewGuid():N}", pubHex));
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Register_ClaimingAKeyYouDoNotControl_Refused()
+    {
+        // THE core exploit the fix closes: an attacker binds a VICTIM's login
+        // pubkey to their own player. They can't — proof-of-possession fails
+        // because they can't sign for a key they don't hold.
+        var (_, victimPub) = NewKey();
+        var (attackerKey, _) = NewKey();
+        var client = _factory.CreateClient();
+        var nonce = await ChallengeAsync(client);
+
+        var resp = await client.PostAsJsonAsync("/api/players",
+            new RegisterPlayerRequest("WL-Impostor", $"sim-login-{Guid.NewGuid():N}",
+                victimPub, nonce, Sign(attackerKey, nonce)));
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Register_DuplicateLoginKey_Refused()
+    {
+        var (_, key, pubHex) = await RegisterWithKeyAsync("WL-Uniq1");
+        // A second registration with the SAME (proven) login key, different address.
+        var client = _factory.CreateClient();
+        var nonce = await ChallengeAsync(client);
+        var resp = await client.PostAsJsonAsync("/api/players",
+            new RegisterPlayerRequest("WL-Uniq2", $"sim-login-{Guid.NewGuid():N}", pubHex, nonce, Sign(key, nonce)));
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 }

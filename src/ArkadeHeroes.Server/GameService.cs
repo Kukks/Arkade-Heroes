@@ -42,18 +42,36 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     private static readonly TimeSpan LoginNonceTtl = TimeSpan.FromMinutes(5);
 
     public async Task<(Player Player, string Address, long Balance)> RegisterPlayerAsync(
-        string name, string arkadeAddress, string? loginPubKeyHex, CancellationToken ct)
+        string name, string arkadeAddress, string? loginPubKeyHex,
+        string? nonceHex, string? signatureHex, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new GameRuleException("Player name is required.");
         if (string.IsNullOrWhiteSpace(arkadeAddress))
             throw new GameRuleException("Your wallet's Arkade address is required — keys stay on your side.");
+
+        string? loginKey = null;
+        if (!string.IsNullOrWhiteSpace(loginPubKeyHex))
+        {
+            loginKey = loginPubKeyHex.Trim().ToLowerInvariant();
+            // Proof-of-possession: you may only register a login key you actually
+            // control — sign a fresh server challenge with it. Without this, an
+            // attacker could bind a VICTIM's login pubkey (paired with their own
+            // address) to their own player and hijack the victim's later sign-in.
+            if (string.IsNullOrWhiteSpace(nonceHex) || string.IsNullOrWhiteSpace(signatureHex))
+                throw new GameRuleException("Registering a login key requires proof of possession (a signed challenge).");
+            ConsumeAndVerifyChallenge(loginKey, nonceHex, signatureHex);
+            // Uniqueness: one player per login key, so sign-in is unambiguous.
+            if (store.Players.Values.Any(p =>
+                    string.Equals(p.LoginPubKeyHex, loginKey, StringComparison.OrdinalIgnoreCase)))
+                throw new GameRuleException("This wallet is already registered — use 'login' to resume it.");
+        }
 
         var player = new Player
         {
             Id = NewId("player"),
             Name = name.Trim(),
             Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
-            LoginPubKeyHex = string.IsNullOrWhiteSpace(loginPubKeyHex) ? null : loginPubKeyHex.Trim().ToLowerInvariant(),
+            LoginPubKeyHex = loginKey,
         };
 
         try
@@ -98,19 +116,37 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// </summary>
     public Player Login(string loginPubKeyHex, string nonceHex, string signatureHex)
     {
-        // Single-use: consume the nonce whatever happens next.
-        if (!store.LoginNonces.TryRemove(nonceHex, out var issued))
-            throw new GameRuleException("Unknown or already-used login challenge — request a fresh one.");
-        if (DateTimeOffset.UtcNow - issued > LoginNonceTtl)
-            throw new GameRuleException("The login challenge expired — request a fresh one.");
-
         var key = string.IsNullOrWhiteSpace(loginPubKeyHex) ? "" : loginPubKeyHex.Trim().ToLowerInvariant();
-        if (!VerifyLoginSignature(key, nonceHex, signatureHex))
-            throw new GameRuleException("Signature does not prove control of this login key.");
+        ConsumeAndVerifyChallenge(key, nonceHex, signatureHex);
 
-        return store.Players.Values.FirstOrDefault(p =>
-                string.Equals(p.LoginPubKeyHex, key, StringComparison.OrdinalIgnoreCase))
-            ?? throw new GameRuleException("No player is registered with this login key.");
+        // SingleOrDefault, not FirstOrDefault: registration enforces one player per
+        // login key, so a duplicate would be a broken invariant — fail closed
+        // (throw) rather than silently pick one and confuse accounts.
+        try
+        {
+            return store.Players.Values.SingleOrDefault(p =>
+                    string.Equals(p.LoginPubKeyHex, key, StringComparison.OrdinalIgnoreCase))
+                ?? throw new GameRuleException("No player is registered with this login key.");
+        }
+        catch (InvalidOperationException)
+        {
+            throw new GameRuleException("This login key is ambiguous — sign-in refused.");
+        }
+    }
+
+    /// <summary>
+    /// Consumes a single-use challenge nonce (whatever happens next) and verifies
+    /// the BIP340 signature over its digest proves control of <paramref name="pubKeyHex"/>.
+    /// Shared by login and by registration's proof-of-possession.
+    /// </summary>
+    private void ConsumeAndVerifyChallenge(string pubKeyHex, string nonceHex, string signatureHex)
+    {
+        if (string.IsNullOrWhiteSpace(nonceHex) || !store.LoginNonces.TryRemove(nonceHex, out var issued))
+            throw new GameRuleException("Unknown or already-used challenge — request a fresh one.");
+        if (DateTimeOffset.UtcNow - issued > LoginNonceTtl)
+            throw new GameRuleException("The challenge expired — request a fresh one.");
+        if (!VerifyLoginSignature(pubKeyHex, nonceHex, signatureHex))
+            throw new GameRuleException("Signature does not prove control of this login key.");
     }
 
     private static bool VerifyLoginSignature(string pubKeyHex, string nonceHex, string sigHex)

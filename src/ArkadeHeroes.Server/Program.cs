@@ -53,7 +53,7 @@ var api = app.MapGroup("/api");
 api.MapPost("/players", async (RegisterPlayerRequest request, GameService game, CancellationToken ct) =>
 {
     var (player, address, balance) = await game.RegisterPlayerAsync(
-        request.Name, request.ArkadeAddress, request.LoginPubKeyHex, ct);
+        request.Name, request.ArkadeAddress, request.LoginPubKeyHex, request.NonceHex, request.SignatureHex, ct);
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance,
         player.StarterClaimed, player.Token));
 });

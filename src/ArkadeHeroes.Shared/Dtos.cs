@@ -6,9 +6,14 @@ namespace ArkadeHeroes.Shared;
 /// Registration binds the player to THEIR wallet's address — keys never leave the
 /// client. <see cref="LoginPubKeyHex"/> (optional) is the wallet's stable login
 /// key, registered so the player can later resume by signing a challenge with it
-/// ("sign in with your wallet" after a restore).
+/// ("sign in with your wallet" after a restore). When it is supplied, the wallet
+/// must prove possession: sign a fresh <c>/api/players/login-challenge</c> nonce
+/// and pass it here (<see cref="NonceHex"/> + <see cref="SignatureHex"/>), so a
+/// login key you don't control cannot be registered against your player.
 /// </summary>
-public record RegisterPlayerRequest(string Name, string ArkadeAddress, string? LoginPubKeyHex = null);
+public record RegisterPlayerRequest(
+    string Name, string ArkadeAddress,
+    string? LoginPubKeyHex = null, string? NonceHex = null, string? SignatureHex = null);
 
 /// <summary>A fresh single-use nonce to sign for wallet login.</summary>
 public record LoginChallengeResponse(string NonceHex);

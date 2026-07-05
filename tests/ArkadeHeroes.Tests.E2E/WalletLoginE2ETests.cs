@@ -56,11 +56,14 @@ public class WalletLoginE2ETests : IAsyncLifetime
     [Fact]
     public async Task RestoredWallet_SignsIn_ResumesTheSamePlayer_ReplayRefused()
     {
-        // Register a player with their wallet's login key.
+        // Register a player with their wallet's login key (proving possession by
+        // signing a fresh challenge).
         var wallet = await WalletAsync();
         var reg = _factory.CreateClient();
+        var regChallenge = (await reg.GetFromJsonAsync<LoginChallengeResponse>("/api/players/login-challenge", Web))!;
+        var (_, regSig) = wallet.SignLoginDigest(LoginChallenge.Digest(regChallenge.NonceHex));
         var registerResp = await reg.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest("Login-Alice", wallet.Address, wallet.LoginPubKeyHex));
+            new RegisterPlayerRequest("Login-Alice", wallet.Address, wallet.LoginPubKeyHex, regChallenge.NonceHex, regSig));
         registerResp.EnsureSuccessStatusCode();
         var player = JsonSerializer.Deserialize<PlayerDto>(await registerResp.Content.ReadAsStringAsync(), Web)!;
 

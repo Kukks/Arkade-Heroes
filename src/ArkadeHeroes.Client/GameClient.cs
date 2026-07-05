@@ -396,7 +396,7 @@ public class GameClient : IAsyncDisposable
         // InMemory simulation a local sim-address stands in for it. In NArk mode
         // we also register the wallet's login pubkey so a restored wallet can
         // later resume this player via 'login' (sign in with your wallet).
-        string? loginPubKey = null;
+        string? loginPubKey = null, loginNonce = null, loginSig = null;
         if (address is null)
         {
             if (await ChainModeAsync() == "InMemory")
@@ -408,10 +408,16 @@ public class GameClient : IAsyncDisposable
                 var wallet = await WalletAsync();
                 address = wallet.Address;
                 loginPubKey = wallet.LoginPubKeyHex;
+                // Proof-of-possession: sign a fresh challenge so this login key
+                // can only be registered by whoever actually controls it.
+                var challenge = await GetAsync<LoginChallengeResponse>("/api/players/login-challenge");
+                (_, loginSig) = wallet.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
+                loginNonce = challenge.NonceHex;
             }
         }
 
-        var player = await PostAsync<PlayerDto>("/api/players", new RegisterPlayerRequest(name, address, loginPubKey));
+        var player = await PostAsync<PlayerDto>("/api/players",
+            new RegisterPlayerRequest(name, address, loginPubKey, loginNonce, loginSig));
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
         _me = player;
         await SaveSessionAsync(player.Token!);
