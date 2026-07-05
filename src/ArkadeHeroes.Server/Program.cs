@@ -123,12 +123,12 @@ api.MapGet("/heroes/{heroId}", (string heroId, GameService game) =>
 // ── Breeding (commit → reveal) ─────────────────────────────────────────────
 
 api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext http, GameService game,
-    Microsoft.Extensions.Options.IOptions<GameOptions> options, CancellationToken ct) =>
+    CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
     var (session, invoice) = await game.CommitBreedingAsync(player, request.ParentAId, request.ParentBId, request.Mode, ct);
     return Results.Ok(new BreedCommitResponse(session.Id, session.CommitmentHex, invoice?.ToDto(),
-        session.EscrowAddress, session.EscrowAddress is null ? 0 : options.Value.BreedingFeeSats));
+        session.EscrowAddress, session.EscrowAddress is null ? 0 : session.FeeSats));
 });
 
 // Public breed-escrow parameters: everything a player needs to rebuild the

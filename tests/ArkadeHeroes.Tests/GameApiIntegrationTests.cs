@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ArkadeHeroes.Tests;
 
@@ -125,5 +126,27 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         var noAddress = await anonymous.PostAsJsonAsync("/api/players",
             new RegisterPlayerRequest("NoWallet", ""));
         Assert.Equal(HttpStatusCode.BadRequest, noAddress.StatusCode);
+    }
+
+    [Fact]
+    public async Task BreedFee_EscalatesWithParentBreedCount()
+    {
+        var (alice, _) = await _factory.RegisterAsync("BF-Alice");
+        var heroes = await alice.ClaimStartersAsync();
+
+        // Fresh parents → base fee in the invoice.
+        var fresh = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
+                new BreedCommitRequest(heroes[0].Id, heroes[1].Id)))
+            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        Assert.Equal(1000, fresh.Invoice!.AmountSats);
+
+        // Bump the parents' combined breed count to 2 → 4x fee.
+        var store = _factory.Services.GetRequiredService<ArkadeHeroes.Server.GameStore>();
+        store.Heroes[heroes[0].Id].BreedCount = 1;
+        store.Heroes[heroes[1].Id].BreedCount = 1;
+        var bred = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
+                new BreedCommitRequest(heroes[0].Id, heroes[1].Id)))
+            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        Assert.Equal(4000, bred.Invoice!.AmountSats);
     }
 }

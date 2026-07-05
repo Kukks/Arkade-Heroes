@@ -252,6 +252,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     {
         var parentA = GetOwnedHero(player, parentAId);
         var parentB = GetOwnedHero(player, parentBId);
+        // The breed fee escalates with how much the parents have already been bred
+        // (their combined breed count) — a supply-side sats sink.
+        var breedFee = BreedingPolicy.FeeSats(_options.BreedingFeeSats, parentA.BreedCount + parentB.BreedCount);
 
         if (BreedingService.Validate(parentA, parentB, DateTimeOffset.UtcNow) is { } error)
             throw new GameRuleException(error);
@@ -265,20 +268,20 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             // the covenant (not the treasury) then enforces the mint's shape.
             var escrow = await chain.CreateBreedEscrowAsync(
                 sessionId, player.Id, parentA.AssetId!, parentB.AssetId!,
-                _options.BreedingFeeSats, receipts.PublicKeyHex,
+                breedFee, receipts.PublicKeyHex,
                 DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
             var covenantSession = new BreedingSession
             {
                 Id = sessionId, PlayerId = player.Id, ParentAId = parentAId, ParentBId = parentBId,
                 ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
-                Mode = "covenant", EscrowAddress = escrow.EscrowAddress,
+                Mode = "covenant", EscrowAddress = escrow.EscrowAddress, FeeSats = breedFee,
             };
             store.Breedings[covenantSession.Id] = covenantSession;
             return (covenantSession, null);
         }
 
         var invoice = await chain.CreateFeeInvoiceAsync(
-            $"breed:{parentAId}+{parentBId}", _options.BreedingFeeSats, ct);
+            $"breed:{parentAId}+{parentBId}", breedFee, ct);
         var session = new BreedingSession
         {
             Id = sessionId,
@@ -288,6 +291,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             ServerSeed = seed,
             CommitmentHex = CommitReveal.Commit(seed),
             FeeInvoiceId = invoice.InvoiceId,
+            FeeSats = breedFee,
         };
         store.Breedings[session.Id] = session;
         return (session, invoice);

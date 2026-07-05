@@ -57,6 +57,16 @@ public class BreedingServiceTests
     }
 
     [Fact]
+    public void BreedFeeEscalatesWithParentBreedCount_Capped()
+    {
+        Assert.Equal(1000, BreedingPolicy.FeeSats(1000, 0));   // fresh parents → base
+        Assert.Equal(2000, BreedingPolicy.FeeSats(1000, 1));
+        Assert.Equal(4000, BreedingPolicy.FeeSats(1000, 2));
+        Assert.Equal(8000, BreedingPolicy.FeeSats(1000, 3));
+        Assert.Equal(8000, BreedingPolicy.FeeSats(1000, 10));  // capped at 8x
+    }
+
+    [Fact]
     public void CooldownGrowsWithBreedCountAndGene()
     {
         var policy = new BreedingPolicy(TimeSpan.FromMinutes(1));

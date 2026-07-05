@@ -28,6 +28,8 @@ public class BreedingSession
     public string? FeeInvoiceId { get; init; }
     /// <summary>Breed escrow address the player deposits both parents + fee into (covenant mode).</summary>
     public string? EscrowAddress { get; set; }
+    /// <summary>The escalated breeding fee for this session (sats) — paid via the invoice or the breed escrow.</summary>
+    public long FeeSats { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Completed { get; set; }
     public string? ChildHeroId { get; set; }

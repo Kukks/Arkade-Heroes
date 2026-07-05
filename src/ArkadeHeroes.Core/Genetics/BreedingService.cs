@@ -17,6 +17,17 @@ public sealed record BreedingPolicy(TimeSpan CooldownBaseUnit)
         var geneScale = 1 + cooldownGene / 128.0; // 1.0 .. ~3.0
         return CooldownBaseUnit * (doubling * geneScale);
     }
+
+    /// <summary>The escalating breed-fee doubling caps at 8× the base.</summary>
+    public const int FeeDoublingCap = 3;
+
+    /// <summary>
+    /// The breeding fee, escalated by the parents' COMBINED prior breed count:
+    /// baseFeeSats × 2^min(total, cap). Fresh heroes breed at the base; a heavily-bred
+    /// line pays progressively more — a supply-side sats sink alongside the cooldown.
+    /// </summary>
+    public static long FeeSats(long baseFeeSats, int totalParentBreeds)
+        => baseFeeSats * (1L << Math.Min(Math.Max(totalParentBreeds, 0), FeeDoublingCap));
 }
 
 public sealed record BreedingOutcome(
