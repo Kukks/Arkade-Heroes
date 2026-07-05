@@ -180,6 +180,29 @@ public interface IChainService
     /// <summary>The public breed-escrow parameters for trustless client rebuild + refund. Null when unknown/invoice-mode.</summary>
     Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default);
 
+    // ── Covenant merge / fusion escrows ────────────────────────────────
+
+    /// <summary>
+    /// Builds the merge escrow and returns the address the player deposits
+    /// BOTH input heroes (base + sacrifice) plus the fee into from their own
+    /// wallet. Rung 1 is treasury-executed; rung 2 makes the mint covenant-enforced.
+    /// </summary>
+    Task<string> CreateMergeEscrowAsync(
+        string mergeId, string playerId, string baseAssetId, string sacrificeAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once both input heroes and the fee sit at the merge escrow address.</summary>
+    Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Executes the merge: the two input heroes are RETIRED to the treasury
+    /// (the sink) and the fused hero is issued under the species with
+    /// <paramref name="fusedData"/>'s metadata, gated on the oracle's BIP340
+    /// signature over the fused-genome metadata root. Returns the fused asset id.
+    /// </summary>
+    Task<HeroMintResult> ExecuteMergeAsync(
+        string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default);
+
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
     /// <summary>

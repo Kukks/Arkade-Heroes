@@ -720,6 +720,20 @@ public class NArkChainService(
         return new HeroMintResult(childAssetId, breedTxId);
     }
 
+    // ── Covenant merge / fusion escrows (live impl lands in rung 2) ─────
+
+    public Task<string> CreateMergeEscrowAsync(
+        string mergeId, string playerId, string baseAssetId, string sacrificeAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+        => throw new NotSupportedException("Live merge covenant lands in rung 2; run merges on the InMemory chain for now.");
+
+    public Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default)
+        => throw new NotSupportedException("Live merge covenant lands in rung 2.");
+
+    public Task<HeroMintResult> ExecuteMergeAsync(
+        string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default)
+        => throw new NotSupportedException("Live merge covenant lands in rung 2.");
+
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
     private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>

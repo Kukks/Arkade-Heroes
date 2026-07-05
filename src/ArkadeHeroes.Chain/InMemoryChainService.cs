@@ -346,6 +346,81 @@ public class InMemoryChainService : IChainService
             "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, breedingId, e.RefundAfterUnixSeconds));
     }
 
+    // ── Merge / fusion escrows (simulated) — inputs retired, fused minted ──
+
+    /// <summary>The sim's stand-in holder for assets retired to the treasury (removed from the player).</summary>
+    private const string SimTreasuryHolder = "__treasury__";
+
+    private sealed record MergeEscrow(
+        string PlayerId, string BaseAssetId, string SacrificeAssetId, long FeeSats, string OraclePkHex, long RefundAfterUnixSeconds)
+    {
+        public bool Funded;
+        public bool Executed;
+    }
+
+    private readonly ConcurrentDictionary<string, MergeEscrow> _mergeEscrows = new();
+
+    public async Task<string> CreateMergeEscrowAsync(
+        string mergeId, string playerId, string baseAssetId, string sacrificeAssetId,
+        long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        await GetPlayerAddressAsync(playerId, ct);
+        _mergeEscrows[mergeId] = new MergeEscrow(
+            playerId, baseAssetId, sacrificeAssetId, feeSats, oraclePubKeyHex, refundAfterUnixSeconds);
+        return $"sim-merge-escrow-{mergeId}";
+    }
+
+    public Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default)
+        => Task.FromResult(_mergeEscrows.TryGetValue(mergeId, out var e) && e.Funded);
+
+    /// <summary>Simulated client-wallet deposit of base + sacrifice + fee into the merge escrow.</summary>
+    public void FundMergeEscrowFromPlayer(string playerId, string mergeId)
+    {
+        if (!_mergeEscrows.TryGetValue(mergeId, out var escrow))
+            throw new InvalidOperationException($"Unknown merge escrow {mergeId}.");
+        if (escrow.PlayerId != playerId)
+            throw new InvalidOperationException("Not the merging player.");
+        if (_assetHolders.GetValueOrDefault(escrow.BaseAssetId) != playerId
+            || _assetHolders.GetValueOrDefault(escrow.SacrificeAssetId) != playerId)
+            throw new InvalidOperationException("The player does not hold both the base and the sacrifice.");
+        var paid = false;
+        _playerBalances.AddOrUpdate(playerId, _ => throw new InvalidOperationException("No wallet."),
+            (_, bal) => { if (bal < escrow.FeeSats) return bal; paid = true; return bal - escrow.FeeSats; });
+        if (!paid) throw new InvalidOperationException($"Insufficient balance for the {escrow.FeeSats}-sat fee.");
+        escrow.Funded = true;
+    }
+
+    public async Task<HeroMintResult> ExecuteMergeAsync(
+        string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default)
+    {
+        if (!_mergeEscrows.TryGetValue(mergeId, out var escrow))
+            throw new InvalidOperationException($"Unknown merge escrow {mergeId}.");
+        if (!escrow.Funded) throw new InvalidOperationException($"Merge escrow {mergeId} is not funded.");
+        if (escrow.Executed) throw new InvalidOperationException("Merge already executed.");
+
+        // Enforce the same oracle rule rung 2's covenant will: a BIP340 signature over the
+        // fused hero's metadata Merkle root (same shape as a bred child — base as parentA,
+        // sacrifice as parentB). The server signs this exact root; the covenant reads it on-chain.
+        var root = Covenants.ArkadeCovenants.MetadataMerkleRoot(Covenants.BreedEscrowContracts.ChildMetadata(
+            fusedData.GenomeHex, fusedData.Generation, fusedData.ParentAId ?? "", fusedData.ParentBId ?? "",
+            fusedData.ServerSeedHex ?? "", fusedData.PlayerNonce ?? ""));
+        if (!NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(escrow.OraclePkHex), out var oraclePk)
+            || oraclePk is null
+            || !NBitcoin.Secp256k1.SecpSchnorrSignature.TryCreate(oracleSignature64, out var signature)
+            || signature is null
+            || !oraclePk.SigVerifyBIP340(signature, root))
+            throw new InvalidOperationException("Oracle signature does not authorize this merge.");
+
+        escrow.Executed = true;
+        // Both inputs RETIRED to the treasury (the sink); the fused hero minted to the player.
+        _assetHolders[escrow.BaseAssetId] = SimTreasuryHolder;
+        _assetHolders[escrow.SacrificeAssetId] = SimTreasuryHolder;
+        var assetId = NewId("sim-asset");
+        _assetHolders[assetId] = escrow.PlayerId;
+        await Task.CompletedTask;
+        return new HeroMintResult(assetId, NewId("sim-merge"));
+    }
+
     // ── Covenant offers (simulated) — fungible items and unique heroes ──
 
     /// <summary>Carrier dust deposited with a resting offer's asset (the sim's stand-in for serverInfo.Dust).</summary>
