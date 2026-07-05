@@ -55,8 +55,9 @@ public class CovenantOfferProbeTests : IAsyncLifetime
         });
     }
 
-    /// <summary>Mints a fungible "item" asset to the seller via a covenant issuance (the proven rung-1 shape).</summary>
-    private async Task<string> MintItemToSellerAsync(NArk.Core.ArkServerInfo serverInfo, EmulatorInfo emulatorInfo)
+    /// <summary>Mints an asset to the seller via a covenant issuance (the proven rung-1 shape). supply=1 is the unique-hero shape.</summary>
+    private async Task<string> MintItemToSellerAsync(
+        NArk.Core.ArkServerInfo serverInfo, EmulatorInfo emulatorInfo, ulong supply = 100, string label = "rusty-blade")
     {
         var sellerScript = global::NArk.Abstractions.ArkAddress.Parse(_seller.Address).ScriptPubKey;
         var mint = new ArkadeArtifactContract("offer-item-mint", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
@@ -69,8 +70,8 @@ public class CovenantOfferProbeTests : IAsyncLifetime
             [new TxOut(Money.Satoshis(15_000), sellerScript)],
             extraPackets: [Packet.Create([AssetGroup.Create(
                 assetId: null, controlAsset: null, inputs: [],
-                outputs: [AssetOutput.Create(0, 100)],
-                metadata: new List<AssetMetadata> { AssetMetadata.Create("item", "rusty-blade") })])]);
+                outputs: [AssetOutput.Create(0, supply)],
+                metadata: new List<AssetMetadata> { AssetMetadata.Create("item", label) })])]);
         var itemId = AssetId.Create(
             PSBT.Parse(response.SignedArkTx, serverInfo.Network).GetGlobalTransaction().GetHash().ToString(), 0).ToString();
         await _seller.WaitForAssetAsync(itemId, TimeSpan.FromSeconds(45));
@@ -250,5 +251,43 @@ public class CovenantOfferProbeTests : IAsyncLifetime
             await Task.Delay(1000);
         Assert.True(await SellerItemBalanceAsync(itemId) >= heldAfterResting + 1,
             "the reclaimed item unit did not return to the seller");
+    }
+
+    /// <summary>
+    /// Hero sales reuse the SAME offer covenant (it only ever sees an asset id).
+    /// This proves the hero shape live: a UNIQUE supply-1 asset (a character) is
+    /// rested whole and bought — the seller ends holding NONE of it (unlike a
+    /// fungible item, where they keep the rest), and the buyer receives the exact
+    /// same asset id, metadata intact (the passthrough never re-mints).
+    /// </summary>
+    [Fact]
+    public async Task RestingOffer_SellsAWholeUniqueAsset_TheHeroShape()
+    {
+        var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        const long ask = 12_000;
+
+        // A supply-1 asset — the unique-hero shape (vs. the supply-100 item above).
+        var heroAssetId = await MintItemToSellerAsync(serverInfo, emulatorInfo, supply: 1, label: "hero");
+        Assert.Equal(1UL, await SellerItemBalanceAsync(heroAssetId));
+
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var offer = new OfferParams(_seller.Address, heroAssetId, ask, serverInfo.Dust.Satoshi, "offer-hero", refundAfter);
+        var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        // The seller rests the WHOLE unique asset (its only unit).
+        await _seller.SendAssetAsync(contract.GetArkAddress().ToString(isMain), heroAssetId, 1);
+        await CovenantSpender.WaitForVtxosAsync(_seller, contract, 1, TimeSpan.FromSeconds(45));
+
+        var sellerBefore = await _seller.GetBalanceSatsAsync();
+
+        await OfferFulfillFlow.FulfillAsync(_buyer, EmulatorUri, offer);
+
+        // The buyer holds the exact hero asset; the seller was paid; the seller
+        // no longer holds ANY of the unique asset (it changed owner wholesale).
+        await _buyer.WaitForAssetAsync(heroAssetId, TimeSpan.FromSeconds(60));
+        await _seller.WaitForBalanceAsync(sellerBefore + ask, TimeSpan.FromSeconds(60));
+        Assert.Equal(0UL, await SellerItemBalanceAsync(heroAssetId));
     }
 }
