@@ -203,6 +203,9 @@ public interface IChainService
     Task<HeroMintResult> ExecuteMergeAsync(
         string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default);
 
+    /// <summary>The public merge-escrow parameters for trustless client rebuild + refund. Null when unknown.</summary>
+    Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default);
+
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
 
     /// <summary>

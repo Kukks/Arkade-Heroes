@@ -418,6 +418,14 @@ public class InMemoryChainService : IChainService
         return new HeroMintResult(assetId, NewId("sim-merge"));
     }
 
+    public Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default)
+    {
+        if (!_mergeEscrows.TryGetValue(mergeId, out var e)) return Task.FromResult<Covenants.MergeEscrowParams?>(null);
+        return Task.FromResult<Covenants.MergeEscrowParams?>(new Covenants.MergeEscrowParams(
+            $"sim-player-{e.PlayerId}", e.BaseAssetId, e.SacrificeAssetId, "sim-species",
+            "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, mergeId, e.RefundAfterUnixSeconds));
+    }
+
     // ── Covenant offers (simulated) — fungible items and unique heroes ──
 
     /// <summary>Carrier dust deposited with a resting offer's asset (the sim's stand-in for serverInfo.Dust).</summary>

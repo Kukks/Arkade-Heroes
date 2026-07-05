@@ -89,4 +89,28 @@ public class MergeFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var early = await alice.PostAsJsonAsync($"/api/merge/{commit.MergeId}/reveal", new MergeRevealRequest("n"));
         Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
     }
+
+    [Fact]
+    public async Task Merge_EscrowParamsAreServedForTrustlessRebuild()
+    {
+        var (alice, _) = await _factory.RegisterAsync("Mrg-Escrow");
+        var heroes = await alice.ClaimStartersAsync();
+
+        var commit = (await (await alice.PostAsJsonAsync("/api/merge/commit",
+                new MergeCommitRequest(heroes[0].Id, heroes[1].Id)))
+            .Content.ReadFromJsonAsync<MergeCommitResponse>())!;
+
+        // The escrow params are publicly rebuildable (base + sacrifice + mergeId), so a
+        // player can reconstruct the contract and reclaim an abandoned deposit trustlessly.
+        var escrow = await alice.GetAsync($"/api/merges/{commit.MergeId}/escrow");
+        Assert.Equal(HttpStatusCode.OK, escrow.StatusCode);
+        var body = await escrow.Content.ReadAsStringAsync();
+        Assert.Contains(commit.MergeId, body);
+        Assert.Contains(heroes[0].AssetId!, body);
+        Assert.Contains(heroes[1].AssetId!, body);
+
+        // Unknown merge → 404.
+        var missing = await alice.GetAsync("/api/merges/does-not-exist/escrow");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
 }

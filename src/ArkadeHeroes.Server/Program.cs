@@ -160,6 +160,11 @@ api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest
     return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt));
 });
 
+// Public merge-escrow parameters: everything a player needs to rebuild the merge
+// covenant locally and reclaim an abandoned deposit. 404 for unknown merges.
+api.MapGet("/merges/{mergeId}/escrow", async (string mergeId, IChainService chain, CancellationToken ct) =>
+    await chain.GetMergeEscrowParamsAsync(mergeId, ct) is { } p ? Results.Ok(p) : Results.NotFound());
+
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
