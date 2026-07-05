@@ -505,6 +505,28 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         }
     }
 
+    /// <summary>
+    /// XP-weighted matchmaking: OTHER players' heroes ranked by how evenly matched
+    /// they are with the given hero (closest level first), each annotated with the
+    /// conserved XP swing — what a staked win would gain and a loss would cost — so
+    /// a player finds fights where XP is actually at stake, not lopsided ones.
+    /// </summary>
+    public IReadOnlyList<Shared.OpponentSuggestionDto> SuggestOpponents(Player player, string heroId, int take = 10)
+    {
+        var hero = GetOwnedHero(player, heroId);
+        return store.Heroes.Values
+            .Where(h => h.OwnerId != player.Id)
+            .Select(h => new Shared.OpponentSuggestionDto(
+                h.ToDto(), h.OwnerId,
+                Matchmaking.LevelGap(hero.Level, h.Level),
+                Matchmaking.XpIfWin(hero.Level, h.Level),
+                Matchmaking.XpIfLose(hero.Level, h.Level)))
+            .OrderBy(s => s.LevelGap)
+            .ThenByDescending(s => s.Hero.Level)
+            .Take(take)
+            .ToList();
+    }
+
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
         long ChallengerXp, long DefenderXp,
         Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout,

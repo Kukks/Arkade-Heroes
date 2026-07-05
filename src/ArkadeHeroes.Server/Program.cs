@@ -198,6 +198,14 @@ api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
         ? Results.Ok(ToMatchDto(session))
         : Results.NotFound());
 
+// XP-weighted matchmaking: other players' heroes ranked by level proximity to the
+// given hero, each annotated with the conserved XP a staked win/loss would move.
+api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameService game) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(game.SuggestOpponents(player, heroId));
+});
+
 // Public escrow parameters of a covenant match: everything a player needs to
 // rebuild the per-party contracts locally (WagerEscrowContracts.Build) and
 // reclaim a timelocked refund WITHOUT trusting this server. 404 for

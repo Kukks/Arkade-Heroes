@@ -142,6 +142,10 @@ public record MatchDto(
     long WagerSats = 0,
     string? DefenderPlayerId = null);
 
+// ── XP-weighted matchmaking: suggested opponents ranked by level proximity ──────
+public record OpponentSuggestionDto(
+    HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose);
+
 // ── Hero transfer (client-signed spend; server verifies + confirms) ────────
 
 public record TransferRequest(string ToPlayerId);

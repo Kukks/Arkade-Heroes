@@ -237,8 +237,10 @@ against the client's actual command output.
 
 CI (GitHub Actions: unit always; E2E behind a regtest service container), upstream arkd
 poisoned-txid bug report (`19-backlog.md` §24 has the trace), ~~hero marketplace~~ (SHIPPED — see
-item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, XP-weighted
-matchmaking, wallet import/restore UX, ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
+item 3), pre-built recovery PSBTs/watchtower handoff, VRF entropy replacing commit–reveal, ~~XP-weighted
+matchmaking~~ (✅ SHIPPED: `GET /api/matchmaking/{heroId}` + client `opponents` — other players'
+heroes ranked by level proximity, each annotated with the conserved XP a staked win would gain
+and a loss would cost; `Core/Progression/Matchmaking`), wallet import/restore UX, ~~expired-session bookkeeping~~ (✅ SHIPPED — see item 6),
 ~~coin-selection recoverable-coin filter~~ (✅ SHIPPED game-side. A treasury-bought item's offer
 deposit could fail `SendAssetAsync` with `VTXO_RECOVERABLE`. CONFIRMED in the SDK:
 `SpendingService.GetAvailableCoins` (SpendingService.cs:168) excludes only unconfirmed-onchain

@@ -224,6 +224,7 @@ public class GameClient : IAsyncDisposable
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
             case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats> [covenant]"), parts.Length > 4 && parts[4].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "matches": await ListMatchesAsync(); break;
+            case "opponents": await ListOpponentsAsync(Arg(parts, 1, "opponents <hero>")); break;
             case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
             case "refund": await RefundAsync(Arg(parts, 1, "refund <matchId>")); break;
@@ -270,6 +271,7 @@ public class GameClient : IAsyncDisposable
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
           challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
+          opponents <hero>       suggested opponents by level (XP-weighted matchmaking)
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
           refund <matchId>       reclaim your covenant stake after expiry (no server trust)
@@ -677,6 +679,22 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine(ok
             ? $"    fairness ✓ {detail}"
             : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
+    private async Task ListOpponentsAsync(string heroRef)
+    {
+        RequireSession();
+        var hero = ResolveHero(heroRef);
+        var opponents = await GetAsync<List<OpponentSuggestionDto>>($"/api/matchmaking/{hero.Id}");
+        if (opponents.Count == 0)
+        {
+            Console.WriteLine("  no opponents available yet (other players need heroes)");
+            return;
+        }
+        Console.WriteLine($"  opponents for {ShortId(hero.Id)} (level {hero.Level}), closest match first:");
+        foreach (var o in opponents)
+            Console.WriteLine($"    {ShortId(o.Hero.Id)}  L{o.Hero.Level}  gap {o.LevelGap}  " +
+                              $"win +{o.XpIfYouWin} / lose -{o.XpIfYouLose} xp  owner {ShortId(o.OwnerPlayerId)}");
     }
 
     private async Task ListMatchesAsync()
