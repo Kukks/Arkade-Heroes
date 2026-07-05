@@ -234,6 +234,7 @@ public class GameClient : IAsyncDisposable
             case "restore" or "import": await RestoreWalletAsync(string.Join(' ', parts.Skip(1))); break;
             case "fund": await FundAsync(); break;
             case "top": await LeaderboardAsync(); break;
+            case "rarest": await RarestAsync(); break;
             case "receipts": await ListReceiptsAsync(); break;
             case "verify-receipts": await VerifyReceiptsAsync(); break;
             case "shop": await ShopAsync(); break;
@@ -281,6 +282,7 @@ public class GameClient : IAsyncDisposable
           restore <12 words>     recover your wallet (heroes + funds) from your mnemonic (alias: import)
           fund                   how to fund your wallet address
           top                    leaderboard (wins/level, recomputed from receipts)
+          rarest                 heroes ranked by trait rarity (collectible board)
           receipts               your signed progression receipts (portable proof)
           verify-receipts        verify signatures + recompute levels from receipts
           shop                   list equipment
@@ -488,9 +490,10 @@ public class GameClient : IAsyncDisposable
             var h = heroes[i];
             var mine = _me is not null && h.OwnerId == _me.PlayerId ? "•" : " ";
             var cooldown = h.BreedCooldownUntil > DateTimeOffset.UtcNow ? " ⏳" : "";
+            var rarity = h.Rarity is { Tier: not "Common" } r ? $"  [{r.Tier}]" : "";
             Console.WriteLine(
                 $"  {mine}[{i + 1,2}] {h.Name,-22} gen{h.Generation}  lv{h.Level,2}  {h.Element,-8} " +
-                $"hp{h.Stats.MaxHp,4} atk{h.Stats.Attack,3} def{h.Stats.Defense,3} spd{h.Stats.Speed,3}{cooldown}");
+                $"hp{h.Stats.MaxHp,4} atk{h.Stats.Attack,3} def{h.Stats.Defense,3} spd{h.Stats.Speed,3}{cooldown}{rarity}");
         }
 
         Task<List<HeroDto>> ListMineAsync()
@@ -515,6 +518,16 @@ public class GameClient : IAsyncDisposable
                 genome    {hero.GenomeHex}
                 on-chain  asset {hero.AssetId ?? "-"}  tx {ShortId(hero.MintArkTxId ?? "-")}
             """);
+        if (hero.Rarity is { } rarity)
+        {
+            Console.WriteLine($"    rarity    {rarity.Tier} (score {rarity.Score})");
+            if (rarity.Expressed.Count > 0)
+                Console.WriteLine("    traits    " + string.Join(", ",
+                    rarity.Expressed.Select(t => $"{t.Category} [{t.Tier}]")));
+            if (rarity.CarriedRecessives.Count > 0)
+                Console.WriteLine("    carries   " + string.Join(", ",
+                    rarity.CarriedRecessives.Select(t => $"{t.Category} [{t.Tier}]")) + "  (breeding potential)");
+        }
     }
 
     private async Task BreedAsync(string refA, string refB, bool covenant)
@@ -855,6 +868,16 @@ public class GameClient : IAsyncDisposable
             Console.WriteLine($"  {e.Rank,-3} {e.Name,-15} {e.Level,3}  {e.Wins,4}  {e.Matches,7}");
     }
 
+    private async Task RarestAsync()
+    {
+        var board = await GetAsync<List<HeroDto>>("/api/rarest");
+        if (board.Count == 0) { Console.WriteLine("  no heroes yet"); return; }
+        Console.WriteLine("  #   hero            tier        score  gen");
+        var rank = 1;
+        foreach (var h in board)
+            Console.WriteLine($"  {rank++,-3} {h.Name,-15} {h.Rarity?.Tier,-11} {h.Rarity?.Score,5}  {h.Generation,3}");
+    }
+
     private async Task ListReceiptsAsync()
     {
         var receipts = await LoadReceiptsAsync();
@@ -1055,7 +1078,10 @@ public class GameClient : IAsyncDisposable
         }
         Console.WriteLine("  offer              kind  name              ask       seller");
         foreach (var o in offers)
-            Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.Kind,-5} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}");
+        {
+            var tier = o.RarityTier is { } t ? $"  [{t}]" : "";
+            Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.Kind,-5} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}{tier}");
+        }
         Console.WriteLine("  buy with 'buyoffer <id>' (item) or 'buyhero <id>' (hero) — you pay the seller directly; the covenant enforces the ask");
     }
 
