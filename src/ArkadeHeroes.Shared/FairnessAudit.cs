@@ -63,6 +63,36 @@ public static class FairnessAudit
     }
 
     /// <summary>
+    /// Verifies a merge (fusion) outcome: seed matches the commitment, entropy is
+    /// the documented derivation, and the fused genome equals
+    /// <c>Fusion.Fuse(base, sacrifice, entropy)</c> — the deterministic recompute
+    /// that makes a wrong mint detectable even before the covenant enforces it.
+    /// </summary>
+    public static (bool Ok, string Detail) VerifyMerge(
+        string mergeId, HeroDto baseHero, HeroDto sacrificeHero, string nonce,
+        string commitmentHex, MergeRevealResponse reveal)
+    {
+        var seed = Convert.FromHexString(reveal.ServerSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        var entropy = CommitReveal.DeriveEntropy(seed, mergeId, baseHero.Id, sacrificeHero.Id, nonce);
+        if (!Convert.ToHexString(entropy).Equals(reveal.EntropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, mergeId, base, sacrifice, nonce)");
+
+        var expected = Fusion.Fuse(
+            Genome.FromHex(baseHero.GenomeHex), Genome.FromHex(sacrificeHero.GenomeHex), entropy);
+        if (expected.ToHex() != reveal.Hero.GenomeHex)
+            return (false, "fused genome does not equal Fusion.Fuse(base, sacrifice, entropy)");
+
+        var expectedGeneration = Math.Max(baseHero.Generation, sacrificeHero.Generation) + 1;
+        if (expectedGeneration != reveal.Hero.Generation)
+            return (false, $"fused generation should be {expectedGeneration}");
+
+        return (true, "seed, entropy, fused genome, and generation all verify");
+    }
+
+    /// <summary>
     /// Verifies a match outcome: seed matches the commitment, entropy is the
     /// documented derivation, and replaying <c>BattleEngine.Fight</c> over the
     /// pre-fight snapshots reproduces the exact event log.

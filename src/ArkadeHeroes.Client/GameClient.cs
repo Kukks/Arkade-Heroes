@@ -221,6 +221,7 @@ public class GameClient : IAsyncDisposable
             case "heroes": await ListHeroesAsync(mineOnly: false); break;
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB> [covenant]"), Arg(parts, 2, "breed <parentA> <parentB> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
+            case "merge": await MergeAsync(Arg(parts, 1, "merge <base> <sacrifice> [covenant]"), Arg(parts, 2, "merge <base> <sacrifice> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
             case "challenge": await ChallengeAsync(Arg(parts, 1, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 2, "challenge <mine> <theirs> <wagerSats> [covenant]"), Arg(parts, 3, "challenge <mine> <theirs> <wagerSats> [covenant]"), parts.Length > 4 && parts[4].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "matches": await ListMatchesAsync(); break;
@@ -269,6 +270,7 @@ public class GameClient : IAsyncDisposable
           heroes                 list all heroes (find opponents)
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
           breed <a> <b> [covenant]  breed two heroes; 'covenant' = emulator-enforced escrow mint
+          merge <base> <sac> [covenant]  fuse two heroes into one (both consumed); concentrates traits, may be born sterile
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
           challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
@@ -660,6 +662,56 @@ public class GameClient : IAsyncDisposable
         await wallet.SendAssetAsync(escrowAddress, parentB.AssetId ?? parentB.Id, 1);
         await wallet.SendAsync(escrowAddress, feeSats);
         Console.WriteLine($"    deposited both parents + {feeSats}-sat fee into the breed escrow from your wallet");
+    }
+
+    /// <summary>Fuse a base + sacrifice into one trait-concentrated hero (both inputs consumed). Commit → deposit → reveal → recompute+audit.</summary>
+    private async Task MergeAsync(string baseRef, string sacrificeRef, bool covenant)
+    {
+        RequireSession();
+        var baseHero = ResolveHero(baseRef);
+        var sacrificeHero = ResolveHero(sacrificeRef);
+
+        var commit = await PostAsync<MergeCommitResponse>("/api/merge/commit",
+            new MergeCommitRequest(baseHero.Id, sacrificeHero.Id, covenant ? "covenant" : "treasury"));
+
+        Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)}  [merge escrow{(covenant ? ", covenant" : "")}]");
+        await DepositMergeEscrowAsync(commit.MergeId, commit.EscrowAddress, commit.FeeSats, baseHero, sacrificeHero);
+
+        var nonce = NewNonce();
+        var reveal = await RetryUntilObservedAsync(
+            () => PostAsync<MergeRevealResponse>(
+                $"/api/merge/{commit.MergeId}/reveal", new MergeRevealRequest(nonce)),
+            "merge reveal");
+
+        await StoreReceiptAsync(reveal.Receipt);
+
+        var fused = reveal.Hero;
+        Console.WriteLine($"  ✓ fused: {fused.Name}  gen{fused.Generation}  lvl{fused.Level}  [{fused.Element}]");
+        Console.WriteLine($"    hp{fused.Stats.MaxHp} atk{fused.Stats.Attack} mag{fused.Stats.Magic} def{fused.Stats.Defense} spd{fused.Stats.Speed}");
+        if (fused.Rarity is { } rarity)
+            Console.WriteLine($"    rarity {rarity.Tier} (score {rarity.Score}){(fused.IsSterile ? "  ⚠ born STERILE — a breeding dead-end" : "  — fertile")}");
+        Console.WriteLine($"    asset {ShortId(fused.AssetId ?? "?")}  (base + sacrifice consumed)");
+
+        var (ok, detail) = FairnessAudit.VerifyMerge(commit.MergeId, baseHero, sacrificeHero, nonce, commit.CommitmentHex, reveal);
+        Console.WriteLine(ok
+            ? $"    fairness ✓ {detail}"
+            : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
+    /// <summary>Deposits base + sacrifice + the fee into a merge escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
+    private async Task DepositMergeEscrowAsync(string mergeId, string escrowAddress, long feeSats, HeroDto baseHero, HeroDto sacrificeHero)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/fund-merge-escrow", new { MergeId = mergeId });
+            Console.WriteLine("    deposited base + sacrifice + fee into the merge escrow (simulated wallet)");
+            return;
+        }
+        var wallet = await WalletAsync();
+        await wallet.SendAssetAsync(escrowAddress, baseHero.AssetId ?? baseHero.Id, 1);
+        await wallet.SendAssetAsync(escrowAddress, sacrificeHero.AssetId ?? sacrificeHero.Id, 1);
+        await wallet.SendAsync(escrowAddress, feeSats);
+        Console.WriteLine($"    deposited base + sacrifice + {feeSats}-sat fee into the merge escrow from your wallet");
     }
 
     /// <summary>Stakes into a covenant escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
