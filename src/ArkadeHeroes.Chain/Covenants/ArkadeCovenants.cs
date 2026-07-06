@@ -71,12 +71,16 @@ public static class ArkadeCovenants
         var witnessProgram = pkScript[2..];
         return
         [
-            // the asset is present at output o with amount 1 (0xef → amount, flag)
-            .. EncodeIndex(outputIndex),
+            // the asset is present at output o with amount 1 (0xef → amount, flag).
+            // The output index is BAKED as a script constant — PushScriptNum, NOT
+            // EncodeIndex (which emits an empty push for 0 / a bare scriptnum that
+            // the parser misreads as a data-push opcode; EncodeIndex is for witness
+            // items). Mirrors breed ParentPresent baking its gidx with PushScriptNum.
+            .. PushScriptNum(outputIndex),
             32, .. asset.Txid.Reverse(), .. PushScriptNum(asset.GroupIndex),
             OpInspectOutAssetLookup, OpVerify, Op1, OpEqualVerify88,
             // ...and output o pays `script` (P2TR: version 1 + the 32-byte program) — mirror PayTo
-            .. EncodeIndex(outputIndex),
+            .. PushScriptNum(outputIndex),
             OpInspectOutputScriptPubkey, Op1, OpEqualVerify,
             (byte)witnessProgram.Length, .. witnessProgram, OpEqualVerify,
         ];
@@ -94,7 +98,7 @@ public static class ArkadeCovenants
         var s = new List<byte>();
         for (var o = 0; o < outputCount; o++)
         {
-            s.AddRange(EncodeIndex(o));
+            s.AddRange(PushScriptNum(o)); // baked script constant — NOT EncodeIndex (see AssetAtOutput)
             s.Add(32); s.AddRange(asset.Txid.Reverse());
             s.AddRange(PushScriptNum(asset.GroupIndex));
             s.Add(OpInspectOutAssetLookup); // → amount, flag  (flag on top)
