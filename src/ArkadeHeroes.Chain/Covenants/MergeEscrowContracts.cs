@@ -53,9 +53,10 @@ public static class MergeEscrowContracts
     /// The merge escrow (covenant-v2): one contract with a structural <c>merge</c> leaf
     /// (<see cref="ArkadeCovenants.MergeAuthorized"/> — the shared breed gate PLUS base +
     /// sacrifice provably BURNED and the fused hero provably MINTED TO THE PLAYER, no packet
-    /// trust) and a timelocked introspection-bound <c>refund</c> leaf that routes EACH
-    /// deposited hero home (base→output 0, sacrifice→output 1, script-pinned so a reclaim
-    /// cannot reroute; the fee returns as change). The player deposits base + sacrifice plus
+    /// trust) and a timelocked introspection-bound <c>refund</c> leaf that routes BOTH
+    /// deposited heroes home to the player at output 0 (one output, two assets — two
+    /// player-paying outputs would be coalesced; script-pinned so a reclaim cannot reroute;
+    /// the fee returns as change). The player deposits base + sacrifice plus
     /// the fee here; the server assembles the covenant mint, and the covenant — not the
     /// packet — enforces that both inputs are destroyed and the fused hero reaches the player.
     /// </summary>
@@ -78,8 +79,10 @@ public static class MergeEscrowContracts
                     playerScript, MergeOutputSweep)),
                 new("refund",
                     [
+                        // BOTH heroes home to the player at output 0 (one output, two assets —
+                        // two player-paying outputs would be coalesced by the builder).
                         .. ArkadeCovenants.AssetAtOutput(0, baseAsset, playerScript),
-                        .. ArkadeCovenants.AssetAtOutput(1, sacrificeAsset, playerScript),
+                        .. ArkadeCovenants.AssetAtOutput(0, sacrificeAsset, playerScript),
                         0x51, // OP_1
                     ],
                     refundLockTime),
