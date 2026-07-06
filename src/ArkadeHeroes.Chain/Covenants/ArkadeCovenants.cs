@@ -109,6 +109,32 @@ public static class ArkadeCovenants
         return [.. s];
     }
 
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): output 0 carries EXACTLY ONE asset (0xed count == 1)
+    /// AND pays <paramref name="playerP2tr"/> (0xd1 output-script). Used with AssetBurned
+    /// on the inputs + the species-pin: when every input asset is burned and the fee is
+    /// sats-only, the lone asset at output 0 MUST be the fresh mint — so this binds a
+    /// tx-derived mint to the baked player WITHOUT its (unknowable) asset id. Consumes NO
+    /// witness (output index baked to 0). EXACT stack contract validated by CovenantMintToPlayerProbe.
+    /// </summary>
+    public static byte[] MintToPlayer(Script playerP2tr)
+    {
+        var pkScript = playerP2tr.ToBytes();
+        if (pkScript.Length != 34 || pkScript[0] != 0x51 || pkScript[1] != 0x20)
+            throw new ArgumentException("MintToPlayer expects a P2TR (v1 witness) scriptPubKey.", nameof(playerP2tr));
+        var witnessProgram = pkScript[2..];
+        return
+        [
+            // output 0 has exactly one asset entry (the fresh mint — inputs are burned, fee is sats-only)
+            .. PushScriptNum(0),
+            OpInspectOutAssetCount, Op1, OpEqualVerify,
+            // ...and output 0 pays `player` (P2TR: version 1 + the 32-byte program) — mirror PayTo
+            .. PushScriptNum(0),
+            OpInspectOutputScriptPubkey, Op1, OpEqualVerify,
+            (byte)witnessProgram.Length, .. witnessProgram, OpEqualVerify,
+        ];
+    }
+
     private const byte OpSha256 = 0xa8;
 
     /// <summary>
