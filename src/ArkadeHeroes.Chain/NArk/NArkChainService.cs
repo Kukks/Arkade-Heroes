@@ -849,99 +849,103 @@ public class NArkChainService(
         return new HeroMintResult(fusedAssetId, mergeTxId);
     }
 
-    // ── Covenant death-match escrows ───────────────────────────────────
+    // ── Covenant death-match escrows (JOINT, covenant-v2) ──────────────
 
     private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
-        BuildDeathMatchContractAsync(Covenants.DeathMatchEscrowParams parameters, CancellationToken ct)
+        BuildDeathMatchContractAsync(Covenants.DeathMatchJointEscrowParams parameters, CancellationToken ct)
     {
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorKey = await RequireEmulatorSignerAsync(ct);
-        var contract = Covenants.DeathMatchEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey);
+        var contract = Covenants.DeathMatchEscrowContracts.BuildJoint(parameters, serverInfo.SignerKey, emulatorKey);
         return (contract, serverInfo);
     }
 
-    public async Task<string> CreateDeathMatchEscrowAsync(
-        string deathMatchId, string playerId, string heroAssetId, IReadOnlyList<string> gearAssetIds,
-        string role, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+    public async Task<string> CreateDeathMatchJointEscrowAsync(
+        string deathMatchId, string challengerPlayerId, string challengerHeroAssetId,
+        string defenderPlayerId, string defenderHeroAssetId,
+        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var playerAddress = await GetPlayerAddressAsync(playerId, ct);
-        var parameters = new Covenants.DeathMatchEscrowParams(
-            playerAddress, heroAssetId, gearAssetIds,
+        var challengerAddress = await GetPlayerAddressAsync(challengerPlayerId, ct);
+        var defenderAddress = await GetPlayerAddressAsync(defenderPlayerId, ct);
+        var parameters = new Covenants.DeathMatchJointEscrowParams(
+            challengerAddress, challengerHeroAssetId, defenderAddress, defenderHeroAssetId,
             Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
-            oraclePubKeyHex, deathMatchId, role, serverInfo.Dust.Satoshi, refundAfterUnixSeconds);
-        await SetKvAsync($"deathmatch-escrow:{deathMatchId}:{role}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+            oraclePubKeyHex, deathMatchId, serverInfo.Dust.Satoshi, refundAfterUnixSeconds);
+        await SetKvAsync($"deathmatch-escrow:{deathMatchId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
         var (contract, _) = await BuildDeathMatchContractAsync(parameters, ct);
         var address = contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
-        logger.LogInformation("Death-match escrow {Id}:{Role}: {Address} (refund after {Refund})",
-            deathMatchId, role, address, refundAfterUnixSeconds);
+        logger.LogInformation("Joint death-match escrow {Id}: {Address} (refund after {Refund})",
+            deathMatchId, address, refundAfterUnixSeconds);
         return address;
     }
 
-    private async Task<Covenants.DeathMatchEscrowParams> RequireDeathMatchParamsAsync(string deathMatchId, string role, CancellationToken ct)
+    private async Task<Covenants.DeathMatchJointEscrowParams> RequireDeathMatchParamsAsync(string deathMatchId, CancellationToken ct)
     {
-        var json = await GetKvAsync($"deathmatch-escrow:{deathMatchId}:{role}", ct)
-                   ?? throw new InvalidOperationException($"No death-match escrow recorded for {deathMatchId}:{role}.");
-        return System.Text.Json.JsonSerializer.Deserialize<Covenants.DeathMatchEscrowParams>(json)!;
+        var json = await GetKvAsync($"deathmatch-escrow:{deathMatchId}", ct)
+                   ?? throw new InvalidOperationException($"No death-match escrow recorded for {deathMatchId}.");
+        return System.Text.Json.JsonSerializer.Deserialize<Covenants.DeathMatchJointEscrowParams>(json)!;
     }
 
-    public async Task<Covenants.DeathMatchEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, string role, CancellationToken ct = default)
+    public async Task<Covenants.DeathMatchJointEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, CancellationToken ct = default)
     {
-        var json = await GetKvAsync($"deathmatch-escrow:{deathMatchId}:{role}", ct);
-        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.DeathMatchEscrowParams>(json);
+        var json = await GetKvAsync($"deathmatch-escrow:{deathMatchId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.DeathMatchJointEscrowParams>(json);
     }
 
-    private async Task<ArkVtxo?> DeathMatchHeroVtxoAsync(Covenants.DeathMatchEscrowParams parameters, CancellationToken ct)
+    private async Task<IReadOnlyCollection<ArkVtxo>> DeathMatchVtxosAsync(Covenants.DeathMatchJointEscrowParams parameters, CancellationToken ct)
     {
         var (contract, _) = await BuildDeathMatchContractAsync(parameters, ct);
         var script = contract.GetArkAddress().ScriptPubKey.ToHex();
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
-        var vtxos = await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct);
-        return vtxos.FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.HeroAssetId) == true);
+        return await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct);
     }
 
-    public async Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, string role, CancellationToken ct = default)
+    public async Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default)
     {
-        var parameters = await RequireDeathMatchParamsAsync(deathMatchId, role, ct);
-        return await DeathMatchHeroVtxoAsync(parameters, ct) is not null;
+        var parameters = await RequireDeathMatchParamsAsync(deathMatchId, ct);
+        var vtxos = await DeathMatchVtxosAsync(parameters, ct);
+        var hasChallenger = vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.ChallengerHeroAssetId) == true);
+        var hasDefender = vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.DefenderHeroAssetId) == true);
+        return hasChallenger && hasDefender;
     }
 
     public async Task<string> SettleDeathMatchAsync(
         string deathMatchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default)
     {
-        var challengerParams = await RequireDeathMatchParamsAsync(deathMatchId, "challenger", ct);
-        var defenderParams = await RequireDeathMatchParamsAsync(deathMatchId, "defender", ct);
-        var (challengerContract, serverInfo) = await BuildDeathMatchContractAsync(challengerParams, ct);
-        var (defenderContract, _) = await BuildDeathMatchContractAsync(defenderParams, ct);
+        var parameters = await RequireDeathMatchParamsAsync(deathMatchId, ct);
+        var (contract, serverInfo) = await BuildDeathMatchContractAsync(parameters, ct);
 
-        var challengerHeroVtxo = await DeathMatchHeroVtxoAsync(challengerParams, ct);
-        var defenderHeroVtxo = await DeathMatchHeroVtxoAsync(defenderParams, ct);
-        if (challengerHeroVtxo is null || defenderHeroVtxo is null)
+        var vtxos = await DeathMatchVtxosAsync(parameters, ct);
+        var challengerVtxo = vtxos.FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.ChallengerHeroAssetId) == true);
+        var defenderVtxo = vtxos.FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.DefenderHeroAssetId) == true);
+        if (challengerVtxo is null || defenderVtxo is null)
             throw new InvalidOperationException($"Death-match {deathMatchId} is not fully staked.");
 
         var branch = challengerWon ? "settleToChallenger" : "settleToDefender";
-        var winnerContract = challengerWon ? challengerContract : defenderContract;
-        var loserContract = challengerWon ? defenderContract : challengerContract;
-        var winnerVtxo = challengerWon ? challengerHeroVtxo : defenderHeroVtxo;
-        var loserVtxo = challengerWon ? defenderHeroVtxo : challengerHeroVtxo;
-        var winnerParams = challengerWon ? challengerParams : defenderParams;
-        var loserParams = challengerWon ? defenderParams : challengerParams;
-        var winnerHeroAsset = global::NArk.Core.Assets.AssetId.FromString(winnerParams.HeroAssetId);
-        var loserHeroAsset = global::NArk.Core.Assets.AssetId.FromString(loserParams.HeroAssetId);
-        var winnerScript = ArkAddress.Parse(winnerParams.PlayerAddress).ScriptPubKey;
+        var winnerVtxo = challengerWon ? challengerVtxo : defenderVtxo;
+        var loserVtxo = challengerWon ? defenderVtxo : challengerVtxo;
+        var winnerHeroAsset = global::NArk.Core.Assets.AssetId.FromString(
+            challengerWon ? parameters.ChallengerHeroAssetId : parameters.DefenderHeroAssetId);
+        var loserHeroAsset = global::NArk.Core.Assets.AssetId.FromString(
+            challengerWon ? parameters.DefenderHeroAssetId : parameters.ChallengerHeroAssetId);
+        var winnerScript = ArkAddress.Parse(
+            challengerWon ? parameters.ChallengerAddress : parameters.DefenderAddress).ScriptPubKey;
 
-        // Order inputs: winner's hero carrier vin 0, loser's vin 1. Witness = [serverSeed, oracleSig]
-        // (SettleAuthorizedNoPot: oracle gate + seed reveal, no sats sweep indices).
+        // Both heroes spent from the ONE joint escrow through the winning branch —
+        // winner's carrier vin 0, loser's vin 1. Witness = [serverSeed, oracleSig]
+        // (the branch's structural checks are fully baked — no index/sweep args).
         Covenants.CovenantSpender.CovenantInput[] inputs =
         [
-            new(winnerContract, branch, [serverSeed, oracleSignature64], winnerVtxo),
-            new(loserContract, branch, [serverSeed, oracleSignature64], loserVtxo),
+            new(contract, branch, [serverSeed, oracleSignature64], winnerVtxo),
+            new(contract, branch, [serverSeed, oracleSignature64], loserVtxo),
         ];
 
         // Packet: the winner's hero → the winner (passthrough vin 0 → output 0); the LOSER's
         // hero → BURNED (declared as input vin 1 with an EMPTY output list — arkd destroys it).
+        // The branch's AssetAtOutput/AssetBurned checks make this the ONLY packet it will sign.
         var packet = global::NArk.Core.Assets.Packet.Create(
         [
             global::NArk.Core.Assets.AssetGroup.Create(winnerHeroAsset, null,
@@ -959,7 +963,7 @@ public class NArkChainService(
 
         var settleTxId = NBitcoin.PSBT.Parse(response.SignedArkTx, serverInfo.Network)
             .GetGlobalTransaction().GetHash().ToString();
-        logger.LogInformation("Death-match {Id} settled via covenant ({Branch}) → loser hero burned, winner retained", deathMatchId, branch);
+        logger.LogInformation("Death-match {Id} settled via JOINT covenant ({Branch}) → loser hero burned, winner retained", deathMatchId, branch);
         return settleTxId;
     }
 

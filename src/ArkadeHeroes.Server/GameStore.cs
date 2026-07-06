@@ -65,8 +65,8 @@ public class DeathMatchSession
     public required string DefenderHeroId { get; init; }
     public required byte[] ServerSeed { get; init; }
     public required string CommitmentHex { get; init; }
-    public string? ChallengerEscrowAddress { get; set; }
-    public string? DefenderEscrowAddress { get; set; }
+    /// <summary>The ONE joint escrow both players stake their hero into (covenant-v2).</summary>
+    public string? JointEscrowAddress { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Accepted { get; set; }
     public bool Completed { get; set; }

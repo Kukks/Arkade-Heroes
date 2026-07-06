@@ -426,51 +426,56 @@ public class InMemoryChainService : IChainService
             "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, mergeId, e.RefundAfterUnixSeconds));
     }
 
-    // ── Death-match escrows (simulated) — hero-only escrow, burn the loser's hero ──
+    // ── Death-match escrows (simulated) — ONE JOINT escrow, burn the loser's hero ──
 
-    private sealed record DeathMatchEscrow(
-        string PlayerId, string HeroAssetId, IReadOnlyList<string> GearAssetIds,
+    private sealed record DeathMatchJointEscrow(
+        string ChallengerPlayerId, string ChallengerHeroAssetId,
+        string DefenderPlayerId, string DefenderHeroAssetId,
         string CommitmentHex, string OraclePkHex, long RefundAfterUnixSeconds)
     {
-        public bool Funded;
+        public bool ChallengerFunded;
+        public bool DefenderFunded;
     }
 
-    private readonly ConcurrentDictionary<string, DeathMatchEscrow> _deathMatchEscrows = new();
+    private readonly ConcurrentDictionary<string, DeathMatchJointEscrow> _deathMatchEscrows = new();
     private readonly ConcurrentDictionary<string, bool> _deathMatchSettled = new();
 
-    public async Task<string> CreateDeathMatchEscrowAsync(
-        string deathMatchId, string playerId, string heroAssetId, IReadOnlyList<string> gearAssetIds,
-        string role, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+    public async Task<string> CreateDeathMatchJointEscrowAsync(
+        string deathMatchId, string challengerPlayerId, string challengerHeroAssetId,
+        string defenderPlayerId, string defenderHeroAssetId,
+        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
     {
-        await GetPlayerAddressAsync(playerId, ct);
-        _deathMatchEscrows[$"{deathMatchId}:{role}"] = new DeathMatchEscrow(
-            playerId, heroAssetId, gearAssetIds, Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
-            oraclePubKeyHex, refundAfterUnixSeconds);
-        return $"sim-dm-escrow-{deathMatchId}-{role}";
+        await GetPlayerAddressAsync(challengerPlayerId, ct);
+        _deathMatchEscrows[deathMatchId] = new DeathMatchJointEscrow(
+            challengerPlayerId, challengerHeroAssetId, defenderPlayerId, defenderHeroAssetId,
+            Convert.ToHexString(seedCommitment32).ToLowerInvariant(), oraclePubKeyHex, refundAfterUnixSeconds);
+        return $"sim-dm-escrow-{deathMatchId}";
     }
 
-    public Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, string role, CancellationToken ct = default)
-        => Task.FromResult(_deathMatchEscrows.TryGetValue($"{deathMatchId}:{role}", out var e) && e.Funded);
+    public Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default)
+        => Task.FromResult(_deathMatchEscrows.TryGetValue(deathMatchId, out var e) && e.ChallengerFunded && e.DefenderFunded);
 
-    /// <summary>Simulated client-wallet stake of the staker's hero into their death-match escrow.</summary>
+    /// <summary>Simulated client-wallet stake of the staker's hero into the ONE joint death-match escrow (role selects which party stakes).</summary>
     public void FundDeathMatchEscrowFromPlayer(string playerId, string deathMatchId, string role)
     {
-        if (!_deathMatchEscrows.TryGetValue($"{deathMatchId}:{role}", out var escrow))
-            throw new InvalidOperationException($"Unknown death-match escrow {deathMatchId}:{role}.");
-        if (escrow.PlayerId != playerId)
+        if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var escrow))
+            throw new InvalidOperationException($"Unknown death-match escrow {deathMatchId}.");
+        var (party, heroAsset) = role == "challenger"
+            ? (escrow.ChallengerPlayerId, escrow.ChallengerHeroAssetId)
+            : (escrow.DefenderPlayerId, escrow.DefenderHeroAssetId);
+        if (party != playerId)
             throw new InvalidOperationException("Not the staking player.");
-        if (_assetHolders.GetValueOrDefault(escrow.HeroAssetId) != playerId)
+        if (_assetHolders.GetValueOrDefault(heroAsset) != playerId)
             throw new InvalidOperationException("The player does not hold the staked hero.");
-        escrow.Funded = true;
+        if (role == "challenger") escrow.ChallengerFunded = true; else escrow.DefenderFunded = true;
     }
 
     public Task<string> SettleDeathMatchAsync(
         string deathMatchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default)
     {
-        if (!_deathMatchEscrows.TryGetValue($"{deathMatchId}:challenger", out var challengerEscrow)
-            || !_deathMatchEscrows.TryGetValue($"{deathMatchId}:defender", out var defenderEscrow))
-            throw new InvalidOperationException($"Death-match {deathMatchId} escrows are not both created.");
-        if (!challengerEscrow.Funded || !defenderEscrow.Funded)
+        if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var escrow))
+            throw new InvalidOperationException($"Death-match {deathMatchId} escrow is not created.");
+        if (!escrow.ChallengerFunded || !escrow.DefenderFunded)
             throw new InvalidOperationException($"Death-match {deathMatchId} is not fully staked.");
         if (_deathMatchSettled.ContainsKey(deathMatchId))
             throw new InvalidOperationException("Death-match already settled.");
@@ -478,7 +483,7 @@ public class InMemoryChainService : IChainService
         // The same oracle rule the covenant enforces: a BIP340 signature over THIS
         // branch's death-match settle message.
         var message = Covenants.ArkadeCovenants.DeathMatchSettleMessage(deathMatchId, challengerWon);
-        if (!NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(challengerEscrow.OraclePkHex), out var oraclePk)
+        if (!NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(escrow.OraclePkHex), out var oraclePk)
             || oraclePk is null
             || !NBitcoin.Secp256k1.SecpSchnorrSignature.TryCreate(oracleSignature64, out var signature)
             || signature is null
@@ -487,19 +492,19 @@ public class InMemoryChainService : IChainService
 
         _deathMatchSettled[deathMatchId] = true;
         // The LOSER's hero is BURNED (removed); the winner's hero stays the winner's.
-        // (Gear moves server-side in rung 1; covenant-routed in rung 2.)
-        var loser = challengerWon ? defenderEscrow : challengerEscrow;
-        _assetHolders.TryRemove(loser.HeroAssetId, out _);
+        var loserHeroAsset = challengerWon ? escrow.DefenderHeroAssetId : escrow.ChallengerHeroAssetId;
+        _assetHolders.TryRemove(loserHeroAsset, out _);
         return Task.FromResult(NewId("sim-dm-settle"));
     }
 
-    public Task<Covenants.DeathMatchEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, string role, CancellationToken ct = default)
+    public Task<Covenants.DeathMatchJointEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, CancellationToken ct = default)
     {
-        if (!_deathMatchEscrows.TryGetValue($"{deathMatchId}:{role}", out var e))
-            return Task.FromResult<Covenants.DeathMatchEscrowParams?>(null);
-        return Task.FromResult<Covenants.DeathMatchEscrowParams?>(new Covenants.DeathMatchEscrowParams(
-            $"sim-player-{e.PlayerId}", e.HeroAssetId, e.GearAssetIds, e.CommitmentHex,
-            e.OraclePkHex, deathMatchId, role, 330, e.RefundAfterUnixSeconds));
+        if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var e))
+            return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(null);
+        return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(new Covenants.DeathMatchJointEscrowParams(
+            $"sim-player-{e.ChallengerPlayerId}", e.ChallengerHeroAssetId,
+            $"sim-player-{e.DefenderPlayerId}", e.DefenderHeroAssetId,
+            e.CommitmentHex, e.OraclePkHex, deathMatchId, 330, e.RefundAfterUnixSeconds));
     }
 
     // ── Covenant offers (simulated) — fungible items and unique heroes ──

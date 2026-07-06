@@ -485,9 +485,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var id = NewId("dm");
         var commitment = CommitReveal.Commit(seed);
         var refundAfter = DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds();
-        // Rung 1: hero-only escrow (gear is covenant-staked + routed to the winner in rung 2).
-        var escrow = await chain.CreateDeathMatchEscrowAsync(
-            id, player.Id, challenger.AssetId!, Array.Empty<string>(), "challenger",
+        // Covenant-v2: ONE joint escrow baked at open — both parties are known (the
+        // defender is the challenged hero's owner). Both players stake into this one
+        // address; consent = staking. The settle branch STRUCTURALLY enforces the
+        // burn-loser/return-winner outcome (gear is a follow-up).
+        var escrow = await chain.CreateDeathMatchJointEscrowAsync(
+            id, player.Id, challenger.AssetId!, defender.OwnerId, defender.AssetId!,
             Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter, ct);
 
         var session = new DeathMatchSession
@@ -499,14 +502,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             DefenderHeroId = defenderHeroId,
             ServerSeed = seed,
             CommitmentHex = commitment,
-            ChallengerEscrowAddress = escrow,
+            JointEscrowAddress = escrow,
         };
         store.DeathMatches[session.Id] = session;
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
         return (session, escrow, favor);
     }
 
-    public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender)> AcceptDeathMatchAsync(
+    public Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender)> AcceptDeathMatchAsync(
         Player player, string deathMatchId, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -517,13 +520,10 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (session.Completed) throw new GameRuleException("Death-match already resolved.");
         var defender = GetOwnedHero(player, session.DefenderHeroId);
 
-        var refundAfter = DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds();
-        var escrow = await chain.CreateDeathMatchEscrowAsync(
-            deathMatchId, player.Id, defender.AssetId!, Array.Empty<string>(), "defender",
-            Convert.FromHexString(session.CommitmentHex), receipts.PublicKeyHex, refundAfter, ct);
-        session.DefenderEscrowAddress = escrow;
+        // Covenant-v2: no new escrow — the joint escrow was baked at open. Accepting =
+        // staking the defender's hero into the SAME joint address (consent = staking).
         session.Accepted = true;
-        return (session, escrow, defender);
+        return Task.FromResult((session, session.JointEscrowAddress!, defender));
     }
 
     public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(
@@ -536,9 +536,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (session.Completed) throw new GameRuleException("Death-match already resolved.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
-        // Both players must have staked their hero (their own escrow funded).
-        if (!await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, "challenger", ct)
-            || !await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, "defender", ct))
+        // Both players must have staked their hero into the one joint escrow.
+        if (!await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, ct))
             throw new GameRuleException("Both players must stake their hero before the death-match settles.");
 
         var challenger = GetHero(session.ChallengerHeroId);

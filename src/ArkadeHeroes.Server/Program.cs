@@ -188,8 +188,8 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
     return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt));
 });
 
-api.MapGet("/deathmatch/{id}/escrow/{role}", async (string id, string role, IChainService chain, CancellationToken ct) =>
-    await chain.GetDeathMatchEscrowParamsAsync(id, role, ct) is { } p ? Results.Ok(p) : Results.NotFound());
+api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
+    await chain.GetDeathMatchEscrowParamsAsync(id, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
