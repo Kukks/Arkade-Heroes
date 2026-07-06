@@ -56,6 +56,55 @@ public static class ArkadeCovenants
         return script.ToArray();
     }
 
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/> (amount 1) sits at output
+    /// <paramref name="outputIndex"/> AND that output pays <paramref name="script"/> (P2TR).
+    /// Baked output index (not witness-supplied) — no witness freedom. Mirrors the breed
+    /// 0xf2 lookup + PayTo's 0xd1 output-script check. Consumes NO witness (all baked).
+    /// EXACT stack contract validated by CovenantStructuralBurnProbe.
+    /// </summary>
+    public static byte[] AssetAtOutput(int outputIndex, global::NArk.Core.Assets.AssetId asset, Script script)
+    {
+        var pkScript = script.ToBytes();
+        if (pkScript.Length != 34 || pkScript[0] != 0x51 || pkScript[1] != 0x20)
+            throw new ArgumentException("AssetAtOutput expects a P2TR (v1 witness) scriptPubKey.", nameof(script));
+        var witnessProgram = pkScript[2..];
+        return
+        [
+            // the asset is present at output o with amount 1 (0xef → amount, flag)
+            .. EncodeIndex(outputIndex),
+            32, .. asset.Txid.Reverse(), .. PushScriptNum(asset.GroupIndex),
+            OpInspectOutAssetLookup, OpVerify, Op1, OpEqualVerify88,
+            // ...and output o pays `script` (P2TR: version 1 + the 32-byte program) — mirror PayTo
+            .. EncodeIndex(outputIndex),
+            OpInspectOutputScriptPubkey, Op1, OpEqualVerify,
+            (byte)witnessProgram.Length, .. witnessProgram, OpEqualVerify,
+        ];
+    }
+
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/> is BURNED — absent (flag 0) from
+    /// every output 0..<paramref name="outputCount"/>-1. The settle tx's output set is fixed by
+    /// the spender, so outputCount is known. If the arkade VM can't express clean absence (the
+    /// 0xef flag being empty-bytes vs scriptnum-0), the probe iterates to the 0xed
+    /// "exactly-one-hero-output = winner's" framing. Consumes NO witness.
+    /// </summary>
+    public static byte[] AssetBurned(global::NArk.Core.Assets.AssetId asset, int outputCount)
+    {
+        var s = new List<byte>();
+        for (var o = 0; o < outputCount; o++)
+        {
+            s.AddRange(EncodeIndex(o));
+            s.Add(32); s.AddRange(asset.Txid.Reverse());
+            s.AddRange(PushScriptNum(asset.GroupIndex));
+            s.Add(OpInspectOutAssetLookup); // → amount, flag  (flag on top)
+            s.Add(Op0);                     // push 0
+            s.Add(OpEqualVerify);           // flag == 0 (absent)
+            s.Add(OpDrop);                  // drop the amount
+        }
+        return [.. s];
+    }
+
     private const byte OpSha256 = 0xa8;
 
     /// <summary>
@@ -214,7 +263,10 @@ public static class ArkadeCovenants
     private const byte OpInspectAssetGroupCtrl = 0xe7;
     private const byte OpInspectAssetGroupMetadataHash = 0xe9;
     private const byte OpInspectInAssetLookup = 0xf2;
+    private const byte OpInspectOutAssetCount = 0xed;   // o → n (asset entries at output o)
+    private const byte OpInspectOutAssetLookup = 0xef;  // o txid gidx → (amount, flag); flag 1 found / 0 absent
     private const byte OpEqualVerify88 = 0x88;
+    private const byte Op0 = 0x00;
 
     /// <summary>
     /// The full covenant-breeding gate. An invalid breed is UNSIGNABLE:
