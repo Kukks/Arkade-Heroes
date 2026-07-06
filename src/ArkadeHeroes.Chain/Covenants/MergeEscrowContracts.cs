@@ -42,14 +42,22 @@ public sealed record MergeEscrowParams(
 public static class MergeEscrowContracts
 {
     /// <summary>
-    /// The merge escrow: one contract with a <c>merge</c> leaf (the full
-    /// <see cref="ArkadeCovenants.BreedAuthorized"/> gate — both inputs present,
-    /// fused hero controlled by the species, fee paid to the treasury, oracle
-    /// sig over the fused hero's metadata root) and a timelocked <c>refund</c>
-    /// leaf paying the escrow value back to the player after expiry (the inputs
-    /// ride the refund output home; task 17/18 machinery reused). The player
-    /// deposits base + sacrifice plus the fee here; the server assembles the
-    /// covenant mint, BURNING both inputs.
+    /// Outputs the merge settle covenant sweeps for input-burn absence (fused→0, fee→1,
+    /// + the appended extension). Over-sweeps safely: <c>0xef</c> returns "absent" for a
+    /// non-existent output, so a generous sweep never false-rejects. Mirrors the
+    /// death-match <c>SettleOutputSweep</c>.
+    /// </summary>
+    public const int MergeOutputSweep = 4;
+
+    /// <summary>
+    /// The merge escrow (covenant-v2): one contract with a structural <c>merge</c> leaf
+    /// (<see cref="ArkadeCovenants.MergeAuthorized"/> — the shared breed gate PLUS base +
+    /// sacrifice provably BURNED and the fused hero provably MINTED TO THE PLAYER, no packet
+    /// trust) and a timelocked introspection-bound <c>refund</c> leaf that routes EACH
+    /// deposited hero home (base→output 0, sacrifice→output 1, script-pinned so a reclaim
+    /// cannot reroute; the fee returns as change). The player deposits base + sacrifice plus
+    /// the fee here; the server assembles the covenant mint, and the covenant — not the
+    /// packet — enforces that both inputs are destroyed and the fused hero reaches the player.
     /// </summary>
     public static ArkadeArtifactContract Build(
         MergeEscrowParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex)
@@ -65,9 +73,16 @@ public static class MergeEscrowContracts
         return new ArkadeArtifactContract(
             "merge-escrow", operatorKey, emulatorSignerKeyHex,
             [
-                new("merge", ArkadeCovenants.BreedAuthorized(
-                    species, baseAsset, sacrificeAsset, oraclePk, treasuryScript, parameters.FeeSats)),
-                new("refund", ArkadeCovenants.RefundTo(playerScript, parameters.EscrowSats), refundLockTime),
+                new("merge", ArkadeCovenants.MergeAuthorized(
+                    species, baseAsset, sacrificeAsset, oraclePk, treasuryScript, parameters.FeeSats,
+                    playerScript, MergeOutputSweep)),
+                new("refund",
+                    [
+                        .. ArkadeCovenants.AssetAtOutput(0, baseAsset, playerScript),
+                        .. ArkadeCovenants.AssetAtOutput(1, sacrificeAsset, playerScript),
+                        0x51, // OP_1
+                    ],
+                    refundLockTime),
             ]);
     }
 }

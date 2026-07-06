@@ -369,6 +369,31 @@ public static class ArkadeCovenants
         ];
     }
 
+    /// <summary>
+    /// The FULL merge covenant gate (covenant-v2): everything <see cref="BreedAuthorized"/>
+    /// enforces (both inputs present, mint under the species, fee to the treasury, oracle sig
+    /// over the fused metadata root) PLUS the structural asset consequences merge previously
+    /// left to the packet — base + sacrifice BURNED (absent from every output) and the fused
+    /// hero MINTED TO THE PLAYER (the lone output-0 asset). An invalid merge is UNSIGNABLE.
+    /// Witness is IDENTICAL to BreedAuthorized (<see cref="BreedWitness"/>) — the added
+    /// checks are fully baked.
+    /// </summary>
+    public static byte[] MergeAuthorized(
+        global::NArk.Core.Assets.AssetId species,
+        global::NArk.Core.Assets.AssetId baseAsset,
+        global::NArk.Core.Assets.AssetId sacrificeAsset,
+        byte[] oraclePk32, Script feeP2tr, long feeSats,
+        Script playerP2tr, int outputSweep)
+        =>
+        [
+            .. BreedAuthorized(species, baseAsset, sacrificeAsset, oraclePk32, feeP2tr, feeSats),
+            OpVerify,                                    // consume the oracle CSFS verdict
+            .. AssetBurned(baseAsset, outputSweep),      // base provably destroyed
+            .. AssetBurned(sacrificeAsset, outputSweep), // sacrifice provably destroyed
+            .. MintToPlayer(playerP2tr),                 // the lone output-0 asset → the player
+            Op1,                                         // leave EXACTLY one truthy item
+        ];
+
     /// <summary>The witness for <see cref="BreedAuthorized"/> — see its stack contract.</summary>
     public static byte[][] BreedWitness(
         byte[] oracleSig64, int childGroupIndex, int feeOutputIndex,
