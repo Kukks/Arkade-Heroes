@@ -103,7 +103,12 @@ public class NArkChainService(
     {
         var coins = await spendingService.GetAvailableCoins(_treasuryWalletId!, ct);
         var btcCoins = coins.Where(c => c.Assets is null or { Count: 0 }).ToArray();
-        if (btcCoins.Length < 3) return;
+        // Consolidate at 2+ coins: with exactly [one large faucet coin, one small
+        // invoice-payment coin] the issuance's AUTO selection can pick the tiny coin
+        // and dead-end in "change address should be specified (Uncolored)" — the
+        // documented subdust-change failure class (reproduced by the geared
+        // death-match E2E: an item invoice paid right before its lazy issuance).
+        if (btcCoins.Length < 2) return;
 
         var total = btcCoins.Sum(c => c.TxOut.Value.Satoshi);
         var serverInfo = await transport.GetServerInfoAsync(ct);

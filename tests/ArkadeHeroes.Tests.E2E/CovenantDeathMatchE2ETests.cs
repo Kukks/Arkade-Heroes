@@ -59,6 +59,10 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
     private async Task<HttpClient> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
         var client = _factory.CreateClient();
+        // Treasury spends serialize with a 70s contention backoff; a first item claim
+        // (issuance + delivery) can exceed HttpClient's 100s default right after the
+        // starter mints — give the test client generous headroom.
+        client.Timeout = TimeSpan.FromMinutes(4);
         var response = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name, wallet.Address));
         var body = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
@@ -150,6 +154,107 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
             var loserHeld = (await loserWallet.GetAssetsAsync()).Select(a => a.AssetId).ToHashSet();
             if (!winnerHeld.Contains(settle.LoserHeroId) && !loserHeld.Contains(settle.LoserHeroId)) break;
             Assert.True(DateTime.UtcNow < mineDeadline, "loser's hero was not burned (still in a wallet)");
+            await Task.Delay(1500);
+        }
+    }
+
+    /// <summary>
+    /// The GEARED death-match live: the defender's equipped gear (bought + delivered to his
+    /// REAL wallet, then staked into the joint escrow alongside his hero) transfers to the
+    /// WINNER on-chain — covenant-enforced, not server bookkeeping. The gear-less fact above
+    /// is the zero-regression gate; this one proves the spoil.
+    /// </summary>
+    [Fact]
+    public async Task CovenantDeathMatch_StakedGearTransfersToTheWinner()
+    {
+        var alice = await RegisterAsync("DMG-Alice", _alice);
+        var bob = await RegisterAsync("DMG-Bob", _bob);
+
+        // Fund the treasury (fresh server DB): starters + the item issuance/delivery.
+        var boot = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        await RegtestHelper.ArkSend(boot.TreasuryAddress, 400_000);
+        var probe = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var treasuryHex = global::NArk.Abstractions.ArkAddress.Parse(boot.TreasuryAddress).ScriptPubKey.ToHex();
+        var fundDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        while (true)
+        {
+            var seen = 0L;
+            await foreach (var v in probe.GetVtxoByScriptsAsSnapshot(new HashSet<string> { treasuryHex }))
+                if (!v.IsSpent()) seen += (long)v.Amount;
+            if (seen >= 400_000) break;
+            Assert.True(DateTime.UtcNow < fundDeadline, "treasury funding never appeared");
+            await Task.Delay(1500);
+        }
+
+        var aliceHero = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes[0];
+        var bobHero = (await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter")).Heroes[0];
+        await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
+        await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
+
+        // Bob buys + equips gear through the REAL purchase flow (invoice → wallet pays → claim).
+        await RegtestHelper.ArkSend(_bob.Address, 50_000);
+        await _bob.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+        var invoice = (await PostOkAsync<ItemInvoiceResponse>(bob, "/api/items/rusty-blade/buy")).Invoice;
+        await _bob.SendAsync(invoice.PayToAddress, invoice.AmountSats);
+        ClaimItemResponse? claim = null;
+        var claimDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(150);
+        while (claim is null)
+        {
+            var r = await bob.PostAsJsonAsync("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId));
+            if (r.IsSuccessStatusCode)
+            {
+                claim = JsonSerializer.Deserialize<ClaimItemResponse>(await r.Content.ReadAsStringAsync(), Web);
+                break;
+            }
+            Assert.True(DateTime.UtcNow < claimDeadline, $"item claim never delivered: {await r.Content.ReadAsStringAsync()}");
+            await Task.Delay(2000);
+        }
+        await _bob.WaitForAssetAsync(claim!.ItemAssetId, TimeSpan.FromSeconds(30));
+        var equip = await bob.PostAsJsonAsync($"/api/heroes/{bobHero.Id}/equip", new EquipRequest("rusty-blade"));
+        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+
+        // Open: Bob's loadout-at-open is baked as his required stake.
+        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+            new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
+        var stake = Assert.Single(open.DefenderGear);
+        Assert.Equal("rusty-blade", stake.ItemId);
+        Assert.Equal(claim.ItemAssetId, stake.AssetId);
+        Assert.Empty(open.ChallengerGear);
+
+        // Stakes: Alice her hero; Bob his hero + the gear unit.
+        await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
+        var accept = await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
+        await _bob.SendAssetAsync(accept.EscrowAddress, stake.AssetId, (ulong)stake.Amount);
+
+        DeathMatchSettleResponse? settle = null;
+        var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+        while (settle is null)
+        {
+            var response = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
+                new DeathMatchSettleRequest("e2e-dm-gear"));
+            if (response.IsSuccessStatusCode)
+            {
+                settle = JsonSerializer.Deserialize<DeathMatchSettleResponse>(await response.Content.ReadAsStringAsync(), Web);
+                break;
+            }
+            Assert.True(DateTime.UtcNow < revealDeadline,
+                $"geared covenant death-match never settled: {await response.Content.ReadAsStringAsync()}");
+            await Task.Delay(2000);
+        }
+
+        // The WINNER's wallet holds the winner hero AND the staked gear unit — routed by
+        // the covenant, whoever won; the loser holds neither (their hero is burned).
+        var winnerWallet = settle!.WinnerHeroId == aliceHero.Id ? _alice : _bob;
+        var loserWallet = settle.LoserHeroId == aliceHero.Id ? _alice : _bob;
+        await winnerWallet.WaitForAssetAsync(settle.WinnerHeroId, TimeSpan.FromSeconds(60));
+        await winnerWallet.WaitForAssetAsync(stake.AssetId, TimeSpan.FromSeconds(60));
+        var gearDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+        while (true)
+        {
+            var loserHeld = (await loserWallet.GetAssetsAsync()).Select(a => a.AssetId).ToHashSet();
+            if (!loserHeld.Contains(settle.LoserHeroId) && !loserHeld.Contains(stake.AssetId)) break;
+            Assert.True(DateTime.UtcNow < gearDeadline, "the loser still holds the burned hero or the forfeited gear");
             await Task.Delay(1500);
         }
     }
