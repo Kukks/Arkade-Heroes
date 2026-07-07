@@ -202,6 +202,45 @@ public class ClientRefundFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AbandonedBreedDeposit_PlayerReclaimsBothParentsViaTheClientFlow()
+    {
+        var alice = await RegisterAsync("Breed-Reclaim-Alice", _alice);
+        await EnsureTreasuryFundedAsync(alice);
+        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var parentA = heroes.Heroes[0];
+        var parentB = heroes.Heroes[1];
+
+        // Covenant breed; Alice deposits both parents + fee, then abandons it (never reveals).
+        var commit = await PostOkAsync<BreedCommitResponse>(alice, "/api/breeding/commit",
+            new BreedCommitRequest(parentA.Id, parentB.Id, "covenant"));
+        Assert.NotNull(commit.EscrowAddress);
+        await _alice.SendAssetAsync(commit.EscrowAddress!, parentA.AssetId!, 1);
+        await _alice.SendAssetAsync(commit.EscrowAddress!, parentB.AssetId!, 1);
+        await _alice.SendAsync(commit.EscrowAddress!, commit.EscrowFeeSats);
+
+        // The trustless rebuild: params from the server, contract reconstructed locally.
+        var parameters = (await alice.GetFromJsonAsync<BreedEscrowParams>(
+            $"/api/breedings/{commit.BreedingId}/escrow", Web))!;
+        Assert.Equal(_alice.Address, parameters.PlayerAddress);
+        using var esploraHttp = new HttpClient();
+
+        // Pre-expiry the flow's own gate refuses WITHOUT submitting anything.
+        await Assert.ThrowsAsync<RefundNotYetDueException>(() => BreedEscrowRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct)));
+
+        await RegtestHelper.WaitForChainTimeAsync(parameters.RefundAfterUnixSeconds, TimeSpan.FromSeconds(120));
+        var refund = await BreedEscrowRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
+        Assert.False(string.IsNullOrEmpty(refund.SignedArkTx));
+
+        // Both parents land back in Alice's wallet.
+        await _alice.WaitForAssetAsync(parentA.AssetId!, TimeSpan.FromSeconds(90));
+        await _alice.WaitForAssetAsync(parentB.AssetId!, TimeSpan.FromSeconds(90));
+    }
+
+    [Fact]
     public async Task HalfFundedDeathMatch_ChallengerReclaimsAfterExpiry()
     {
         var alice = await RegisterAsync("DM-Reclaim-Alice", _alice);
