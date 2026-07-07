@@ -158,7 +158,16 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
             ]));
         Assert.Contains("Emulator rejected", shortPot.Message);
 
-        // 5. Honest settle: oracle-authorized branch, revealed seed, full pot.
+        // 5. WRONG SCRIPT — the full pot (right amount, valid sig + seed) paid to
+        //    the DEFENDER's script under the challenger-won branch. PayTo's baked
+        //    witness program refuses: the oracle picks the winner BRANCH; the
+        //    covenant — not the tx-builder — decides where the pot can go.
+        var wrongScript = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
+            [new TxOut(Money.Satoshis(Pot), defenderPkScript)]));
+        Assert.Contains("Emulator rejected", wrongScript.Message);
+
+        // 6. Honest settle: oracle-authorized branch, revealed seed, full pot.
         var balanceBefore = await _challenger.GetBalanceSatsAsync();
         var response = await CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
