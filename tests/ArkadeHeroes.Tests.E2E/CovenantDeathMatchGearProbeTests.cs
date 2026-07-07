@@ -12,10 +12,11 @@ namespace ArkadeHeroes.Tests.E2E;
 /// The structural TEETH of the GEARED death-match covenant, live on regtest. Extends the
 /// proven joint escrow with covenant-staked gear: both sides stake their hero PLUS gear
 /// units; the settle routes ALL gear to the winner (including the SAME fungible item staked
-/// by BOTH sides — the amount-2 aggregation at output 0); the refund routes each side's hero
-/// + own gear home. Cheats refused: gear kept by the loser (gear-theft), only 1 of 2 units
-/// delivered (gear-shortchange), a refund stealing the other side's gear. This is also the
-/// largest covenant spend yet (5 inputs) — the input-count scaling probe.
+/// by BOTH sides — the amount-2 aggregation at output 0); the per-side reclaim routes each
+/// side's hero + own gear home after expiry. Cheats refused: gear kept by the loser
+/// (gear-theft), only 1 of 2 units delivered (gear-shortchange), a reclaim pulling in the
+/// other side's gear (num-groups). This is also the largest covenant spend yet (5-carrier
+/// escrow) — the input-count scaling probe.
 /// </summary>
 public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
 {
@@ -203,56 +204,79 @@ public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GearedRefund_EachSideHomeAfterExpiry_GearTheftAndPreExpiryRefused()
+    public async Task GearedReclaim_EachSidePostExpiry_CounterpartyGearRefused_PreExpiryRefused()
     {
         var serverSeed = CommitReveal.NewSeed();
         var commitment = Convert.FromHexString(CommitReveal.Commit(serverSeed));
         var (_, oraclePk) = NewOracle();
-        const string matchId = "e2e-gear-refund";
+        const string matchId = "e2e-gear-reclaim";
         var refundAfter = DateTimeOffset.UtcNow.AddSeconds(8).ToUnixTimeSeconds();
 
         var (contract, ordered, cHero, dHero, gearX, gearY, total, chalScript, defScript) =
             await StakeGearedEscrowAsync(matchId, commitment, oraclePk, refundAfter);
-        var dust = 330L;
 
-        CovenantSpender.CovenantInput[] RefundInputs(long lockTime) => ordered
-            .Select(v => new CovenantSpender.CovenantInput(contract, "refund", [], v, LockTime: new LockTime((uint)lockTime)))
-            .ToArray();
-        // Honest routing: challenger hero + 1 gearX → out 0; defender hero + 1 gearX + gearY → out 1.
-        Packet HonestPacket() => Packet.Create(
+        var cHeroVtxo = ordered.First(v => v.Assets!.Any(a => a.AssetId == cHero.ToString()));
+        var dHeroVtxo = ordered.First(v => v.Assets!.Any(a => a.AssetId == dHero.ToString()));
+        var gearXCarriers = ordered.Where(v => v.Assets!.Any(a => a.AssetId == gearX.ToString())).ToList();
+        var gearYVtxo = ordered.First(v => v.Assets!.Any(a => a.AssetId == gearY.ToString()));
+        Assert.Equal(2, gearXCarriers.Count);
+
+        // Challenger reclaim: cHero (vin0) + ONE gearX unit (vin1) → challenger output 0.
+        CovenantSpender.CovenantInput[] ChalInputs(long lockTime) =>
+        [
+            new(contract, "reclaimChallenger", [], cHeroVtxo, LockTime: new LockTime((uint)lockTime)),
+            new(contract, "reclaimChallenger", [], gearXCarriers[0], LockTime: new LockTime((uint)lockTime)),
+        ];
+        Packet ChalPacket() => Packet.Create(
         [
             AssetGroup.Create(cHero, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
-            AssetGroup.Create(dHero, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(1, 1)], []),
-            AssetGroup.Create(gearX, null, InputsOf(ordered, gearX), [AssetOutput.Create(0, 1), AssetOutput.Create(1, 1)], []),
-            AssetGroup.Create(gearY, null, InputsOf(ordered, gearY), [AssetOutput.Create(1, 1)], []),
+            AssetGroup.Create(gearX, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
         ]);
-        TxOut[] HomeOutputs() =>
-            [new TxOut(Money.Satoshis(2 * dust), chalScript), new TxOut(Money.Satoshis(total - 2 * dust), defScript)];
+        long chalTotal = (long)cHeroVtxo.Amount + (long)gearXCarriers[0].Amount;
 
         // ── Pre-expiry: refused (disposable non-canonical locktime = expiry+1).
         var early = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, RefundInputs(refundAfter + 1), HomeOutputs(), extraPackets: [HonestPacket()]));
+            _challenger, EmulatorUri, ChalInputs(refundAfter + 1),
+            [new TxOut(Money.Satoshis(chalTotal), chalScript)], extraPackets: [ChalPacket()]));
         Assert.False(early is TimeoutException, $"expected a refusal, got: {early.Message}");
 
         await RegtestHelper.WaitForChainTimeAsync(refundAfter, TimeSpan.FromSeconds(120));
 
-        // ── REFUND GEAR-THEFT: the challenger routes the defender's gearY to output 0
-        //    (their own side) → AssetAtOutput(1, gearY, defScript, 1) refused.
+        // ── Cheat: the challenger ALSO pulls in the defender's exclusive gearY → NumAssetGroupsIs(2)
+        //    refuses (3 groups: cHero, gearX, gearY).
         var theft = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, RefundInputs(refundAfter),
-            [new TxOut(Money.Satoshis(3 * dust), chalScript), new TxOut(Money.Satoshis(total - 3 * dust), defScript)],
+            _challenger, EmulatorUri,
+            [new(contract, "reclaimChallenger", [], cHeroVtxo, LockTime: new LockTime((uint)refundAfter)),
+             new(contract, "reclaimChallenger", [], gearXCarriers[0], LockTime: new LockTime((uint)refundAfter)),
+             new(contract, "reclaimChallenger", [], gearYVtxo, LockTime: new LockTime((uint)refundAfter))],
+            [new TxOut(Money.Satoshis(chalTotal + (long)gearYVtxo.Amount), chalScript)],
             extraPackets: [Packet.Create(
             [
                 AssetGroup.Create(cHero, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
-                AssetGroup.Create(dHero, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(1, 1)], []),
-                AssetGroup.Create(gearX, null, InputsOf(ordered, gearX), [AssetOutput.Create(0, 1), AssetOutput.Create(1, 1)], []),
-                AssetGroup.Create(gearY, null, InputsOf(ordered, gearY), [AssetOutput.Create(0, 1)], []), // stolen
+                AssetGroup.Create(gearX, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(gearY, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(0, 1)], []),
             ])]));
         Assert.Contains("Emulator rejected", theft.Message);
 
-        // ── Honest post-expiry refund (submit ONCE): each side's hero + own gear home.
-        var refund = await CovenantSpender.SpendManyAsync(
-            _challenger, EmulatorUri, RefundInputs(refundAfter), HomeOutputs(), extraPackets: [HonestPacket()]);
-        Assert.False(string.IsNullOrEmpty(refund.SignedArkTx), "the post-expiry geared refund must be emulator-co-signed");
+        // ── Honest challenger reclaim (submit once): cHero + 1 gearX → challenger, co-signed.
+        var chalReclaim = await CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, ChalInputs(refundAfter),
+            [new TxOut(Money.Satoshis(chalTotal), chalScript)], extraPackets: [ChalPacket()]);
+        Assert.False(string.IsNullOrEmpty(chalReclaim.SignedArkTx), "the challenger's geared reclaim must be co-signed");
+
+        // ── Honest defender reclaim: dHero (vin0) + the OTHER gearX unit (vin1) + gearY (vin2) → defender output 0.
+        var defReclaim = await CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri,
+            [new(contract, "reclaimDefender", [], dHeroVtxo, LockTime: new LockTime((uint)refundAfter)),
+             new(contract, "reclaimDefender", [], gearXCarriers[1], LockTime: new LockTime((uint)refundAfter)),
+             new(contract, "reclaimDefender", [], gearYVtxo, LockTime: new LockTime((uint)refundAfter))],
+            [new TxOut(Money.Satoshis((long)dHeroVtxo.Amount + (long)gearXCarriers[1].Amount + (long)gearYVtxo.Amount), defScript)],
+            extraPackets: [Packet.Create(
+            [
+                AssetGroup.Create(dHero, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(gearX, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(gearY, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(0, 1)], []),
+            ])]);
+        Assert.False(string.IsNullOrEmpty(defReclaim.SignedArkTx), "the defender's geared reclaim must be co-signed");
     }
 }

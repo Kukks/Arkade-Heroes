@@ -102,50 +102,36 @@ public static class DeathMatchEscrowContracts
             return [.. s];
         }
 
-        // An abort branch (covenant-v2 liveness): the oracle authorizes unwinding ONE
-        // side's stake when the match never fully funded. My hero + my gear → MY output 0
-        // (script-pinned); NOT timelocked (immediate — no wait when the opponent never
-        // showed). The counterparty's hero is pinned ABSENT from every swept output
-        // (AssetBurned), so even if a counterparty carrier races into the escrow between
-        // the server's sign and this submit, the abort can never ROUTE it to me — theft is
-        // structurally impossible (at worst a griefing burn, needing the counterparty's own
-        // irrational deposit). The server only ever signs an abort for a NOT-fully-funded
-        // escrow, so in the normal case there is no counterparty carrier at all.
-        // Witness (bottom→top): [oracleSig]. Ends in OP_1 (exactly one truthy item).
-        byte[] AbortBranch(bool abortChallenger)
+        // A reclaim branch (covenant-v2, trustless): after expiry, MY hero + MY gear → MY
+        // output 0 (script-pinned). No oracle, no server. The counterparty's carriers can't be
+        // pulled in: NumAssetGroupsIs(N) forbids any extra asset group (their hero / exclusive
+        // gear), and per-my-asset AssetInputSumIs bounds a SHARED fungible-gear group to my own
+        // staked units. Timelocked (RefundAfterUnixSeconds) so the winner settles first — reclaim
+        // only ever reaches an ABANDONED escrow. Empty witness. Ends in OP_1.
+        byte[] ReclaimBranch(bool isChallenger)
         {
-            var myHero = abortChallenger ? challengerHero : defenderHero;
-            var myScript = abortChallenger ? challengerScript : defenderScript;
-            var myGear = abortChallenger ? challengerGear : defenderGear;
-            var counterpartyHero = abortChallenger ? defenderHero : challengerHero;
+            var myHero = isChallenger ? challengerHero : defenderHero;
+            var myScript = isChallenger ? challengerScript : defenderScript;
+            var myGear = isChallenger ? challengerGear : defenderGear;
+            // Distinct gear assets (ordinal — address-critical), aggregated amount per asset.
+            var myGearByAsset = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            foreach (var g in myGear) myGearByAsset[g.AssetId] = myGearByAsset.GetValueOrDefault(g.AssetId) + g.Amount;
+
             var s = new List<byte>();
-            s.AddRange(ArkadeCovenants.CheckSigFromStackGate(
-                ArkadeCovenants.DeathMatchAbortMessage(p.DeathMatchId, abortChallenger), oraclePk));
             s.AddRange(ArkadeCovenants.AssetAtOutput(0, myHero, myScript));
-            foreach (var g in myGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
+            foreach (var (gearId, total) in myGearByAsset)
                 s.AddRange(ArkadeCovenants.AssetAtOutput(
-                    0, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), myScript, g.Amount));
-            s.AddRange(ArkadeCovenants.AssetBurned(counterpartyHero, SettleOutputSweep));
+                    0, global::NArk.Core.Assets.AssetId.FromString(gearId), myScript, total));
+            // Exactly my distinct asset groups (hero + each distinct gear asset).
+            s.AddRange(ArkadeCovenants.NumAssetGroupsIs(1 + myGearByAsset.Count));
+            // Bound each of my assets' input sum to my staked amount (hero = 1).
+            s.AddRange(ArkadeCovenants.AssetInputSumIs(myHero, 1));
+            foreach (var (gearId, total) in myGearByAsset)
+                s.AddRange(ArkadeCovenants.AssetInputSumIs(
+                    global::NArk.Core.Assets.AssetId.FromString(gearId), total));
             s.Add(0x51); // OP_1
             return [.. s];
         }
-
-        // Refund (timelocked): each side's hero + OWN gear routed home — challenger's →
-        // output 0 paying the challenger, defender's → output 1 paying the defender
-        // (distinct owners; each side's assets share ONE output). No oracle, no seed;
-        // fully baked (empty witness). Script-pinned destinations mean anyone may
-        // trigger it after expiry without being able to steal.
-        var refundScript = new List<byte>();
-        refundScript.AddRange(ArkadeCovenants.AssetAtOutput(0, challengerHero, challengerScript));
-        foreach (var g in challengerGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
-            refundScript.AddRange(ArkadeCovenants.AssetAtOutput(
-                0, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), challengerScript, g.Amount));
-        refundScript.AddRange(ArkadeCovenants.AssetAtOutput(1, defenderHero, defenderScript));
-        foreach (var g in defenderGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
-            refundScript.AddRange(ArkadeCovenants.AssetAtOutput(
-                1, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), defenderScript, g.Amount));
-        refundScript.Add(0x51); // OP_1
-        byte[] refund = [.. refundScript];
 
         var refundLockTime = new LockTime((uint)p.RefundAfterUnixSeconds);
         return new ArkadeArtifactContract(
@@ -153,9 +139,8 @@ public static class DeathMatchEscrowContracts
             [
                 new("settleToChallenger", SettleBranch(challengerWon: true)),
                 new("settleToDefender", SettleBranch(challengerWon: false)),
-                new("refund", refund, refundLockTime),
-                new("abortChallenger", AbortBranch(abortChallenger: true)),
-                new("abortDefender", AbortBranch(abortChallenger: false)),
+                new("reclaimChallenger", ReclaimBranch(isChallenger: true), refundLockTime),
+                new("reclaimDefender", ReclaimBranch(isChallenger: false), refundLockTime),
             ]);
     }
 }

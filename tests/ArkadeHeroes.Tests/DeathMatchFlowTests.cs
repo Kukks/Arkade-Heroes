@@ -4,6 +4,7 @@ using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -185,13 +186,15 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task DeathMatch_HalfFundedChallengerAborts_GearReturned_SettleThenRefused()
+    public async Task DeathMatch_HalfFundedChallengerReclaimsAfterExpiry_GearReturned()
     {
-        var (alice, alicePlayer) = await _factory.RegisterAsync("DM-Abort-A");
-        var (bob, _) = await _factory.RegisterAsync("DM-Abort-B");
+        // Zero reclaim window so the abandoned stake is immediately reclaimable in-test.
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:WagerEscrowRefundAfter", "00:00:00"));
+        var (alice, alicePlayer) = await factory.RegisterAsync("DM-Reclaim-A");
+        var (bob, _) = await factory.RegisterAsync("DM-Reclaim-B");
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
-        var chain = _factory.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
+        var chain = factory.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
 
         // Alice (challenger) equips gear — baked into her stake at open.
         await alice.BuyItemAsync("rusty-blade");
@@ -208,21 +211,22 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
         Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // staked into escrow
 
-        // Abort → Alice reclaims her staked gear.
-        var abort = await alice.PostAsJsonAsync("/api/dev/abort-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.True(abort.IsSuccessStatusCode, await abort.Content.ReadAsStringAsync());
+        // Post-expiry reclaim → Alice reclaims her staked gear.
+        var reclaim = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.True(reclaim.IsSuccessStatusCode, await reclaim.Content.ReadAsStringAsync());
         Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // returned
 
-        // Settle is now refused — the match was aborted.
+        // Settle is now refused — the escrow is emptied (funded-check fails).
         var settle = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle", new DeathMatchSettleRequest("n"));
         Assert.Equal(HttpStatusCode.BadRequest, settle.StatusCode);
     }
 
     [Fact]
-    public async Task DeathMatch_FullyFundedAbort_IsRefused()
+    public async Task DeathMatch_FullyFundedEachSideReclaimsAfterExpiry()
     {
-        var (alice, _) = await _factory.RegisterAsync("DM-FullAbort-A");
-        var (bob, _) = await _factory.RegisterAsync("DM-FullAbort-B");
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:WagerEscrowRefundAfter", "00:00:00"));
+        var (alice, _) = await factory.RegisterAsync("DM-FullReclaim-A");
+        var (bob, _) = await factory.RegisterAsync("DM-FullReclaim-B");
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
 
@@ -233,8 +237,28 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
         await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
 
-        // Both staked → abort refused (reclaim would be the timelocked refund, not an abort).
-        var abort = await alice.PostAsJsonAsync("/api/dev/abort-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.Equal(HttpStatusCode.BadRequest, abort.StatusCode);
+        // Each side reclaims their OWN stake post-expiry.
+        var aReclaim = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.True(aReclaim.IsSuccessStatusCode, await aReclaim.Content.ReadAsStringAsync());
+        var bReclaim = await bob.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.True(bReclaim.IsSuccessStatusCode, await bReclaim.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task DeathMatch_ReclaimBeforeExpiry_IsRefused()
+    {
+        // Default 24h window: a reclaim right after staking is locked.
+        var (alice, _) = await _factory.RegisterAsync("DM-EarlyReclaim-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-EarlyReclaim-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+
+        var early = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
     }
 }

@@ -8,17 +8,11 @@ using NBitcoin;
 namespace ArkadeHeroes.Chain.Covenants;
 
 /// <summary>
-/// The CLIENT side of death-match reclaim. Two paths, chosen from the on-chain
-/// funded state (never the server's word):
-///  • BOTH heroes staked, abandoned → the trustless timelocked <c>refund</c> leaf
-///    routes each side home (challenger → output 0, defender → output 1); gated on
-///    the chain clock, submitted once. No oracle, no server.
-///  • ONLY my hero staked (the opponent never showed) → my oracle-gated
-///    <c>abort{Side}</c> leaf routes my hero + my gear home to output 0, immediately.
-///    <paramref name="requestAbortSig"/> fetches my side's oracle signature (the
-///    server signs only for a not-fully-funded escrow — see the abort endpoint).
-/// The flow only ever aborts over carriers whose assets are MINE, so it never
-/// constructs a spend that touches a counterparty carrier.
+/// The CLIENT side of death-match reclaim: after expiry, MY hero + MY gear come home via
+/// my timelocked <c>reclaim{Side}</c> leaf — fully structural (num-groups + input-sum bound),
+/// no oracle, no server. Handles BOTH the half-funded case (opponent never showed) and a
+/// fully-funded abandoned match (each side reclaims their own). Gated on the chain clock;
+/// submitted exactly once. Mirrors <see cref="EscrowRefundFlow"/> / <see cref="MergeEscrowRefundFlow"/>.
 /// </summary>
 public static class DeathMatchRefundFlow
 {
@@ -27,7 +21,6 @@ public static class DeathMatchRefundFlow
         Uri emulatorUri,
         DeathMatchJointEscrowParams parameters,
         Func<CancellationToken, Task<long>> chainMedianTime,
-        Func<CancellationToken, Task<byte[]>> requestAbortSig,
         TimeSpan? vtxoTimeout = null,
         CancellationToken ct = default)
     {
@@ -42,6 +35,15 @@ public static class DeathMatchRefundFlow
             throw new InvalidOperationException(
                 $"This wallet ({wallet.Address}) is not a party to death-match {parameters.DeathMatchId}.");
 
+        var myScript = ArkAddress.Parse(isChallenger ? parameters.ChallengerAddress : parameters.DefenderAddress).ScriptPubKey;
+        var myHeroId = isChallenger ? parameters.ChallengerHeroAssetId : parameters.DefenderHeroAssetId;
+        var myGear = isChallenger ? parameters.ChallengerGear : parameters.DefenderGear;
+        // My staked amount per asset (hero = 1). A SHARED fungible-gear asset appears at BOTH
+        // sides' carriers, so I must include only up to MY amount — the reclaim leaf's
+        // AssetInputSumIs(asset, myAmount) refuses any over-inclusion.
+        var myAmounts = new Dictionary<string, long>(StringComparer.Ordinal) { [myHeroId] = 1 };
+        foreach (var g in myGear ?? []) myAmounts[g.AssetId] = myAmounts.GetValueOrDefault(g.AssetId) + g.Amount;
+
         IReadOnlyList<ArkVtxo> vtxos;
         try
         {
@@ -54,71 +56,31 @@ public static class DeathMatchRefundFlow
                 $"No VTXO at the death-match escrow for {parameters.DeathMatchId} — nothing staked, already settled, or already reclaimed.");
         }
 
-        var bothHeroesPresent =
-            vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.ChallengerHeroAssetId) == true) &&
-            vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.DefenderHeroAssetId) == true);
-
-        return bothHeroesPresent
-            ? await AtomicRefundAsync(wallet, emulatorUri, parameters, contract, vtxos, chainMedianTime, ct)
-            : await AbortAsync(wallet, emulatorUri, parameters, contract, vtxos, isChallenger, requestAbortSig, ct);
-    }
-
-    // Both heroes staked, abandoned: the timelocked refund routes each side home.
-    private static async Task<EmulatorSubmitResponse> AtomicRefundAsync(
-        SelfCustodyWallet wallet, Uri emulatorUri, DeathMatchJointEscrowParams p,
-        ArkadeArtifactContract contract, IReadOnlyList<ArkVtxo> vtxos,
-        Func<CancellationToken, Task<long>> chainMedianTime, CancellationToken ct)
-    {
-        var chainNow = await chainMedianTime(ct);
-        if (chainNow < p.RefundAfterUnixSeconds)
-            throw new RefundNotYetDueException(p.RefundAfterUnixSeconds, chainNow);
-
-        var challengerScript = ArkAddress.Parse(p.ChallengerAddress).ScriptPubKey;
-        var defenderScript = ArkAddress.Parse(p.DefenderAddress).ScriptPubKey;
-        var challengerAssets = new HashSet<string>(
-            new[] { p.ChallengerHeroAssetId }.Concat((p.ChallengerGear ?? []).Select(g => g.AssetId)));
-
-        // Challenger's assets → home output 0, defender's → output 1.
-        var lockTime = new LockTime((uint)p.RefundAfterUnixSeconds);
-        var inputs = vtxos
-            .Select(v => new CovenantSpender.CovenantInput(contract, "refund", [], v, LockTime: lockTime))
-            .ToList();
-        var packet = BuildRoutingPacket(vtxos, assetId => challengerAssets.Contains(assetId) ? 0 : 1);
-
-        long challengerSats = 0, defenderSats = 0;
+        // Take carriers whose assets are ALL mine, capping each asset at my staked amount so a
+        // shared-gear group never over-includes the counterparty's units (which the leaf refuses).
+        var taken = new Dictionary<string, long>(StringComparer.Ordinal);
+        var mine = new List<ArkVtxo>();
         foreach (var v in vtxos)
         {
-            var mine = v.Assets?.All(a => challengerAssets.Contains(a.AssetId)) == true;
-            if (mine) challengerSats += (long)v.Amount; else defenderSats += (long)v.Amount;
+            var assets = v.Assets;
+            if (assets is null || assets.Count == 0) continue;
+            if (!assets.All(a => myAmounts.ContainsKey(a.AssetId))) continue;
+            if (assets.Any(a => taken.GetValueOrDefault(a.AssetId) + (long)a.Amount > myAmounts[a.AssetId])) continue;
+            mine.Add(v);
+            foreach (var a in assets) taken[a.AssetId] = taken.GetValueOrDefault(a.AssetId) + (long)a.Amount;
         }
-        return await CovenantSpender.SpendManyAsync(
-            wallet, emulatorUri, inputs,
-            [new TxOut(Money.Satoshis(challengerSats), challengerScript),
-             new TxOut(Money.Satoshis(defenderSats), defenderScript)],
-            extraPackets: [packet], ct: ct);
-    }
-
-    // Only my hero staked: my oracle-gated abort routes my hero + gear home to output 0.
-    private static async Task<EmulatorSubmitResponse> AbortAsync(
-        SelfCustodyWallet wallet, Uri emulatorUri, DeathMatchJointEscrowParams p,
-        ArkadeArtifactContract contract, IReadOnlyList<ArkVtxo> vtxos, bool isChallenger,
-        Func<CancellationToken, Task<byte[]>> requestAbortSig, CancellationToken ct)
-    {
-        var myScript = ArkAddress.Parse(isChallenger ? p.ChallengerAddress : p.DefenderAddress).ScriptPubKey;
-        var myHeroId = isChallenger ? p.ChallengerHeroAssetId : p.DefenderHeroAssetId;
-        var myGear = (isChallenger ? p.ChallengerGear : p.DefenderGear) ?? [];
-        var myAssetIds = new HashSet<string>(new[] { myHeroId }.Concat(myGear.Select(g => g.AssetId)));
-
-        // Spend ONLY carriers whose assets are entirely mine — never a counterparty carrier.
-        var mine = vtxos.Where(v => v.Assets?.All(a => myAssetIds.Contains(a.AssetId)) == true).ToList();
         if (mine.Count == 0)
             throw new InvalidOperationException(
-                $"No stake of yours is at the death-match escrow for {p.DeathMatchId}.");
+                $"No stake of yours is at the death-match escrow for {parameters.DeathMatchId}.");
 
-        var oracleSig = await requestAbortSig(ct);
-        var leaf = isChallenger ? "abortChallenger" : "abortDefender";
+        var chainNow = await chainMedianTime(ct);
+        if (chainNow < parameters.RefundAfterUnixSeconds)
+            throw new RefundNotYetDueException(parameters.RefundAfterUnixSeconds, chainNow);
+
+        var leaf = isChallenger ? "reclaimChallenger" : "reclaimDefender";
+        var lockTime = new LockTime((uint)parameters.RefundAfterUnixSeconds);
         var inputs = mine
-            .Select(v => new CovenantSpender.CovenantInput(contract, leaf, [oracleSig], v))
+            .Select(v => new CovenantSpender.CovenantInput(contract, leaf, [], v, LockTime: lockTime))
             .ToList();
         var packet = BuildRoutingPacket(mine, _ => 0);   // everything → my output 0
         var total = mine.Sum(v => (long)v.Amount);

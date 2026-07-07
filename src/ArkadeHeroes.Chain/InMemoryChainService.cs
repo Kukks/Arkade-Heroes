@@ -504,21 +504,22 @@ public class InMemoryChainService : IChainService
         if (role == "challenger") escrow.ChallengerFunded = true; else escrow.DefenderFunded = true;
     }
 
-    /// <summary>Simulated oracle-gated abort: unwinds ONE half-funded side. The staked hero was never moved out of the player's holdings; return this side's staked gear units and clear the funded flag. Immediate (no expiry). Refused if BOTH sides staked (use the timelocked refund) or already settled.</summary>
-    public void AbortDeathMatchFromPlayer(string playerId, string deathMatchId)
+    /// <summary>Simulated timelocked per-side reclaim: after expiry, return THIS side's staked hero (never moved out of holdings) + gear units and clear THIS side's funded flag. Works for both half- and fully-funded (each side reclaims its own). Refused before expiry or after settle.</summary>
+    public void ReclaimDeathMatchFromPlayer(string playerId, string deathMatchId)
     {
         if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var escrow))
             throw new InvalidOperationException($"Unknown death-match escrow {deathMatchId}.");
         if (_deathMatchSettled.ContainsKey(deathMatchId))
-            throw new InvalidOperationException("Death-match already settled — nothing to abort.");
+            throw new InvalidOperationException("Death-match already settled — nothing to reclaim.");
         var isChallenger = escrow.ChallengerPlayerId == playerId;
         var isDefender = escrow.DefenderPlayerId == playerId;
         if (!isChallenger && !isDefender)
             throw new InvalidOperationException("Not a party to this death-match.");
-        if (escrow.ChallengerFunded && escrow.DefenderFunded)
-            throw new InvalidOperationException("Both players staked — settle or timelocked refund, not abort.");
         var funded = isChallenger ? escrow.ChallengerFunded : escrow.DefenderFunded;
-        if (!funded) throw new InvalidOperationException("Nothing staked to abort.");
+        if (!funded) throw new InvalidOperationException("Nothing staked to reclaim.");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (now < escrow.RefundAfterUnixSeconds)
+            throw new InvalidOperationException($"Reclaim locked until {escrow.RefundAfterUnixSeconds} (chain time {now}).");
         var gearIds = isChallenger ? escrow.ChallengerGearItemIds : escrow.DefenderGearItemIds;
         foreach (var itemId in gearIds)
         {

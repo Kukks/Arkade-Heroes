@@ -530,7 +530,6 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             throw new GameRuleException("Only the challenged hero's owner can accept this death-match.");
         if (session.Accepted) throw new GameRuleException("Death-match already accepted.");
         if (session.Completed) throw new GameRuleException("Death-match already resolved.");
-        if (session.Aborted) throw new GameRuleException("Death-match was aborted.");
         var defender = GetOwnedHero(player, session.DefenderHeroId);
 
         // Covenant-v2: no new escrow — the joint escrow was baked at open. Accepting =
@@ -549,7 +548,6 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (session.ChallengerPlayerId != player.Id && session.DefenderPlayerId != player.Id)
             throw new GameRuleException("Only a participant can settle this death-match.");
         if (session.Completed) throw new GameRuleException("Death-match already resolved.");
-        if (session.Aborted) throw new GameRuleException("Death-match was aborted.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
         // Both players must have staked their hero into the one joint escrow.
@@ -591,33 +589,6 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             session.ChallengerHeroId, session.DefenderHeroId);
 
         return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot, serverSeedHex, entropyHex, receipt);
-    }
-
-    /// <summary>
-    /// Unwinds ONE side's half-funded death-match stake. The oracle (game key) signs
-    /// this side's abort message; the covenant's abort{Side} leaf then lets the player
-    /// reclaim their hero + gear. Signed ONLY for a NOT-fully-funded escrow — the
-    /// load-bearing safety guard: with no counterparty carrier present, the solo abort
-    /// leaf has nothing to steal. A fully-funded abandoned match reclaims via the
-    /// timelocked refund instead. Marks the session Aborted (settle/accept then refuse).
-    /// </summary>
-    public async Task<(bool IsChallenger, byte[] SideSig, string EscrowAddress)> AbortDeathMatchAsync(
-        Player player, string deathMatchId, CancellationToken ct)
-    {
-        if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
-            throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
-        if (session.ChallengerPlayerId != player.Id && session.DefenderPlayerId != player.Id)
-            throw new GameRuleException("Only a participant can abort this death-match.");
-        if (session.Completed) throw new GameRuleException("Death-match already resolved.");
-        if (session.Aborted) throw new GameRuleException("Death-match already aborted.");
-        if (await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, ct))
-            throw new GameRuleException("Both players have staked — reclaim after expiry via the timelocked refund, not an abort.");
-
-        var isChallenger = session.ChallengerPlayerId == player.Id;
-        var abortMessage = Chain.Covenants.ArkadeCovenants.DeathMatchAbortMessage(session.Id, isChallenger);
-        var sideSig = receipts.SignDigest(abortMessage);
-        session.Aborted = true;
-        return (isChallenger, sideSig, session.JointEscrowAddress!);
     }
 
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────

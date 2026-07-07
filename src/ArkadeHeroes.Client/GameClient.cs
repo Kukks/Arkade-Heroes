@@ -387,7 +387,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/abort-deathmatch", new { DeathMatchId = deathMatchId });
+            await PostAsync<object>("/api/dev/reclaim-deathmatch", new { DeathMatchId = deathMatchId });
             Console.WriteLine("    death-match stake reclaimed (simulated wallet)");
             return;
         }
@@ -400,16 +400,11 @@ public class GameClient : IAsyncDisposable
         {
             await Chain.Covenants.DeathMatchRefundFlow.ReclaimAsync(
                 wallet, new Uri(emulatorUri), escrow,
-                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct),
-                async ct =>
-                {
-                    var resp = await PostAsync<AbortDeathMatchResponse>($"/api/deathmatch/{deathMatchId}/abort");
-                    return Convert.FromHexString(resp.SideSignatureHex);
-                });
+                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct));
         }
         catch (Chain.Covenants.RefundNotYetDueException ex)
         {
-            Console.WriteLine($"    not yet: the both-staked refund unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
+            Console.WriteLine($"    not yet: reclaim unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
             return;
         }
         Console.WriteLine("    co-signed — waiting for your hero to land back in your wallet…");

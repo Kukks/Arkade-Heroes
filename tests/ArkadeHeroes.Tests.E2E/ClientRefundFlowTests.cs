@@ -44,7 +44,9 @@ public class ClientRefundFlowTests : IAsyncLifetime
         _alice = await NewWalletAsync();
         _bob = await NewWalletAsync();
         await RegtestHelper.ArkSend(_alice.Address, 50_000);
+        await RegtestHelper.ArkSend(_bob.Address, 50_000);   // bob stakes his own hero in the fully-funded reclaim E2E
         await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+        await _bob.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
     }
 
     public async Task DisposeAsync()
@@ -200,10 +202,10 @@ public class ClientRefundFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task HalfFundedDeathMatch_ChallengerAbortsViaTheClientFlow()
+    public async Task HalfFundedDeathMatch_ChallengerReclaimsAfterExpiry()
     {
-        var alice = await RegisterAsync("DM-Abort-Alice", _alice);
-        var bob = await RegisterAsync("DM-Abort-Bob", _bob);
+        var alice = await RegisterAsync("DM-Reclaim-Alice", _alice);
+        var bob = await RegisterAsync("DM-Reclaim-Bob", _bob);
         await EnsureTreasuryFundedAsync(alice);
         var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
         var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
@@ -219,20 +221,52 @@ public class ClientRefundFlowTests : IAsyncLifetime
         Assert.Equal(_alice.Address, parameters.ChallengerAddress);
         using var esploraHttp = new HttpClient();
 
-        // The oracle-gated abort: the flow requests Alice's side signature, then spends her
-        // abort leaf — immediate (no expiry wait; the opponent never showed).
+        // Pre-expiry the flow's own gate refuses without submitting.
+        await Assert.ThrowsAsync<RefundNotYetDueException>(() => DeathMatchRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct)));
+
+        // The trustless timelocked reclaim: after expiry, Alice's reclaim leaf brings her hero home.
+        await RegtestHelper.WaitForChainTimeAsync(parameters.RefundAfterUnixSeconds, TimeSpan.FromSeconds(120));
         var reclaim = await DeathMatchRefundFlow.ReclaimAsync(
             _alice, EmulatorUri, parameters,
-            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct),
-            async ct =>
-            {
-                var resp = await PostOkAsync<AbortDeathMatchResponse>(alice, $"/api/deathmatch/{open.DeathMatchId}/abort");
-                return Convert.FromHexString(resp.SideSignatureHex);
-            });
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
         Assert.False(string.IsNullOrEmpty(reclaim.SignedArkTx));
-
-        // Alice's hero is back in her wallet.
         await _alice.WaitForAssetAsync(myHero.AssetId!, TimeSpan.FromSeconds(90));
+    }
+
+    [Fact]
+    public async Task FullyFundedDeathMatch_EachSideReclaimsAfterExpiry()
+    {
+        var alice = await RegisterAsync("DM-Full-Alice", _alice);
+        var bob = await RegisterAsync("DM-Full-Bob", _bob);
+        await EnsureTreasuryFundedAsync(alice);
+        var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
+        var aHero = aliceHeroes.Heroes[0];
+        var bHero = bobHeroes.Heroes[0];
+
+        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+            new DeathMatchOpenRequest(aHero.Id, bHero.Id));
+        await _alice.SendAssetAsync(open.EscrowAddress, aHero.AssetId!, 1);
+        await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        await _bob.SendAssetAsync(open.EscrowAddress, bHero.AssetId!, 1);
+
+        var parameters = (await alice.GetFromJsonAsync<DeathMatchJointEscrowParams>(
+            $"/api/deathmatch/{open.DeathMatchId}/escrow", Web))!;
+        using var esploraHttp = new HttpClient();
+        await RegtestHelper.WaitForChainTimeAsync(parameters.RefundAfterUnixSeconds, TimeSpan.FromSeconds(120));
+
+        // Each side reclaims their OWN hero (two independent txs, either order).
+        var aReclaim = await DeathMatchRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters, ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
+        Assert.False(string.IsNullOrEmpty(aReclaim.SignedArkTx));
+        var bReclaim = await DeathMatchRefundFlow.ReclaimAsync(
+            _bob, EmulatorUri, parameters, ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
+        Assert.False(string.IsNullOrEmpty(bReclaim.SignedArkTx));
+
+        await _alice.WaitForAssetAsync(aHero.AssetId!, TimeSpan.FromSeconds(90));
+        await _bob.WaitForAssetAsync(bHero.AssetId!, TimeSpan.FromSeconds(90));
     }
 
     /// <summary>Funds the fresh server's treasury and waits until the funding is indexer-visible — required before the first starter mint (as the wager fact does).</summary>

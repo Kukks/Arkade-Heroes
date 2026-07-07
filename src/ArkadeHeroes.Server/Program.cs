@@ -191,16 +191,6 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
     await chain.GetDeathMatchEscrowParamsAsync(id, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
-// Oracle-gated abort: signs THE REQUESTER'S side of a half-funded death-match so
-// they can reclaim their stranded stake via the covenant's abort{Side} leaf. Signed
-// only when the escrow is NOT fully funded (no counterparty carrier to steal).
-api.MapPost("/deathmatch/{id}/abort", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
-{
-    var player = game.Authenticate(BearerToken(http));
-    var (isChallenger, sig, escrow) = await game.AbortDeathMatchAsync(player, id, ct);
-    return Results.Ok(new AbortDeathMatchResponse(Convert.ToHexString(sig).ToLowerInvariant(), isChallenger, escrow));
-});
-
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -477,16 +467,12 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         return Results.Ok(new { refunded = true });
     });
 
-    dev.MapPost("/abort-deathmatch", async (AbortDeathMatchDevRequest request, HttpContext http, GameService game, IChainService chain, CancellationToken ct) =>
+    dev.MapPost("/reclaim-deathmatch", (ReclaimDeathMatchDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try
-        {
-            await game.AbortDeathMatchAsync(player, request.DeathMatchId, ct);   // guards + marks Aborted
-            ((InMemoryChainService)chain).AbortDeathMatchFromPlayer(player.Id, request.DeathMatchId);
-        }
+        try { ((InMemoryChainService)chain).ReclaimDeathMatchFromPlayer(player.Id, request.DeathMatchId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
-        return Results.Ok(new { aborted = true });
+        return Results.Ok(new { reclaimed = true });
     });
 
     // Marketplace: the seller deposits the item, a buyer fulfils, or the seller
@@ -566,8 +552,8 @@ public record FundDeathMatchEscrowDevRequest(string DeathMatchId, string Role);
 /// <summary>Dev-only (InMemory mode): simulated client-wallet timelocked merge refund reclaim.</summary>
 public record RefundMergeDevRequest(string MergeId);
 
-/// <summary>Dev-only (InMemory mode): simulated oracle-gated death-match abort reclaim.</summary>
-public record AbortDeathMatchDevRequest(string DeathMatchId);
+/// <summary>Dev-only (InMemory mode): simulated timelocked per-side death-match reclaim.</summary>
+public record ReclaimDeathMatchDevRequest(string DeathMatchId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet offer op (deposit / fulfil / reclaim), keyed by offer.</summary>
 public record OfferDevRequest(string OfferId);
