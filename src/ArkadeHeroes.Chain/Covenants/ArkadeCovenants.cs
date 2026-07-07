@@ -414,6 +414,29 @@ public static class ArkadeCovenants
             Op1,                                         // leave EXACTLY one truthy item
         ];
 
+    /// <summary>
+    /// The FULL breed covenant gate (covenant-v2): everything <see cref="BreedAuthorized"/>
+    /// enforces (both parents present, child under the species, fee to the treasury, oracle sig
+    /// over the child metadata root) PLUS the structural asset consequences breed previously left
+    /// to the packet — both parents RETAINED to the player (at output 0) and the oracle-signed
+    /// CHILD minted to the player (its group's output at output 0). All three assets share
+    /// output 0 (two player-paying outputs would coalesce). Witness = <see cref="BreedRetainWitness"/>.
+    /// </summary>
+    public static byte[] BreedRetainAuthorized(
+        global::NArk.Core.Assets.AssetId species,
+        global::NArk.Core.Assets.AssetId parentA,
+        global::NArk.Core.Assets.AssetId parentB,
+        byte[] oraclePk32, Script feeP2tr, long feeSats, Script playerP2tr)
+        =>
+        [
+            .. BreedAuthorized(species, parentA, parentB, oraclePk32, feeP2tr, feeSats),
+            OpVerify,                                    // consume the oracle CSFS verdict
+            .. AssetAtOutput(0, parentA, playerP2tr),    // parentA retained → player at output 0
+            .. AssetAtOutput(0, parentB, playerP2tr),    // parentB retained → player at output 0
+            .. ChildAtOutput(0),                         // the oracle-signed child group → output 0
+            Op1,                                         // leave EXACTLY one truthy item
+        ];
+
     /// <summary>The witness for <see cref="BreedAuthorized"/> — see its stack contract.</summary>
     public static byte[][] BreedWitness(
         byte[] oracleSig64, int childGroupIndex, int feeOutputIndex,
@@ -425,6 +448,20 @@ public static class ArkadeCovenants
         EncodeIndex(childGroupIndex),
         EncodeIndex(parentBInputIndex),
         EncodeIndex(parentAInputIndex),
+    ];
+
+    /// <summary>
+    /// The witness for <see cref="BreedRetainAuthorized"/> — <see cref="BreedWitness"/> plus ONE
+    /// extra child-group index at the BOTTOM (array index 0, pushed first / consumed last). The
+    /// breed gate consumes the six BreedWitness items first; the extra childK is left for
+    /// <see cref="ChildAtOutput"/> after the two baked (net-empty) AssetAtOutput checks.
+    /// </summary>
+    public static byte[][] BreedRetainWitness(
+        byte[] oracleSig64, int childGroupIndex, int feeOutputIndex,
+        int parentAInputIndex, int parentBInputIndex) =>
+    [
+        EncodeIndex(childGroupIndex), // the EXTRA childK for ChildAtOutput (witness bottom)
+        .. BreedWitness(oracleSig64, childGroupIndex, feeOutputIndex, parentAInputIndex, parentBInputIndex),
     ];
 
     /// <summary>Minimal script-number PUSH opcodes for small non-negative values (0 → OP_0, 1..16 → OP_1..OP_16, else a minimal data push).</summary>

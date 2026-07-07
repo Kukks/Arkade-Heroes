@@ -701,7 +701,7 @@ public class NArkChainService(
         var total = ordered.Aggregate(0L, (s, v) => s + (long)v.Amount);
         var inputs = ordered.Select(v => new Covenants.CovenantSpender.CovenantInput(
             contract, "breed",
-            Covenants.ArkadeCovenants.BreedWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
+            Covenants.ArkadeCovenants.BreedRetainWitness(oracleSignature64, 2, feeOutputIndex: 1, 0, 1), v)).ToList();
 
         var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
             transport, safetyService, walletProvider, intentStorage,

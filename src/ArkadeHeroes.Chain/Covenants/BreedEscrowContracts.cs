@@ -35,13 +35,14 @@ public sealed record BreedEscrowParams(
 public static class BreedEscrowContracts
 {
     /// <summary>
-    /// The breed escrow: one contract with a <c>breed</c> leaf (the full
-    /// <see cref="ArkadeCovenants.BreedAuthorized"/> gate — parents retained,
-    /// child controlled by the species, fee paid to the treasury, oracle sig
-    /// over the child's metadata root) and a timelocked <c>refund</c> leaf
-    /// paying the escrow value back to the player after expiry (the parents
-    /// ride the output; task 17/18 machinery reused). The player deposits both
-    /// parents plus the fee here; the server assembles the covenant mint.
+    /// The breed escrow (covenant-v2): one contract with a structural <c>breed</c> leaf
+    /// (<see cref="ArkadeCovenants.BreedRetainAuthorized"/> — the shared breed gate PLUS both
+    /// parents provably RETAINED to the player and the oracle-signed CHILD provably minted to
+    /// the player, no packet trust) and a timelocked introspection-bound <c>refund</c> leaf that
+    /// routes BOTH parents home to the player at output 0 (one output, two assets — two
+    /// player-paying outputs would be coalesced by the builder). The player deposits both
+    /// parents plus the fee here; the covenant — not the packet — enforces that both parents are
+    /// retained and the child reaches the player.
     /// </summary>
     public static ArkadeArtifactContract Build(
         BreedEscrowParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex)
@@ -57,9 +58,17 @@ public static class BreedEscrowContracts
         return new ArkadeArtifactContract(
             "breed-escrow", operatorKey, emulatorSignerKeyHex,
             [
-                new("breed", ArkadeCovenants.BreedAuthorized(
-                    species, parentA, parentB, oraclePk, treasuryScript, parameters.FeeSats)),
-                new("refund", ArkadeCovenants.RefundTo(playerScript, parameters.EscrowSats), refundLockTime),
+                new("breed", ArkadeCovenants.BreedRetainAuthorized(
+                    species, parentA, parentB, oraclePk, treasuryScript, parameters.FeeSats, playerScript)),
+                new("refund",
+                    [
+                        // BOTH parents home to the player at output 0 (one output, two assets —
+                        // two player-paying outputs would be coalesced by the builder).
+                        .. ArkadeCovenants.AssetAtOutput(0, parentA, playerScript),
+                        .. ArkadeCovenants.AssetAtOutput(0, parentB, playerScript),
+                        0x51, // OP_1
+                    ],
+                    refundLockTime),
             ]);
     }
 
