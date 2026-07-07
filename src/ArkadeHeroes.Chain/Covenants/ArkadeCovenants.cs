@@ -154,6 +154,24 @@ public static class ArkadeCovenants
         OpDrop,                            // drop the marker → clean
     ];
 
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/> is PRESENT (amount 1) at a
+    /// WITNESS-SUPPLIED output index — the `.ark` spec's `tx.outputs[i].assets.lookup == 1`
+    /// intent. Presence/conservation only, NO script pin: used where the recipient cannot be
+    /// baked (an offer's fulfiller routes the item to themselves out of self-interest; the
+    /// covenant forbids destruction/omission). Byte-wise this is breed ParentPresent with the
+    /// OUT-asset lookup 0xef instead of the IN-asset lookup 0xf2. Consumes ONE witness item
+    /// (the output index). EXACT stack contract validated by CovenantAssetAtWitnessOutputProbe.
+    /// </summary>
+    public static byte[] AssetAtWitnessOutput(global::NArk.Core.Assets.AssetId asset) =>
+    [
+        32, .. asset.Txid.Reverse(),
+        .. PushScriptNum(asset.GroupIndex),
+        OpInspectOutAssetLookup,   // pops gidx, txid, outIdx(witness) → amount, flag
+        OpVerify,                  // flag == 1 (present at that output)
+        Op1, OpEqualVerify88,      // amount == 1
+    ];
+
     private const byte OpSha256 = 0xa8;
 
     /// <summary>
