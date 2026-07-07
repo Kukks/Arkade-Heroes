@@ -114,11 +114,14 @@ public record FavorabilityDto(int LevelGap, string Label);
 
 public record DeathMatchOpenRequest(string ChallengerHeroId, string DefenderHeroId);
 
-/// <summary>The challenger deposits their hero into <see cref="EscrowAddress"/>; heed <see cref="Favorability"/> — losing BURNS your hero.</summary>
-public record DeathMatchOpenResponse(string DeathMatchId, string CommitmentHex, string EscrowAddress, FavorabilityDto Favorability);
+/// <summary>One required gear deposit for a death-match stake: the item units matching the hero's loadout-at-open (send Amount unit(s) of AssetId to the escrow alongside the hero).</summary>
+public record GearStakeDto(string ItemId, string AssetId, int Amount);
 
-/// <summary><see cref="DefenderHero"/> is the challenged hero the defender must stake (covenant deposit needs its asset id).</summary>
-public record DeathMatchAcceptResponse(string EscrowAddress, HeroDto DefenderHero);
+/// <summary>The challenger deposits their hero + <see cref="ChallengerGear"/> into <see cref="EscrowAddress"/>; heed <see cref="Favorability"/> — losing BURNS your hero and forfeits your staked gear.</summary>
+public record DeathMatchOpenResponse(string DeathMatchId, string CommitmentHex, string EscrowAddress, FavorabilityDto Favorability, IReadOnlyList<GearStakeDto> ChallengerGear, IReadOnlyList<GearStakeDto> DefenderGear);
+
+/// <summary><see cref="DefenderHero"/> is the challenged hero the defender must stake (covenant deposit needs its asset id), alongside <see cref="DefenderGear"/>.</summary>
+public record DeathMatchAcceptResponse(string EscrowAddress, HeroDto DefenderHero, IReadOnlyList<GearStakeDto> DefenderGear);
 
 public record DeathMatchSettleRequest(string Nonce);
 

@@ -524,7 +524,7 @@ public class InMemoryChainService : IChainService
             return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(null);
         static IReadOnlyList<Covenants.GearStake> ToStakes(IReadOnlyList<string> itemIds) => itemIds
             .GroupBy(id => id, StringComparer.Ordinal)
-            .Select(g => new Covenants.GearStake(g.Key, g.Count())) // sim asset id == item id
+            .Select(g => new Covenants.GearStake(g.Key, g.Count(), g.Key)) // sim asset id == item id
             .ToList();
         return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(new Covenants.DeathMatchJointEscrowParams(
             $"sim-player-{e.ChallengerPlayerId}", e.ChallengerHeroAssetId,

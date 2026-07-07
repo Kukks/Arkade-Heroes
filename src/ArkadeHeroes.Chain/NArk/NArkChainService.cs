@@ -877,14 +877,14 @@ public class NArkChainService(
         async Task<IReadOnlyList<Covenants.GearStake>> ResolveGearAsync(IReadOnlyList<string>? itemIds)
         {
             if (itemIds is not { Count: > 0 }) return [];
-            var stakes = new Dictionary<string, int>(StringComparer.Ordinal);
+            var stakes = new Dictionary<string, (int Amount, string ItemId)>(StringComparer.Ordinal);
             foreach (var itemId in itemIds)
             {
                 var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
                     ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — cannot stake it in a death-match.");
-                stakes[assetId] = stakes.GetValueOrDefault(assetId) + 1;
+                stakes[assetId] = (stakes.GetValueOrDefault(assetId).Amount + 1, itemId); // item→asset is 1:1
             }
-            return stakes.Select(kv => new Covenants.GearStake(kv.Key, kv.Value)).ToList();
+            return stakes.Select(kv => new Covenants.GearStake(kv.Key, kv.Value.Amount, kv.Value.ItemId)).ToList();
         }
         var challengerGear = await ResolveGearAsync(challengerGearItemIds);
         var defenderGear = await ResolveGearAsync(defenderGearItemIds);

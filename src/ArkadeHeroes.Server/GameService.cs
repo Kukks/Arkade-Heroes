@@ -471,7 +471,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     // ── Death-match: open → both stake a hero → settle (loser's hero burns) ──
 
-    public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability)> OpenDeathMatchAsync(
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability, IReadOnlyList<Shared.GearStakeDto> ChallengerGear, IReadOnlyList<Shared.GearStakeDto> DefenderGear)> OpenDeathMatchAsync(
         Player player, string challengerHeroId, string defenderHeroId, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
@@ -488,10 +488,15 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // Covenant-v2: ONE joint escrow baked at open — both parties are known (the
         // defender is the challenged hero's owner). Both players stake into this one
         // address; consent = staking. The settle branch STRUCTURALLY enforces the
-        // burn-loser/return-winner outcome (gear is a follow-up).
+        // outcome: burn the loser, return the winner's hero AND ALL staked gear to
+        // the winner. Each side's stake = their hero + the item units matching the
+        // hero's equipped loadout AT OPEN (unequip before opening to shield gear).
+        var challengerGearIds = challenger.Equipment.Slots.Values.ToList();
+        var defenderGearIds = defender.Equipment.Slots.Values.ToList();
         var escrow = await chain.CreateDeathMatchJointEscrowAsync(
             id, player.Id, challenger.AssetId!, defender.OwnerId, defender.AssetId!,
-            Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter, ct: ct);
+            Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter,
+            challengerGearIds, defenderGearIds, ct);
 
         var session = new DeathMatchSession
         {
@@ -503,13 +508,20 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             ServerSeed = seed,
             CommitmentHex = commitment,
             JointEscrowAddress = escrow,
+            ChallengerGearItemIds = challengerGearIds,
+            DefenderGearItemIds = defenderGearIds,
         };
         store.DeathMatches[session.Id] = session;
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
-        return (session, escrow, favor);
+        var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(id, ct);
+        return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear));
     }
 
-    public Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender)> AcceptDeathMatchAsync(
+    /// <summary>The chain-resolved gear stakes as client-facing deposit instructions (ItemId is display provenance; AssetId is what gets sent).</summary>
+    private static IReadOnlyList<Shared.GearStakeDto> MapGearDtos(IReadOnlyList<Chain.Covenants.GearStake>? stakes)
+        => stakes?.Select(s => new Shared.GearStakeDto(s.ItemId ?? s.AssetId, s.AssetId, s.Amount)).ToList() ?? [];
+
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender, IReadOnlyList<Shared.GearStakeDto> DefenderGear)> AcceptDeathMatchAsync(
         Player player, string deathMatchId, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -521,9 +533,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var defender = GetOwnedHero(player, session.DefenderHeroId);
 
         // Covenant-v2: no new escrow — the joint escrow was baked at open. Accepting =
-        // staking the defender's hero into the SAME joint address (consent = staking).
+        // staking the defender's hero (+ their baked gear) into the SAME joint address
+        // (consent = staking).
         session.Accepted = true;
-        return Task.FromResult((session, session.JointEscrowAddress!, defender));
+        var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(deathMatchId, ct);
+        return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear));
     }
 
     public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(

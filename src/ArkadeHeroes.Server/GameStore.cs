@@ -67,6 +67,9 @@ public class DeathMatchSession
     public required string CommitmentHex { get; init; }
     /// <summary>The ONE joint escrow both players stake their hero into (covenant-v2).</summary>
     public string? JointEscrowAddress { get; set; }
+    /// <summary>Each side's equipped-item snapshot at OPEN — the gear units staked alongside the heroes.</summary>
+    public IReadOnlyList<string> ChallengerGearItemIds { get; init; } = [];
+    public IReadOnlyList<string> DefenderGearItemIds { get; init; } = [];
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Accepted { get; set; }
     public bool Completed { get; set; }

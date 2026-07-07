@@ -730,10 +730,12 @@ public class GameClient : IAsyncDisposable
         var open = await PostAsync<DeathMatchOpenResponse>("/api/deathmatch/open",
             new DeathMatchOpenRequest(mine.Id, theirs.Id));
 
-        // Informed consent: show the level gap before the hero is at risk.
+        // Informed consent: show the level gap + the gear at stake before the hero is at risk.
         var gap = Math.Abs(open.Favorability.LevelGap);
         var dir = open.Favorability.LevelGap > 0 ? "above" : "below";
         Console.WriteLine($"  ⚠ {open.Favorability.Label.ToUpperInvariant()} — the opponent is {gap} level(s) {dir} you.");
+        if (open.ChallengerGear.Count > 0)
+            Console.WriteLine($"    your equipped gear is AT STAKE too: {string.Join(", ", open.ChallengerGear.Select(g => $"{g.Amount}× {g.ItemId}"))}");
         Console.WriteLine($"    LOSING BURNS {mine.Name} FOREVER. Type 'yes' to stake it:");
         if ((Console.ReadLine() ?? "").Trim().ToLowerInvariant() != "yes")
         {
@@ -741,7 +743,7 @@ public class GameClient : IAsyncDisposable
             return;
         }
 
-        await StakeDeathMatchAsync(open.DeathMatchId, "challenger", open.EscrowAddress, mine);
+        await StakeDeathMatchAsync(open.DeathMatchId, "challenger", open.EscrowAddress, mine, open.ChallengerGear);
         Console.WriteLine($"  ✓ death-match opened: {open.DeathMatchId}  (commitment {ShortId(open.CommitmentHex)})");
         Console.WriteLine($"    opponent runs 'accept-death {open.DeathMatchId}', then you run 'settle-death {open.DeathMatchId}'");
     }
@@ -752,7 +754,9 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         var accept = await PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept", null);
         Console.WriteLine($"  ⚠ accepting a death-match — if {accept.DefenderHero.Name} loses, it is BURNED.");
-        await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, accept.DefenderHero);
+        if (accept.DefenderGear.Count > 0)
+            Console.WriteLine($"    your equipped gear is AT STAKE too: {string.Join(", ", accept.DefenderGear.Select(g => $"{g.Amount}× {g.ItemId}"))}");
+        await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, accept.DefenderHero, accept.DefenderGear);
         Console.WriteLine($"  ✓ staked. The challenger runs 'settle-death {deathMatchId}'.");
     }
 
@@ -779,19 +783,24 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
     }
 
-    /// <summary>Stake a hero into a death-match escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>
-    private async Task StakeDeathMatchAsync(string deathMatchId, string role, string escrowAddress, HeroDto? hero)
+    /// <summary>Stake a hero + their equipped gear units into a death-match escrow from the player's OWN wallet (or the dev simulator in InMemory mode, whose sim moves the gear internally).</summary>
+    private async Task StakeDeathMatchAsync(string deathMatchId, string role, string escrowAddress, HeroDto? hero, IReadOnlyList<GearStakeDto>? gear = null)
     {
         if (await ChainModeAsync() == "InMemory")
         {
             await PostAsync<object>("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = deathMatchId, Role = role });
-            Console.WriteLine("    staked your hero into the death-match escrow (simulated wallet)");
+            Console.WriteLine("    staked your hero (+ any equipped gear) into the death-match escrow (simulated wallet)");
             return;
         }
         if (hero is null) throw new GameClientException("A covenant death-match deposit needs the hero (rung 2).");
         var wallet = await WalletAsync();
         await wallet.SendAssetAsync(escrowAddress, hero.AssetId ?? hero.Id, 1);
         Console.WriteLine($"    staked {hero.Name} into the death-match escrow from your wallet");
+        foreach (var g in gear ?? [])
+        {
+            await wallet.SendAssetAsync(escrowAddress, g.AssetId, (ulong)g.Amount);
+            Console.WriteLine($"    staked {g.Amount}× {g.ItemId} into the death-match escrow");
+        }
     }
 
     /// <summary>Stakes into a covenant escrow from the player's OWN wallet (or the dev simulator in InMemory mode).</summary>

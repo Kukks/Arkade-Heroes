@@ -110,4 +110,77 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var resp = await alice.PostAsJsonAsync("/api/deathmatch/open", new DeathMatchOpenRequest(b[0].Id, a[0].Id));
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
+
+    [Fact]
+    public async Task DeathMatch_StakedGearMovesToTheWinner()
+    {
+        var (alice, alicePlayer) = await _factory.RegisterAsync("DM-GearA");
+        var (bob, bobPlayer) = await _factory.RegisterAsync("DM-GearB");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+        var store = _factory.Services.GetRequiredService<GameStore>();
+        var chain = _factory.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
+
+        // Bob's hero carries gear (bought + equipped); Alice out-levels him.
+        store.Heroes[a[0].Id].Level = 20;
+        await bob.BuyItemAsync("rusty-blade");
+        var equip = await bob.PostAsJsonAsync($"/api/heroes/{b[0].Id}/equip", new EquipRequest("rusty-blade"));
+        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+
+        // Open bakes Bob's loadout as his required stake; Alice has none.
+        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var stake = Assert.Single(open.DefenderGear);
+        Assert.Equal("rusty-blade", stake.ItemId);
+        Assert.Equal(1, stake.Amount);
+        Assert.Empty(open.ChallengerGear);
+
+        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
+        await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+
+        // Staking moved Bob's unit INTO the escrow — he no longer holds it (can't sell it).
+        Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(bobPlayer.PlayerId, "rusty-blade"));
+
+        var settle = (await (await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
+                new DeathMatchSettleRequest("gear-nonce")))
+            .Content.ReadFromJsonAsync<DeathMatchSettleResponse>())!;
+
+        // ALL staked gear goes to the WINNER (outcome-agnostic: Bob winning gets his own back).
+        var winnerId = settle.WinnerHeroId == a[0].Id ? alicePlayer.PlayerId : bobPlayer.PlayerId;
+        var loserId = settle.WinnerHeroId == a[0].Id ? bobPlayer.PlayerId : alicePlayer.PlayerId;
+        Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(winnerId, "rusty-blade"));
+        Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(loserId, "rusty-blade"));
+    }
+
+    [Fact]
+    public async Task DeathMatch_CannotStakeTheSameGearUnitTwice()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DM-Dbl-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-Dbl-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        // Bob owns ONE unit, equipped on his hero — baked into BOTH matches' stakes.
+        await bob.BuyItemAsync("rusty-blade");
+        var equip = await bob.PostAsJsonAsync($"/api/heroes/{b[0].Id}/equip", new EquipRequest("rusty-blade"));
+        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+
+        var open1 = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var open2 = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[1].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+
+        // Funding match 1 moves the unit into ITS escrow; the same unit cannot fund match 2.
+        await bob.PostAsync($"/api/deathmatch/{open1.DeathMatchId}/accept", null);
+        var fund1 = await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open1.DeathMatchId, Role = "defender" });
+        Assert.True(fund1.IsSuccessStatusCode, await fund1.Content.ReadAsStringAsync());
+
+        await bob.PostAsync($"/api/deathmatch/{open2.DeathMatchId}/accept", null);
+        var fund2 = await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open2.DeathMatchId, Role = "defender" });
+        Assert.Equal(HttpStatusCode.BadRequest, fund2.StatusCode);
+    }
 }

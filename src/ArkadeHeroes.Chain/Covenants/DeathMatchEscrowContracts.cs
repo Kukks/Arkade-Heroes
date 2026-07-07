@@ -14,8 +14,8 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// Persisted under <c>deathmatch-escrow:{id}</c> and served so either player can
 /// rebuild the contract and reclaim their OWN hero after expiry without the server.
 /// </summary>
-/// <summary>One staked gear position: an item ASSET id (chain-resolved) and how many units this side stakes (1 per equipped slot; the same fungible item on both sides aggregates at settle).</summary>
-public sealed record GearStake(string AssetId, int Amount);
+/// <summary>One staked gear position: an item ASSET id (chain-resolved) and how many units this side stakes (1 per equipped slot; the same fungible item on both sides aggregates at settle). <paramref name="ItemId"/> is display-only provenance (the catalog item the asset resolves from — 1:1); the covenant uses only AssetId + Amount.</summary>
+public sealed record GearStake(string AssetId, int Amount, string? ItemId = null);
 
 public sealed record DeathMatchJointEscrowParams(
     string ChallengerAddress,
