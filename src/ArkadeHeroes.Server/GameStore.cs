@@ -73,6 +73,8 @@ public class DeathMatchSession
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Accepted { get; set; }
     public bool Completed { get; set; }
+    /// <summary>Set when a party unwound their half-funded stake via /deathmatch/{id}/abort — settle and accept both refuse afterward.</summary>
+    public bool Aborted { get; set; }
     public string? WinnerHeroId { get; set; }
 }
 

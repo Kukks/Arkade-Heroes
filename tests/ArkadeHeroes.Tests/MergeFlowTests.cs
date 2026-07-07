@@ -4,6 +4,7 @@ using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -112,5 +113,30 @@ public class MergeFlowTests : IClassFixture<WebApplicationFactory<Program>>
         // Unknown merge → 404.
         var missing = await alice.GetAsync("/api/merges/does-not-exist/escrow");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
+    public async Task Merge_AbandonedDeposit_RefundReturnsFee_ThenNothingToRefund()
+    {
+        // Zero refund window so the abandoned deposit is immediately reclaimable in-test.
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:WagerEscrowRefundAfter", "00:00:00"));
+        var (alice, _) = await factory.RegisterAsync("Mrg-Refund");
+        var heroes = await alice.ClaimStartersAsync();
+
+        var meStart = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        var commit = (await (await alice.PostAsJsonAsync("/api/merge/commit",
+                new MergeCommitRequest(heroes[0].Id, heroes[1].Id)))
+            .Content.ReadFromJsonAsync<MergeCommitResponse>())!;
+        await alice.PostAsJsonAsync("/api/dev/fund-merge-escrow", new { MergeId = commit.MergeId });
+
+        // Abandon → refund returns the fee (window is zero, so it's immediately due).
+        var refund = await alice.PostAsJsonAsync("/api/dev/refund-merge", new { MergeId = commit.MergeId });
+        Assert.True(refund.IsSuccessStatusCode, await refund.Content.ReadAsStringAsync());
+        var meEnd = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        Assert.Equal(meStart.BalanceSats, meEnd.BalanceSats); // fund − fee then refund + fee = net zero
+
+        // A second refund finds nothing to reclaim.
+        var again = await alice.PostAsJsonAsync("/api/dev/refund-merge", new { MergeId = commit.MergeId });
+        Assert.Equal(HttpStatusCode.BadRequest, again.StatusCode);
     }
 }

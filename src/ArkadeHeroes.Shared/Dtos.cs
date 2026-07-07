@@ -123,6 +123,9 @@ public record DeathMatchOpenResponse(string DeathMatchId, string CommitmentHex, 
 /// <summary><see cref="DefenderHero"/> is the challenged hero the defender must stake (covenant deposit needs its asset id), alongside <see cref="DefenderGear"/>.</summary>
 public record DeathMatchAcceptResponse(string EscrowAddress, HeroDto DefenderHero, IReadOnlyList<GearStakeDto> DefenderGear);
 
+/// <summary>The oracle's signature (hex) authorizing THE REQUESTER'S side of a half-funded death-match abort — the witness for the covenant's abort{Side} leaf. <see cref="IsChallenger"/> tells the client which leaf to spend; <see cref="EscrowAddress"/> is the joint escrow to reclaim from.</summary>
+public record AbortDeathMatchResponse(string SideSignatureHex, bool IsChallenger, string EscrowAddress);
+
 public record DeathMatchSettleRequest(string Nonce);
 
 /// <summary>The fight result + the burned loser + the audit trail. The pre-fight snapshots let the client replay BattleEngine.Fight and verify the winner (the loser's record is gone after settle).</summary>

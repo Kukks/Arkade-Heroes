@@ -183,4 +183,58 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var fund2 = await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open2.DeathMatchId, Role = "defender" });
         Assert.Equal(HttpStatusCode.BadRequest, fund2.StatusCode);
     }
+
+    [Fact]
+    public async Task DeathMatch_HalfFundedChallengerAborts_GearReturned_SettleThenRefused()
+    {
+        var (alice, alicePlayer) = await _factory.RegisterAsync("DM-Abort-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-Abort-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+        var chain = _factory.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
+
+        // Alice (challenger) equips gear — baked into her stake at open.
+        await alice.BuyItemAsync("rusty-blade");
+        var equip = await alice.PostAsJsonAsync($"/api/heroes/{a[0].Id}/equip", new EquipRequest("rusty-blade"));
+        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+
+        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var stake = Assert.Single(open.ChallengerGear);
+        Assert.Equal("rusty-blade", stake.ItemId);
+
+        // Alice stakes her hero + gear; Bob never accepts → half-funded.
+        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // staked into escrow
+
+        // Abort → Alice reclaims her staked gear.
+        var abort = await alice.PostAsJsonAsync("/api/dev/abort-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.True(abort.IsSuccessStatusCode, await abort.Content.ReadAsStringAsync());
+        Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // returned
+
+        // Settle is now refused — the match was aborted.
+        var settle = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle", new DeathMatchSettleRequest("n"));
+        Assert.Equal(HttpStatusCode.BadRequest, settle.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeathMatch_FullyFundedAbort_IsRefused()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DM-FullAbort-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-FullAbort-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
+                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
+            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
+        await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+
+        // Both staked → abort refused (reclaim would be the timelocked refund, not an abort).
+        var abort = await alice.PostAsJsonAsync("/api/dev/abort-deathmatch", new { DeathMatchId = open.DeathMatchId });
+        Assert.Equal(HttpStatusCode.BadRequest, abort.StatusCode);
+    }
 }
