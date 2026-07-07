@@ -232,6 +232,8 @@ public class GameClient : IAsyncDisposable
             case "accept": await AcceptAsync(Arg(parts, 1, "accept <matchId>")); break;
             case "duel": await DuelAsync(Arg(parts, 1, "duel <matchId>")); break;
             case "refund": await RefundAsync(Arg(parts, 1, "refund <matchId>")); break;
+            case "refund-merge": await RefundMergeAsync(Arg(parts, 1, "refund-merge <mergeId>")); break;
+            case "refund-death": await RefundDeathAsync(Arg(parts, 1, "refund-death <deathMatchId>")); break;
             case "transfer": await TransferAsync(Arg(parts, 1, "transfer <hero> <playerId>"), Arg(parts, 2, "transfer <hero> <playerId>")); break;
             case "wallet": await WalletInfoAsync(); break;
             case "backup": await BackupAsync(); break;
@@ -284,6 +286,8 @@ public class GameClient : IAsyncDisposable
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
           refund <matchId>       reclaim your covenant stake after expiry (no server trust)
+          refund-merge <id>      reclaim an abandoned merge deposit after expiry (no server trust)
+          refund-death <id>      reclaim a stranded death-match stake (abort if half-funded, refund if both staked)
           transfer <hero> <pid>  send a hero (you sign; the Arkade asset moves wallets)
           wallet                 your self-custody wallet: address, balance, assets
           backup                 print your wallet mnemonic (guard it!)
@@ -347,6 +351,81 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine("    refund co-signed — waiting for the stake to land in your wallet…");
         await wallet.WaitForBalanceAsync(balanceBefore + escrow.StakeSats, TimeSpan.FromSeconds(90));
         Console.WriteLine($"    reclaimed {escrow.StakeSats} sats — balance {balanceBefore + escrow.StakeSats}+");
+    }
+
+    /// <summary>Reclaims an abandoned merge deposit (base + sacrifice + fee) after expiry — contracts rebuilt LOCALLY from the merge's public escrow params; the server only supplies the (verifiable) params.</summary>
+    private async Task RefundMergeAsync(string mergeId)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/refund-merge", new { MergeId = mergeId });
+            Console.WriteLine("    merge deposit refunded (simulated wallet)");
+            return;
+        }
+        var escrow = await GetAsync<Chain.Covenants.MergeEscrowParams>($"/api/merges/{mergeId}/escrow");
+        var (emulatorUri, esploraApi) = await RefundEndpointsAsync();
+        var wallet = await WalletAsync();
+        Console.WriteLine($"    rebuilding merge escrow locally (refundable after {escrow.RefundAfterUnixSeconds})…");
+        try
+        {
+            await Chain.Covenants.MergeEscrowRefundFlow.ReclaimAsync(
+                wallet, new Uri(emulatorUri), escrow,
+                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct));
+        }
+        catch (Chain.Covenants.RefundNotYetDueException ex)
+        {
+            Console.WriteLine($"    not yet: refund unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
+            return;
+        }
+        Console.WriteLine("    refund co-signed — waiting for your heroes to land back in your wallet…");
+        await wallet.WaitForAssetAsync(escrow.BaseId, TimeSpan.FromSeconds(90));
+        Console.WriteLine("    reclaimed the base + sacrifice heroes (and the fee).");
+    }
+
+    /// <summary>Reclaims a death-match stake: if BOTH heroes are staked and the match was abandoned, the trustless timelocked refund; if only yours is staked (the opponent never showed), the oracle-gated abort (the server signs your side after confirming the escrow is not fully funded).</summary>
+    private async Task RefundDeathAsync(string deathMatchId)
+    {
+        if (await ChainModeAsync() == "InMemory")
+        {
+            await PostAsync<object>("/api/dev/abort-deathmatch", new { DeathMatchId = deathMatchId });
+            Console.WriteLine("    death-match stake reclaimed (simulated wallet)");
+            return;
+        }
+        var escrow = await GetAsync<Chain.Covenants.DeathMatchJointEscrowParams>($"/api/deathmatch/{deathMatchId}/escrow");
+        var (emulatorUri, esploraApi) = await RefundEndpointsAsync();
+        var wallet = await WalletAsync();
+        var myHeroId = wallet.Address == escrow.ChallengerAddress ? escrow.ChallengerHeroAssetId : escrow.DefenderHeroAssetId;
+        Console.WriteLine("    rebuilding the death-match escrow locally…");
+        try
+        {
+            await Chain.Covenants.DeathMatchRefundFlow.ReclaimAsync(
+                wallet, new Uri(emulatorUri), escrow,
+                ct => Chain.Covenants.EsploraChainTime.GetMedianTimeAsync(_http, esploraApi, ct),
+                async ct =>
+                {
+                    var resp = await PostAsync<AbortDeathMatchResponse>($"/api/deathmatch/{deathMatchId}/abort");
+                    return Convert.FromHexString(resp.SideSignatureHex);
+                });
+        }
+        catch (Chain.Covenants.RefundNotYetDueException ex)
+        {
+            Console.WriteLine($"    not yet: the both-staked refund unlocks at chain time {ex.DueUnixSeconds}, chain is at {ex.ChainUnixSeconds} — try again later");
+            return;
+        }
+        Console.WriteLine("    co-signed — waiting for your hero to land back in your wallet…");
+        await wallet.WaitForAssetAsync(myHeroId, TimeSpan.FromSeconds(90));
+        Console.WriteLine("    reclaimed your hero (and any staked gear).");
+    }
+
+    /// <summary>The emulator + esplora endpoints the refund flows need (env overrides win, else chain info).</summary>
+    private async Task<(string EmulatorUri, string EsploraApi)> RefundEndpointsAsync()
+    {
+        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
+            ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
+        var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
+            ?? throw new GameClientException("no esplora API for chain time — set ARKADE_HEROES_ESPLORA (e.g. http://localhost:8999/api/v1)");
+        return (emulatorUri, esploraApi);
     }
 
     // ── HTTP helpers ───────────────────────────────────────────────────

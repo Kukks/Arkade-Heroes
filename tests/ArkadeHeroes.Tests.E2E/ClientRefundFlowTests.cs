@@ -160,4 +160,97 @@ public class ClientRefundFlowTests : IAsyncLifetime
 
         await _alice.WaitForBalanceAsync(balanceBefore + Wager, TimeSpan.FromSeconds(90));
     }
+
+    [Fact]
+    public async Task AbandonedMergeDeposit_PlayerReclaimsBothHeroesViaTheClientFlow()
+    {
+        var alice = await RegisterAsync("Merge-Reclaim-Alice", _alice);
+        await EnsureTreasuryFundedAsync(alice);
+        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var baseHero = heroes.Heroes[0];
+        var sacHero = heroes.Heroes[1];
+
+        // Covenant merge; Alice deposits base + sacrifice + fee, then abandons it.
+        var commit = await PostOkAsync<MergeCommitResponse>(alice, "/api/merge/commit",
+            new MergeCommitRequest(baseHero.Id, sacHero.Id, "covenant"));
+        await _alice.SendAssetAsync(commit.EscrowAddress, baseHero.AssetId!, 1);
+        await _alice.SendAssetAsync(commit.EscrowAddress, sacHero.AssetId!, 1);
+        await _alice.SendAsync(commit.EscrowAddress, commit.FeeSats);
+
+        // The trustless rebuild: params from the server, contract reconstructed locally.
+        var parameters = (await alice.GetFromJsonAsync<MergeEscrowParams>(
+            $"/api/merges/{commit.MergeId}/escrow", Web))!;
+        Assert.Equal(_alice.Address, parameters.PlayerAddress);
+        using var esploraHttp = new HttpClient();
+
+        // Pre-expiry the flow's own gate refuses WITHOUT submitting anything.
+        await Assert.ThrowsAsync<RefundNotYetDueException>(() => MergeEscrowRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct)));
+
+        await RegtestHelper.WaitForChainTimeAsync(parameters.RefundAfterUnixSeconds, TimeSpan.FromSeconds(120));
+        var refund = await MergeEscrowRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct));
+        Assert.False(string.IsNullOrEmpty(refund.SignedArkTx));
+
+        // Both heroes land back in Alice's wallet.
+        await _alice.WaitForAssetAsync(baseHero.AssetId!, TimeSpan.FromSeconds(90));
+        await _alice.WaitForAssetAsync(sacHero.AssetId!, TimeSpan.FromSeconds(90));
+    }
+
+    [Fact]
+    public async Task HalfFundedDeathMatch_ChallengerAbortsViaTheClientFlow()
+    {
+        var alice = await RegisterAsync("DM-Abort-Alice", _alice);
+        var bob = await RegisterAsync("DM-Abort-Bob", _bob);
+        await EnsureTreasuryFundedAsync(alice);
+        var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
+        var myHero = aliceHeroes.Heroes[0];
+
+        // Alice opens + stakes her hero; Bob never accepts → half-funded, Alice is stranded.
+        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+            new DeathMatchOpenRequest(myHero.Id, bobHeroes.Heroes[0].Id));
+        await _alice.SendAssetAsync(open.EscrowAddress, myHero.AssetId!, 1);
+
+        var parameters = (await alice.GetFromJsonAsync<DeathMatchJointEscrowParams>(
+            $"/api/deathmatch/{open.DeathMatchId}/escrow", Web))!;
+        Assert.Equal(_alice.Address, parameters.ChallengerAddress);
+        using var esploraHttp = new HttpClient();
+
+        // The oracle-gated abort: the flow requests Alice's side signature, then spends her
+        // abort leaf — immediate (no expiry wait; the opponent never showed).
+        var reclaim = await DeathMatchRefundFlow.ReclaimAsync(
+            _alice, EmulatorUri, parameters,
+            ct => EsploraChainTime.GetMedianTimeAsync(esploraHttp, EsploraApi, ct),
+            async ct =>
+            {
+                var resp = await PostOkAsync<AbortDeathMatchResponse>(alice, $"/api/deathmatch/{open.DeathMatchId}/abort");
+                return Convert.FromHexString(resp.SideSignatureHex);
+            });
+        Assert.False(string.IsNullOrEmpty(reclaim.SignedArkTx));
+
+        // Alice's hero is back in her wallet.
+        await _alice.WaitForAssetAsync(myHero.AssetId!, TimeSpan.FromSeconds(90));
+    }
+
+    /// <summary>Funds the fresh server's treasury and waits until the funding is indexer-visible — required before the first starter mint (as the wager fact does).</summary>
+    private async Task EnsureTreasuryFundedAsync(HttpClient client)
+    {
+        var bootInfo = (await client.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        await RegtestHelper.ArkSend(bootInfo.TreasuryAddress, 200_000);
+        var treasuryScript = global::NArk.Abstractions.ArkAddress.Parse(bootInfo.TreasuryAddress).ScriptPubKey.ToHex();
+        var probeTransport = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var fundingDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        while (true)
+        {
+            var seen = 0L;
+            await foreach (var v in probeTransport.GetVtxoByScriptsAsSnapshot(new HashSet<string> { treasuryScript }))
+                if (!v.IsSpent()) seen += (long)v.Amount;
+            if (seen >= 200_000) break;
+            Assert.True(DateTime.UtcNow < fundingDeadline, $"treasury funding never appeared (saw {seen} sats)");
+            await Task.Delay(1500);
+        }
+    }
 }
