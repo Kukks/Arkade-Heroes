@@ -203,23 +203,29 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
 
         await _funder.SendAssetAsync(contractAddr, baseId, 1);
         await _funder.SendAssetAsync(contractAddr, sacrificeId, 1);
-        var vtxos = await CovenantSpender.WaitForVtxosAsync(_funder, contract, 2, TimeSpan.FromSeconds(60));
+        await _funder.SendAsync(contractAddr, Fee);                 // the fee sats VTXO the real escrow also holds
+        var vtxos = await CovenantSpender.WaitForVtxosAsync(_funder, contract, 3, TimeSpan.FromSeconds(60));
         var baseVtxo = vtxos.First(v => v.Assets?.Any(a => a.AssetId == baseId) == true);
         var sacVtxo = vtxos.First(v => v.Assets?.Any(a => a.AssetId == sacrificeId) == true);
+        var feeVtxo = vtxos.First(v => v.OutPoint != baseVtxo.OutPoint && v.OutPoint != sacVtxo.OutPoint);
+        var total = (long)baseVtxo.Amount + (long)sacVtxo.Amount + (long)feeVtxo.Amount;
 
         // Refund routes BOTH heroes to output 0 (the player) — one output, two assets, one
-        // owner (two player-paying outputs would be coalesced by the builder).
+        // owner (two player-paying outputs would be coalesced by the builder). All THREE
+        // escrow VTXOs spend the refund leaf; the fee sats ride output 0 as value.
+        // base vin0, sacrifice vin1, fee vin2.
         CovenantSpender.CovenantInput[] RefundInputs(long lockTime) =>
         [
             new(contract, "refund", [], baseVtxo, LockTime: new LockTime((uint)lockTime)),
             new(contract, "refund", [], sacVtxo, LockTime: new LockTime((uint)lockTime)),
+            new(contract, "refund", [], feeVtxo, LockTime: new LockTime((uint)lockTime)),
         ];
         Packet RefundPacket() => Packet.Create(
         [
             AssetGroup.Create(baseAsset, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
             AssetGroup.Create(sacrificeAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
         ]);
-        TxOut[] HomeOutputs() => [new TxOut(Money.Satoshis(2 * dust), playerScript)];
+        TxOut[] HomeOutputs() => [new TxOut(Money.Satoshis(total), playerScript)];
 
         // Before expiry: refused by the leaf CLTV. Disposable non-canonical locktime (expiry+1)
         // so a refused submit never poisons the canonical refund txid (arkd sticky-failure bug).
@@ -233,7 +239,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
         // refuses (0xd1 output-script). Distinct output → distinct txid (disposable).
         var theft = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _funder, EmulatorUri, RefundInputs(refundAfter),
-            [new TxOut(Money.Satoshis(2 * dust), thiefScript)],
+            [new TxOut(Money.Satoshis(total), thiefScript)],
             extraPackets: [RefundPacket()]));
         Assert.Contains("Emulator rejected", theft.Message);
 
