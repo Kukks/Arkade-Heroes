@@ -135,6 +135,25 @@ public static class ArkadeCovenants
         ];
     }
 
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): the child asset GROUP (index childK, ALREADY on the stack from
+    /// the witness) has its first output at tx-output <paramref name="expectedVout"/>. Because
+    /// childK is the SAME group BreedAuthorized forces to be under-species + oracle-signed, this
+    /// binds the REAL child's output — no need for its (tx-derived) asset id. 0xeb pops source,
+    /// j, k and (source=1) pushes (1, vout, amount); we drop the amount, verify vout, drop the
+    /// marker. Consumes the childK witness item. EXACT stack contract validated by CovenantChildAtOutputProbe.
+    /// </summary>
+    public static byte[] ChildAtOutput(int expectedVout) =>
+    [
+        .. PushScriptNum(0),               // j = 0 (the child group's first output)
+        .. PushScriptNum(1),               // source = 1 (outputs)
+        OpInspectAssetGroup,               // 0xeb → 1, vout, amount  (amount on top)
+        OpDrop,                            // drop amount → 1, vout
+        .. PushScriptNum(expectedVout),    // expected vout
+        OpEqualVerify,                     // vout == expectedVout → leaves the source-marker 1
+        OpDrop,                            // drop the marker → clean
+    ];
+
     private const byte OpSha256 = 0xa8;
 
     /// <summary>
@@ -292,6 +311,7 @@ public static class ArkadeCovenants
     private const byte OpDrop = 0x75;
     private const byte OpInspectAssetGroupCtrl = 0xe7;
     private const byte OpInspectAssetGroupMetadataHash = 0xe9;
+    private const byte OpInspectAssetGroup = 0xeb;      // source j k → (source=1: 1, vout, amount)
     private const byte OpInspectInAssetLookup = 0xf2;
     private const byte OpInspectOutAssetCount = 0xed;   // o → n (asset entries at output o)
     private const byte OpInspectOutAssetLookup = 0xef;  // o txid gidx → (amount, flag); flag 1 found / 0 absent
