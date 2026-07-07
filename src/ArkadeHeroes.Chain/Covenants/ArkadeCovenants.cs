@@ -57,13 +57,15 @@ public static class ArkadeCovenants
     }
 
     /// <summary>
-    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/> (amount 1) sits at output
-    /// <paramref name="outputIndex"/> AND that output pays <paramref name="script"/> (P2TR).
-    /// Baked output index (not witness-supplied) — no witness freedom. Mirrors the breed
-    /// 0xf2 lookup + PayTo's 0xd1 output-script check. Consumes NO witness (all baked).
+    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/> (amount <paramref name="amount"/>,
+    /// default 1) sits at output <paramref name="outputIndex"/> AND that output pays
+    /// <paramref name="script"/> (P2TR). Baked output index (not witness-supplied) — no witness
+    /// freedom. Mirrors the breed 0xf2 lookup + PayTo's 0xd1 output-script check. Consumes NO
+    /// witness (all baked). At amount 1 the script is BYTE-IDENTICAL to the pre-amount version
+    /// (PushScriptNum(1) == OP_1), so shipped covenant addresses are unchanged.
     /// EXACT stack contract validated by CovenantStructuralBurnProbe.
     /// </summary>
-    public static byte[] AssetAtOutput(int outputIndex, global::NArk.Core.Assets.AssetId asset, Script script)
+    public static byte[] AssetAtOutput(int outputIndex, global::NArk.Core.Assets.AssetId asset, Script script, int amount = 1)
     {
         var pkScript = script.ToBytes();
         if (pkScript.Length != 34 || pkScript[0] != 0x51 || pkScript[1] != 0x20)
@@ -71,14 +73,14 @@ public static class ArkadeCovenants
         var witnessProgram = pkScript[2..];
         return
         [
-            // the asset is present at output o with amount 1 (0xef → amount, flag).
+            // the asset is present at output o with the expected amount (0xef → amount, flag).
             // The output index is BAKED as a script constant — PushScriptNum, NOT
             // EncodeIndex (which emits an empty push for 0 / a bare scriptnum that
             // the parser misreads as a data-push opcode; EncodeIndex is for witness
             // items). Mirrors breed ParentPresent baking its gidx with PushScriptNum.
             .. PushScriptNum(outputIndex),
             32, .. asset.Txid.Reverse(), .. PushScriptNum(asset.GroupIndex),
-            OpInspectOutAssetLookup, OpVerify, Op1, OpEqualVerify88,
+            OpInspectOutAssetLookup, OpVerify, .. PushScriptNum(amount), OpEqualVerify88,
             // ...and output o pays `script` (P2TR: version 1 + the 32-byte program) — mirror PayTo
             .. PushScriptNum(outputIndex),
             OpInspectOutputScriptPubkey, Op1, OpEqualVerify,
