@@ -221,6 +221,18 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         // then submit the canonical refund exactly ONCE. Never submit early
         // and retry: each refusal would poison the canonical txid forever.
         await RegtestHelper.WaitForChainTimeAsync(refundAfter, TimeSpan.FromSeconds(120));
+
+        // THEFT: a post-expiry refund routing the stake to the DEFENDER (a thief —
+        // this refund leaf pays ONLY the challenger). RefundTo's baked script
+        // refuses at the EMULATOR (the failure never reaches arkd), and the
+        // outputs differ from the canonical refund's, so the canonical txid
+        // cannot be poisoned by this attempt.
+        var thiefScript = ArkAddress.Parse(_defender.Address).ScriptPubKey;
+        var theft = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, RefundInputs(refundAfter),
+            [new TxOut(Money.Satoshis(Stake), thiefScript)]));
+        Assert.Contains("Emulator rejected", theft.Message);
+
         var balanceBefore = await _challenger.GetBalanceSatsAsync();
         var refund = await CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, RefundInputs(refundAfter), refundOutputs);
