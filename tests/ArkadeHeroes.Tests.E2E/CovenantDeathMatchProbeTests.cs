@@ -87,6 +87,15 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
         return bytes;
     }
 
+    private static byte[] SignAbort(byte[] oraclePriv, string matchId, bool isChallenger)
+    {
+        var key = NBitcoin.Secp256k1.ECPrivKey.Create(oraclePriv);
+        var sig = key.SignBIP340(ArkadeCovenants.DeathMatchAbortMessage(matchId, isChallenger));
+        var bytes = new byte[64];
+        sig.WriteToSpan(bytes);
+        return bytes;
+    }
+
     [Fact]
     public async Task JointSettle_HonestCoSigned_AllCheatsRefused()
     {
@@ -271,5 +280,127 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
             _challenger, EmulatorUri, RefundInputs(refundAfter), HomeOutputs(), extraPackets: [RefundPacket()]);
         Assert.False(string.IsNullOrEmpty(refund.SignedArkTx), "the post-expiry refund must be emulator-co-signed");
         Assert.Equal(2, refund.SignedCheckpointTxs.Length);
+    }
+
+    [Fact]
+    public async Task JointAbort_HalfFundedHonestCoSigned_ForgeCrossTheftRefused()
+    {
+        var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        var dust = serverInfo.Dust.Satoshi;
+
+        // Challenger's hero (C) + one gear unit (G); defender's hero (D) is issued and
+        // staked ONLY to exercise the counterparty-hero theft-pin — the honest abort
+        // never touches it.
+        var assetManager = _challenger.GetService<IAssetManager>();
+        var c = await assetManager.IssueAsync(_challenger.WalletId, new IssuanceParams(Amount: 1));
+        var g = await assetManager.IssueAsync(_challenger.WalletId, new IssuanceParams(Amount: 1));
+        var d = await assetManager.IssueAsync(_challenger.WalletId, new IssuanceParams(Amount: 1));
+        await _challenger.WaitForAssetAsync(c.AssetId, TimeSpan.FromSeconds(30));
+        await _challenger.WaitForAssetAsync(g.AssetId, TimeSpan.FromSeconds(30));
+        await _challenger.WaitForAssetAsync(d.AssetId, TimeSpan.FromSeconds(30));
+        var cAsset = AssetId.FromString(c.AssetId);
+        var gAsset = AssetId.FromString(g.AssetId);
+        var dAsset = AssetId.FromString(d.AssetId);
+        var challengerScript = ArkAddress.Parse(_challenger.Address).ScriptPubKey;
+        var wrongScript = ArkAddress.Parse(_defender.Address).ScriptPubKey;
+
+        var serverSeed = CommitReveal.NewSeed();
+        var commitment = Convert.FromHexString(CommitReveal.Commit(serverSeed));
+        var (oraclePriv, oraclePk) = NewOracle();
+        const string matchId = "e2e-dm-probe-abort";
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+
+        var parameters = new DeathMatchJointEscrowParams(
+            _challenger.Address, c.AssetId, _defender.Address, d.AssetId,
+            Convert.ToHexString(commitment).ToLowerInvariant(), Convert.ToHexString(oraclePk).ToLowerInvariant(),
+            matchId, dust, refundAfter,
+            ChallengerGear: [new GearStake(g.AssetId, 1)], DefenderGear: []);
+        var contract = DeathMatchEscrowContracts.BuildJoint(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        var contractAddr = contract.GetArkAddress().ToString(isMain);
+
+        // Stake C + G (challenger's real stake) AND D (to exercise the theft-pin).
+        await _challenger.SendAssetAsync(contractAddr, c.AssetId, 1);
+        await _challenger.SendAssetAsync(contractAddr, g.AssetId, 1);
+        await _challenger.SendAssetAsync(contractAddr, d.AssetId, 1);
+        var vtxos = await CovenantSpender.WaitForVtxosAsync(_challenger, contract, 3, TimeSpan.FromSeconds(60));
+        var cVtxo = vtxos.First(v => v.Assets!.Any(a => a.AssetId == c.AssetId));
+        var gVtxo = vtxos.First(v => v.Assets!.Any(a => a.AssetId == g.AssetId));
+        var dVtxo = vtxos.First(v => v.Assets!.Any(a => a.AssetId == d.AssetId));
+
+        // Honest abort spends the challenger's carriers ONLY (C vin0, G vin1) → output 0.
+        CovenantSpender.CovenantInput[] MyInputs(byte[] sig) =>
+        [
+            new(contract, "abortChallenger", [sig], cVtxo),
+            new(contract, "abortChallenger", [sig], gVtxo),
+        ];
+        Packet MyPacket() => Packet.Create(
+        [
+            AssetGroup.Create(cAsset, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
+            AssetGroup.Create(gAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
+        ]);
+        var honestSig = SignAbort(oraclePriv, matchId, isChallenger: true);
+        var myTotal = (long)cVtxo.Amount + (long)gVtxo.Amount;
+
+        // ── Cheat: FORGED oracle signature → CSFS refuses.
+        var (forgerPriv, _) = NewOracle();
+        var forged = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, MyInputs(SignAbort(forgerPriv, matchId, true)),
+            [new TxOut(Money.Satoshis(myTotal), challengerScript)], extraPackets: [MyPacket()]));
+        Assert.Contains("Emulator rejected", forged.Message);
+
+        // ── Cheat: CROSS-SIDE replay — the DEFENDER abort message can't authorize abortChallenger.
+        var crossSide = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, MyInputs(SignAbort(oraclePriv, matchId, isChallenger: false)),
+            [new TxOut(Money.Satoshis(myTotal), challengerScript)], extraPackets: [MyPacket()]));
+        Assert.Contains("Emulator rejected", crossSide.Message);
+
+        // ── Cheat: route MY hero to the WRONG script → AssetAtOutput(0, C, challengerScript) refuses.
+        var wrongDest = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, MyInputs(honestSig),
+            [new TxOut(Money.Satoshis(myTotal), wrongScript)], extraPackets: [MyPacket()]));
+        Assert.Contains("Emulator rejected", wrongDest.Message);
+
+        // ── Cheat: THEFT — pull in the DEFENDER's carrier and route D to MY output 0.
+        //    AssetBurned(defenderHero) refuses (D present at output 0).
+        CovenantSpender.CovenantInput[] TheftInputs() =>
+        [
+            new(contract, "abortChallenger", [honestSig], cVtxo),
+            new(contract, "abortChallenger", [honestSig], gVtxo),
+            new(contract, "abortChallenger", [honestSig], dVtxo),
+        ];
+        var theftToMe = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, TheftInputs(),
+            [new TxOut(Money.Satoshis(myTotal + (long)dVtxo.Amount), challengerScript)],
+            extraPackets: [Packet.Create(
+            [
+                AssetGroup.Create(cAsset, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(gAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(dAsset, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(0, 1)], []),
+            ])]));
+        Assert.Contains("Emulator rejected", theftToMe.Message);
+
+        // ── Cheat: THEFT to a SECOND output — route D to output 1. AssetBurned sweeps outputs
+        //    0..3, so D at output 1 is still refused.
+        var theftToOut1 = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, TheftInputs(),
+            [new TxOut(Money.Satoshis(myTotal), challengerScript),
+             new TxOut(Money.Satoshis((long)dVtxo.Amount), challengerScript)],
+            extraPackets: [Packet.Create(
+            [
+                AssetGroup.Create(cAsset, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(gAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
+                AssetGroup.Create(dAsset, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(1, 1)], []),
+            ])]));
+        Assert.Contains("Emulator rejected", theftToOut1.Message);
+
+        // ── Honest half-funded abort: challenger's hero + gear → output 0, co-signed.
+        var response = await CovenantSpender.SpendManyAsync(
+            _challenger, EmulatorUri, MyInputs(honestSig),
+            [new TxOut(Money.Satoshis(myTotal), challengerScript)], extraPackets: [MyPacket()]);
+        Assert.False(string.IsNullOrEmpty(response.SignedArkTx), "the honest half-funded abort must be emulator-co-signed");
+        Assert.Equal(2, response.SignedCheckpointTxs.Length);
     }
 }
