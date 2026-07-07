@@ -431,10 +431,13 @@ public class InMemoryChainService : IChainService
     private sealed record DeathMatchJointEscrow(
         string ChallengerPlayerId, string ChallengerHeroAssetId,
         string DefenderPlayerId, string DefenderHeroAssetId,
-        string CommitmentHex, string OraclePkHex, long RefundAfterUnixSeconds)
+        string CommitmentHex, string OraclePkHex, long RefundAfterUnixSeconds,
+        IReadOnlyList<string> ChallengerGearItemIds, IReadOnlyList<string> DefenderGearItemIds)
     {
         public bool ChallengerFunded;
         public bool DefenderFunded;
+        /// <summary>itemId → units held IN the escrow (moved out of the staker's holdings at fund time — a staked unit cannot be sold).</summary>
+        public readonly Dictionary<string, ulong> StakedGear = new(StringComparer.Ordinal);
     }
 
     private readonly ConcurrentDictionary<string, DeathMatchJointEscrow> _deathMatchEscrows = new();
@@ -443,30 +446,43 @@ public class InMemoryChainService : IChainService
     public async Task<string> CreateDeathMatchJointEscrowAsync(
         string deathMatchId, string challengerPlayerId, string challengerHeroAssetId,
         string defenderPlayerId, string defenderHeroAssetId,
-        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
+        IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        CancellationToken ct = default)
     {
         await GetPlayerAddressAsync(challengerPlayerId, ct);
         _deathMatchEscrows[deathMatchId] = new DeathMatchJointEscrow(
             challengerPlayerId, challengerHeroAssetId, defenderPlayerId, defenderHeroAssetId,
-            Convert.ToHexString(seedCommitment32).ToLowerInvariant(), oraclePubKeyHex, refundAfterUnixSeconds);
+            Convert.ToHexString(seedCommitment32).ToLowerInvariant(), oraclePubKeyHex, refundAfterUnixSeconds,
+            challengerGearItemIds ?? [], defenderGearItemIds ?? []);
         return $"sim-dm-escrow-{deathMatchId}";
     }
 
     public Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default)
         => Task.FromResult(_deathMatchEscrows.TryGetValue(deathMatchId, out var e) && e.ChallengerFunded && e.DefenderFunded);
 
-    /// <summary>Simulated client-wallet stake of the staker's hero into the ONE joint death-match escrow (role selects which party stakes).</summary>
+    /// <summary>Simulated client-wallet stake of the staker's hero AND their baked gear units into the ONE joint death-match escrow (role selects which party stakes). Gear units move OUT of the player's holdings into the escrow — a staked unit cannot be sold.</summary>
     public void FundDeathMatchEscrowFromPlayer(string playerId, string deathMatchId, string role)
     {
         if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var escrow))
             throw new InvalidOperationException($"Unknown death-match escrow {deathMatchId}.");
-        var (party, heroAsset) = role == "challenger"
-            ? (escrow.ChallengerPlayerId, escrow.ChallengerHeroAssetId)
-            : (escrow.DefenderPlayerId, escrow.DefenderHeroAssetId);
+        var (party, heroAsset, gearItemIds) = role == "challenger"
+            ? (escrow.ChallengerPlayerId, escrow.ChallengerHeroAssetId, escrow.ChallengerGearItemIds)
+            : (escrow.DefenderPlayerId, escrow.DefenderHeroAssetId, escrow.DefenderGearItemIds);
         if (party != playerId)
             throw new InvalidOperationException("Not the staking player.");
         if (_assetHolders.GetValueOrDefault(heroAsset) != playerId)
             throw new InvalidOperationException("The player does not hold the staked hero.");
+        foreach (var itemId in gearItemIds)
+        {
+            if (_itemHoldings.GetValueOrDefault((playerId, itemId)) < 1)
+                throw new InvalidOperationException($"The player does not hold a free unit of '{itemId}' to stake.");
+        }
+        foreach (var itemId in gearItemIds)
+        {
+            _itemHoldings.AddOrUpdate((playerId, itemId), _ => throw new InvalidOperationException("Race: unit vanished."), (_, count) => count - 1);
+            escrow.StakedGear[itemId] = escrow.StakedGear.GetValueOrDefault(itemId) + 1;
+        }
         if (role == "challenger") escrow.ChallengerFunded = true; else escrow.DefenderFunded = true;
     }
 
@@ -494,6 +510,11 @@ public class InMemoryChainService : IChainService
         // The LOSER's hero is BURNED (removed); the winner's hero stays the winner's.
         var loserHeroAsset = challengerWon ? escrow.DefenderHeroAssetId : escrow.ChallengerHeroAssetId;
         _assetHolders.TryRemove(loserHeroAsset, out _);
+        // ALL staked gear (both sides') goes to the winner — the covenant's routing.
+        var winnerPlayerId = challengerWon ? escrow.ChallengerPlayerId : escrow.DefenderPlayerId;
+        foreach (var (itemId, units) in escrow.StakedGear)
+            _itemHoldings.AddOrUpdate((winnerPlayerId, itemId), units, (_, count) => count + units);
+        escrow.StakedGear.Clear();
         return Task.FromResult(NewId("sim-dm-settle"));
     }
 
@@ -501,10 +522,15 @@ public class InMemoryChainService : IChainService
     {
         if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var e))
             return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(null);
+        static IReadOnlyList<Covenants.GearStake> ToStakes(IReadOnlyList<string> itemIds) => itemIds
+            .GroupBy(id => id, StringComparer.Ordinal)
+            .Select(g => new Covenants.GearStake(g.Key, g.Count())) // sim asset id == item id
+            .ToList();
         return Task.FromResult<Covenants.DeathMatchJointEscrowParams?>(new Covenants.DeathMatchJointEscrowParams(
             $"sim-player-{e.ChallengerPlayerId}", e.ChallengerHeroAssetId,
             $"sim-player-{e.DefenderPlayerId}", e.DefenderHeroAssetId,
-            e.CommitmentHex, e.OraclePkHex, deathMatchId, 330, e.RefundAfterUnixSeconds));
+            e.CommitmentHex, e.OraclePkHex, deathMatchId, 330, e.RefundAfterUnixSeconds,
+            ChallengerGear: ToStakes(e.ChallengerGearItemIds), DefenderGear: ToStakes(e.DefenderGearItemIds)));
     }
 
     // ── Covenant offers (simulated) — fungible items and unique heroes ──

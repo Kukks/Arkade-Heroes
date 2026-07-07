@@ -14,6 +14,9 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// Persisted under <c>deathmatch-escrow:{id}</c> and served so either player can
 /// rebuild the contract and reclaim their OWN hero after expiry without the server.
 /// </summary>
+/// <summary>One staked gear position: an item ASSET id (chain-resolved) and how many units this side stakes (1 per equipped slot; the same fungible item on both sides aggregates at settle).</summary>
+public sealed record GearStake(string AssetId, int Amount);
+
 public sealed record DeathMatchJointEscrowParams(
     string ChallengerAddress,
     string ChallengerHeroAssetId,
@@ -23,7 +26,9 @@ public sealed record DeathMatchJointEscrowParams(
     string OraclePkHex,
     string DeathMatchId,
     long EscrowSats,
-    long RefundAfterUnixSeconds);
+    long RefundAfterUnixSeconds,
+    IReadOnlyList<GearStake>? ChallengerGear = null,
+    IReadOnlyList<GearStake>? DefenderGear = null);
 
 /// <summary>
 /// The canonical construction of the JOINT death-match escrow contract — shared by
@@ -63,37 +68,56 @@ public static class DeathMatchEscrowContracts
         var challengerHero = global::NArk.Core.Assets.AssetId.FromString(p.ChallengerHeroAssetId);
         var defenderHero = global::NArk.Core.Assets.AssetId.FromString(p.DefenderHeroAssetId);
 
+        // Staked gear: per-side lists baked at open. The settle checks use the MERGED
+        // per-asset totals (the same fungible item on both sides aggregates at the
+        // winner's output); the refund checks use the per-side amounts. Ordinal ordering
+        // everywhere — ADDRESS-CRITICAL (server + any client rebuild must agree).
+        var challengerGear = p.ChallengerGear ?? [];
+        var defenderGear = p.DefenderGear ?? [];
+        var mergedGear = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var g in challengerGear) mergedGear[g.AssetId] = mergedGear.GetValueOrDefault(g.AssetId) + g.Amount;
+        foreach (var g in defenderGear) mergedGear[g.AssetId] = mergedGear.GetValueOrDefault(g.AssetId) + g.Amount;
+
         // A settle branch: oracle-authorize THIS (match, winner) pair + reveal the
-        // committed seed, THEN structurally bind the outcome — winner's hero at the
-        // winner's output, loser's hero burned. Witness (bottom→top):
-        // [serverSeed, oracleSig] (both gates consume from the witness; the two
-        // structural checks are fully baked). Ends in OP_1 (exactly one truthy item).
+        // committed seed, THEN structurally bind the outcome — winner's hero AND all
+        // staked gear at the winner's output, loser's hero burned. Witness (bottom→top):
+        // [serverSeed, oracleSig] (both gates consume from the witness; every
+        // structural check is fully baked). Ends in OP_1 (exactly one truthy item).
         byte[] SettleBranch(bool challengerWon)
         {
             var winnerHero = challengerWon ? challengerHero : defenderHero;
             var winnerScript = challengerWon ? challengerScript : defenderScript;
             var loserHero = challengerWon ? defenderHero : challengerHero;
-            return
-            [
-                .. ArkadeCovenants.CheckSigFromStackGate(
-                    ArkadeCovenants.DeathMatchSettleMessage(p.DeathMatchId, challengerWon), oraclePk),
-                .. ArkadeCovenants.Sha256Gate(commitment),
-                .. ArkadeCovenants.AssetAtOutput(0, winnerHero, winnerScript),
-                .. ArkadeCovenants.AssetBurned(loserHero, SettleOutputSweep),
-                0x51, // OP_1 — leave EXACTLY one truthy stack item
-            ];
+            var s = new List<byte>();
+            s.AddRange(ArkadeCovenants.CheckSigFromStackGate(
+                ArkadeCovenants.DeathMatchSettleMessage(p.DeathMatchId, challengerWon), oraclePk));
+            s.AddRange(ArkadeCovenants.Sha256Gate(commitment));
+            s.AddRange(ArkadeCovenants.AssetAtOutput(0, winnerHero, winnerScript));
+            s.AddRange(ArkadeCovenants.AssetBurned(loserHero, SettleOutputSweep));
+            // ALL staked gear → the winner at output 0 (per-asset aggregated amounts).
+            foreach (var (gearId, total) in mergedGear)
+                s.AddRange(ArkadeCovenants.AssetAtOutput(
+                    0, global::NArk.Core.Assets.AssetId.FromString(gearId), winnerScript, total));
+            s.Add(0x51); // OP_1 — leave EXACTLY one truthy stack item
+            return [.. s];
         }
 
-        // Refund (timelocked): each hero routed home — challenger's → output 0
-        // paying the challenger, defender's → output 1 paying the defender. No
-        // oracle, no seed; fully baked (empty witness). Script-pinned destinations
-        // mean anyone may trigger it after expiry without being able to steal.
-        byte[] refund =
-        [
-            .. ArkadeCovenants.AssetAtOutput(0, challengerHero, challengerScript),
-            .. ArkadeCovenants.AssetAtOutput(1, defenderHero, defenderScript),
-            0x51, // OP_1
-        ];
+        // Refund (timelocked): each side's hero + OWN gear routed home — challenger's →
+        // output 0 paying the challenger, defender's → output 1 paying the defender
+        // (distinct owners; each side's assets share ONE output). No oracle, no seed;
+        // fully baked (empty witness). Script-pinned destinations mean anyone may
+        // trigger it after expiry without being able to steal.
+        var refundScript = new List<byte>();
+        refundScript.AddRange(ArkadeCovenants.AssetAtOutput(0, challengerHero, challengerScript));
+        foreach (var g in challengerGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
+            refundScript.AddRange(ArkadeCovenants.AssetAtOutput(
+                0, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), challengerScript, g.Amount));
+        refundScript.AddRange(ArkadeCovenants.AssetAtOutput(1, defenderHero, defenderScript));
+        foreach (var g in defenderGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
+            refundScript.AddRange(ArkadeCovenants.AssetAtOutput(
+                1, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), defenderScript, g.Amount));
+        refundScript.Add(0x51); // OP_1
+        byte[] refund = [.. refundScript];
 
         var refundLockTime = new LockTime((uint)p.RefundAfterUnixSeconds);
         return new ArkadeArtifactContract(

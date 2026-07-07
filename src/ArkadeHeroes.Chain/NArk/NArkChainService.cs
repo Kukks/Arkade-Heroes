@@ -863,16 +863,37 @@ public class NArkChainService(
     public async Task<string> CreateDeathMatchJointEscrowAsync(
         string deathMatchId, string challengerPlayerId, string challengerHeroAssetId,
         string defenderPlayerId, string defenderHeroAssetId,
-        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default)
+        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
+        IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var challengerAddress = await GetPlayerAddressAsync(challengerPlayerId, ct);
         var defenderAddress = await GetPlayerAddressAsync(defenderPlayerId, ct);
+
+        // Resolve each side's loadout item ids to chain asset stakes (grouped per asset —
+        // a loadout is slot-unique, so per-side amounts are 1 today; grouping is defensive).
+        async Task<IReadOnlyList<Covenants.GearStake>> ResolveGearAsync(IReadOnlyList<string>? itemIds)
+        {
+            if (itemIds is not { Count: > 0 }) return [];
+            var stakes = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var itemId in itemIds)
+            {
+                var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
+                    ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — cannot stake it in a death-match.");
+                stakes[assetId] = stakes.GetValueOrDefault(assetId) + 1;
+            }
+            return stakes.Select(kv => new Covenants.GearStake(kv.Key, kv.Value)).ToList();
+        }
+        var challengerGear = await ResolveGearAsync(challengerGearItemIds);
+        var defenderGear = await ResolveGearAsync(defenderGearItemIds);
+
         var parameters = new Covenants.DeathMatchJointEscrowParams(
             challengerAddress, challengerHeroAssetId, defenderAddress, defenderHeroAssetId,
             Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
-            oraclePubKeyHex, deathMatchId, serverInfo.Dust.Satoshi, refundAfterUnixSeconds);
+            oraclePubKeyHex, deathMatchId, serverInfo.Dust.Satoshi, refundAfterUnixSeconds,
+            ChallengerGear: challengerGear, DefenderGear: defenderGear);
         await SetKvAsync($"deathmatch-escrow:{deathMatchId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
         var (contract, _) = await BuildDeathMatchContractAsync(parameters, ct);
@@ -903,13 +924,25 @@ public class NArkChainService(
         return await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct);
     }
 
+    /// <summary>Per-asset totals across both sides' staked gear (the settle's aggregated view).</summary>
+    private static SortedDictionary<string, int> MergedGear(Covenants.DeathMatchJointEscrowParams parameters)
+    {
+        var merged = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var g in parameters.ChallengerGear ?? []) merged[g.AssetId] = merged.GetValueOrDefault(g.AssetId) + g.Amount;
+        foreach (var g in parameters.DefenderGear ?? []) merged[g.AssetId] = merged.GetValueOrDefault(g.AssetId) + g.Amount;
+        return merged;
+    }
+
     public async Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default)
     {
         var parameters = await RequireDeathMatchParamsAsync(deathMatchId, ct);
         var vtxos = await DeathMatchVtxosAsync(parameters, ct);
         var hasChallenger = vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.ChallengerHeroAssetId) == true);
         var hasDefender = vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.DefenderHeroAssetId) == true);
-        return hasChallenger && hasDefender;
+        // Every baked gear asset must be present with its full (both-sides) amount.
+        var gearFunded = MergedGear(parameters).All(kv =>
+            vtxos.Sum(v => (long)(v.Assets?.Where(a => a.AssetId == kv.Key).Aggregate(0UL, (s, a) => s + a.Amount) ?? 0)) >= kv.Value);
+        return hasChallenger && hasDefender && gearFunded;
     }
 
     public async Task<string> SettleDeathMatchAsync(
@@ -934,27 +967,47 @@ public class NArkChainService(
         var winnerScript = ArkAddress.Parse(
             challengerWon ? parameters.ChallengerAddress : parameters.DefenderAddress).ScriptPubKey;
 
-        // Both heroes spent from the ONE joint escrow through the winning branch —
-        // winner's carrier vin 0, loser's vin 1. Witness = [serverSeed, oracleSig]
-        // (the branch's structural checks are fully baked — no index/sweep args).
-        Covenants.CovenantSpender.CovenantInput[] inputs =
-        [
-            new(contract, branch, [serverSeed, oracleSignature64], winnerVtxo),
-            new(contract, branch, [serverSeed, oracleSignature64], loserVtxo),
-        ];
+        // ALL carriers spent from the ONE joint escrow through the winning branch —
+        // winner's hero vin 0, loser's vin 1, then every gear carrier (deterministic
+        // order). Witness = [serverSeed, oracleSig] on every input (the branch's
+        // structural checks are fully baked — no index/sweep args).
+        var gearCarriers = vtxos
+            .Where(v => v.Assets is { Count: > 0 } && v.OutPoint != challengerVtxo.OutPoint && v.OutPoint != defenderVtxo.OutPoint)
+            .OrderBy(v => v.OutPoint.ToString(), StringComparer.Ordinal)
+            .ToList();
+        var orderedVtxos = new List<ArkVtxo> { winnerVtxo, loserVtxo };
+        orderedVtxos.AddRange(gearCarriers);
+        var inputs = orderedVtxos
+            .Select(v => new Covenants.CovenantSpender.CovenantInput(contract, branch, [serverSeed, oracleSignature64], v))
+            .ToArray();
 
         // Packet: the winner's hero → the winner (passthrough vin 0 → output 0); the LOSER's
-        // hero → BURNED (declared as input vin 1 with an EMPTY output list — arkd destroys it).
+        // hero → BURNED (declared as input vin 1 with an EMPTY output list — arkd destroys it);
+        // every staked gear asset → the winner at output 0 (per-asset aggregated amounts).
         // The branch's AssetAtOutput/AssetBurned checks make this the ONLY packet it will sign.
+        var gearGroups = new List<global::NArk.Core.Assets.AssetGroup>();
+        foreach (var (gearId, totalUnits) in MergedGear(parameters))
+        {
+            var gearInputs = new List<global::NArk.Core.Assets.AssetInput>();
+            for (var vin = 0; vin < orderedVtxos.Count; vin++)
+            {
+                var amt = orderedVtxos[vin].Assets?.Where(a => a.AssetId == gearId).Aggregate(0UL, (s, a) => s + a.Amount) ?? 0;
+                if (amt > 0) gearInputs.Add(global::NArk.Core.Assets.AssetInput.Create((ushort)vin, amt));
+            }
+            gearGroups.Add(global::NArk.Core.Assets.AssetGroup.Create(
+                global::NArk.Core.Assets.AssetId.FromString(gearId), null, gearInputs,
+                [global::NArk.Core.Assets.AssetOutput.Create(0, (ulong)totalUnits)], []));
+        }
         var packet = global::NArk.Core.Assets.Packet.Create(
         [
             global::NArk.Core.Assets.AssetGroup.Create(winnerHeroAsset, null,
                 [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], []),
             global::NArk.Core.Assets.AssetGroup.Create(loserHeroAsset, null,
                 [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [], []),      // burned: input, no output
+            .. gearGroups,
         ]);
 
-        var total = (long)winnerVtxo.Amount + (long)loserVtxo.Amount;
+        var total = orderedVtxos.Sum(v => (long)v.Amount);
         var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
             transport, safetyService, walletProvider, intentStorage,
             _treasuryWalletId!, new Uri(options.EmulatorUri), inputs,

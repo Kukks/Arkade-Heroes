@@ -211,14 +211,19 @@ public interface IChainService
     /// <summary>
     /// Builds the ONE JOINT death-match escrow (both parties baked at open — the
     /// defender is the challenged hero's owner) and returns the single address BOTH
-    /// players stake their hero into. The settle branch STRUCTURALLY enforces the
-    /// asset consequences (winner's hero to the winner, loser's hero burned); the
-    /// oracle attests only the winning branch. Consent = staking into this address.
+    /// players stake their hero into. Optional per-side gear ITEM ids (each side's
+    /// loadout-at-open) are chain-resolved to asset stakes and baked too: the settle
+    /// branch STRUCTURALLY enforces the asset consequences (winner's hero AND all
+    /// staked gear to the winner, loser's hero burned); the refund routes each side's
+    /// hero + own gear home. The oracle attests only the winning branch. Consent =
+    /// staking into this address.
     /// </summary>
     Task<string> CreateDeathMatchJointEscrowAsync(
         string deathMatchId, string challengerPlayerId, string challengerHeroAssetId,
         string defenderPlayerId, string defenderHeroAssetId,
-        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default);
+        byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
+        IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        CancellationToken ct = default);
 
     /// <summary>True once BOTH heroes sit at the one joint death-match escrow.</summary>
     Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default);
