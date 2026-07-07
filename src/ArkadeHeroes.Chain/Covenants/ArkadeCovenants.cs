@@ -271,6 +271,12 @@ public static class ArkadeCovenants
             System.Text.Encoding.UTF8.GetBytes(
                 $"arkade-heroes-deathmatch-v1|{deathMatchId}|{(challengerWon ? "challenger" : "defender")}"));
 
+    /// <summary>The death-match ABORT message the oracle signs to unwind ONE side's stake when the match never fully funded (the opponent never staked) — a DISTINCT tag from the settle message (no cross-purpose replay). Byte-identical in the server signer and the covenant leaf.</summary>
+    public static byte[] DeathMatchAbortMessage(string deathMatchId, bool isChallenger)
+        => System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"arkade-heroes-dm-abort-v1|{deathMatchId}|{(isChallenger ? "challenger" : "defender")}"));
+
     /// <summary>
     /// The full oracle-authorized settle branch:
     /// oracle signature over THIS branch's message + revealed seed + atomic sweep.

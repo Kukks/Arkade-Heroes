@@ -102,6 +102,34 @@ public static class DeathMatchEscrowContracts
             return [.. s];
         }
 
+        // An abort branch (covenant-v2 liveness): the oracle authorizes unwinding ONE
+        // side's stake when the match never fully funded. My hero + my gear → MY output 0
+        // (script-pinned); NOT timelocked (immediate — no wait when the opponent never
+        // showed). The counterparty's hero is pinned ABSENT from every swept output
+        // (AssetBurned), so even if a counterparty carrier races into the escrow between
+        // the server's sign and this submit, the abort can never ROUTE it to me — theft is
+        // structurally impossible (at worst a griefing burn, needing the counterparty's own
+        // irrational deposit). The server only ever signs an abort for a NOT-fully-funded
+        // escrow, so in the normal case there is no counterparty carrier at all.
+        // Witness (bottom→top): [oracleSig]. Ends in OP_1 (exactly one truthy item).
+        byte[] AbortBranch(bool abortChallenger)
+        {
+            var myHero = abortChallenger ? challengerHero : defenderHero;
+            var myScript = abortChallenger ? challengerScript : defenderScript;
+            var myGear = abortChallenger ? challengerGear : defenderGear;
+            var counterpartyHero = abortChallenger ? defenderHero : challengerHero;
+            var s = new List<byte>();
+            s.AddRange(ArkadeCovenants.CheckSigFromStackGate(
+                ArkadeCovenants.DeathMatchAbortMessage(p.DeathMatchId, abortChallenger), oraclePk));
+            s.AddRange(ArkadeCovenants.AssetAtOutput(0, myHero, myScript));
+            foreach (var g in myGear.OrderBy(g => g.AssetId, StringComparer.Ordinal))
+                s.AddRange(ArkadeCovenants.AssetAtOutput(
+                    0, global::NArk.Core.Assets.AssetId.FromString(g.AssetId), myScript, g.Amount));
+            s.AddRange(ArkadeCovenants.AssetBurned(counterpartyHero, SettleOutputSweep));
+            s.Add(0x51); // OP_1
+            return [.. s];
+        }
+
         // Refund (timelocked): each side's hero + OWN gear routed home — challenger's →
         // output 0 paying the challenger, defender's → output 1 paying the defender
         // (distinct owners; each side's assets share ONE output). No oracle, no seed;
@@ -126,6 +154,8 @@ public static class DeathMatchEscrowContracts
                 new("settleToChallenger", SettleBranch(challengerWon: true)),
                 new("settleToDefender", SettleBranch(challengerWon: false)),
                 new("refund", refund, refundLockTime),
+                new("abortChallenger", AbortBranch(abortChallenger: true)),
+                new("abortDefender", AbortBranch(abortChallenger: false)),
             ]);
     }
 }
