@@ -66,7 +66,10 @@ public static class OfferFulfillFlow
 
         return await CovenantSpender.SpendManyAsync(
             buyer, emulatorUri,
-            [new CovenantSpender.CovenantInput(contract, "fulfill", [ArkadeCovenants.EncodeIndex(0)], offerVtxo)],
+            // Witness (bottom→top): [itemOutIdx=1, payToOutIdx=0] — the item rides the
+            // buyer's output 1; the seller is paid at output 0 (PayTo consumes the top).
+            [new CovenantSpender.CovenantInput(contract, "fulfill",
+                [ArkadeCovenants.EncodeIndex(1), ArkadeCovenants.EncodeIndex(0)], offerVtxo)],
             [
                 new TxOut(Money.Satoshis(offer.AskSats), sellerScript),  // seller paid (vout 0)
                 new TxOut(Money.Satoshis(buyerChange), buyerScript),     // item carrier + change (vout 1)

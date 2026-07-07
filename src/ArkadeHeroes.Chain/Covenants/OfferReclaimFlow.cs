@@ -15,8 +15,9 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// reclaim tx is deterministic, and arkd permanently poisons a txid's event
 /// stream on ANY refused submission, so this flow refuses to submit until the
 /// chain's median-time-past has reached the expiry and never retries itself.
-/// Trustless: the contract is rebuilt locally, and the reclaim leaf can only pay
-/// the seller's own address — a lying server can make this fail, never steal.
+/// Trustless: the contract is rebuilt locally, and the reclaim leaf script-pins
+/// BOTH the item and its carrier output to the seller's own address (covenant-v2
+/// AssetAtOutput) — a lying server can make this fail, never steal.
 /// </summary>
 public static class OfferReclaimFlow
 {
@@ -71,8 +72,10 @@ public static class OfferReclaimFlow
         return await CovenantSpender.SpendManyAsync(
             seller, emulatorUri,
             [
+                // The covenant-v2 reclaim leaf is fully baked (AssetAtOutput: item → output 0
+                // paying the seller, script-pinned) — EMPTY witness.
                 new CovenantSpender.CovenantInput(
-                    contract, "reclaim", [ArkadeCovenants.EncodeIndex(0)], offerVtxo,
+                    contract, "reclaim", [], offerVtxo,
                     LockTime: new LockTime((uint)offer.RefundAfterUnixSeconds)),
             ],
             [new TxOut(Money.Satoshis(offer.OfferValueSats), sellerScript)],

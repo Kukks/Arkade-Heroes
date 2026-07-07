@@ -28,22 +28,41 @@ public sealed record OfferParams(
 public static class OfferContracts
 {
     /// <summary>
-    /// The offer covenant: a <c>fulfill</c> leaf that lets anyone spend the
-    /// offer VTXO ONLY if they pay the seller exactly the ask in the same tx
-    /// (banco's non-interactive-swap shape — the emulator refuses underpayment),
-    /// and a timelocked <c>reclaim</c> leaf paying the offer value back to the
-    /// seller so an unsold offer is recoverable (task 17/18 refund machinery).
+    /// The offer covenant (covenant-v2, FULLY structural — no oracle): a <c>fulfill</c> leaf
+    /// that lets anyone spend the offer VTXO ONLY if they pay the seller exactly the ask AND
+    /// the item is CONSERVED — present (amount 1) at a witness-supplied output (the `.ark`
+    /// spec's <c>tx.outputs[i].assets.lookup == 1</c> intent; the fulfiller routes it to
+    /// themselves out of self-interest, the covenant forbids destruction) — and a timelocked
+    /// <c>reclaim</c> leaf that routes the ITEM home to the SELLER at output 0, script-pinned
+    /// (closing the theft where anyone post-expiry paid the seller dust while the packet
+    /// routed the item to themselves).
     /// </summary>
     public static ArkadeArtifactContract Build(
         OfferParams parameters, OutputDescriptor operatorKey, string emulatorSignerKeyHex)
     {
         var sellerScript = ArkAddress.Parse(parameters.SellerAddress).ScriptPubKey;
+        var item = global::NArk.Core.Assets.AssetId.FromString(parameters.ItemAssetId);
         var refundLockTime = new LockTime((uint)parameters.RefundAfterUnixSeconds);
         return new ArkadeArtifactContract(
             "item-offer", operatorKey, emulatorSignerKeyHex,
             [
-                new("fulfill", ArkadeCovenants.PayTo(sellerScript, parameters.AskSats)),
-                new("reclaim", ArkadeCovenants.RefundTo(sellerScript, parameters.OfferValueSats), refundLockTime),
+                // Witness (bottom→top): [itemOutIdx, payToOutIdx] — PayTo's leading DUP
+                // consumes the top; AssetAtWitnessOutput consumes the item index beneath.
+                new("fulfill",
+                    [
+                        .. ArkadeCovenants.PayTo(sellerScript, parameters.AskSats),
+                        0x69, // OP_VERIFY — PayTo ends in EQUAL
+                        .. ArkadeCovenants.AssetAtWitnessOutput(item),
+                        0x51, // OP_1 — leave exactly one truthy item
+                    ]),
+                // Fully baked (empty witness); the carrier dust rides the output (not
+                // separately pinned — the merge/breed refund precedent, dust-floor bounded).
+                new("reclaim",
+                    [
+                        .. ArkadeCovenants.AssetAtOutput(0, item, sellerScript),
+                        0x51, // OP_1
+                    ],
+                    refundLockTime),
             ]);
     }
 }
