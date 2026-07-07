@@ -467,6 +467,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         return Results.Ok(new { refunded = true });
     });
 
+    dev.MapPost("/refund-breed", (RefundBreedDevRequest request, HttpContext http, GameService game, IChainService chain) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        try { ((InMemoryChainService)chain).RefundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
+        catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
+        return Results.Ok(new { refunded = true });
+    });
+
     dev.MapPost("/reclaim-deathmatch", (ReclaimDeathMatchDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
@@ -542,6 +550,9 @@ public record RefundEscrowDevRequest(string MatchId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of both parents + fee into a breed escrow.</summary>
 public record FundBreedEscrowDevRequest(string BreedingId);
+
+/// <summary>Dev-only (InMemory mode): simulated client-wallet timelocked breed refund reclaim.</summary>
+public record RefundBreedDevRequest(string BreedingId);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet deposit of base + sacrifice + fee into the merge escrow.</summary>
 public record FundMergeEscrowDevRequest(string MergeId);

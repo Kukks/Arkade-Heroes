@@ -310,6 +310,24 @@ public class InMemoryChainService : IChainService
         escrow.Funded = true;
     }
 
+    /// <summary>Simulated timelocked breed refund: both parents were never moved out of the player's holdings, so this only returns the fee and clears the funded flag — gated after expiry, never after execution.</summary>
+    public void RefundBreedEscrowFromPlayer(string playerId, string breedingId)
+    {
+        if (!_breedEscrows.TryGetValue(breedingId, out var escrow))
+            throw new InvalidOperationException($"Unknown breed escrow {breedingId}.");
+        if (escrow.PlayerId != playerId)
+            throw new InvalidOperationException("Not the breeding player.");
+        if (escrow.Executed)
+            throw new InvalidOperationException("Breeding already executed — nothing to refund.");
+        if (!escrow.Funded)
+            throw new InvalidOperationException("Nothing deposited to refund.");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (now < escrow.RefundAfterUnixSeconds)
+            throw new InvalidOperationException($"Refund locked until {escrow.RefundAfterUnixSeconds} (chain time {now}).");
+        escrow.Funded = false;
+        _playerBalances.AddOrUpdate(playerId, escrow.FeeSats, (_, b) => b + escrow.FeeSats);
+    }
+
     public async Task<HeroMintResult> ExecuteBreedCovenantAsync(
         string breedingId, HeroMintData childData, byte[] oracleSignature64, CancellationToken ct = default)
     {
