@@ -112,6 +112,36 @@ public static class ArkadeCovenants
     }
 
     /// <summary>
+    /// STRUCTURAL (covenant-v2): the spending tx's asset packet has EXACTLY <paramref name="n"/>
+    /// asset groups (0xe5). Used by the death-match reclaim to forbid any counterparty-EXCLUSIVE
+    /// asset (their hero, their exclusive gear) — each would be an extra group. Consumes NO witness.
+    /// EXACT stack contract validated by CovenantAssetGroupProbe.
+    /// </summary>
+    public static byte[] NumAssetGroupsIs(int n) =>
+    [
+        OpInspectNumAssetGroups,
+        .. PushScriptNum(n),
+        OpEqualVerify88,
+    ];
+
+    /// <summary>
+    /// STRUCTURAL (covenant-v2): the <paramref name="asset"/>'s group is present in the packet AND
+    /// its INPUT sum equals <paramref name="amount"/> (0xe8 find → k, then 0xec source=0 → inSum).
+    /// Binds a SHARED fungible-gear group to my own staked units — the counterparty's units would
+    /// push the input sum over <paramref name="amount"/> and be refused. Baked canonical id (reversed
+    /// txid). Consumes NO witness. EXACT stack contract (incl. the BigNum-vs-scriptnum comparison)
+    /// validated by CovenantAssetGroupProbe.
+    /// </summary>
+    public static byte[] AssetInputSumIs(global::NArk.Core.Assets.AssetId asset, int amount) =>
+    [
+        32, .. asset.Txid.Reverse(), .. PushScriptNum(asset.GroupIndex),
+        OpFindAssetGroupByAssetId, OpVerify,   // → k, 1; VERIFY found → leaves k
+        .. PushScriptNum(0),                   // source = 0 (input)
+        OpInspectAssetGroupSum,                // pops source, k → pushes inSum (BigNum)
+        .. PushScriptNum(amount), OpEqualVerify88,
+    ];
+
+    /// <summary>
     /// STRUCTURAL (covenant-v2): output 0 carries EXACTLY ONE asset (0xed count == 1)
     /// AND pays <paramref name="playerP2tr"/> (0xd1 output-script). Used with AssetBurned
     /// on the inputs + the species-pin: when every input asset is burned and the fee is
@@ -338,6 +368,9 @@ public static class ArkadeCovenants
     private const byte OpInspectAssetGroupCtrl = 0xe7;
     private const byte OpInspectAssetGroupMetadataHash = 0xe9;
     private const byte OpInspectAssetGroup = 0xeb;      // source j k → (source=1: 1, vout, amount)
+    private const byte OpInspectNumAssetGroups = 0xe5;  // — → group count
+    private const byte OpFindAssetGroupByAssetId = 0xe8; // asset_txid asset_gidx → k, 1 (found) / 0, 0 (absent)
+    private const byte OpInspectAssetGroupSum = 0xec;   // k source → sum(s) BigNum (source 0=in, 1=out, 2=both)
     private const byte OpInspectInAssetLookup = 0xf2;
     private const byte OpInspectOutAssetCount = 0xed;   // o → n (asset entries at output o)
     private const byte OpInspectOutAssetLookup = 0xef;  // o txid gidx → (amount, flag); flag 1 found / 0 absent
