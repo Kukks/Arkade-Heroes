@@ -8,6 +8,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/ArkadeHeroes.Chain/ArkadeHeroes.Chain.csproj" />
+    <Project Path="src/ArkadeHeroes.Client.Sdk/ArkadeHeroes.Client.Sdk.csproj" />
     <Project Path="src/ArkadeHeroes.Client/ArkadeHeroes.Client.csproj" />
     <Project Path="src/ArkadeHeroes.Core/ArkadeHeroes.Core.csproj" />
     <Project Path="src/ArkadeHeroes.Server/ArkadeHeroes.Server.csproj" />
