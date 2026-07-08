@@ -1,8 +1,6 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -18,7 +16,6 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class ClientRefundFlowTests : IAsyncLifetime
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
     private static readonly Uri EmulatorUri = new("http://localhost:7073/");
     private const string EsploraApi = "http://localhost:8999/api/v1";
     private const long Wager = 4_000;
@@ -70,25 +67,11 @@ public class ClientRefundFlowTests : IAsyncLifetime
         });
     }
 
-    private async Task<HttpClient> RegisterAsync(string name, SelfCustodyWallet wallet)
+    private async Task<ArkadeHeroesClient> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
-        var client = _factory.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name, wallet.Address));
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
-        var player = JsonSerializer.Deserialize<PlayerDto>(body, Web)!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
+        await client.Players.RegisterAsync(new RegisterPlayerRequest(name, wallet.Address));
         return client;
-    }
-
-    private static async Task<T> PostOkAsync<T>(HttpClient client, string path, object? payload = null)
-    {
-        var response = payload is null
-            ? await client.PostAsync(path, null)
-            : await client.PostAsJsonAsync(path, payload);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"{path} failed: {body}");
-        return JsonSerializer.Deserialize<T>(body, Web)!;
     }
 
     [Fact]
@@ -101,7 +84,7 @@ public class ClientRefundFlowTests : IAsyncLifetime
         // is indexer-visible BEFORE the first mint (the claim flag is not
         // rolled back on a failed mint, so a premature attempt would strand
         // the player hero-less).
-        var bootInfo = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var bootInfo = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(bootInfo.TreasuryAddress, 200_000);
         var treasuryScript = global::NArk.Abstractions.ArkAddress.Parse(bootInfo.TreasuryAddress).ScriptPubKey.ToHex();
         var probeTransport = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
@@ -116,11 +99,11 @@ public class ClientRefundFlowTests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
-        var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
+        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
+        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
 
         // Covenant match; alice stakes into HER escrow; bob never accepts.
-        var open = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+        var open = await alice.Matches.OpenAsync(
             new OpenMatchRequest(aliceHeroes.Heroes[0].Id, bobHeroes.Heroes[0].Id, Wager, "covenant"));
         Assert.NotNull(open.EscrowAddress);
         await _alice.SendAsync(open.EscrowAddress!, Wager);
@@ -128,8 +111,7 @@ public class ClientRefundFlowTests : IAsyncLifetime
         // The client-side trustless rebuild: params from the server, contracts
         // reconstructed locally — the challenger address MUST equal what alice
         // just staked to, or the server lied about the covenant.
-        var parameters = (await alice.GetFromJsonAsync<WagerEscrowParams>(
-            $"/api/matches/{open.MatchId}/escrow", Web))!;
+        var parameters = await alice.Matches.EscrowAsync(open.MatchId);
         Assert.Equal(_alice.Address, parameters.ChallengerAddress);
         var transport = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
@@ -140,7 +122,7 @@ public class ClientRefundFlowTests : IAsyncLifetime
             challengerContract.GetArkAddress().ToString(serverInfo.Network == NBitcoin.Network.Main));
 
         // Chain info advertises the endpoints the console client would use.
-        var chainInfo = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var chainInfo = await alice.Chain.InfoAsync();
         Assert.NotNull(chainInfo.EmulatorUri);
         Assert.NotNull(chainInfo.EsploraApiUri);
 
@@ -168,20 +150,19 @@ public class ClientRefundFlowTests : IAsyncLifetime
     {
         var alice = await RegisterAsync("Merge-Reclaim-Alice", _alice);
         await EnsureTreasuryFundedAsync(alice);
-        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var heroes = await alice.Heroes.ClaimStartersAsync();
         var baseHero = heroes.Heroes[0];
         var sacHero = heroes.Heroes[1];
 
         // Covenant merge; Alice deposits base + sacrifice + fee, then abandons it.
-        var commit = await PostOkAsync<MergeCommitResponse>(alice, "/api/merge/commit",
+        var commit = await alice.Merge.CommitAsync(
             new MergeCommitRequest(baseHero.Id, sacHero.Id, "covenant"));
         await _alice.SendAssetAsync(commit.EscrowAddress, baseHero.AssetId!, 1);
         await _alice.SendAssetAsync(commit.EscrowAddress, sacHero.AssetId!, 1);
         await _alice.SendAsync(commit.EscrowAddress, commit.FeeSats);
 
         // The trustless rebuild: params from the server, contract reconstructed locally.
-        var parameters = (await alice.GetFromJsonAsync<MergeEscrowParams>(
-            $"/api/merges/{commit.MergeId}/escrow", Web))!;
+        var parameters = await alice.Merge.EscrowAsync(commit.MergeId);
         Assert.Equal(_alice.Address, parameters.PlayerAddress);
         using var esploraHttp = new HttpClient();
 
@@ -206,12 +187,12 @@ public class ClientRefundFlowTests : IAsyncLifetime
     {
         var alice = await RegisterAsync("Breed-Reclaim-Alice", _alice);
         await EnsureTreasuryFundedAsync(alice);
-        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var heroes = await alice.Heroes.ClaimStartersAsync();
         var parentA = heroes.Heroes[0];
         var parentB = heroes.Heroes[1];
 
         // Covenant breed; Alice deposits both parents + fee, then abandons it (never reveals).
-        var commit = await PostOkAsync<BreedCommitResponse>(alice, "/api/breeding/commit",
+        var commit = await alice.Breeding.CommitAsync(
             new BreedCommitRequest(parentA.Id, parentB.Id, "covenant"));
         Assert.NotNull(commit.EscrowAddress);
         await _alice.SendAssetAsync(commit.EscrowAddress!, parentA.AssetId!, 1);
@@ -219,8 +200,7 @@ public class ClientRefundFlowTests : IAsyncLifetime
         await _alice.SendAsync(commit.EscrowAddress!, commit.EscrowFeeSats);
 
         // The trustless rebuild: params from the server, contract reconstructed locally.
-        var parameters = (await alice.GetFromJsonAsync<BreedEscrowParams>(
-            $"/api/breedings/{commit.BreedingId}/escrow", Web))!;
+        var parameters = await alice.Breeding.EscrowAsync(commit.BreedingId);
         Assert.Equal(_alice.Address, parameters.PlayerAddress);
         using var esploraHttp = new HttpClient();
 
@@ -246,17 +226,16 @@ public class ClientRefundFlowTests : IAsyncLifetime
         var alice = await RegisterAsync("DM-Reclaim-Alice", _alice);
         var bob = await RegisterAsync("DM-Reclaim-Bob", _bob);
         await EnsureTreasuryFundedAsync(alice);
-        var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
-        var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
+        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
+        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
         var myHero = aliceHeroes.Heroes[0];
 
         // Alice opens + stakes her hero; Bob never accepts → half-funded, Alice is stranded.
-        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+        var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(myHero.Id, bobHeroes.Heroes[0].Id));
         await _alice.SendAssetAsync(open.EscrowAddress, myHero.AssetId!, 1);
 
-        var parameters = (await alice.GetFromJsonAsync<DeathMatchJointEscrowParams>(
-            $"/api/deathmatch/{open.DeathMatchId}/escrow", Web))!;
+        var parameters = await alice.DeathMatch.EscrowAsync(open.DeathMatchId);
         Assert.Equal(_alice.Address, parameters.ChallengerAddress);
         using var esploraHttp = new HttpClient();
 
@@ -280,19 +259,18 @@ public class ClientRefundFlowTests : IAsyncLifetime
         var alice = await RegisterAsync("DM-Full-Alice", _alice);
         var bob = await RegisterAsync("DM-Full-Bob", _bob);
         await EnsureTreasuryFundedAsync(alice);
-        var aliceHeroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
-        var bobHeroes = await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter");
+        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
+        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
         var aHero = aliceHeroes.Heroes[0];
         var bHero = bobHeroes.Heroes[0];
 
-        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+        var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(aHero.Id, bHero.Id));
         await _alice.SendAssetAsync(open.EscrowAddress, aHero.AssetId!, 1);
-        await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await _bob.SendAssetAsync(open.EscrowAddress, bHero.AssetId!, 1);
 
-        var parameters = (await alice.GetFromJsonAsync<DeathMatchJointEscrowParams>(
-            $"/api/deathmatch/{open.DeathMatchId}/escrow", Web))!;
+        var parameters = await alice.DeathMatch.EscrowAsync(open.DeathMatchId);
         using var esploraHttp = new HttpClient();
         await RegtestHelper.WaitForChainTimeAsync(parameters.RefundAfterUnixSeconds, TimeSpan.FromSeconds(120));
 
@@ -317,17 +295,17 @@ public class ClientRefundFlowTests : IAsyncLifetime
         // view; a single stale read of cached VTXO storage used to throw "Treasury wallet has
         // no funds" and flake the suite.
         var alice = await RegisterAsync("Treasury-Race-Alice", _alice);
-        var info = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var info = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(info.TreasuryAddress, 200_000);
 
-        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        var heroes = await alice.Heroes.ClaimStartersAsync();
         Assert.Equal(2, heroes.Heroes.Count);
     }
 
     /// <summary>Funds the fresh server's treasury and waits until the funding is indexer-visible — required before the first starter mint (as the wager fact does).</summary>
-    private async Task EnsureTreasuryFundedAsync(HttpClient client)
+    private async Task EnsureTreasuryFundedAsync(ArkadeHeroesClient client)
     {
-        var bootInfo = (await client.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var bootInfo = await client.Chain.InfoAsync();
         await RegtestHelper.ArkSend(bootInfo.TreasuryAddress, 200_000);
         var treasuryScript = global::NArk.Abstractions.ArkAddress.Parse(bootInfo.TreasuryAddress).ScriptPubKey.ToHex();
         var probeTransport = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();

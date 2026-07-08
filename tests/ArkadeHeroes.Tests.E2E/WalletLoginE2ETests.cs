@@ -1,7 +1,5 @@
-using System.Net;
-using System.Net.Http.Json;
-using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -16,8 +14,6 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class WalletLoginE2ETests : IAsyncLifetime
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
-
     private WebApplicationFactory<Program> _factory = null!;
     private string _serverDbPath = null!;
     private readonly List<string> _walletDbPaths = [];
@@ -59,35 +55,30 @@ public class WalletLoginE2ETests : IAsyncLifetime
         // Register a player with their wallet's login key (proving possession by
         // signing a fresh challenge).
         var wallet = await WalletAsync();
-        var reg = _factory.CreateClient();
-        var regChallenge = (await reg.GetFromJsonAsync<LoginChallengeResponse>("/api/players/login-challenge", Web))!;
+        var reg = new ArkadeHeroesClient(_factory.CreateClient());
+        var regChallenge = await reg.Players.LoginChallengeAsync();
         var (_, regSig) = wallet.SignLoginDigest(LoginChallenge.Digest(regChallenge.NonceHex));
-        var registerResp = await reg.PostAsJsonAsync("/api/players",
+        var player = await reg.Players.RegisterAsync(
             new RegisterPlayerRequest("Login-Alice", wallet.Address, wallet.LoginPubKeyHex, regChallenge.NonceHex, regSig));
-        registerResp.EnsureSuccessStatusCode();
-        var player = JsonSerializer.Deserialize<PlayerDto>(await registerResp.Content.ReadAsStringAsync(), Web)!;
 
         // The machine is lost; restore the wallet from the mnemonic — same login key.
         var restored = await WalletAsync(wallet.Mnemonic);
         Assert.Equal(wallet.LoginPubKeyHex, restored.LoginPubKeyHex);
 
         // Sign in with the restored wallet from a FRESH (token-less) client.
-        var fresh = _factory.CreateClient();
-        var challenge = (await fresh.GetFromJsonAsync<LoginChallengeResponse>("/api/players/login-challenge", Web))!;
+        var fresh = new ArkadeHeroesClient(_factory.CreateClient());
+        var challenge = await fresh.Players.LoginChallengeAsync();
         var (pubKey, signature) = restored.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
-        var loginResp = await fresh.PostAsJsonAsync("/api/players/login",
+        var resumed = await fresh.Players.LoginAsync(
             new LoginRequest(pubKey, challenge.NonceHex, signature));
-        loginResp.EnsureSuccessStatusCode();
-        var resumed = JsonSerializer.Deserialize<PlayerDto>(await loginResp.Content.ReadAsStringAsync(), Web)!;
 
         // Same player, same session — resumed with the wallet alone.
         Assert.Equal(player.PlayerId, resumed.PlayerId);
         Assert.Equal(player.Token, resumed.Token);
 
         // Replay: the same nonce is single-use, so re-presenting it is refused.
-        var replay = await fresh.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubKey, challenge.NonceHex, signature));
-        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => fresh.Players.LoginAsync(
+            new LoginRequest(pubKey, challenge.NonceHex, signature)));
     }
 
     [Fact]
@@ -95,12 +86,11 @@ public class WalletLoginE2ETests : IAsyncLifetime
     {
         // A wallet whose login key was never registered can't sign in.
         var stranger = await WalletAsync();
-        var client = _factory.CreateClient();
-        var challenge = (await client.GetFromJsonAsync<LoginChallengeResponse>("/api/players/login-challenge", Web))!;
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
+        var challenge = await client.Players.LoginChallengeAsync();
         var (pubKey, signature) = stranger.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
 
-        var resp = await client.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubKey, challenge.NonceHex, signature));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => client.Players.LoginAsync(
+            new LoginRequest(pubKey, challenge.NonceHex, signature)));
     }
 }

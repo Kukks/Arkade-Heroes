@@ -1,8 +1,5 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 using NArk.Transport.GrpcClient;
@@ -20,8 +17,6 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class FullGameLoopOnRegtestTests : IAsyncLifetime
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
-
     private WebApplicationFactory<Program> _factory = null!;
     private string _serverDbPath = null!;
     private readonly List<string> _walletDbPaths = [];
@@ -63,26 +58,11 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         return wallet;
     }
 
-    private async Task<(HttpClient Client, PlayerDto Player)> RegisterAsync(string name, SelfCustodyWallet wallet)
+    private async Task<(ArkadeHeroesClient Client, PlayerDto Player)> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
-        var client = _factory.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest(name, wallet.Address));
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
-        var player = JsonSerializer.Deserialize<PlayerDto>(body, Web)!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
+        var player = await client.Players.RegisterAsync(new RegisterPlayerRequest(name, wallet.Address));
         return (client, player);
-    }
-
-    private static async Task<T> PostOkAsync<T>(HttpClient client, string path, object? payload = null)
-    {
-        var response = payload is null
-            ? await client.PostAsync(path, null)
-            : await client.PostAsJsonAsync(path, payload);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"{path} failed: {body}");
-        return JsonSerializer.Deserialize<T>(body, Web)!;
     }
 
     private static async Task PollUntilAsync(Func<Task<bool>> probe, TimeSpan timeout, string what)
@@ -96,29 +76,13 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         throw new TimeoutException($"Timed out waiting for {what}.");
     }
 
-    /// <summary>Poll variant that reports the last HTTP response body on timeout.</summary>
-    private static async Task<string> PollHttpUntilOkAsync(
-        Func<Task<HttpResponseMessage>> request, TimeSpan timeout, string what)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        var lastBody = "(no attempt)";
-        while (DateTime.UtcNow < deadline)
-        {
-            var response = await request();
-            lastBody = await response.Content.ReadAsStringAsync();
-            if (response.IsSuccessStatusCode) return lastBody;
-            await Task.Delay(1500);
-        }
-        throw new TimeoutException($"Timed out waiting for {what}. Last response: {lastBody}");
-    }
-
     [Fact]
     public async Task FullGameLoop_SelfCustody_OnRegtest()
     {
-        var anonymous = _factory.CreateClient();
+        var anonymous = new ArkadeHeroesClient(_factory.CreateClient());
 
         // ── Treasury boots and gets funded ─────────────────────────────
-        var chainInfo = (await anonymous.GetFromJsonAsync<ChainInfoDto>("/api/chain/info"))!;
+        var chainInfo = await anonymous.Chain.InfoAsync();
         Assert.Equal("NArk", chainInfo.Mode);
         await RegtestHelper.ArkSend(chainInfo.TreasuryAddress, 200_000);
 
@@ -140,8 +104,8 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         var (bob, bobPlayer) = await RegisterAsync("Bob", bobWallet);
 
         // ── Starters: minted by the treasury straight into player wallets ─
-        var aliceHeroes = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes.ToList();
-        var bobHeroes = (await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter")).Heroes.ToList();
+        var aliceHeroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        var bobHeroes = (await bob.Heroes.ClaimStartersAsync()).Heroes.ToList();
         Assert.Equal(2, aliceHeroes.Count);
 
         // The hero assets are IN Alice's own wallet — she truly holds them.
@@ -154,24 +118,29 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         Assert.Equal(1UL, details.Supply);
 
         // ── Breed: invoice paid from Alice's own wallet ────────────────
-        var commit = await PostOkAsync<BreedCommitResponse>(alice, "/api/breeding/commit",
+        var commit = await alice.Breeding.CommitAsync(
             new BreedCommitRequest(aliceHeroes[0].Id, aliceHeroes[1].Id));
 
         // Reveal before paying is refused.
-        var unpaid = await alice.PostAsJsonAsync($"/api/breeding/{commit.BreedingId}/reveal",
-            new BreedRevealRequest("nope"));
-        Assert.Equal(HttpStatusCode.BadRequest, unpaid.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Breeding.RevealAsync(
+            commit.BreedingId, new BreedRevealRequest("nope")));
 
         await aliceWallet.SendAsync(commit.Invoice.PayToAddress, commit.Invoice.AmountSats);
         await PollUntilAsync(async () =>
         {
-            var probe = await alice.PostAsJsonAsync($"/api/breeding/{commit.BreedingId}/reveal",
-                new BreedRevealRequest("e2e-nonce-1"));
-            return probe.IsSuccessStatusCode || await ProbeCompleted(probe);
+            try
+            {
+                await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("e2e-nonce-1"));
+                return true;
+            }
+            catch (ArkadeHeroesApiException ex)
+            {
+                return ex.Message.Contains("already completed");
+            }
         }, TimeSpan.FromSeconds(45), "breeding fee to be observed and reveal to succeed");
 
         // The reveal poll above may have succeeded inside the loop; fetch the child.
-        var aliceMine = (await alice.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!;
+        var aliceMine = await alice.Heroes.MineAsync();
         var child = aliceMine.Single(h => h.Generation == 1);
         Assert.Equal(aliceHeroes[0].Id, child.ParentAId);
 
@@ -185,36 +154,45 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
 
         await PollUntilAsync(async () =>
         {
-            var confirm = await alice.PostAsJsonAsync($"/api/heroes/{child.Id}/transfer",
-                new TransferRequest(bobPlayer.PlayerId));
-            return confirm.IsSuccessStatusCode;
+            try
+            {
+                await alice.Heroes.TransferAsync(child.Id, new TransferRequest(bobPlayer.PlayerId));
+                return true;
+            }
+            catch (ArkadeHeroesApiException)
+            {
+                return false;
+            }
         }, TimeSpan.FromSeconds(45), "server to verify the client-signed transfer");
 
-        var bobMine = (await bob.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!;
+        var bobMine = await bob.Heroes.MineAsync();
         Assert.Contains(bobMine, h => h.Id == child.Id);
 
         // ── Wagered match: stakes paid by each player's own wallet ─────
         const long wager = 2_000;
-        var open = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+        var open = await alice.Matches.OpenAsync(
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, wager));
         Assert.NotNull(open.StakeInvoice);
         await aliceWallet.SendAsync(open.StakeInvoice!.PayToAddress, open.StakeInvoice.AmountSats);
         // Each fighter also pays their per-character match fee from their own wallet.
         await aliceWallet.SendAsync(open.MatchFeeInvoice!.PayToAddress, open.MatchFeeInvoice.AmountSats);
 
-        var accept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{open.MatchId}/accept");
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
         await bobWallet.SendAsync(accept.StakeInvoice.PayToAddress, accept.StakeInvoice.AmountSats);
         await bobWallet.SendAsync(accept.MatchFeeInvoice!.PayToAddress, accept.MatchFeeInvoice.AmountSats);
 
         FightResponse? duel = null;
         await PollUntilAsync(async () =>
         {
-            var response = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-                new FightRequest("e2e-duel-nonce"));
-            if (!response.IsSuccessStatusCode) return false;
-            duel = JsonSerializer.Deserialize<FightResponse>(
-                await response.Content.ReadAsStringAsync(), Web);
-            return true;
+            try
+            {
+                duel = await alice.Matches.FightAsync(open.MatchId, new FightRequest("e2e-duel-nonce"));
+                return true;
+            }
+            catch (ArkadeHeroesApiException)
+            {
+                return false;
+            }
         }, TimeSpan.FromSeconds(45), "both stakes to be observed and the duel to resolve");
 
         Assert.Equal(wager * 2, duel!.WinnerPayoutSats);
@@ -227,12 +205,12 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         Assert.NotNull(duel.Receipt);
         var (receiptOk, receiptDetail) = ReceiptVerifier.Verify(duel.Receipt!);
         Assert.True(receiptOk, receiptDetail);
-        var infoNow = (await anonymous.GetFromJsonAsync<ChainInfoDto>("/api/chain/info"))!;
+        var infoNow = await anonymous.Chain.InfoAsync();
         Assert.Equal(infoNow.GameSignerKey, duel.Receipt!.GameSignerKeyHex);
 
         // ── Covenant-mode wagered match: emulator-enforced escrow ──────
         const long covenantWager = 3_000;
-        var covenantOpen = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+        var covenantOpen = await alice.Matches.OpenAsync(
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, covenantWager, "covenant"));
         Assert.NotNull(covenantOpen.EscrowAddress);
         Assert.Null(covenantOpen.StakeInvoice);
@@ -241,7 +219,7 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         await aliceWallet.SendAsync(covenantOpen.EscrowAddress!, covenantWager);
         // …plus their per-character match fee (a treasury invoice, separate from the escrow).
         await aliceWallet.SendAsync(covenantOpen.MatchFeeInvoice!.PayToAddress, covenantOpen.MatchFeeInvoice.AmountSats);
-        var covenantAccept = await PostOkAsync<AcceptMatchResponse>(bob, $"/api/matches/{covenantOpen.MatchId}/accept");
+        var covenantAccept = await bob.Matches.AcceptAsync(covenantOpen.MatchId);
         // Per-party escrows: the defender stakes into their OWN address.
         Assert.NotNull(covenantAccept.EscrowAddress);
         Assert.NotEqual(covenantOpen.EscrowAddress, covenantAccept.EscrowAddress);
@@ -256,12 +234,15 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         FightResponse? covenantDuel = null;
         await PollUntilAsync(async () =>
         {
-            var response = await alice.PostAsJsonAsync($"/api/matches/{covenantOpen.MatchId}/fight",
-                new FightRequest("e2e-covenant-duel"));
-            if (!response.IsSuccessStatusCode) return false;
-            covenantDuel = JsonSerializer.Deserialize<FightResponse>(
-                await response.Content.ReadAsStringAsync(), Web);
-            return true;
+            try
+            {
+                covenantDuel = await alice.Matches.FightAsync(covenantOpen.MatchId, new FightRequest("e2e-covenant-duel"));
+                return true;
+            }
+            catch (ArkadeHeroesApiException)
+            {
+                return false;
+            }
         }, TimeSpan.FromSeconds(60), "escrow funding to be observed and the covenant duel to settle");
 
         Assert.Equal(covenantWager * 2, covenantDuel!.WinnerPayoutSats);
@@ -277,13 +258,22 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         await winnerWallet.WaitForBalanceAsync(winnerBefore + covenantWager * 2, TimeSpan.FromSeconds(45));
 
         // ── Shop: invoice → Alice pays → claim → the unit is in HER wallet ─
-        var itemInvoice = (await PostOkAsync<ItemInvoiceResponse>(alice, "/api/items/rusty-blade/buy")).Invoice;
+        var itemInvoice = (await alice.Items.BuyAsync("rusty-blade")).Invoice;
         await aliceWallet.SendAsync(itemInvoice.PayToAddress, itemInvoice.AmountSats);
 
-        var claimBody = await PollHttpUntilOkAsync(
-            () => alice.PostAsJsonAsync("/api/items/claim", new ClaimItemRequest(itemInvoice.InvoiceId)),
-            TimeSpan.FromSeconds(150), "item payment to be observed and the claim to deliver");
-        var claim = JsonSerializer.Deserialize<ClaimItemResponse>(claimBody, Web);
+        ClaimItemResponse? claim = null;
+        await PollUntilAsync(async () =>
+        {
+            try
+            {
+                claim = await alice.Items.ClaimAsync(new ClaimItemRequest(itemInvoice.InvoiceId));
+                return true;
+            }
+            catch (ArkadeHeroesApiException)
+            {
+                return false;
+            }
+        }, TimeSpan.FromSeconds(150), "item payment to be observed and the claim to deliver");
 
         Assert.Equal(1UL, claim!.UnitsHeld);
         await aliceWallet.WaitForAssetAsync(claim.ItemAssetId, TimeSpan.FromSeconds(30));
@@ -292,33 +282,20 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         Assert.Equal(1000UL, itemDetails.Supply);
 
         // Equip the held unit on Alice's remaining hero.
-        var equip = await alice.PostAsJsonAsync($"/api/heroes/{aliceHeroes[0].Id}/equip",
-            new EquipRequest("rusty-blade"));
-        var equipBody = await equip.Content.ReadAsStringAsync();
-        Assert.True(equip.IsSuccessStatusCode, $"equip failed: {equipBody}");
+        await alice.Heroes.EquipAsync(aliceHeroes[0].Id, new EquipRequest("rusty-blade"));
 
         // Unequip frees the slot (server-side bookkeeping; the item asset stays in Alice's wallet).
-        var unequip = await alice.PostAsJsonAsync($"/api/heroes/{aliceHeroes[0].Id}/unequip",
-            new UnequipRequest("Weapon"));
-        Assert.True(unequip.IsSuccessStatusCode, $"unequip failed: {await unequip.Content.ReadAsStringAsync()}");
-        var afterUnequip = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{aliceHeroes[0].Id}", Web))!;
+        await alice.Heroes.UnequipAsync(aliceHeroes[0].Id, new UnequipRequest("Weapon"));
+        var afterUnequip = await alice.Heroes.GetAsync(aliceHeroes[0].Id);
         Assert.DoesNotContain("rusty-blade", afterUnequip.Equipment.Values);
 
         // Friendly fight (no stakes): resolves immediately and carries a verifiable receipt.
-        var friendlyOpen = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+        var friendlyOpen = await alice.Matches.OpenAsync(
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id));
-        var friendly = await PostOkAsync<FightResponse>(alice, $"/api/matches/{friendlyOpen.MatchId}/fight",
-            new FightRequest("e2e-friendly"));
+        var friendly = await alice.Matches.FightAsync(friendlyOpen.MatchId, new FightRequest("e2e-friendly"));
         Assert.False(string.IsNullOrEmpty(friendly.Result.WinnerId));
         var (friendlyOk, friendlyDetail) = FairnessAudit.VerifyMatch(
             friendlyOpen.MatchId, "e2e-friendly", friendlyOpen.CommitmentHex, friendly);
         Assert.True(friendlyOk, friendlyDetail);
-    }
-
-    /// <summary>Treats "already completed" as success for the reveal poll (a prior iteration won the race).</summary>
-    private static async Task<bool> ProbeCompleted(HttpResponseMessage response)
-    {
-        var body = await response.Content.ReadAsStringAsync();
-        return body.Contains("already completed");
     }
 }

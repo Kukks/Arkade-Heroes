@@ -1,7 +1,5 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -16,8 +14,6 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class CovenantDeathMatchE2ETests : IAsyncLifetime
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
-
     private WebApplicationFactory<Program> _factory = null!;
     private string _serverDbPath = null!;
     private SelfCustodyWallet _alice = null!;
@@ -56,27 +52,16 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         });
     }
 
-    private async Task<HttpClient> RegisterAsync(string name, SelfCustodyWallet wallet)
+    private async Task<ArkadeHeroesClient> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
-        var client = _factory.CreateClient();
+        var http = _factory.CreateClient();
         // Treasury spends serialize with a 70s contention backoff; a first item claim
         // (issuance + delivery) can exceed HttpClient's 100s default right after the
         // starter mints — give the test client generous headroom.
-        client.Timeout = TimeSpan.FromMinutes(4);
-        var response = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name, wallet.Address));
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
-        var player = JsonSerializer.Deserialize<PlayerDto>(body, Web)!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        http.Timeout = TimeSpan.FromMinutes(4);
+        var client = new ArkadeHeroesClient(http);
+        await client.Players.RegisterAsync(new RegisterPlayerRequest(name, wallet.Address));
         return client;
-    }
-
-    private static async Task<T> PostOkAsync<T>(HttpClient client, string path, object? payload = null)
-    {
-        var response = payload is null ? await client.PostAsync(path, null) : await client.PostAsJsonAsync(path, payload);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"{path} failed: {body}");
-        return JsonSerializer.Deserialize<T>(body, Web)!;
     }
 
     [Fact]
@@ -86,7 +71,7 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         var bob = await RegisterAsync("DM-Bob", _bob);
 
         // Fund the treasury (fresh server DB), wait for indexer visibility.
-        var boot = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var boot = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(boot.TreasuryAddress, 300_000);
         var probe = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
         var treasuryHex = global::NArk.Abstractions.ArkAddress.Parse(boot.TreasuryAddress).ScriptPubKey.ToHex();
@@ -102,17 +87,17 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         }
 
         // Each player claims a starter hero into their own wallet.
-        var aliceHero = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes[0];
-        var bobHero = (await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter")).Heroes[0];
+        var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
+        var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
         await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
 
         // Alice opens the death-match; both players stake their hero into their escrow.
-        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+        var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
         await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
 
-        var accept = await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
 
         // Settle: once both heroes are staked, the covenant burns the loser + returns the winner.
@@ -120,16 +105,15 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
         while (settle is null)
         {
-            var response = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
-                new DeathMatchSettleRequest("e2e-dm"));
-            if (response.IsSuccessStatusCode)
+            try
             {
-                settle = JsonSerializer.Deserialize<DeathMatchSettleResponse>(await response.Content.ReadAsStringAsync(), Web);
-                break;
+                settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("e2e-dm"));
             }
-            Assert.True(DateTime.UtcNow < revealDeadline,
-                $"covenant death-match never settled: {await response.Content.ReadAsStringAsync()}");
-            await Task.Delay(2000);
+            catch (ArkadeHeroesApiException ex)
+            {
+                Assert.True(DateTime.UtcNow < revealDeadline, $"covenant death-match never settled: {ex.Message}");
+                await Task.Delay(2000);
+            }
         }
 
         // The winner is client-verifiable (replay the deterministic fight).
@@ -171,7 +155,7 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         var bob = await RegisterAsync("DMG-Bob", _bob);
 
         // Fund the treasury (fresh server DB): starters + the item issuance/delivery.
-        var boot = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var boot = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(boot.TreasuryAddress, 400_000);
         var probe = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
         var treasuryHex = global::NArk.Abstractions.ArkAddress.Parse(boot.TreasuryAddress).ScriptPubKey.ToHex();
@@ -186,35 +170,35 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        var aliceHero = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes[0];
-        var bobHero = (await PostOkAsync<StarterResponse>(bob, "/api/heroes/starter")).Heroes[0];
+        var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
+        var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
         await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
 
         // Bob buys + equips gear through the REAL purchase flow (invoice → wallet pays → claim).
         await RegtestHelper.ArkSend(_bob.Address, 50_000);
         await _bob.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
-        var invoice = (await PostOkAsync<ItemInvoiceResponse>(bob, "/api/items/rusty-blade/buy")).Invoice;
+        var invoice = (await bob.Items.BuyAsync("rusty-blade")).Invoice;
         await _bob.SendAsync(invoice.PayToAddress, invoice.AmountSats);
         ClaimItemResponse? claim = null;
         var claimDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(150);
         while (claim is null)
         {
-            var r = await bob.PostAsJsonAsync("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId));
-            if (r.IsSuccessStatusCode)
+            try
             {
-                claim = JsonSerializer.Deserialize<ClaimItemResponse>(await r.Content.ReadAsStringAsync(), Web);
-                break;
+                claim = await bob.Items.ClaimAsync(new ClaimItemRequest(invoice.InvoiceId));
             }
-            Assert.True(DateTime.UtcNow < claimDeadline, $"item claim never delivered: {await r.Content.ReadAsStringAsync()}");
-            await Task.Delay(2000);
+            catch (ArkadeHeroesApiException ex)
+            {
+                Assert.True(DateTime.UtcNow < claimDeadline, $"item claim never delivered: {ex.Message}");
+                await Task.Delay(2000);
+            }
         }
         await _bob.WaitForAssetAsync(claim!.ItemAssetId, TimeSpan.FromSeconds(30));
-        var equip = await bob.PostAsJsonAsync($"/api/heroes/{bobHero.Id}/equip", new EquipRequest("rusty-blade"));
-        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+        await bob.Heroes.EquipAsync(bobHero.Id, new EquipRequest("rusty-blade"));
 
         // Open: Bob's loadout-at-open is baked as his required stake.
-        var open = await PostOkAsync<DeathMatchOpenResponse>(alice, "/api/deathmatch/open",
+        var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
         var stake = Assert.Single(open.DefenderGear);
         Assert.Equal("rusty-blade", stake.ItemId);
@@ -223,7 +207,7 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
 
         // Stakes: Alice her hero; Bob his hero + the gear unit.
         await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
-        var accept = await PostOkAsync<DeathMatchAcceptResponse>(bob, $"/api/deathmatch/{open.DeathMatchId}/accept");
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
         await _bob.SendAssetAsync(accept.EscrowAddress, stake.AssetId, (ulong)stake.Amount);
 
@@ -231,16 +215,15 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
         while (settle is null)
         {
-            var response = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
-                new DeathMatchSettleRequest("e2e-dm-gear"));
-            if (response.IsSuccessStatusCode)
+            try
             {
-                settle = JsonSerializer.Deserialize<DeathMatchSettleResponse>(await response.Content.ReadAsStringAsync(), Web);
-                break;
+                settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("e2e-dm-gear"));
             }
-            Assert.True(DateTime.UtcNow < revealDeadline,
-                $"geared covenant death-match never settled: {await response.Content.ReadAsStringAsync()}");
-            await Task.Delay(2000);
+            catch (ArkadeHeroesApiException ex)
+            {
+                Assert.True(DateTime.UtcNow < revealDeadline, $"geared covenant death-match never settled: {ex.Message}");
+                await Task.Delay(2000);
+            }
         }
 
         // The WINNER's wallet holds the winner hero AND the staked gear unit — routed by

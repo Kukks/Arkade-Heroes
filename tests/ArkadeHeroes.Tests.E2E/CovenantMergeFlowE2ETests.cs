@@ -1,8 +1,5 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -19,8 +16,6 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class CovenantMergeFlowE2ETests : IAsyncLifetime
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
-
     private WebApplicationFactory<Program> _factory = null!;
     private string _serverDbPath = null!;
     private SelfCustodyWallet _alice = null!;
@@ -56,23 +51,11 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         });
     }
 
-    private async Task<HttpClient> RegisterAsync(string name, SelfCustodyWallet wallet)
+    private async Task<ArkadeHeroesClient> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
-        var client = _factory.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/players", new RegisterPlayerRequest(name, wallet.Address));
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"register failed: {body}");
-        var player = JsonSerializer.Deserialize<PlayerDto>(body, Web)!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
+        await client.Players.RegisterAsync(new RegisterPlayerRequest(name, wallet.Address));
         return client;
-    }
-
-    private static async Task<T> PostOkAsync<T>(HttpClient client, string path, object? payload = null)
-    {
-        var response = payload is null ? await client.PostAsync(path, null) : await client.PostAsJsonAsync(path, payload);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.True(response.IsSuccessStatusCode, $"{path} failed: {body}");
-        return JsonSerializer.Deserialize<T>(body, Web)!;
     }
 
     [Fact]
@@ -81,7 +64,7 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         var alice = await RegisterAsync("Merge-Alice", _alice);
 
         // Fund the treasury (fresh server DB), wait for indexer visibility.
-        var boot = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        var boot = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(boot.TreasuryAddress, 300_000);
         var probe = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
         var treasuryHex = global::NArk.Abstractions.ArkAddress.Parse(boot.TreasuryAddress).ScriptPubKey.ToHex();
@@ -97,7 +80,7 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         }
 
         // Starters: two heroes minted straight into Alice's wallet — the base + the sacrifice.
-        var heroes = (await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter")).Heroes.ToList();
+        var heroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
         Assert.Equal(2, heroes.Count);
         var baseHero = heroes[0];
         var sacrificeHero = heroes[1];
@@ -107,14 +90,13 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         // Fund Alice's wallet for the fee, and commit a covenant merge.
         await RegtestHelper.ArkSend(_alice.Address, 50_000);
         await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
-        var commit = await PostOkAsync<MergeCommitResponse>(alice, "/api/merge/commit",
+        var commit = await alice.Merge.CommitAsync(
             new MergeCommitRequest(baseHero.Id, sacrificeHero.Id, "covenant"));
         Assert.False(string.IsNullOrEmpty(commit.EscrowAddress));
 
         // Reveal before depositing is refused.
-        var early = await alice.PostAsJsonAsync($"/api/merge/{commit.MergeId}/reveal",
-            new MergeRevealRequest("e2e-merge"));
-        Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Merge.RevealAsync(
+            commit.MergeId, new MergeRevealRequest("e2e-merge")));
 
         // Deposit BOTH inputs + the fee into the merge escrow (same shape as breeding).
         await _alice.SendAssetAsync(commit.EscrowAddress, baseHero.AssetId!, 1);
@@ -126,16 +108,15 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
         var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
         while (reveal is null)
         {
-            var response = await alice.PostAsJsonAsync($"/api/merge/{commit.MergeId}/reveal",
-                new MergeRevealRequest("e2e-merge"));
-            if (response.IsSuccessStatusCode)
+            try
             {
-                reveal = JsonSerializer.Deserialize<MergeRevealResponse>(await response.Content.ReadAsStringAsync(), Web);
-                break;
+                reveal = await alice.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest("e2e-merge"));
             }
-            Assert.True(DateTime.UtcNow < revealDeadline,
-                $"covenant merge never revealed: {await response.Content.ReadAsStringAsync()}");
-            await Task.Delay(2000);
+            catch (ArkadeHeroesApiException ex)
+            {
+                Assert.True(DateTime.UtcNow < revealDeadline, $"covenant merge never revealed: {ex.Message}");
+                await Task.Delay(2000);
+            }
         }
 
         // The fused hero is auditable (Fusion.Fuse recompute), carries a signed receipt,
