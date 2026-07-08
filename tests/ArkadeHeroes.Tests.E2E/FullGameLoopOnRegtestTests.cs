@@ -296,6 +296,23 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
             new EquipRequest("rusty-blade"));
         var equipBody = await equip.Content.ReadAsStringAsync();
         Assert.True(equip.IsSuccessStatusCode, $"equip failed: {equipBody}");
+
+        // Unequip frees the slot (server-side bookkeeping; the item asset stays in Alice's wallet).
+        var unequip = await alice.PostAsJsonAsync($"/api/heroes/{aliceHeroes[0].Id}/unequip",
+            new UnequipRequest("Weapon"));
+        Assert.True(unequip.IsSuccessStatusCode, $"unequip failed: {await unequip.Content.ReadAsStringAsync()}");
+        var afterUnequip = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{aliceHeroes[0].Id}", Web))!;
+        Assert.DoesNotContain("rusty-blade", afterUnequip.Equipment.Values);
+
+        // Friendly fight (no stakes): resolves immediately and carries a verifiable receipt.
+        var friendlyOpen = await PostOkAsync<OpenMatchResponse>(alice, "/api/matches/open",
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id));
+        var friendly = await PostOkAsync<FightResponse>(alice, $"/api/matches/{friendlyOpen.MatchId}/fight",
+            new FightRequest("e2e-friendly"));
+        Assert.False(string.IsNullOrEmpty(friendly.Result.WinnerId));
+        var (friendlyOk, friendlyDetail) = FairnessAudit.VerifyMatch(
+            friendlyOpen.MatchId, "e2e-friendly", friendlyOpen.CommitmentHex, friendly);
+        Assert.True(friendlyOk, friendlyDetail);
     }
 
     /// <summary>Treats "already completed" as success for the reveal poll (a prior iteration won the race).</summary>
