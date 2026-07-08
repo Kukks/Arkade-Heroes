@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -19,9 +18,8 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
 
     public MarketplaceOfferTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private static async Task<CreateOfferResponse> ListAsync(HttpClient seller, string itemId, long ask)
-        => (await (await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest(itemId, ask)))
-            .Content.ReadFromJsonAsync<CreateOfferResponse>())!;
+    private static Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
+        => seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
 
     [Fact]
     public async Task Offer_ListFundFulfil_ItemMovesAndSellerPaid()
@@ -36,33 +34,32 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         Assert.Equal(ask, offer.AskSats);
 
         // Not yet buyable: the item hasn't been deposited (pending, not listed).
-        var beforeFund = await buyer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        Assert.DoesNotContain(beforeFund!, o => o.OfferId == offer.OfferId);
+        var beforeFund = await buyer.Offers.ListAsync();
+        Assert.DoesNotContain(beforeFund, o => o.OfferId == offer.OfferId);
 
         // Seller deposits the item — the offer becomes an active, discoverable listing.
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
-        var listed = await buyer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        var mine = Assert.Single(listed!, o => o.OfferId == offer.OfferId);
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+        var listed = await buyer.Offers.ListAsync();
+        var mine = Assert.Single(listed, o => o.OfferId == offer.OfferId);
         Assert.Equal("active", mine.Status);
         Assert.Equal("Rusty Blade", mine.ItemName);
         Assert.Equal(ask, mine.AskSats);
 
-        var sellerBefore = (await seller.GetFromJsonAsync<PlayerDto>("/api/players/me"))!.BalanceSats;
+        var sellerBefore = (await seller.Players.MeAsync()).BalanceSats;
 
         // Buyer fulfils: pays the seller, takes the item.
-        (await buyer.PostAsJsonAsync("/api/dev/fulfill-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
 
-        var sellerAfter = (await seller.GetFromJsonAsync<PlayerDto>("/api/players/me"))!.BalanceSats;
+        var sellerAfter = (await seller.Players.MeAsync()).BalanceSats;
         Assert.Equal(sellerBefore + ask, sellerAfter);
 
         // Offer closed — no longer discoverable.
-        var afterSale = await buyer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        Assert.DoesNotContain(afterSale!, o => o.OfferId == offer.OfferId);
+        var afterSale = await buyer.Offers.ListAsync();
+        Assert.DoesNotContain(afterSale, o => o.OfferId == offer.OfferId);
 
         // The buyer now holds the item — provable by equipping it to a hero.
         var buyerHeroes = await buyer.ClaimStartersAsync();
-        (await buyer.PostAsJsonAsync($"/api/heroes/{buyerHeroes[0].Id}/equip",
-            new EquipRequest("rusty-blade"))).EnsureSuccessStatusCode();
+        await buyer.Heroes.EquipAsync(buyerHeroes[0].Id, new EquipRequest("rusty-blade"));
     }
 
     [Fact]
@@ -72,22 +69,20 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         await seller.BuyItemAsync("steel-saber");
         var offer = await ListAsync(seller, "steel-saber", 5_000);
 
-        var parameters = (await seller.GetFromJsonAsync<Chain.Covenants.OfferParams>(
-            $"/api/offers/{offer.OfferId}/params"))!;
+        var parameters = await seller.Offers.ParamsAsync(offer.OfferId);
         Assert.Equal(offer.OfferId, parameters.OfferId);
         Assert.Equal(offer.ItemAssetId, parameters.ItemAssetId);
         Assert.Equal(5_000, parameters.AskSats);
 
-        var unknown = await seller.GetAsync("/api/offers/does-not-exist/params");
-        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => seller.Offers.ParamsAsync("does-not-exist"));
     }
 
     [Fact]
     public async Task Offer_CannotListItemNotHeld()
     {
         var (seller, _) = await _factory.RegisterAsync("M-NoItem");
-        var response = await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("rusty-blade", 1_000));
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 1_000)));
     }
 
     [Fact]
@@ -96,12 +91,11 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         var (seller, _) = await _factory.RegisterAsync("M-Equipped");
         var heroes = await seller.ClaimStartersAsync();
         await seller.BuyItemAsync("rusty-blade");
-        (await seller.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("rusty-blade"))).EnsureSuccessStatusCode();
+        await seller.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("rusty-blade"));
 
         // The only unit is equipped — none free to sell.
-        var response = await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("rusty-blade", 1_000));
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 1_000)));
     }
 
     [Fact]
@@ -109,12 +103,11 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
     {
         var (seller, _) = await _factory.RegisterAsync("M-Double");
         await seller.BuyItemAsync("rusty-blade");
-        (await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("rusty-blade", 1_000)))
-            .EnsureSuccessStatusCode();
+        await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 1_000));
 
         // The single unit is already reserved by the first (pending) offer.
-        var second = await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("rusty-blade", 2_000));
-        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 2_000)));
     }
 
     [Fact]
@@ -125,15 +118,14 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         await seller.BuyItemAsync("swift-anklet"); // now holds 2
 
         var first = await ListAsync(seller, "swift-anklet", 3_000);
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = first.OfferId })).EnsureSuccessStatusCode();
+        await seller.Dev.FundOfferAsync(new { OfferId = first.OfferId });
 
         // One unit is deposited; the second is still free to list.
-        (await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("swift-anklet", 4_000)))
-            .EnsureSuccessStatusCode();
+        await seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 4_000));
 
         // But not a third — both units are now committed.
-        var third = await seller.PostAsJsonAsync("/api/offers", new CreateOfferRequest("swift-anklet", 5_000));
-        Assert.Equal(HttpStatusCode.BadRequest, third.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 5_000)));
     }
 
     [Fact]
@@ -145,14 +137,14 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
 
         // Ask more than the buyer's simulated faucet balance.
         var offer = await ListAsync(seller, "arkforged-edge", Chain.InMemoryChainService.FaucetSats + 1);
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
 
-        var fulfil = await buyer.PostAsJsonAsync("/api/dev/fulfill-offer", new { OfferId = offer.OfferId });
-        Assert.Equal(HttpStatusCode.BadRequest, fulfil.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId }));
 
         // Still resting, still discoverable — the failed buy changed nothing.
-        var listed = await buyer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        Assert.Contains(listed!, o => o.OfferId == offer.OfferId);
+        var listed = await buyer.Offers.ListAsync();
+        Assert.Contains(listed, o => o.OfferId == offer.OfferId);
     }
 
     [Fact]
@@ -162,16 +154,14 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         var heroes = await seller.ClaimStartersAsync();
         await seller.BuyItemAsync("rusty-blade");
         var offer = await ListAsync(seller, "rusty-blade", 3_000);
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
 
         // While listed, the unit is committed — equipping it is refused.
-        var equipWhileListed = await seller.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("rusty-blade"));
-        Assert.Equal(HttpStatusCode.BadRequest, equipWhileListed.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("rusty-blade")));
 
         // Cancel — the item returns, and now equipping works.
-        (await seller.PostAsJsonAsync("/api/dev/reclaim-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
-        (await seller.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("rusty-blade"))).EnsureSuccessStatusCode();
+        await seller.Dev.ReclaimOfferAsync(new { OfferId = offer.OfferId });
+        await seller.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("rusty-blade"));
     }
 }

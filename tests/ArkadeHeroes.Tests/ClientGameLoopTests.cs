@@ -1,5 +1,5 @@
-using System.Net.Http.Json;
 using ArkadeHeroes.Client;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -16,14 +16,19 @@ namespace ArkadeHeroes.Tests;
 public class ClientGameLoopTests : IDisposable
 {
     private readonly WebApplicationFactory<Program> _factory = new();
-    private readonly HttpClient _observer;
+    private readonly HttpClient _observerHttp;
+    private readonly ArkadeHeroesClient _observer;
     private readonly List<string> _homeDirs = [];
 
-    public ClientGameLoopTests() => _observer = _factory.CreateClient();
+    public ClientGameLoopTests()
+    {
+        _observerHttp = _factory.CreateClient();
+        _observer = new ArkadeHeroesClient(_observerHttp);
+    }
 
     public void Dispose()
     {
-        _observer.Dispose();
+        _observerHttp.Dispose();
         _factory.Dispose();
         foreach (var d in _homeDirs)
             try { if (Directory.Exists(d)) Directory.Delete(d, recursive: true); } catch { /* windows lock */ }
@@ -38,8 +43,7 @@ public class ClientGameLoopTests : IDisposable
 
     private GameClient NewClient(string home) => new("http://localhost", _factory.CreateClient(), home);
 
-    private async Task<List<HeroDto>> HeroesAsync() =>
-        (await _observer.GetFromJsonAsync<List<HeroDto>>("/api/heroes"))!;
+    private Task<List<HeroDto>> HeroesAsync() => _observer.Heroes.AllAsync();
 
     [Fact]
     public async Task Breed_ThroughTheClient_ProducesGen1Child_AndStoresReceipt()
@@ -103,7 +107,7 @@ public class ClientGameLoopTests : IDisposable
         await alice.ExecuteAsync(["heroes"]);
         await alice.ExecuteAsync(["fight", aliceHero.Id, bobHero.Id]);
 
-        var match = Assert.Single(await _observer.GetFromJsonAsync<List<MatchDto>>("/api/matches") ?? []);
+        var match = Assert.Single(await _observer.Matches.ListAsync());
         Assert.Equal("resolved", match.Status);
         Assert.NotNull(match.Result);
         Assert.True(File.Exists(Path.Combine(aliceHome, "arkade-heroes-receipts.json")));
@@ -155,11 +159,11 @@ public class ClientGameLoopTests : IDisposable
         await alice.ExecuteAsync(["heroes"]);
         await alice.ExecuteAsync(["challenge", aliceHero.Id, bobHero.Id, "1000"]);
 
-        var opened = Assert.Single(await _observer.GetFromJsonAsync<List<MatchDto>>("/api/matches") ?? []);
+        var opened = Assert.Single(await _observer.Matches.ListAsync());
         await bob.ExecuteAsync(["accept", opened.MatchId]);
         await alice.ExecuteAsync(["duel", opened.MatchId]);
 
-        var resolved = Assert.Single(await _observer.GetFromJsonAsync<List<MatchDto>>("/api/matches") ?? []);
+        var resolved = Assert.Single(await _observer.Matches.ListAsync());
         Assert.Equal("resolved", resolved.Status);
         Assert.Equal(1000, resolved.WagerSats);
         Assert.NotNull(resolved.Result);
@@ -177,7 +181,7 @@ public class ClientGameLoopTests : IDisposable
 
         await seller.ExecuteAsync(["sellhero", hero.Id, "15000"]);
 
-        var offer = Assert.Single(await _observer.GetFromJsonAsync<List<OfferDto>>("/api/offers") ?? []);
+        var offer = Assert.Single(await _observer.Offers.ListAsync());
         Assert.Equal("hero", offer.Kind);
         Assert.Equal(hero.Name, offer.ItemName);
 
@@ -188,7 +192,7 @@ public class ClientGameLoopTests : IDisposable
         // Ownership moved off the seller (to the buyer, who ran buyhero + claimed).
         var moved = (await HeroesAsync()).Single(h => h.Id == hero.Id);
         Assert.NotEqual(sellerId, moved.OwnerId);
-        Assert.DoesNotContain(await _observer.GetFromJsonAsync<List<OfferDto>>("/api/offers") ?? [],
+        Assert.DoesNotContain(await _observer.Offers.ListAsync(),
             o => o.OfferId == offer.OfferId);
     }
 }

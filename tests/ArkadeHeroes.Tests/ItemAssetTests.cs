@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -20,12 +19,10 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task ClaimWithoutPaymentIsRejected()
     {
         var (client, _) = await _factory.RegisterAsync("I-Unpaid");
-        var invoiceResponse = await client.PostAsync("/api/items/steel-saber/buy", null);
-        invoiceResponse.EnsureSuccessStatusCode();
-        var invoice = (await invoiceResponse.Content.ReadFromJsonAsync<ItemInvoiceResponse>())!.Invoice;
+        var invoice = (await client.Items.BuyAsync("steel-saber")).Invoice;
 
-        var claim = await client.PostAsJsonAsync("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId));
-        Assert.Equal(HttpStatusCode.BadRequest, claim.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Items.ClaimAsync(new ClaimItemRequest(invoice.InvoiceId)));
     }
 
     [Fact]
@@ -33,11 +30,9 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (client, _) = await _factory.RegisterAsync("I-NoUnit");
         var heroes = await client.ClaimStartersAsync();
-        var response = await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("steel-saber"));
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-        Assert.Contains("buy", error!.Error);
+        var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("steel-saber")));
+        Assert.Contains("buy", ex.Message);
     }
 
     [Fact]
@@ -48,22 +43,17 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
 
         await client.BuyItemAsync("lucky-feather");
 
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("lucky-feather"))).EnsureSuccessStatusCode();
+        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("lucky-feather"));
 
-        var second = await client.PostAsJsonAsync($"/api/heroes/{heroes[1].Id}/equip",
-            new EquipRequest("lucky-feather"));
-        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("lucky-feather")));
 
         // Re-equipping the same hero's same slot is a no-op, not a double allocation.
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("lucky-feather"))).EnsureSuccessStatusCode();
+        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("lucky-feather"));
 
         // Unequip frees the unit for the second hero.
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/unequip",
-            new UnequipRequest("Trinket"))).EnsureSuccessStatusCode();
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[1].Id}/equip",
-            new EquipRequest("lucky-feather"))).EnsureSuccessStatusCode();
+        await client.Heroes.UnequipAsync(heroes[0].Id, new UnequipRequest("Trinket"));
+        await client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("lucky-feather"));
     }
 
     [Fact]
@@ -76,9 +66,7 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
         var second = await client.BuyItemAsync("swift-anklet");
         Assert.Equal(2UL, second.UnitsHeld);
 
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[0].Id}/equip",
-            new EquipRequest("swift-anklet"))).EnsureSuccessStatusCode();
-        (await client.PostAsJsonAsync($"/api/heroes/{heroes[1].Id}/equip",
-            new EquipRequest("swift-anklet"))).EnsureSuccessStatusCode();
+        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("swift-anklet"));
+        await client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("swift-anklet"));
     }
 }

@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Server;
@@ -175,7 +175,7 @@ public class TraitsAndRarityTests
     public async Task RarestEndpoint_RanksHeroesByRarityScore()
     {
         using var factory = new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>();
-        var client = factory.CreateClient();
+        var client = new ArkadeHeroesClient(factory.CreateClient());
         var store = factory.Services.GetRequiredService<GameStore>();
 
         // A plain hero and a Legendary-Aura hero, injected straight into the store.
@@ -186,7 +186,7 @@ public class TraitsAndRarityTests
         store.Heroes["rare"] = new Hero
             { Id = "rare", OwnerId = "p", Name = "Rarest", Genome = new Genome(g), Generation = 1 };
 
-        var board = (await client.GetFromJsonAsync<List<HeroDto>>("/api/rarest"))!;
+        var board = await client.Leaderboard.RarestAsync();
         Assert.Equal("rare", board[0].Id); // the legendary sits on top
         Assert.Equal("Legendary", board[0].Rarity!.Tier);
     }

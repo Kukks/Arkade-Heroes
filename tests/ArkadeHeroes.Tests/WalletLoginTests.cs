@@ -1,6 +1,5 @@
-using System.Net;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 using NBitcoin.Secp256k1;
@@ -36,32 +35,27 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    private async Task<string> ChallengeAsync(HttpClient c) =>
-        (await c.GetFromJsonAsync<LoginChallengeResponse>("/api/players/login-challenge"))!.NonceHex;
+    private async Task<string> ChallengeAsync(ArkadeHeroesClient c) =>
+        (await c.Players.LoginChallengeAsync()).NonceHex;
 
     private async Task<(PlayerDto Player, ECPrivKey Key, string PubHex)> RegisterWithKeyAsync(string name)
     {
         var (key, pubHex) = NewKey();
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var nonce = await ChallengeAsync(client); // proof-of-possession
-        var resp = await client.PostAsJsonAsync("/api/players",
+        var player = await client.Players.RegisterAsync(
             new RegisterPlayerRequest(name, $"sim-login-{Guid.NewGuid():N}", pubHex, nonce, Sign(key, nonce)));
-        resp.EnsureSuccessStatusCode();
-        return ((await resp.Content.ReadFromJsonAsync<PlayerDto>())!, key, pubHex);
+        return (player, key, pubHex);
     }
 
     [Fact]
     public async Task Login_WithRegisteredKey_ResumesSamePlayer()
     {
         var (player, key, pubHex) = await RegisterWithKeyAsync("WL-Resume");
-        var fresh = _factory.CreateClient(); // no token
+        var fresh = new ArkadeHeroesClient(_factory.CreateClient()); // no token
         var nonce = await ChallengeAsync(fresh);
 
-        var login = await fresh.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubHex, nonce, Sign(key, nonce)));
-        login.EnsureSuccessStatusCode();
-
-        var resumed = (await login.Content.ReadFromJsonAsync<PlayerDto>())!;
+        var resumed = await fresh.Players.LoginAsync(new LoginRequest(pubHex, nonce, Sign(key, nonce)));
         Assert.Equal(player.PlayerId, resumed.PlayerId);
         Assert.Equal(player.Token, resumed.Token);
     }
@@ -71,39 +65,36 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (_, _, pubHex) = await RegisterWithKeyAsync("WL-WrongSig");
         var (impostor, _) = NewKey(); // a different key signs
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var nonce = await ChallengeAsync(client);
 
         // Claim the registered pubkey but sign with the impostor's key.
-        var resp = await client.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubHex, nonce, Sign(impostor, nonce)));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.LoginAsync(new LoginRequest(pubHex, nonce, Sign(impostor, nonce))));
     }
 
     [Fact]
     public async Task Login_SignatureOverADifferentNonce_Refused()
     {
         var (_, key, pubHex) = await RegisterWithKeyAsync("WL-Bind");
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var nonceA = await ChallengeAsync(client);
         var nonceB = await ChallengeAsync(client);
 
         // Sign nonce A but present nonce B — the signature isn't over B's digest.
-        var resp = await client.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubHex, nonceB, Sign(key, nonceA)));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.LoginAsync(new LoginRequest(pubHex, nonceB, Sign(key, nonceA))));
     }
 
     [Fact]
     public async Task Login_WithUnknownNonce_Refused()
     {
         var (_, key, pubHex) = await RegisterWithKeyAsync("WL-Unknown");
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var madeUpNonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
-        var resp = await client.PostAsJsonAsync("/api/players/login",
-            new LoginRequest(pubHex, madeUpNonce, Sign(key, madeUpNonce)));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.LoginAsync(new LoginRequest(pubHex, madeUpNonce, Sign(key, madeUpNonce))));
     }
 
     // ── Registration hardening (the flagged account-confusion fix) ──────
@@ -112,11 +103,10 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Register_LoginKeyWithoutProofOfPossession_Refused()
     {
         var (_, pubHex) = NewKey();
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         // Claims a login key but supplies no signed challenge.
-        var resp = await client.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest("WL-NoPoP", $"sim-login-{Guid.NewGuid():N}", pubHex));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.RegisterAsync(new RegisterPlayerRequest("WL-NoPoP", $"sim-login-{Guid.NewGuid():N}", pubHex)));
     }
 
     [Fact]
@@ -127,13 +117,12 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
         // because they can't sign for a key they don't hold.
         var (_, victimPub) = NewKey();
         var (attackerKey, _) = NewKey();
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var nonce = await ChallengeAsync(client);
 
-        var resp = await client.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest("WL-Impostor", $"sim-login-{Guid.NewGuid():N}",
-                victimPub, nonce, Sign(attackerKey, nonce)));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.RegisterAsync(new RegisterPlayerRequest("WL-Impostor", $"sim-login-{Guid.NewGuid():N}",
+                victimPub, nonce, Sign(attackerKey, nonce))));
     }
 
     [Fact]
@@ -141,10 +130,9 @@ public class WalletLoginTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (_, key, pubHex) = await RegisterWithKeyAsync("WL-Uniq1");
         // A second registration with the SAME (proven) login key, different address.
-        var client = _factory.CreateClient();
+        var client = new ArkadeHeroesClient(_factory.CreateClient());
         var nonce = await ChallengeAsync(client);
-        var resp = await client.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest("WL-Uniq2", $"sim-login-{Guid.NewGuid():N}", pubHex, nonce, Sign(key, nonce)));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Players.RegisterAsync(new RegisterPlayerRequest("WL-Uniq2", $"sim-login-{Guid.NewGuid():N}", pubHex, nonce, Sign(key, nonce))));
     }
 }

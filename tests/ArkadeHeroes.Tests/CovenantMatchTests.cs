@@ -1,6 +1,5 @@
-using System.Net;
-using System.Net.Http.Json;
 using ArkadeHeroes.Chain;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -29,43 +28,38 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
         var start = InMemoryChainService.FaucetSats;
 
         // Open in covenant mode: an escrow address, no invoice.
-        var open = (await (await alice.PostAsJsonAsync("/api/matches/open",
-                new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, wager, "covenant")))
-            .Content.ReadFromJsonAsync<OpenMatchResponse>())!;
+        var open = await alice.Matches.OpenAsync(
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, wager, "covenant"));
         Assert.Null(open.StakeInvoice);
         Assert.NotNull(open.EscrowAddress);
         Assert.Equal(wager, open.EscrowStakeSats);
 
         // Fight is blocked until BOTH stakes sit in the escrow.
-        await alice.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
-        var accept = (await (await bob.PostAsync($"/api/matches/{open.MatchId}/accept", null))
-            .Content.ReadFromJsonAsync<AcceptMatchResponse>())!;
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
         Assert.Null(accept.StakeInvoice);
         // Per-party escrows: each side stakes into their OWN address.
         Assert.NotNull(accept.EscrowAddress);
         Assert.NotEqual(open.EscrowAddress, accept.EscrowAddress);
 
-        var underfunded = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-            new FightRequest("early"));
-        Assert.Equal(HttpStatusCode.BadRequest, underfunded.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Matches.FightAsync(open.MatchId, new FightRequest("early")));
 
-        await bob.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
+        await bob.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
 
         // Both fighters also pay their per-character match fee before the duel.
         await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
         await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
 
         // Duel: settlement comes from the ESCROW, not a treasury payout.
-        var fight = (await (await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-                new FightRequest("covenant-duel")))
-            .Content.ReadFromJsonAsync<FightResponse>())!;
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("covenant-duel"));
         Assert.Equal(wager * 2, fight.WinnerPayoutSats);
 
         var (ok, detail) = FairnessAudit.VerifyMatch(open.MatchId, "covenant-duel", open.CommitmentHex, fight);
         Assert.True(ok, detail);
 
-        var aliceFinal = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
-        var bobFinal = (await bob.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        var aliceFinal = await alice.Players.MeAsync();
+        var bobFinal = await bob.Players.MeAsync();
         var challengerWon = fight.Result.WinnerId == aliceHeroes[0].Id;
         var (winnerBalance, loserBalance) = challengerWon
             ? (aliceFinal.BalanceSats, bobFinal.BalanceSats)
@@ -83,8 +77,7 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (alice, _) = await _factory.RegisterAsync("C-NoWager");
         var heroes = await alice.ClaimStartersAsync();
-        var response = await alice.PostAsJsonAsync("/api/matches/open",
-            new OpenMatchRequest(heroes[0].Id, heroes[1].Id, 0, "covenant"));
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Matches.OpenAsync(new OpenMatchRequest(heroes[0].Id, heroes[1].Id, 0, "covenant")));
     }
 }

@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -44,19 +44,16 @@ public class LeaderboardTests : IClassFixture<WebApplicationFactory<Program>>
         var aliceHeroes = await alice.ClaimStartersAsync();
         var bobHeroes = await bob.ClaimStartersAsync();
 
-        var open = (await (await alice.PostAsJsonAsync("/api/matches/open",
-                new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, 2_000, "covenant")))
-            .Content.ReadFromJsonAsync<OpenMatchResponse>())!;
-        await alice.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
-        var accept = (await (await bob.PostAsync($"/api/matches/{open.MatchId}/accept", null))
-            .Content.ReadFromJsonAsync<AcceptMatchResponse>())!;
-        await bob.PostAsJsonAsync("/api/dev/stake-escrow", new { MatchId = open.MatchId });
+        var open = await alice.Matches.OpenAsync(
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, 2_000, "covenant"));
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
+        await bob.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
         await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
         await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
-        var fight = (await (await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-                new FightRequest("lb-duel"))).Content.ReadFromJsonAsync<FightResponse>())!;
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("lb-duel"));
 
-        var board = (await alice.GetFromJsonAsync<List<LeaderboardEntryDto>>("/api/leaderboard"))!;
+        var board = await alice.Leaderboard.TopAsync();
         // The two dueling heroes appear, and the winner sits above the loser.
         var winnerRank = board.First(e => e.HeroId == fight.Result.WinnerId).Rank;
         var loserId = fight.Result.WinnerId == aliceHeroes[0].Id ? bobHeroes[0].Id : aliceHeroes[0].Id;

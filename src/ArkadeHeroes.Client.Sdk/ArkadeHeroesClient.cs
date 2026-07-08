@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using ArkadeHeroes.Shared;
 
 namespace ArkadeHeroes.Client.Sdk;
@@ -64,7 +65,12 @@ public sealed class ArkadeHeroesClient
     {
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            // Most non-2xx responses carry an ErrorResponse body, but some answer a
+            // bare status with no body (e.g. a 404 from Results.NotFound()) — fall
+            // back to the status code rather than failing to parse an empty stream.
+            ErrorResponse? error = null;
+            try { error = await response.Content.ReadFromJsonAsync<ErrorResponse>(); }
+            catch (JsonException) { /* empty or non-JSON error body */ }
             throw new ArkadeHeroesApiException(error?.Error ?? $"server returned {(int)response.StatusCode}");
         }
         return (await response.Content.ReadFromJsonAsync<T>())!;

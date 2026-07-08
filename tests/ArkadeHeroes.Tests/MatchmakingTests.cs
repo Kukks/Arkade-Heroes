@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Progression;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
@@ -43,8 +43,7 @@ public class MatchmakingTests : IDisposable
         store.Heroes[bobHeroes[0].Id].Level = 5;   // peer — gap 0
         store.Heroes[bobHeroes[1].Id].Level = 12;  // far — gap 7
 
-        var suggestions = (await alice.GetFromJsonAsync<List<OpponentSuggestionDto>>(
-            $"/api/matchmaking/{aliceHeroes[0].Id}"))!;
+        var suggestions = await alice.Matches.MatchmakingAsync(aliceHeroes[0].Id);
 
         // Alice's own other hero is never a suggested opponent.
         Assert.DoesNotContain(suggestions, s => s.Hero.Id == aliceHeroes[1].Id);

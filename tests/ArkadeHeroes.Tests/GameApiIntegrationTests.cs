@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Core.Progression;
@@ -49,37 +48,26 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(breedOk, breedDetail);
 
         // Fee left the (simulated) client wallet.
-        var me = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        var me = await alice.Players.MeAsync();
         Assert.True(me.BalanceSats < 100_000, "Breeding fee should have been paid from the player's wallet.");
 
         // Reveal without paying is impossible: Bob commits (fresh parents), skips payment.
-        var unpaidCommitResponse = await bob.PostAsJsonAsync("/api/breeding/commit",
+        var unpaidCommit = await bob.Breeding.CommitAsync(
             new BreedCommitRequest(bobHeroes[0].Id, bobHeroes[1].Id));
-        unpaidCommitResponse.EnsureSuccessStatusCode();
-        var unpaidCommit = (await unpaidCommitResponse.Content.ReadFromJsonAsync<BreedCommitResponse>())!;
-        var unpaidReveal = await bob.PostAsJsonAsync($"/api/breeding/{unpaidCommit.BreedingId}/reveal",
-            new BreedRevealRequest("n"));
-        Assert.Equal(HttpStatusCode.BadRequest, unpaidReveal.StatusCode);
-        var unpaidError = await unpaidReveal.Content.ReadFromJsonAsync<ErrorResponse>();
-        Assert.Contains("invoice", unpaidError!.Error);
+        var unpaidError = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => bob.Breeding.RevealAsync(unpaidCommit.BreedingId, new BreedRevealRequest("n")));
+        Assert.Contains("invoice", unpaidError.Message);
 
         // Parents now on cooldown → immediate rebreed rejected.
-        var rebreed = await alice.PostAsJsonAsync("/api/breeding/commit",
-            new BreedCommitRequest(aliceHeroes[0].Id, aliceHeroes[1].Id));
-        Assert.Equal(HttpStatusCode.BadRequest, rebreed.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Breeding.CommitAsync(new BreedCommitRequest(aliceHeroes[0].Id, aliceHeroes[1].Id)));
 
         // ── Fight (friendly, no stakes) with client-side replay ────────
-        var openResponse = await alice.PostAsJsonAsync("/api/matches/open",
-            new OpenMatchRequest(child.Id, bobHeroes[0].Id));
-        openResponse.EnsureSuccessStatusCode();
-        var open = (await openResponse.Content.ReadFromJsonAsync<OpenMatchResponse>())!;
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(child.Id, bobHeroes[0].Id));
         Assert.Null(open.StakeInvoice);
 
         const string fightNonce = "fight-nonce-9";
-        var fightResponse = await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-            new FightRequest(fightNonce));
-        fightResponse.EnsureSuccessStatusCode();
-        var fight = (await fightResponse.Content.ReadFromJsonAsync<FightResponse>())!;
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest(fightNonce));
 
         Assert.NotEmpty(fight.Result.Events);
         var (matchOk, matchDetail) = FairnessAudit.VerifyMatch(
@@ -87,14 +75,11 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(matchOk, matchDetail);
 
         // ── Shop: invoice → claim delivers the unit → equip ────────────
-        var heroBefore = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{child.Id}"))!;
+        var heroBefore = await alice.Heroes.GetAsync(child.Id);
         var claim = await alice.BuyItemAsync("rusty-blade");
         Assert.Equal(1UL, claim.UnitsHeld);
 
-        var equipResponse = await alice.PostAsJsonAsync($"/api/heroes/{child.Id}/equip",
-            new EquipRequest("rusty-blade"));
-        equipResponse.EnsureSuccessStatusCode();
-        var equip = (await equipResponse.Content.ReadFromJsonAsync<EquipResponse>())!;
+        var equip = await alice.Heroes.EquipAsync(child.Id, new EquipRequest("rusty-blade"));
         Assert.Equal(heroBefore.Stats.Attack + 4, equip.Hero.Stats.Attack);
     }
 
@@ -105,30 +90,25 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         var heroes = await alice.ClaimStartersAsync();
 
         // Self-breeding.
-        var selfBreed = await alice.PostAsJsonAsync("/api/breeding/commit",
-            new BreedCommitRequest(heroes[0].Id, heroes[0].Id));
-        Assert.Equal(HttpStatusCode.BadRequest, selfBreed.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[0].Id)));
 
         // Double starter claim.
-        var again = await alice.PostAsync("/api/heroes/starter", null);
-        Assert.Equal(HttpStatusCode.BadRequest, again.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Heroes.ClaimStartersAsync());
 
         // Foreign hero use.
         var (mallory, _) = await _factory.RegisterAsync("Mallory");
         await mallory.ClaimStartersAsync();
-        var steal = await mallory.PostAsJsonAsync("/api/breeding/commit",
-            new BreedCommitRequest(heroes[0].Id, heroes[1].Id));
-        Assert.Equal(HttpStatusCode.BadRequest, steal.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => mallory.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id)));
 
         // Missing auth.
-        var anonymous = _factory.CreateClient();
-        var unauthorized = await anonymous.PostAsync("/api/heroes/starter", null);
-        Assert.Equal(HttpStatusCode.BadRequest, unauthorized.StatusCode);
+        var anonymous = new ArkadeHeroesClient(_factory.CreateClient());
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => anonymous.Heroes.ClaimStartersAsync());
 
         // Registration without an address is refused — keys must exist client-side.
-        var noAddress = await anonymous.PostAsJsonAsync("/api/players",
-            new RegisterPlayerRequest("NoWallet", ""));
-        Assert.Equal(HttpStatusCode.BadRequest, noAddress.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => anonymous.Players.RegisterAsync(new RegisterPlayerRequest("NoWallet", "")));
     }
 
     [Fact]
@@ -138,18 +118,14 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         var heroes = await alice.ClaimStartersAsync();
 
         // Fresh parents → base fee in the invoice.
-        var fresh = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
-                new BreedCommitRequest(heroes[0].Id, heroes[1].Id)))
-            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        var fresh = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id));
         Assert.Equal(1000, fresh.Invoice!.AmountSats);
 
         // Bump the parents' combined breed count to 2 → 4x fee.
         var store = _factory.Services.GetRequiredService<ArkadeHeroes.Server.GameStore>();
         store.Heroes[heroes[0].Id].BreedCount = 1;
         store.Heroes[heroes[1].Id].BreedCount = 1;
-        var bred = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
-                new BreedCommitRequest(heroes[0].Id, heroes[1].Id)))
-            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        var bred = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id));
         Assert.Equal(4000, bred.Invoice!.AmountSats);
     }
 
@@ -176,9 +152,8 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         store.Heroes["sterile"] = new Hero
             { Id = "sterile", OwnerId = heroes[0].OwnerId, Name = "TheLast", Genome = sterileGenome!.Value, Generation = 3 };
 
-        var resp = await alice.PostAsJsonAsync("/api/breeding/commit",
-            new BreedCommitRequest("sterile", heroes[0].Id));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Contains("sterile", await resp.Content.ReadAsStringAsync());
+        var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Breeding.CommitAsync(new BreedCommitRequest("sterile", heroes[0].Id)));
+        Assert.Contains("sterile", ex.Message);
     }
 }

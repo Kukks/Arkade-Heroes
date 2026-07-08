@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -26,31 +25,26 @@ public class CovenantBreedFlowTests : IClassFixture<WebApplicationFactory<Progra
         var heroes = await alice.ClaimStartersAsync();
 
         // Commit in covenant mode: an escrow address, no fee invoice.
-        var commit = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
-                new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant")))
-            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        var commit = await alice.Breeding.CommitAsync(
+            new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
         Assert.Null(commit.Invoice);
         Assert.NotNull(commit.EscrowAddress);
         Assert.True(commit.EscrowFeeSats > 0);
 
         // Reveal is blocked until the parents + fee are deposited.
-        var early = await alice.PostAsJsonAsync($"/api/breeding/{commit.BreedingId}/reveal",
-            new BreedRevealRequest("n0nce"));
-        Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("n0nce")));
 
         // The escrow params are publicly rebuildable (trustless refund basis).
-        var parameters = (await alice.GetFromJsonAsync<Chain.Covenants.BreedEscrowParams>(
-            $"/api/breedings/{commit.BreedingId}/escrow"))!;
+        var parameters = await alice.Breeding.EscrowAsync(commit.BreedingId);
         Assert.Equal(commit.BreedingId, parameters.BreedingId);
         Assert.Equal(heroes[0].AssetId, parameters.ParentAId);
         Assert.Equal(heroes[1].AssetId, parameters.ParentBId);
         Assert.Equal(64, parameters.OraclePkHex.Length);
 
         // Deposit both parents + the fee, then reveal succeeds via the covenant.
-        await alice.PostAsJsonAsync("/api/dev/fund-breed-escrow", new { BreedingId = commit.BreedingId });
-        var reveal = (await (await alice.PostAsJsonAsync($"/api/breeding/{commit.BreedingId}/reveal",
-                new BreedRevealRequest("n0nce")))
-            .Content.ReadFromJsonAsync<BreedRevealResponse>())!;
+        await alice.Dev.FundBreedEscrowAsync(new { BreedingId = commit.BreedingId });
+        var reveal = await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("n0nce"));
         Assert.NotNull(reveal.Hero);
         Assert.Equal(1, reveal.Hero.Generation);
 
@@ -66,13 +60,11 @@ public class CovenantBreedFlowTests : IClassFixture<WebApplicationFactory<Progra
     {
         var (alice, _) = await _factory.RegisterAsync("CB-Invoice");
         var heroes = await alice.ClaimStartersAsync();
-        var commit = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
-                new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "invoice")))
-            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
+        var commit = await alice.Breeding.CommitAsync(
+            new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "invoice"));
         Assert.NotNull(commit.Invoice);
 
-        var response = await alice.GetAsync($"/api/breedings/{commit.BreedingId}/escrow");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Breeding.EscrowAsync(commit.BreedingId));
     }
 
     [Fact]
@@ -83,20 +75,18 @@ public class CovenantBreedFlowTests : IClassFixture<WebApplicationFactory<Progra
         var (alice, _) = await factory.RegisterAsync("CB-Refund");
         var heroes = await alice.ClaimStartersAsync();
 
-        var meStart = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
-        var commit = (await (await alice.PostAsJsonAsync("/api/breeding/commit",
-                new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant")))
-            .Content.ReadFromJsonAsync<BreedCommitResponse>())!;
-        await alice.PostAsJsonAsync("/api/dev/fund-breed-escrow", new { BreedingId = commit.BreedingId });
+        var meStart = await alice.Players.MeAsync();
+        var commit = await alice.Breeding.CommitAsync(
+            new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
+        await alice.Dev.FundBreedEscrowAsync(new { BreedingId = commit.BreedingId });
 
         // Abandon → refund returns the fee (window is zero, so it's immediately due).
-        var refund = await alice.PostAsJsonAsync("/api/dev/refund-breed", new { BreedingId = commit.BreedingId });
-        Assert.True(refund.IsSuccessStatusCode, await refund.Content.ReadAsStringAsync());
-        var meEnd = (await alice.GetFromJsonAsync<PlayerDto>("/api/players/me"))!;
+        await alice.Dev.RefundBreedAsync(new { BreedingId = commit.BreedingId });
+        var meEnd = await alice.Players.MeAsync();
         Assert.Equal(meStart.BalanceSats, meEnd.BalanceSats); // fund − fee then refund + fee = net zero
 
         // A second refund finds nothing to reclaim.
-        var again = await alice.PostAsJsonAsync("/api/dev/refund-breed", new { BreedingId = commit.BreedingId });
-        Assert.Equal(HttpStatusCode.BadRequest, again.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Dev.RefundBreedAsync(new { BreedingId = commit.BreedingId }));
     }
 }

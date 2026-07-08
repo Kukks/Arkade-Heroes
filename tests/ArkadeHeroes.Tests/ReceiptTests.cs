@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Progression;
 using ArkadeHeroes.Shared;
@@ -105,16 +105,12 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
         var aliceHeroes = await alice.ClaimStartersAsync();
         var bobHeroes = await bob.ClaimStartersAsync();
 
-        var chainInfo = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info"))!;
+        var chainInfo = await alice.Chain.InfoAsync();
         Assert.False(string.IsNullOrEmpty(chainInfo.GameSignerKey));
 
         // Friendly fight → receipt in the response.
-        var open = (await (await alice.PostAsJsonAsync("/api/matches/open",
-                new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id)))
-            .Content.ReadFromJsonAsync<OpenMatchResponse>())!;
-        var fight = (await (await alice.PostAsJsonAsync($"/api/matches/{open.MatchId}/fight",
-                new FightRequest("receipt-nonce")))
-            .Content.ReadFromJsonAsync<FightResponse>())!;
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id));
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("receipt-nonce"));
 
         Assert.NotNull(fight.Receipt);
         Assert.Equal(chainInfo.GameSignerKey, fight.Receipt!.GameSignerKeyHex);
@@ -124,9 +120,9 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
         // The hero's public receipt chain replays to its server-side level.
         foreach (var heroId in new[] { aliceHeroes[0].Id, bobHeroes[0].Id })
         {
-            var chain = (await alice.GetFromJsonAsync<List<ProgressionReceiptDto>>($"/api/receipts/hero/{heroId}"))!;
+            var chain = await alice.Receipts.ForHeroAsync(heroId);
             Assert.NotEmpty(chain);
-            var hero = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{heroId}"))!;
+            var hero = await alice.Heroes.GetAsync(heroId);
             Assert.Equal(hero.Level, ReceiptVerifier.ReplayLevel(heroId, chain));
         }
 

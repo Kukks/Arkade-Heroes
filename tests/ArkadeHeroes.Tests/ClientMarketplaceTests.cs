@@ -1,5 +1,5 @@
-using System.Net.Http.Json;
 using ArkadeHeroes.Client;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -53,7 +53,7 @@ public class ClientMarketplaceTests : IClassFixture<WebApplicationFactory<Progra
     [Fact]
     public async Task Sell_Offers_BuyOffer_ThroughTheClient()
     {
-        var observer = _factory.CreateClient();
+        var observer = new ArkadeHeroesClient(_factory.CreateClient());
 
         // Seller drives: register → starter → buy an item → list it for sale.
         await using var seller = NewClient(FreshHome());
@@ -63,8 +63,8 @@ public class ClientMarketplaceTests : IClassFixture<WebApplicationFactory<Progra
         await seller.ExecuteAsync(["sell", "rusty-blade", "3000"]);
 
         // The server now indexes one active offer for the item at the ask.
-        var offers = await observer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        var offer = Assert.Single(offers!,
+        var offers = await observer.Offers.ListAsync();
+        var offer = Assert.Single(offers,
             o => o.ItemName == "Rusty Blade" && o.AskSats == 3000 && o.Status == "active");
 
         // Buyer drives: register → buy the offer (id discovered from the server).
@@ -73,14 +73,14 @@ public class ClientMarketplaceTests : IClassFixture<WebApplicationFactory<Progra
         await buyer.ExecuteAsync(["buyoffer", offer.OfferId]);
 
         // The sale went through the client: the offer closed (no longer listed).
-        var after = await observer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        Assert.DoesNotContain(after!, o => o.OfferId == offer.OfferId);
+        var after = await observer.Offers.ListAsync();
+        Assert.DoesNotContain(after, o => o.OfferId == offer.OfferId);
     }
 
     [Fact]
     public async Task Sell_Then_CancelOffer_ReturnsTheItem()
     {
-        var observer = _factory.CreateClient();
+        var observer = new ArkadeHeroesClient(_factory.CreateClient());
 
         await using var seller = NewClient(FreshHome());
         await seller.ExecuteAsync(["register", "CliCancel"]);
@@ -89,18 +89,18 @@ public class ClientMarketplaceTests : IClassFixture<WebApplicationFactory<Progra
         await seller.ExecuteAsync(["sell", "steel-saber", "5000"]);
 
         var offer = Assert.Single(
-            (await observer.GetFromJsonAsync<List<OfferDto>>("/api/offers"))!,
+            await observer.Offers.ListAsync(),
             o => o.ItemName == "Steel Saber");
 
         await seller.ExecuteAsync(["canceloffer", offer.OfferId]);
 
         // Cancelled → no longer listed, and the item is back (the seller can re-list it).
         Assert.DoesNotContain(
-            (await observer.GetFromJsonAsync<List<OfferDto>>("/api/offers"))!,
+            await observer.Offers.ListAsync(),
             o => o.OfferId == offer.OfferId);
         await seller.ExecuteAsync(["sell", "steel-saber", "4000"]); // must not throw — the unit is free again
         Assert.Contains(
-            (await observer.GetFromJsonAsync<List<OfferDto>>("/api/offers"))!,
+            await observer.Offers.ListAsync(),
             o => o.ItemName == "Steel Saber" && o.AskSats == 4000);
     }
 }

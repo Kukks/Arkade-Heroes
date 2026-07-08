@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -19,9 +18,8 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
 
     public HeroSaleTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private static async Task<CreateOfferResponse> ListHeroAsync(HttpClient seller, string heroId, long ask)
-        => (await (await seller.PostAsJsonAsync("/api/offers/hero", new CreateHeroOfferRequest(heroId, ask)))
-            .Content.ReadFromJsonAsync<CreateOfferResponse>())!;
+    private static Task<CreateOfferResponse> ListHeroAsync(ArkadeHeroesClient seller, string heroId, long ask)
+        => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, ask));
 
     [Fact]
     public async Task HeroSale_ListFundFulfilClaim_MovesOwnershipAndStripsEquipment()
@@ -33,35 +31,34 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
 
         // Equip the hero, to prove the loadout is stripped when it changes owners.
         await seller.BuyItemAsync("rusty-blade");
-        (await seller.PostAsJsonAsync($"/api/heroes/{hero.Id}/equip", new EquipRequest("rusty-blade"))).EnsureSuccessStatusCode();
+        await seller.Heroes.EquipAsync(hero.Id, new EquipRequest("rusty-blade"));
 
         const long ask = 20_000;
         var offer = await ListHeroAsync(seller, hero.Id, ask);
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
 
         // Discoverable as a HERO offer, named for the hero.
-        var listed = await buyer.GetFromJsonAsync<List<OfferDto>>("/api/offers");
-        var mine = Assert.Single(listed!, o => o.OfferId == offer.OfferId);
+        var listed = await buyer.Offers.ListAsync();
+        var mine = Assert.Single(listed, o => o.OfferId == offer.OfferId);
         Assert.Equal("hero", mine.Kind);
         Assert.Equal(hero.Id, mine.HeroId);
         Assert.Equal(hero.Name, mine.ItemName);
 
-        var sellerBefore = (await seller.GetFromJsonAsync<PlayerDto>("/api/players/me"))!.BalanceSats;
+        var sellerBefore = (await seller.Players.MeAsync()).BalanceSats;
 
         // Buyer fulfils (own wallet) then claims game-side ownership.
-        (await buyer.PostAsJsonAsync("/api/dev/fulfill-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
-        var claim = (await (await buyer.PostAsync($"/api/offers/{offer.OfferId}/claim-hero", null))
-            .Content.ReadFromJsonAsync<TransferResponse>())!;
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
+        var claim = await buyer.Offers.ClaimHeroAsync(offer.OfferId);
 
         // The hero is the buyer's now, with no equipment; the seller was paid.
         Assert.Equal(buyerPlayer.PlayerId, claim.Hero.OwnerId);
         Assert.Empty(claim.Hero.Equipment);
-        var sellerAfter = (await seller.GetFromJsonAsync<PlayerDto>("/api/players/me"))!.BalanceSats;
+        var sellerAfter = (await seller.Players.MeAsync()).BalanceSats;
         Assert.Equal(sellerBefore + ask, sellerAfter);
 
         // The buyer controls the hero; the seller no longer does.
-        Assert.Contains((await buyer.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!, h => h.Id == hero.Id);
-        Assert.DoesNotContain((await seller.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!, h => h.Id == hero.Id);
+        Assert.Contains(await buyer.Heroes.MineAsync(), h => h.Id == hero.Id);
+        Assert.DoesNotContain(await seller.Heroes.MineAsync(), h => h.Id == hero.Id);
     }
 
     [Fact]
@@ -71,9 +68,8 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
         var (other, _) = await _factory.RegisterAsync("H-Owner");
         var othersHeroes = await other.ClaimStartersAsync();
 
-        var response = await seller.PostAsJsonAsync("/api/offers/hero",
-            new CreateHeroOfferRequest(othersHeroes[0].Id, 1_000));
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(othersHeroes[0].Id, 1_000)));
     }
 
     [Fact]
@@ -82,10 +78,9 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
         var (seller, _) = await _factory.RegisterAsync("H-Double");
         var heroes = await seller.ClaimStartersAsync();
 
-        (await seller.PostAsJsonAsync("/api/offers/hero", new CreateHeroOfferRequest(heroes[0].Id, 1_000)))
-            .EnsureSuccessStatusCode();
-        var second = await seller.PostAsJsonAsync("/api/offers/hero", new CreateHeroOfferRequest(heroes[0].Id, 2_000));
-        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 1_000));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 2_000)));
     }
 
     [Fact]
@@ -96,10 +91,9 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
         var heroes = await seller.ClaimStartersAsync();
 
         var offer = await ListHeroAsync(seller, heroes[0].Id, 5_000);
-        (await seller.PostAsJsonAsync("/api/dev/fund-offer", new { OfferId = offer.OfferId })).EnsureSuccessStatusCode();
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
 
         // The buyer never fulfilled, so the chain doesn't show them holding it.
-        var claim = await buyer.PostAsync($"/api/offers/{offer.OfferId}/claim-hero", null);
-        Assert.Equal(HttpStatusCode.BadRequest, claim.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => buyer.Offers.ClaimHeroAsync(offer.OfferId));
     }
 }

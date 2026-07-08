@@ -1,5 +1,4 @@
-using System.Net;
-using System.Net.Http.Json;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Server;
@@ -41,28 +40,24 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
             [bobHeroId] = store.Heroes[bobHeroId].Level,
         };
 
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(aliceHeroId, bobHeroId)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHeroId, bobHeroId));
         Assert.Equal("favored", open.Favorability.Label);          // Alice is 19 levels up
         Assert.Equal(levelBefore[bobHeroId] - 20, open.Favorability.LevelGap); // signed: theirs − mine
 
         // Capture pre-settle snapshots — settle deletes the loser's record.
-        var aliceBefore = (await alice.GetFromJsonAsync<HeroDto>($"/api/heroes/{aliceHeroId}"))!;
-        var bobBefore = (await bob.GetFromJsonAsync<HeroDto>($"/api/heroes/{bobHeroId}"))!;
+        var aliceBefore = await alice.Heroes.GetAsync(aliceHeroId);
+        var bobBefore = await bob.Heroes.GetAsync(bobHeroId);
 
         // Both stake their hero.
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
-        await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
 
-        var settle = (await (await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
-                new DeathMatchSettleRequest("dm-nonce")))
-            .Content.ReadFromJsonAsync<DeathMatchSettleResponse>())!;
+        var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("dm-nonce"));
 
         // The loser's hero is BURNED — gone from BOTH players' wallets (outcome-agnostic).
-        var aliceMine = (await alice.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!;
-        var bobMine = (await bob.GetFromJsonAsync<List<HeroDto>>("/api/heroes/mine"))!;
+        var aliceMine = await alice.Heroes.MineAsync();
+        var bobMine = await bob.Heroes.MineAsync();
         Assert.DoesNotContain(aliceMine, h => h.Id == settle.LoserHeroId);
         Assert.DoesNotContain(bobMine, h => h.Id == settle.LoserHeroId);
 
@@ -91,13 +86,11 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
 
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
         // Bob never accepts/stakes → settle is refused (deposit-gated).
-        var early = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle", new DeathMatchSettleRequest("n"));
-        Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("n")));
     }
 
     [Fact]
@@ -108,8 +101,8 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
         // Alice tries to stake BOB's hero as the challenger.
-        var resp = await alice.PostAsJsonAsync("/api/deathmatch/open", new DeathMatchOpenRequest(b[0].Id, a[0].Id));
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(b[0].Id, a[0].Id)));
     }
 
     [Fact]
@@ -125,28 +118,23 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         // Bob's hero carries gear (bought + equipped); Alice out-levels him.
         store.Heroes[a[0].Id].Level = 20;
         await bob.BuyItemAsync("rusty-blade");
-        var equip = await bob.PostAsJsonAsync($"/api/heroes/{b[0].Id}/equip", new EquipRequest("rusty-blade"));
-        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+        await bob.Heroes.EquipAsync(b[0].Id, new EquipRequest("rusty-blade"));
 
         // Open bakes Bob's loadout as his required stake; Alice has none.
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
         var stake = Assert.Single(open.DefenderGear);
         Assert.Equal("rusty-blade", stake.ItemId);
         Assert.Equal(1, stake.Amount);
         Assert.Empty(open.ChallengerGear);
 
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
-        await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
 
         // Staking moved Bob's unit INTO the escrow — he no longer holds it (can't sell it).
         Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(bobPlayer.PlayerId, "rusty-blade"));
 
-        var settle = (await (await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle",
-                new DeathMatchSettleRequest("gear-nonce")))
-            .Content.ReadFromJsonAsync<DeathMatchSettleResponse>())!;
+        var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("gear-nonce"));
 
         // ALL staked gear goes to the WINNER (outcome-agnostic: Bob winning gets his own back).
         var winnerId = settle.WinnerHeroId == a[0].Id ? alicePlayer.PlayerId : bobPlayer.PlayerId;
@@ -165,24 +153,18 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         // Bob owns ONE unit, equipped on his hero — baked into BOTH matches' stakes.
         await bob.BuyItemAsync("rusty-blade");
-        var equip = await bob.PostAsJsonAsync($"/api/heroes/{b[0].Id}/equip", new EquipRequest("rusty-blade"));
-        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+        await bob.Heroes.EquipAsync(b[0].Id, new EquipRequest("rusty-blade"));
 
-        var open1 = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
-        var open2 = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[1].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var open1 = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        var open2 = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[1].Id, b[0].Id));
 
         // Funding match 1 moves the unit into ITS escrow; the same unit cannot fund match 2.
-        await bob.PostAsync($"/api/deathmatch/{open1.DeathMatchId}/accept", null);
-        var fund1 = await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open1.DeathMatchId, Role = "defender" });
-        Assert.True(fund1.IsSuccessStatusCode, await fund1.Content.ReadAsStringAsync());
+        await bob.DeathMatch.AcceptAsync(open1.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open1.DeathMatchId, Role = "defender" });
 
-        await bob.PostAsync($"/api/deathmatch/{open2.DeathMatchId}/accept", null);
-        var fund2 = await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open2.DeathMatchId, Role = "defender" });
-        Assert.Equal(HttpStatusCode.BadRequest, fund2.StatusCode);
+        await bob.DeathMatch.AcceptAsync(open2.DeathMatchId);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open2.DeathMatchId, Role = "defender" }));
     }
 
     [Fact]
@@ -198,27 +180,23 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         // Alice (challenger) equips gear — baked into her stake at open.
         await alice.BuyItemAsync("rusty-blade");
-        var equip = await alice.PostAsJsonAsync($"/api/heroes/{a[0].Id}/equip", new EquipRequest("rusty-blade"));
-        Assert.True(equip.IsSuccessStatusCode, await equip.Content.ReadAsStringAsync());
+        await alice.Heroes.EquipAsync(a[0].Id, new EquipRequest("rusty-blade"));
 
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
         var stake = Assert.Single(open.ChallengerGear);
         Assert.Equal("rusty-blade", stake.ItemId);
 
         // Alice stakes her hero + gear; Bob never accepts → half-funded.
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
         Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // staked into escrow
 
         // Post-expiry reclaim → Alice reclaims her staked gear.
-        var reclaim = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.True(reclaim.IsSuccessStatusCode, await reclaim.Content.ReadAsStringAsync());
+        await alice.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = open.DeathMatchId });
         Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(alicePlayer.PlayerId, "rusty-blade")); // returned
 
         // Settle is now refused — the escrow is emptied (funded-check fails).
-        var settle = await alice.PostAsJsonAsync($"/api/deathmatch/{open.DeathMatchId}/settle", new DeathMatchSettleRequest("n"));
-        Assert.Equal(HttpStatusCode.BadRequest, settle.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("n")));
     }
 
     [Fact]
@@ -230,18 +208,14 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
 
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.PostAsync($"/api/deathmatch/{open.DeathMatchId}/accept", null);
-        await bob.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
 
         // Each side reclaims their OWN stake post-expiry.
-        var aReclaim = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.True(aReclaim.IsSuccessStatusCode, await aReclaim.Content.ReadAsStringAsync());
-        var bReclaim = await bob.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.True(bReclaim.IsSuccessStatusCode, await bReclaim.Content.ReadAsStringAsync());
+        await alice.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = open.DeathMatchId });
+        await bob.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = open.DeathMatchId });
     }
 
     [Fact]
@@ -253,12 +227,10 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var a = await alice.ClaimStartersAsync();
         var b = await bob.ClaimStartersAsync();
 
-        var open = (await (await alice.PostAsJsonAsync("/api/deathmatch/open",
-                new DeathMatchOpenRequest(a[0].Id, b[0].Id)))
-            .Content.ReadFromJsonAsync<DeathMatchOpenResponse>())!;
-        await alice.PostAsJsonAsync("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
 
-        var early = await alice.PostAsJsonAsync("/api/dev/reclaim-deathmatch", new { DeathMatchId = open.DeathMatchId });
-        Assert.Equal(HttpStatusCode.BadRequest, early.StatusCode);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = open.DeathMatchId }));
     }
 }
