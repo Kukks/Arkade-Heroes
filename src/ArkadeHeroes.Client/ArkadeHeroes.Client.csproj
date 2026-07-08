@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Shared\ArkadeHeroes.Shared.csproj" />
     <ProjectReference Include="..\ArkadeHeroes.Chain\ArkadeHeroes.Chain.csproj" />
+    <ProjectReference Include="..\ArkadeHeroes.Client.Sdk\ArkadeHeroes.Client.Sdk.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

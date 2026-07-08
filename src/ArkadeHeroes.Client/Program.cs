@@ -1,4 +1,5 @@
 using ArkadeHeroes.Client;
+using ArkadeHeroes.Client.Sdk;
 
 var serverUrl = args.Length > 0 ? args[0]
     : Environment.GetEnvironmentVariable("ARKADE_HEROES_SERVER") ?? "http://localhost:5210";
@@ -30,6 +31,10 @@ while (true)
         if (done) break;
     }
     catch (GameClientException ex)
+    {
+        Console.WriteLine($"  ✗ {ex.Message}");
+    }
+    catch (ArkadeHeroesApiException ex)
     {
         Console.WriteLine($"  ✗ {ex.Message}");
     }

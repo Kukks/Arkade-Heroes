@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Shared;
+using ArkadeHeroes.Client.Sdk;
 
 namespace ArkadeHeroes.Client;
 
@@ -19,6 +20,7 @@ public class GameClient : IAsyncDisposable
 {
     private readonly string _serverUrl;
     private readonly HttpClient _http;
+    private readonly ArkadeHeroesClient _api;
     private readonly bool _ownsHttp;
 
     /// <summary>Per-player data dir (session + wallet + receipts). Override with ARKADE_HEROES_HOME to run several players side by side.</summary>
@@ -39,6 +41,7 @@ public class GameClient : IAsyncDisposable
         _serverUrl = serverUrl;
         _http = httpClient ?? new HttpClient { BaseAddress = new Uri(serverUrl) };
         _ownsHttp = httpClient is null;
+        _api = new ArkadeHeroesClient(_http);
         HomeDir = homeDir ?? Environment.GetEnvironmentVariable("ARKADE_HEROES_HOME") ?? AppContext.BaseDirectory;
         SessionFile = Path.Combine(HomeDir, "arkade-heroes-session.json");
         WalletDbFile = Path.Combine(HomeDir, "arkade-heroes-wallet.db");
@@ -119,7 +122,7 @@ public class GameClient : IAsyncDisposable
     }
 
     private async Task<string> ChainModeAsync()
-        => _chainMode ??= (await GetAsync<ChainInfoDto>("/api/chain/info")).Mode;
+        => _chainMode ??= (await _api.Chain.InfoAsync()).Mode;
 
     /// <summary>
     /// Settles a fee invoice from the player's OWN wallet: the embedded
@@ -131,7 +134,7 @@ public class GameClient : IAsyncDisposable
         if (invoice.AmountSats == 0) return true;
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/pay-invoice", new { InvoiceId = invoice.InvoiceId });
+            await _api.Dev.PayInvoiceAsync(new { InvoiceId = invoice.InvoiceId });
             Console.WriteLine($"    paid {invoice.AmountSats} sats (simulated wallet) → {ShortId(invoice.PayToAddress)}");
             return true;
         }
@@ -157,14 +160,14 @@ public class GameClient : IAsyncDisposable
     private static async Task<T> RetryUntilObservedAsync<T>(Func<Task<T>> action, string what)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
-        GameClientException? last = null;
+        ArkadeHeroesApiException? last = null;
         while (DateTime.UtcNow < deadline)
         {
             try
             {
                 return await action();
             }
-            catch (GameClientException ex) when (
+            catch (ArkadeHeroesApiException ex) when (
                 ex.Message.Contains("not been paid") || ex.Message.Contains("unpaid") ||
                 ex.Message.Contains("does not show"))
             {
@@ -184,13 +187,13 @@ public class GameClient : IAsyncDisposable
         {
             var session = JsonSerializer.Deserialize<SessionState>(await File.ReadAllTextAsync(SessionFile));
             if (session?.Token is null || session.ServerUrl != _serverUrl) return;
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
-            _me = await GetAsync<PlayerDto>("/api/players/me");
+            _api.SetAuthToken(session.Token);
+            _me = await _api.Players.MeAsync();
             Console.WriteLine($"  resumed session as {_me.Name} ({_me.BalanceSats} sats)\n");
         }
         catch
         {
-            _http.DefaultRequestHeaders.Authorization = null;
+            _api.ClearAuthToken();
             _me = null;
         }
     }
@@ -324,13 +327,13 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/refund-escrow", new { MatchId = matchId });
+            await _api.Dev.RefundEscrowAsync(new { MatchId = matchId });
             Console.WriteLine("    stake refunded (simulated wallet)");
             return;
         }
 
-        var escrow = await GetAsync<Chain.Covenants.WagerEscrowParams>($"/api/matches/{matchId}/escrow");
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var escrow = await _api.Matches.EscrowAsync(matchId);
+        var info = await _api.Chain.InfoAsync();
         var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
             ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
         var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
@@ -360,11 +363,11 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/refund-merge", new { MergeId = mergeId });
+            await _api.Dev.RefundMergeAsync(new { MergeId = mergeId });
             Console.WriteLine("    merge deposit refunded (simulated wallet)");
             return;
         }
-        var escrow = await GetAsync<Chain.Covenants.MergeEscrowParams>($"/api/merges/{mergeId}/escrow");
+        var escrow = await _api.Merge.EscrowAsync(mergeId);
         var (emulatorUri, esploraApi) = await RefundEndpointsAsync();
         var wallet = await WalletAsync();
         Console.WriteLine($"    rebuilding merge escrow locally (refundable after {escrow.RefundAfterUnixSeconds})…");
@@ -389,11 +392,11 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/refund-breed", new { BreedingId = breedingId });
+            await _api.Dev.RefundBreedAsync(new { BreedingId = breedingId });
             Console.WriteLine("    breed deposit refunded (simulated wallet)");
             return;
         }
-        var escrow = await GetAsync<Chain.Covenants.BreedEscrowParams>($"/api/breedings/{breedingId}/escrow");
+        var escrow = await _api.Breeding.EscrowAsync(breedingId);
         var (emulatorUri, esploraApi) = await RefundEndpointsAsync();
         var wallet = await WalletAsync();
         Console.WriteLine($"    rebuilding breed escrow locally (refundable after {escrow.RefundAfterUnixSeconds})…");
@@ -418,11 +421,11 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/reclaim-deathmatch", new { DeathMatchId = deathMatchId });
+            await _api.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = deathMatchId });
             Console.WriteLine("    death-match stake reclaimed (simulated wallet)");
             return;
         }
-        var escrow = await GetAsync<Chain.Covenants.DeathMatchJointEscrowParams>($"/api/deathmatch/{deathMatchId}/escrow");
+        var escrow = await _api.DeathMatch.EscrowAsync(deathMatchId);
         var (emulatorUri, esploraApi) = await RefundEndpointsAsync();
         var wallet = await WalletAsync();
         var myHeroId = wallet.Address == escrow.ChallengerAddress ? escrow.ChallengerHeroAssetId : escrow.DefenderHeroAssetId;
@@ -446,32 +449,12 @@ public class GameClient : IAsyncDisposable
     /// <summary>The emulator + esplora endpoints the refund flows need (env overrides win, else chain info).</summary>
     private async Task<(string EmulatorUri, string EsploraApi)> RefundEndpointsAsync()
     {
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var info = await _api.Chain.InfoAsync();
         var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
             ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
         var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
             ?? throw new GameClientException("no esplora API for chain time — set ARKADE_HEROES_ESPLORA (e.g. http://localhost:8999/api/v1)");
         return (emulatorUri, esploraApi);
-    }
-
-    // ── HTTP helpers ───────────────────────────────────────────────────
-
-    private async Task<T> GetAsync<T>(string path)
-        => await ReadAsync<T>(await _http.GetAsync(path));
-
-    private async Task<T> PostAsync<T>(string path, object? body = null)
-        => await ReadAsync<T>(body is null
-            ? await _http.PostAsync(path, null)
-            : await _http.PostAsJsonAsync(path, body));
-
-    private static async Task<T> ReadAsync<T>(HttpResponseMessage response)
-    {
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-            throw new GameClientException(error?.Error ?? $"server returned {(int)response.StatusCode}");
-        }
-        return (await response.Content.ReadFromJsonAsync<T>())!;
     }
 
     private void RequireSession()
@@ -527,15 +510,14 @@ public class GameClient : IAsyncDisposable
                 loginPubKey = wallet.LoginPubKeyHex;
                 // Proof-of-possession: sign a fresh challenge so this login key
                 // can only be registered by whoever actually controls it.
-                var challenge = await GetAsync<LoginChallengeResponse>("/api/players/login-challenge");
+                var challenge = await _api.Players.LoginChallengeAsync();
                 (_, loginSig) = wallet.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
                 loginNonce = challenge.NonceHex;
             }
         }
 
-        var player = await PostAsync<PlayerDto>("/api/players",
+        var player = await _api.Players.RegisterAsync(
             new RegisterPlayerRequest(name, address, loginPubKey, loginNonce, loginSig));
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
         _me = player;
         await SaveSessionAsync(player.Token!);
         Console.WriteLine($"  ✓ welcome, {player.Name} — your keys, your heroes");
@@ -555,11 +537,10 @@ public class GameClient : IAsyncDisposable
         if (await ChainModeAsync() == "InMemory")
             throw new GameClientException("InMemory mode has no wallet to sign in with");
         var wallet = await WalletAsync();
-        var challenge = await GetAsync<LoginChallengeResponse>("/api/players/login-challenge");
+        var challenge = await _api.Players.LoginChallengeAsync();
         var (pubKey, signature) = wallet.SignLoginDigest(LoginChallenge.Digest(challenge.NonceHex));
-        var player = await PostAsync<PlayerDto>("/api/players/login",
+        var player = await _api.Players.LoginAsync(
             new LoginRequest(pubKey, challenge.NonceHex, signature));
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", player.Token);
         _me = player;
         await SaveSessionAsync(player.Token!);
         Console.WriteLine($"  ✓ signed in as {player.Name} — session resumed with your wallet");
@@ -569,7 +550,7 @@ public class GameClient : IAsyncDisposable
     private async Task ShowMeAsync()
     {
         RequireSession();
-        _me = await GetAsync<PlayerDto>("/api/players/me");
+        _me = await _api.Players.MeAsync();
         Console.WriteLine($"  {_me.Name}  ·  {_me.BalanceSats} sats");
         Console.WriteLine($"  player id: {_me.PlayerId}   (others use this to transfer heroes to you)");
         Console.WriteLine($"  address:   {_me.ArkadeAddress}");
@@ -578,7 +559,7 @@ public class GameClient : IAsyncDisposable
     private async Task ClaimStarterAsync()
     {
         RequireSession();
-        var starter = await PostAsync<StarterResponse>("/api/heroes/starter");
+        var starter = await _api.Heroes.ClaimStartersAsync();
         Console.WriteLine("  ✓ two generation-0 heroes minted as Arkade assets:");
         foreach (var hero in starter.Heroes)
             Console.WriteLine($"    {hero.Name}  [{hero.Element}]  asset {ShortId(hero.AssetId ?? "?")}");
@@ -589,7 +570,7 @@ public class GameClient : IAsyncDisposable
     {
         var heroes = mineOnly
             ? await (Task<List<HeroDto>>)ListMineAsync()
-            : await GetAsync<List<HeroDto>>("/api/heroes");
+            : await _api.Heroes.AllAsync();
         _lastListing.Clear();
         _lastListing.AddRange(heroes);
 
@@ -612,13 +593,13 @@ public class GameClient : IAsyncDisposable
         Task<List<HeroDto>> ListMineAsync()
         {
             RequireSession();
-            return GetAsync<List<HeroDto>>("/api/heroes/mine");
+            return _api.Heroes.MineAsync();
         }
     }
 
     private async Task ShowHeroAsync(string reference)
     {
-        var hero = await GetAsync<HeroDto>($"/api/heroes/{ResolveHero(reference).Id}");
+        var hero = await _api.Heroes.GetAsync(ResolveHero(reference).Id);
         Console.WriteLine($"""
               {hero.Name}  (gen {hero.Generation}, level {hero.Level})
                 element   {hero.Element}
@@ -650,7 +631,7 @@ public class GameClient : IAsyncDisposable
         var parentA = ResolveHero(refA);
         var parentB = ResolveHero(refB);
 
-        var commit = await PostAsync<BreedCommitResponse>("/api/breeding/commit",
+        var commit = await _api.Breeding.CommitAsync(
             new BreedCommitRequest(parentA.Id, parentB.Id, covenant ? "covenant" : "invoice"));
 
         if (covenant)
@@ -666,8 +647,7 @@ public class GameClient : IAsyncDisposable
 
         var nonce = NewNonce();
         var reveal = await RetryUntilObservedAsync(
-            () => PostAsync<BreedRevealResponse>(
-                $"/api/breeding/{commit.BreedingId}/reveal", new BreedRevealRequest(nonce)),
+            () => _api.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest(nonce)),
             "breeding reveal");
 
         await StoreReceiptAsync(reveal.Receipt);
@@ -689,11 +669,10 @@ public class GameClient : IAsyncDisposable
         var mine = ResolveHero(mineRef);
         var theirs = ResolveHero(theirsRef);
 
-        var open = await PostAsync<OpenMatchResponse>("/api/matches/open",
+        var open = await _api.Matches.OpenAsync(
             new OpenMatchRequest(mine.Id, theirs.Id));
         var nonce = NewNonce();
-        var fight = await PostAsync<FightResponse>(
-            $"/api/matches/{open.MatchId}/fight", new FightRequest(nonce));
+        var fight = await _api.Matches.FightAsync(open.MatchId, new FightRequest(nonce));
 
         PrintBattle(fight);
         await StoreReceiptAsync(fight.Receipt);
@@ -743,7 +722,7 @@ public class GameClient : IAsyncDisposable
         var mine = ResolveHero(mineRef);
         var theirs = ResolveHero(theirsRef);
 
-        var open = await PostAsync<OpenMatchResponse>("/api/matches/open",
+        var open = await _api.Matches.OpenAsync(
             new OpenMatchRequest(mine.Id, theirs.Id, wager, covenant ? "covenant" : "invoice"));
         Console.WriteLine($"  ✓ challenge opened: {open.MatchId}{(covenant ? "  [covenant escrow]" : "")}");
         Console.WriteLine($"    wager {open.WagerSats} sats; commitment {ShortId(open.CommitmentHex)}");
@@ -764,7 +743,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fund-breed-escrow", new { BreedingId = breedingId });
+            await _api.Dev.FundBreedEscrowAsync(new { BreedingId = breedingId });
             Console.WriteLine("    deposited both parents + fee into the breed escrow (simulated wallet)");
             return;
         }
@@ -782,7 +761,7 @@ public class GameClient : IAsyncDisposable
         var baseHero = ResolveHero(baseRef);
         var sacrificeHero = ResolveHero(sacrificeRef);
 
-        var commit = await PostAsync<MergeCommitResponse>("/api/merge/commit",
+        var commit = await _api.Merge.CommitAsync(
             new MergeCommitRequest(baseHero.Id, sacrificeHero.Id, covenant ? "covenant" : "treasury"));
 
         Console.WriteLine($"  committed: {ShortId(commit.CommitmentHex)}  [merge escrow{(covenant ? ", covenant" : "")}]");
@@ -790,8 +769,7 @@ public class GameClient : IAsyncDisposable
 
         var nonce = NewNonce();
         var reveal = await RetryUntilObservedAsync(
-            () => PostAsync<MergeRevealResponse>(
-                $"/api/merge/{commit.MergeId}/reveal", new MergeRevealRequest(nonce)),
+            () => _api.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest(nonce)),
             "merge reveal");
 
         await StoreReceiptAsync(reveal.Receipt);
@@ -814,7 +792,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fund-merge-escrow", new { MergeId = mergeId });
+            await _api.Dev.FundMergeEscrowAsync(new { MergeId = mergeId });
             Console.WriteLine("    deposited base + sacrifice + fee into the merge escrow (simulated wallet)");
             return;
         }
@@ -832,7 +810,7 @@ public class GameClient : IAsyncDisposable
         var mine = ResolveHero(mineRef);
         var theirs = ResolveHero(theirsRef);
 
-        var open = await PostAsync<DeathMatchOpenResponse>("/api/deathmatch/open",
+        var open = await _api.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(mine.Id, theirs.Id));
 
         // Informed consent: show the level gap + the gear at stake before the hero is at risk.
@@ -857,7 +835,7 @@ public class GameClient : IAsyncDisposable
     private async Task AcceptDeathAsync(string deathMatchId)
     {
         RequireSession();
-        var accept = await PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept", null);
+        var accept = await _api.DeathMatch.AcceptAsync(deathMatchId);
         Console.WriteLine($"  ⚠ accepting a death-match — if {accept.DefenderHero.Name} loses, it is BURNED.");
         if (accept.DefenderGear.Count > 0)
             Console.WriteLine($"    your equipped gear is AT STAKE too: {string.Join(", ", accept.DefenderGear.Select(g => $"{g.Amount}× {g.ItemId}"))}");
@@ -871,8 +849,7 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         var nonce = NewNonce();
         var settle = await RetryUntilObservedAsync(
-            () => PostAsync<DeathMatchSettleResponse>(
-                $"/api/deathmatch/{deathMatchId}/settle", new DeathMatchSettleRequest(nonce)),
+            () => _api.DeathMatch.SettleAsync(deathMatchId, new DeathMatchSettleRequest(nonce)),
             "death-match settle");
         await StoreReceiptAsync(settle.Receipt);
 
@@ -893,7 +870,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fund-deathmatch-escrow", new { DeathMatchId = deathMatchId, Role = role });
+            await _api.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = deathMatchId, Role = role });
             Console.WriteLine("    staked your hero (+ any equipped gear) into the death-match escrow (simulated wallet)");
             return;
         }
@@ -913,7 +890,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/stake-escrow", new { MatchId = matchId });
+            await _api.Dev.StakeEscrowAsync(new { MatchId = matchId });
             Console.WriteLine($"    staked {stakeSats} sats into the escrow (simulated wallet)");
             return;
         }
@@ -924,10 +901,10 @@ public class GameClient : IAsyncDisposable
 
     private async Task DuelResolveAsync(string matchId)
     {
-        var match = await GetAsync<MatchDto>($"/api/matches/{matchId}");
+        var match = await _api.Matches.GetAsync(matchId);
         var nonce = NewNonce();
         var fight = await RetryUntilObservedAsync(
-            () => PostAsync<FightResponse>($"/api/matches/{matchId}/fight", new FightRequest(nonce)),
+            () => _api.Matches.FightAsync(matchId, new FightRequest(nonce)),
             "duel");
 
         PrintBattle(fight);
@@ -945,7 +922,7 @@ public class GameClient : IAsyncDisposable
     {
         RequireSession();
         var hero = ResolveHero(heroRef);
-        var opponents = await GetAsync<List<OpponentSuggestionDto>>($"/api/matchmaking/{hero.Id}");
+        var opponents = await _api.Matches.MatchmakingAsync(hero.Id);
         if (opponents.Count == 0)
         {
             Console.WriteLine("  no opponents available yet (other players need heroes)");
@@ -959,8 +936,8 @@ public class GameClient : IAsyncDisposable
 
     private async Task ListMatchesAsync()
     {
-        var open = await GetAsync<List<MatchDto>>("/api/matches?status=open");
-        var accepted = await GetAsync<List<MatchDto>>("/api/matches?status=accepted");
+        var open = await _api.Matches.ListAsync("open");
+        var accepted = await _api.Matches.ListAsync("accepted");
         var interesting = open.Concat(accepted).Where(m => m.WagerSats > 0).ToList();
         if (interesting.Count == 0)
         {
@@ -975,7 +952,7 @@ public class GameClient : IAsyncDisposable
     private async Task AcceptAsync(string matchId)
     {
         RequireSession();
-        var response = await PostAsync<AcceptMatchResponse>($"/api/matches/{matchId}/accept");
+        var response = await _api.Matches.AcceptAsync(matchId);
         if (response.EscrowAddress is not null)
         {
             Console.WriteLine($"  ✓ accepted — covenant escrow stake {response.EscrowStakeSats} sats");
@@ -1008,21 +985,20 @@ public class GameClient : IAsyncDisposable
         // Non-custodial: the asset spend is OURS to make; the server only verifies.
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/transfer-asset",
+            await _api.Dev.TransferAssetAsync(
                 new { AssetId = hero.AssetId ?? hero.Id, ToPlayerId = toPlayerId });
             Console.WriteLine($"    asset moved (simulated wallet)");
         }
         else
         {
-            var recipient = await GetAsync<PlayerDto>($"/api/players/{toPlayerId}");
+            var recipient = await _api.Players.GetAsync(toPlayerId);
             var wallet = await WalletAsync();
             var txid = await wallet.SendAssetAsync(recipient.ArkadeAddress, hero.AssetId ?? hero.Id, 1);
             Console.WriteLine($"    hero asset sent from your wallet to {recipient.Name}'s address (tx {ShortId(txid)})");
         }
 
         var result = await RetryUntilObservedAsync(
-            () => PostAsync<TransferResponse>($"/api/heroes/{hero.Id}/transfer",
-                new TransferRequest(toPlayerId)),
+            () => _api.Heroes.TransferAsync(hero.Id, new TransferRequest(toPlayerId)),
             "transfer confirmation");
         Console.WriteLine($"  ✓ {result.Hero.Name} transferred to {toPlayerId} (verified on-chain)");
     }
@@ -1104,7 +1080,7 @@ public class GameClient : IAsyncDisposable
 
     private async Task LeaderboardAsync()
     {
-        var board = await GetAsync<List<LeaderboardEntryDto>>("/api/leaderboard");
+        var board = await _api.Leaderboard.TopAsync();
         if (board.Count == 0)
         {
             Console.WriteLine("  no heroes yet");
@@ -1117,7 +1093,7 @@ public class GameClient : IAsyncDisposable
 
     private async Task RarestAsync()
     {
-        var board = await GetAsync<List<HeroDto>>("/api/rarest");
+        var board = await _api.Leaderboard.RarestAsync();
         if (board.Count == 0) { Console.WriteLine("  no heroes yet"); return; }
         Console.WriteLine("  #   hero            tier        score  gen");
         var rank = 1;
@@ -1143,7 +1119,7 @@ public class GameClient : IAsyncDisposable
     private async Task VerifyReceiptsAsync()
     {
         RequireSession();
-        var chainInfo = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var chainInfo = await _api.Chain.InfoAsync();
         var held = await LoadReceiptsAsync();
 
         // Signature + commit-reveal verification on everything we hold.
@@ -1164,10 +1140,10 @@ public class GameClient : IAsyncDisposable
             : $"  {bad}/{held.Count} receipts FAILED verification");
 
         // Level replay: pull each hero's full public receipt chain and recompute.
-        var mine = await GetAsync<List<HeroDto>>("/api/heroes/mine");
+        var mine = await _api.Heroes.MineAsync();
         foreach (var hero in mine)
         {
-            var chain = await GetAsync<List<ProgressionReceiptDto>>($"/api/receipts/hero/{hero.Id}");
+            var chain = await _api.Receipts.ForHeroAsync(hero.Id);
             var expected = ReceiptVerifier.ReplayLevel(hero.Id, chain);
             var match = expected == hero.Level ? "✓" : "✗";
             Console.WriteLine($"  {match} {hero.Name}: level {hero.Level} (recomputed {expected} from {chain.Count} receipt(s))");
@@ -1188,7 +1164,7 @@ public class GameClient : IAsyncDisposable
 
     private async Task ShopAsync()
     {
-        var items = await GetAsync<List<ItemDto>>("/api/items");
+        var items = await _api.Items.ShopAsync();
         foreach (var group in items.GroupBy(i => i.Slot))
         {
             Console.WriteLine($"  {group.Key}:");
@@ -1210,11 +1186,11 @@ public class GameClient : IAsyncDisposable
     private async Task BuyAsync(string itemId)
     {
         RequireSession();
-        var invoice = (await PostAsync<ItemInvoiceResponse>($"/api/items/{itemId}/buy")).Invoice;
+        var invoice = (await _api.Items.BuyAsync(itemId)).Invoice;
         Console.WriteLine($"  invoice: {invoice.AmountSats} sats for {itemId}");
         await SettleInvoiceAsync(invoice);
         var claim = await RetryUntilObservedAsync(
-            () => PostAsync<ClaimItemResponse>("/api/items/claim", new ClaimItemRequest(invoice.InvoiceId)),
+            () => _api.Items.ClaimAsync(new ClaimItemRequest(invoice.InvoiceId)),
             "item claim");
         Console.WriteLine($"  ✓ bought {itemId} — you now hold {claim.UnitsHeld} unit(s)");
         Console.WriteLine($"    item asset {ShortId(claim.ItemAssetId)}  tx {ShortId(claim.ArkTxId)}");
@@ -1223,7 +1199,7 @@ public class GameClient : IAsyncDisposable
     private async Task ClaimAsync(string invoiceId)
     {
         RequireSession();
-        var claim = await PostAsync<ClaimItemResponse>("/api/items/claim", new ClaimItemRequest(invoiceId));
+        var claim = await _api.Items.ClaimAsync(new ClaimItemRequest(invoiceId));
         Console.WriteLine($"  ✓ claimed — you now hold {claim.UnitsHeld} unit(s) (asset {ShortId(claim.ItemAssetId)})");
     }
 
@@ -1231,7 +1207,7 @@ public class GameClient : IAsyncDisposable
     {
         RequireSession();
         var hero = ResolveHero(heroRef);
-        var result = await PostAsync<EquipResponse>($"/api/heroes/{hero.Id}/equip", new EquipRequest(itemId));
+        var result = await _api.Heroes.EquipAsync(hero.Id, new EquipRequest(itemId));
         Console.WriteLine($"  ✓ {result.Hero.Name} equipped {itemId}");
         Console.WriteLine($"    stats now: hp{result.Hero.Stats.MaxHp} atk{result.Hero.Stats.Attack} mag{result.Hero.Stats.Magic} def{result.Hero.Stats.Defense} spd{result.Hero.Stats.Speed}");
     }
@@ -1240,7 +1216,7 @@ public class GameClient : IAsyncDisposable
     {
         RequireSession();
         var hero = ResolveHero(heroRef);
-        var result = await PostAsync<EquipResponse>($"/api/heroes/{hero.Id}/unequip", new UnequipRequest(slot));
+        var result = await _api.Heroes.UnequipAsync(hero.Id, new UnequipRequest(slot));
         Console.WriteLine($"  ✓ {result.Hero.Name} unequipped {slot} — the item unit is free for another hero");
     }
 
@@ -1252,7 +1228,7 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         if (!long.TryParse(askText, out var ask) || ask <= 0)
             throw new GameClientException("ask must be a positive number of sats");
-        var offer = await PostAsync<CreateOfferResponse>("/api/offers", new CreateOfferRequest(itemId, ask));
+        var offer = await _api.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for one {itemId}");
         await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         Console.WriteLine($"    listed — buyers run 'offers' then 'buyoffer {offer.OfferId}'");
@@ -1263,7 +1239,7 @@ public class GameClient : IAsyncDisposable
     {
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fund-offer", new { OfferId = offerId });
+            await _api.Dev.FundOfferAsync(new { OfferId = offerId });
             Console.WriteLine("    deposited the item unit into the offer (simulated wallet)");
             return;
         }
@@ -1279,7 +1255,7 @@ public class GameClient : IAsyncDisposable
         if (!long.TryParse(askText, out var ask) || ask <= 0)
             throw new GameClientException("ask must be a positive number of sats");
         var hero = ResolveHero(heroRef);
-        var offer = await PostAsync<CreateOfferResponse>("/api/offers/hero", new CreateHeroOfferRequest(hero.Id, ask));
+        var offer = await _api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for {hero.Name}");
         await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         Console.WriteLine($"    {hero.Name} listed — buyers run 'offers' then 'buyhero {offer.OfferId}'");
@@ -1296,14 +1272,14 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fulfill-offer", new { OfferId = offerId });
-            var simClaim = await PostAsync<TransferResponse>($"/api/offers/{offerId}/claim-hero");
+            await _api.Dev.FulfillOfferAsync(new { OfferId = offerId });
+            var simClaim = await _api.Offers.ClaimHeroAsync(offerId);
             Console.WriteLine($"  ✓ bought {simClaim.Hero.Name} — hero delivered, seller paid (simulated wallet)");
             return;
         }
 
-        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var offer = await _api.Offers.ParamsAsync(offerId);
+        var info = await _api.Chain.InfoAsync();
         var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
             ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
 
@@ -1312,13 +1288,13 @@ public class GameClient : IAsyncDisposable
         await Chain.Covenants.OfferFulfillFlow.FulfillAsync(wallet, new Uri(emulatorUri), offer);
         Console.WriteLine("    fulfilment co-signed — waiting for the hero to land in your wallet…");
         await wallet.WaitForAssetAsync(offer.ItemAssetId, TimeSpan.FromSeconds(90));
-        var claimed = await PostAsync<TransferResponse>($"/api/offers/{offerId}/claim-hero");
+        var claimed = await _api.Offers.ClaimHeroAsync(offerId);
         Console.WriteLine($"  ✓ bought {claimed.Hero.Name} — you paid {offer.AskSats} sats and now own the hero");
     }
 
     private async Task ListOffersAsync()
     {
-        var offers = await GetAsync<List<OfferDto>>("/api/offers");
+        var offers = await _api.Offers.ListAsync();
         if (offers.Count == 0)
         {
             Console.WriteLine("  no offers resting — list one with 'sell <itemId> <askSats>'");
@@ -1344,13 +1320,13 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/fulfill-offer", new { OfferId = offerId });
+            await _api.Dev.FulfillOfferAsync(new { OfferId = offerId });
             Console.WriteLine($"  ✓ bought offer {ShortId(offerId)} — item delivered, seller paid (simulated wallet)");
             return;
         }
 
-        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var offer = await _api.Offers.ParamsAsync(offerId);
+        var info = await _api.Chain.InfoAsync();
         var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
             ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
 
@@ -1372,13 +1348,13 @@ public class GameClient : IAsyncDisposable
         RequireSession();
         if (await ChainModeAsync() == "InMemory")
         {
-            await PostAsync<object>("/api/dev/reclaim-offer", new { OfferId = offerId });
+            await _api.Dev.ReclaimOfferAsync(new { OfferId = offerId });
             Console.WriteLine($"  ✓ offer {ShortId(offerId)} cancelled — item returned (simulated wallet)");
             return;
         }
 
-        var offer = await GetAsync<Chain.Covenants.OfferParams>($"/api/offers/{offerId}/params");
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var offer = await _api.Offers.ParamsAsync(offerId);
+        var info = await _api.Chain.InfoAsync();
         var emulatorUri = Environment.GetEnvironmentVariable("ARKADE_HEROES_EMULATOR") ?? info.EmulatorUri
             ?? throw new GameClientException("the server did not advertise an emulator URI — set ARKADE_HEROES_EMULATOR");
         var esploraApi = Environment.GetEnvironmentVariable("ARKADE_HEROES_ESPLORA") ?? info.EsploraApiUri
@@ -1404,7 +1380,7 @@ public class GameClient : IAsyncDisposable
 
     private async Task ChainInfoAsync()
     {
-        var info = await GetAsync<ChainInfoDto>("/api/chain/info");
+        var info = await _api.Chain.InfoAsync();
         Console.WriteLine($"  chain: {info.Mode} ({info.Network})");
         Console.WriteLine($"  treasury: {info.TreasuryAddress}");
         Console.WriteLine($"  species asset: {info.SpeciesAssetId ?? "-"}");
