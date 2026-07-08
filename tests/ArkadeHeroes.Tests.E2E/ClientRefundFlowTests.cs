@@ -308,6 +308,22 @@ public class ClientRefundFlowTests : IAsyncLifetime
         await _bob.WaitForAssetAsync(bHero.AssetId!, TimeSpan.FromSeconds(90));
     }
 
+    [Fact]
+    public async Task Starter_SucceedsRightAfterTreasuryFunding_ServerAwaitsItsOwnSync()
+    {
+        // Regression for the treasury-sync race: fund the treasury, then mint IMMEDIATELY —
+        // deliberately WITHOUT the test-side EnsureTreasuryFundedAsync poll. The server's own
+        // mint path (EnsureSpeciesAssetAsync) must poll-and-wait for THIS instance's treasury
+        // view; a single stale read of cached VTXO storage used to throw "Treasury wallet has
+        // no funds" and flake the suite.
+        var alice = await RegisterAsync("Treasury-Race-Alice", _alice);
+        var info = (await alice.GetFromJsonAsync<ChainInfoDto>("/api/chain/info", Web))!;
+        await RegtestHelper.ArkSend(info.TreasuryAddress, 200_000);
+
+        var heroes = await PostOkAsync<StarterResponse>(alice, "/api/heroes/starter");
+        Assert.Equal(2, heroes.Heroes.Count);
+    }
+
     /// <summary>Funds the fresh server's treasury and waits until the funding is indexer-visible — required before the first starter mint (as the wager fact does).</summary>
     private async Task EnsureTreasuryFundedAsync(HttpClient client)
     {

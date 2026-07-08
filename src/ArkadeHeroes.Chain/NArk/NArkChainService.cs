@@ -217,8 +217,11 @@ public class NArkChainService(
         {
             if (_speciesAssetId is not null) return _speciesAssetId;
 
-            var balance = await SumTreasurySatsAsync(ct);
-            if (balance == 0)
+            // The treasury may have been funded moments ago; give THIS instance's own
+            // VTXO sync a bounded chance to observe it before hard-failing. Without this,
+            // the first mint after funding raced the server's indexer (a single stale
+            // read of cached VTXO storage returned 0) and threw spuriously.
+            if (!await WaitForTreasurySatsAsync(TimeSpan.FromSeconds(30), ct))
                 throw new InvalidOperationException(
                     $"Treasury wallet has no funds — send sats to {_treasuryAddress} " +
                     "(regtest: node regtest/regtest.mjs ark send --to <address> --amount <sats> --password secret) " +
@@ -1136,6 +1139,19 @@ public class NArkChainService(
         var contracts = await contractStorage.GetContracts(walletIds: [_treasuryWalletId!], cancellationToken: ct);
         foreach (var contract in contracts)
             await vtxoSync.PollScriptsForVtxos(new HashSet<string> { contract.Script });
+    }
+
+    /// <summary>Polls THIS instance's treasury scripts until its own VTXO view shows a positive balance, or the timeout elapses — closes the first-mint-after-funding race where a single stale read saw 0.</summary>
+    private async Task<bool> WaitForTreasurySatsAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            await PollTreasuryScriptsAsync(ct);      // force a fresh sync before reading
+            if (await SumTreasurySatsAsync(ct) > 0) return true;
+            if (DateTime.UtcNow >= deadline) return false;
+            await Task.Delay(500, ct);
+        }
     }
 
     private async Task WaitForTreasuryAssetAsync(string assetId, TimeSpan timeout, CancellationToken ct)
