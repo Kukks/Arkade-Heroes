@@ -1,0 +1,279 @@
+@page "/heroes/{Id}"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>@(_hero?.Name ?? "Hero") · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <a href="heroes" class="hud back">← roster</a>
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the hero…</div>
+}
+else if (_error || _hero is null)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't load this hero.</div>
+        <p class="muted" style="margin:.7rem 0 0">It may not exist, or the arena is unreachable.</p>
+    </div>
+}
+else
+{
+    var h = _hero;
+    var tier = h.Rarity?.Tier ?? "Common";
+
+    <section class="detail-hero">
+        <div class="detail-portrait" style="background:@HeroCard.ArtGradient(h.GenomeHex)">
+            <span class="hero-gen mono">GEN·@h.Generation</span>
+            @if (h.IsSterile)
+            {
+                <span class="hero-sterile mono" title="sterile — cannot breed">⌀</span>
+            }
+        </div>
+        <div class="detail-headings">
+            <div class="hud">@h.Element · @(h.IsSterile ? "sterile" : "fertile")</div>
+            <h1>@h.Name</h1>
+            <div class="chips">
+                <span class="tier tag-@tier.ToLowerInvariant()">@tier</span>
+                <span class="chip">lvl <b>@h.Level</b></span>
+                <span class="chip">@h.Xp / @h.XpToNext xp</span>
+                @if (h.Rarity is not null)
+                {
+                    <span class="chip">rarity <b>@h.Rarity.Score</b></span>
+                }
+                <span class="chip">bred <b>@h.BreedCount</b>×</span>
+            </div>
+        </div>
+    </section>
+
+    <div class="wallet-grid">
+        <div class="card">
+            <h3>Stats</h3>
+            <div class="stat-grid mono">
+                <div><span>HP</span><b>@h.Stats.MaxHp</b></div>
+                <div><span>ATK</span><b>@h.Stats.Attack</b></div>
+                <div><span>MAG</span><b>@h.Stats.Magic</b></div>
+                <div><span>DEF</span><b>@h.Stats.Defense</b></div>
+                <div><span>SPD</span><b>@h.Stats.Speed</b></div>
+                <div><span>LCK</span><b>@h.Stats.Luck</b></div>
+                <div><span>CRIT</span><b>@h.Stats.CritPercent%</b></div>
+                <div><span>DODGE</span><b>@h.Stats.DodgePercent%</b></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Traits</h3>
+            @if (h.Rarity is { Expressed.Count: > 0 } or { CarriedRecessives.Count: > 0 })
+            {
+                <div class="hud" style="margin-bottom:.4rem">expressed</div>
+                <div class="chips">
+                    @foreach (var t in h.Rarity!.Expressed)
+                    {
+                        <span class="chip">@t.Category <b class="tag-@t.Tier.ToLowerInvariant()">@t.Tier</b></span>
+                    }
+                    @if (h.Rarity.Expressed.Count == 0) { <span class="muted">none yet — traits emerge through breeding</span> }
+                </div>
+                @if (h.Rarity.CarriedRecessives.Count > 0)
+                {
+                    <div class="hud" style="margin:.9rem 0 .4rem">carried recessives · breeding potential</div>
+                    <div class="chips">
+                        @foreach (var t in h.Rarity.CarriedRecessives)
+                        {
+                            <span class="chip ghost">@t.Category <b class="tag-@t.Tier.ToLowerInvariant()">@t.Tier</b></span>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <p class="muted">A gen-0 starter — blank on traits. Breed it to earn heritable traits.</p>
+            }
+        </div>
+    </div>
+
+    <div class="wallet-grid">
+        <div class="card">
+            <h3>Skills</h3>
+            @if (h.Skills.Count == 0)
+            {
+                <p class="muted">No skills learned.</p>
+            }
+            else
+            {
+                <div class="skill-list">
+                    @foreach (var s in h.Skills)
+                    {
+                        <div class="skill">
+                            <div class="skill-head"><b>@s.Name</b> <span class="chip">@(s.Element ?? "physical")</span></div>
+                            <div class="statline mono">
+                                <span>pow @s.Power</span>
+                                <span>acc @s.Accuracy%</span>
+                                <span>cd @s.CooldownTurns</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(s.Effect) && s.Effect != "None")
+                            {
+                                <div class="muted" style="font-size:.8rem">@s.Effect</div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="card">
+            <h3>Equipment</h3>
+            @if (h.Equipment.Count == 0)
+            {
+                <p class="muted">Nothing equipped.</p>
+            }
+            else
+            {
+                <div class="kv">
+                    @foreach (var (slot, item) in h.Equipment)
+                    {
+                        <div><span>@slot</span><b>@item</b></div>
+                    }
+                </div>
+            }
+            <h3 style="margin-top:1.2rem">Lineage</h3>
+            <div class="kv">
+                <div><span>generation</span><b>@h.Generation</b></div>
+                @if (h.ParentAId is not null)
+                {
+                    <div><span>parent A</span><a href="heroes/@h.ParentAId" class="mono">@Short(h.ParentAId)</a></div>
+                }
+                @if (h.ParentBId is not null)
+                {
+                    <div><span>parent B</span><a href="heroes/@h.ParentBId" class="mono">@Short(h.ParentBId)</a></div>
+                }
+                @if (h.ParentAId is null && h.ParentBId is null)
+                {
+                    <div><span>origin</span><b>gen-0 starter</b></div>
+                }
+                @if (h.BreedCooldownUntil is { } cd)
+                {
+                    <div><span>breed cooldown</span><b>@cd.UtcDateTime.ToString("u")</b></div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>On-chain · this hero is an Arkade asset</h3>
+        <div class="kv wide">
+            <div><span>genome</span><code class="mono genome">@h.GenomeHex</code></div>
+            @if (h.AssetId is not null)
+            {
+                <div><span>asset id</span><code class="mono genome">@h.AssetId</code></div>
+            }
+            @if (h.MintArkTxId is not null)
+            {
+                <div><span>mint tx</span><code class="mono genome">@h.MintArkTxId</code></div>
+            }
+            @if (h.Provenance is { CommitmentHex: not null })
+            {
+                <div><span>commitment</span><code class="mono genome">@h.Provenance.CommitmentHex</code></div>
+            }
+            @if (h.Provenance is { ServerSeedHex: not null })
+            {
+                <div><span>server seed</span><code class="mono genome">@h.Provenance.ServerSeedHex</code></div>
+            }
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="page-head" style="margin-bottom:.8rem">
+            <h3 style="margin:0">Progression receipts</h3>
+            <span class="hud">signed facts · verified in your browser</span>
+            <span class="spacer"></span>
+            @if (_receipts.Count > 0)
+            {
+                <span class="chip mono">replayed level @_replayedLevel</span>
+            }
+        </div>
+        @if (_receipts.Count == 0)
+        {
+            <p class="muted">No progression yet — this hero hasn't fought, bred, or merged.</p>
+        }
+        else
+        {
+            <div class="receipt-list">
+                @foreach (var r in _receipts.OrderByDescending(r => r.UnixSeconds))
+                {
+                    var v = Verify(r);
+                    <div class="receipt">
+                        <div class="receipt-head">
+                            <span class="chip">@r.Type</span>
+                            <span class="status-line" style="gap:.4rem">
+                                <span class="dot @(v.Ok ? "ok" : "bad")"></span>
+                                <span class="mono" style="font-size:.72rem">@(v.Ok ? "verified" : "UNVERIFIED")</span>
+                            </span>
+                        </div>
+                        <div class="statline mono">
+                            <span>A lvl @r.LevelA (@Signed(r.XpAwardA) xp)</span>
+                            <span>B lvl @r.LevelB (@Signed(r.XpAwardB) xp)</span>
+                            @if (r.ResultHeroId is not null)
+                            {
+                                <span>→ @Short(r.ResultHeroId)</span>
+                            }
+                        </div>
+                        @if (!v.Ok)
+                        {
+                            <div class="muted" style="font-size:.78rem">@v.Detail</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    private HeroDto? _hero;
+    private List<ProgressionReceiptDto> _receipts = new();
+    private string? _advertisedKey;
+    private int _replayedLevel;
+    private bool _loading = true;
+    private bool _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = false;
+        try
+        {
+            var hero = Api.Heroes.GetAsync(Id);
+            var receipts = Api.Receipts.ForHeroAsync(Id);
+            var info = Api.Chain.InfoAsync();
+            await Task.WhenAll(hero, receipts, info);
+            _hero = await hero;
+            _receipts = await receipts;
+            _advertisedKey = (await info).GameSignerKey;
+            _replayedLevel = ReceiptVerifier.ReplayLevel(Id, _receipts);
+        }
+        catch
+        {
+            _error = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // Trustless: the signature must verify AND be by the game key the server advertises
+    // (else a forger could embed their own key over a self-consistent receipt).
+    private (bool Ok, string Detail) Verify(ProgressionReceiptDto r)
+    {
+        var (ok, detail) = ReceiptVerifier.Verify(r);
+        if (ok && !string.Equals(r.GameSignerKeyHex, _advertisedKey, StringComparison.OrdinalIgnoreCase))
+            return (false, "signed by an unrecognised key (not the arena's advertised signer)");
+        return (ok, detail);
+    }
+
+    static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
+    static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();
+}

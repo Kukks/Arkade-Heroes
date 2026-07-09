@@ -1,6 +1,6 @@
 @* A single hero, its "portrait" generated deterministically from its genome bytes. *@
 
-<div class="hero-card">
+<a class="hero-card" href="@($"heroes/{Hero.Id}")">
     <div class="hero-tile" style="background:@ArtGradient(Hero.GenomeHex)">
         <span class="hero-gen mono">GEN·@Hero.Generation</span>
         @if (Hero.IsSterile)
@@ -28,7 +28,7 @@
             <span>SPD @Hero.Stats.Speed</span>
         </div>
     </div>
-</div>
+</a>
 
 @code {
     [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;
@@ -37,7 +37,7 @@
 
     // Turn the immutable genome into a stable, unique portrait — a conic gradient seeded
     // from the trait + appearance bytes, so every hero looks like itself and re-renders identically.
-    private static string ArtGradient(string hex)
+    public static string ArtGradient(string hex)
     {
         if (hex.Length < 40) return "var(--bg-2)";
         int Hue(int byteIndex) => B(hex, byteIndex) * 360 / 255;

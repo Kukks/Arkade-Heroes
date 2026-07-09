@@ -195,8 +195,8 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .page-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1.3rem; flex-wrap: wrap; }
 .page-head h2 { font-size: 1.5rem; margin: 0; }
 
-.hero-card { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
-.hero-card:hover { transform: translateY(-3px); border-color: rgba(53,240,208,.4); box-shadow: var(--glow), var(--shadow); }
+.hero-card { display: block; color: var(--text); text-decoration: none; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+.hero-card:hover { transform: translateY(-3px); border-color: rgba(53,240,208,.4); box-shadow: var(--glow), var(--shadow); text-decoration: none; }
 .hero-tile { position: relative; aspect-ratio: 16/10; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 .hero-gen { position: absolute; top: .5rem; left: .6rem; z-index: 1; font-size: .6rem; padding: .2rem .45rem; border-radius: 4px; background: rgba(8,11,17,.62); color: var(--text); letter-spacing: .12em; }
@@ -231,6 +231,46 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .offer-price span { color: var(--muted); font-size: .82rem; }
 .offer-status { text-transform: uppercase; letter-spacing: .08em; font-size: .62rem; }
 .offer-status.on { color: var(--ok); }
+
+/* --- Hero detail page ----------------------------------------------------- */
+.page-head .back { text-decoration: none; }
+.page-head .back:hover { color: var(--accent); }
+
+.detail-hero { display: grid; grid-template-columns: 260px 1fr; gap: 1.6rem; align-items: center; margin-bottom: 1.4rem; }
+.detail-portrait {
+    position: relative; aspect-ratio: 1; border-radius: var(--radius); border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+}
+.detail-portrait::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); background: repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 2px, transparent 2px 4px); }
+.detail-headings h1 { font-size: 2.2rem; margin: .1em 0 .4em; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
+.stat-grid > div { display: flex; flex-direction: column; gap: .1rem; padding: .55rem .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); }
+.stat-grid span { color: var(--muted); font-size: .6rem; letter-spacing: .1em; text-transform: uppercase; }
+.stat-grid b { font-size: 1.15rem; color: var(--text); }
+
+.chip.ghost { background: transparent; border-style: dashed; }
+
+.skill-list { display: grid; gap: .7rem; }
+.skill { padding: .6rem .7rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); display: grid; gap: .35rem; }
+.skill-head { display: flex; align-items: center; gap: .6rem; }
+
+.kv { display: grid; gap: .5rem; }
+.kv > div { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line-soft); padding-bottom: .45rem; }
+.kv > div:last-child { border-bottom: none; padding-bottom: 0; }
+.kv span { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
+.kv.wide > div { flex-direction: column; align-items: stretch; gap: .3rem; }
+.genome { display: block; word-break: break-all; font-size: .74rem; color: var(--accent); background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .5rem .6rem; }
+
+.receipt-list { display: grid; gap: .7rem; }
+.receipt { padding: .6rem .7rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); display: grid; gap: .4rem; }
+.receipt-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+
+@media (max-width: 780px) {
+    .detail-hero { grid-template-columns: 1fr; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .wallet-grid { grid-template-columns: 1fr; }
+}
 
 /* --- Wallet pill: address + balance, as a link --------------------------- */
 .pill { text-decoration: none; }
