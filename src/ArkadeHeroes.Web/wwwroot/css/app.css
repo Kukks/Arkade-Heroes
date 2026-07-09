@@ -197,6 +197,64 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 
 .hero-card { display: block; color: var(--text); text-decoration: none; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
 .hero-card:hover { transform: translateY(-3px); border-color: rgba(53,240,208,.4); box-shadow: var(--glow), var(--shadow); text-decoration: none; }
+
+/* --- Summon / reveal animations — retro monster-game energy, modern neon ----- */
+/* Grid entrance: every card (heroes, offers) materialises bright-to-crisp, lightly staggered. */
+.grid.cols > *:not(.reveal) { animation: summon-in .55s cubic-bezier(.2,.85,.25,1) backwards; }
+.grid.cols > *:nth-child(2){ animation-delay:.05s }
+.grid.cols > *:nth-child(3){ animation-delay:.10s }
+.grid.cols > *:nth-child(4){ animation-delay:.15s }
+.grid.cols > *:nth-child(5){ animation-delay:.20s }
+.grid.cols > *:nth-child(6){ animation-delay:.25s }
+.grid.cols > *:nth-child(7){ animation-delay:.30s }
+.grid.cols > *:nth-child(8){ animation-delay:.35s }
+@keyframes summon-in {
+    0%   { opacity:0; transform: translateY(10px) scale(.95); filter: brightness(1.9) saturate(.3); }
+    55%  { opacity:1; filter: brightness(1.4) saturate(.7); }
+    100% { opacity:1; transform: translateY(0) scale(1); filter: none; }
+}
+
+/* The big reveal — a hero materialises in a beam: scales up from a bright shard, a
+   rarity/energy flare bursts behind it, and a scan bar wipes down the portrait. */
+.hero-card.reveal { position: relative; animation: summon-reveal 1s cubic-bezier(.16,1,.3,1) backwards; }
+@keyframes summon-reveal {
+    0%   { opacity:0; transform: scale(.55) translateY(24px); filter: brightness(3.5) saturate(0) blur(5px); }
+    28%  { opacity:1; filter: brightness(2.4) saturate(.4) blur(1.5px); }
+    52%  { transform: scale(1.05) translateY(0); filter: brightness(1.3) saturate(1) blur(0); }
+    66%  { transform: scale(.98) translateY(0); }
+    80%  { transform: scale(1.01); }
+    100% { opacity:1; transform: scale(1); filter: none; }
+}
+.hero-card.reveal::before {
+    content:""; position:absolute; inset:-40%; z-index:-1; border-radius:50%; pointer-events:none;
+    background: radial-gradient(circle, var(--flare, var(--accent)) 0%, transparent 62%);
+    opacity:0; animation: flare 1s ease-out backwards;
+}
+@keyframes flare {
+    0%{ opacity:0; transform:scale(.35) } 25%{ opacity:.7 } 60%{ opacity:.25 } 100%{ opacity:0; transform:scale(1.4) }
+}
+.hero-card.reveal .hero-tile { position: relative; }
+.hero-card.reveal .hero-tile::before {
+    content:""; position:absolute; left:0; right:0; top:0; height:16%; z-index:3; pointer-events:none;
+    background: linear-gradient(var(--flare, var(--accent)), transparent);
+    box-shadow: 0 0 26px 7px var(--flare, var(--accent));
+    animation: scan-wipe 1s ease-in-out backwards;
+}
+@keyframes scan-wipe {
+    0%{ transform:translateY(-120%); opacity:0 } 15%{ opacity:1 } 85%{ opacity:1 } 100%{ transform:translateY(560%); opacity:0 }
+}
+/* Fusion burns hotter: red flare (set on the card), a faster resolve, and the portrait
+   shakes as the two heroes collide (on the tile, so it doesn't fight the card's scale). */
+.hero-card.reveal.fuse { animation-duration: .85s; }
+.hero-card.reveal.fuse .hero-tile { animation: fuse-shake .12s steps(2) 6 .1s backwards; }
+@keyframes fuse-shake {
+    0%,100%{ transform: translateX(0) } 25%{ transform: translateX(-3px) } 75%{ transform: translateX(3px) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .grid.cols > *:not(.reveal), .hero-card.reveal, .hero-card.reveal.fuse .hero-tile { animation: none; }
+    .hero-card.reveal::before, .hero-card.reveal .hero-tile::before { display: none; }
+}
 .hero-tile { position: relative; aspect-ratio: 16/10; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 .hero-gen { position: absolute; top: .5rem; left: .6rem; z-index: 1; font-size: .6rem; padding: .2rem .45rem; border-radius: 4px; background: rgba(8,11,17,.62); color: var(--text); letter-spacing: .12em; }

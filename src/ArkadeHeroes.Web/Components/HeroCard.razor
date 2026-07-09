@@ -1,6 +1,6 @@
 @* A single hero, its "portrait" generated deterministically from its genome bytes. *@
 
-<a class="hero-card" href="@($"heroes/{Hero.Id}")">
+<a class="@CardClass" href="@($"heroes/{Hero.Id}")" style="--flare:@FlareColor">
     <div class="hero-tile" style="background:@ArtGradient(Hero.GenomeHex)">
         <span class="hero-gen mono">GEN·@Hero.Generation</span>
         @if (Hero.IsSterile)
@@ -33,7 +33,18 @@
 @code {
     [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;
 
+    /// <summary>Play the dramatic "summon" reveal (a freshly bred/fused hero materialising).</summary>
+    [Parameter] public bool Reveal { get; set; }
+
+    /// <summary>Fusion tone — hot-red convergence energy instead of the calm rarity flare.</summary>
+    [Parameter] public bool Fuse { get; set; }
+
     private string Tier => Hero.Rarity?.Tier ?? "Common";
+
+    private string CardClass => $"hero-card{(Reveal ? " reveal" : "")}{(Fuse ? " fuse" : "")}";
+
+    // The reveal flare colour: fusion burns hot-red; a birth glows in the hero's rarity colour.
+    private string FlareColor => Fuse ? "var(--danger)" : $"var(--r-{Tier.ToLowerInvariant()})";
 
     // Turn the immutable genome into a stable, unique portrait — a conic gradient seeded
     // from the trait + appearance bytes, so every hero looks like itself and re-renders identically.
