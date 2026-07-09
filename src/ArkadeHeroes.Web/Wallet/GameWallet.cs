@@ -1,4 +1,5 @@
 using ArkadeHeroes.Shared;
+using NArk.Abstractions;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
 using NArk.Core.Services;
@@ -100,6 +101,28 @@ public class GameWallet(
     /// <summary>The wallet's VTXOs (its coins and hero/asset carriers), newest first by default.</summary>
     public async Task<IReadOnlyCollection<ArkVtxo>> GetVtxosAsync(string walletId, int skip = 0, int take = 50)
         => await vtxoStorage.GetVtxos(walletIds: [walletId], skip: skip, take: take);
+
+    /// <summary>
+    /// Send sats to another Arkade address — a real, non-custodial VTXO spend, built and signed
+    /// in the browser (the SDK selects coins). Returns the resulting Arkade tx id. Throws
+    /// <see cref="GameWalletException"/> on a bad address, non-positive amount, or a spend failure
+    /// (e.g. insufficient funds).
+    /// </summary>
+    public async Task<string> SendSatsAsync(string walletId, string destinationAddress, long amountSats)
+    {
+        ArkAddress dest;
+        try { dest = ArkAddress.Parse(destinationAddress.Trim()); }
+        catch (Exception ex) { throw new GameWalletException("That isn't a valid Arkade address.", ex); }
+        if (amountSats <= 0) throw new GameWalletException("Enter an amount greater than zero.");
+        try
+        {
+            var output = new ArkTxOut(ArkTxOutType.Vtxo, Money.Satoshis(amountSats), dest);
+            var txId = await spendingService.Spend(walletId, [output]);
+            return txId.ToString();
+        }
+        catch (GameWalletException) { throw; }
+        catch (Exception ex) { throw new GameWalletException($"Send failed: {ex.Message}", ex); }
+    }
 
     /// <summary>The wallet's mnemonic, for a backup/reveal screen (HD wallets only; null otherwise).</summary>
     public async Task<string?> GetMnemonicAsync(string walletId)

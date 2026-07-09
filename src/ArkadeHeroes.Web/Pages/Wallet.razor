@@ -96,6 +96,28 @@ else // Ready
     </div>
 
     <div class="card" style="margin-bottom:1.1rem">
+        <h3>Send</h3>
+        <p class="muted">Move sats to another Arkade address — the spend is built and signed in this browser.</p>
+        <div class="send-form">
+            <input class="wallet-input" @bind="_sendTo" @bind:event="oninput" placeholder="tark1… destination address" disabled="@_sending" />
+            <div class="send-row">
+                <input class="wallet-input amt" type="number" min="1" @bind="_sendAmount" @bind:event="oninput" placeholder="sats" disabled="@_sending" />
+                <button class="btn primary" @onclick="Send" disabled="@(_sending || string.IsNullOrWhiteSpace(_sendTo) || _sendAmount <= 0)">
+                    @(_sending ? "Sending…" : "Send")
+                </button>
+            </div>
+        </div>
+        @if (_sendResult is not null)
+        {
+            <div class="status-line" style="margin-top:.7rem"><span class="dot ok"></span> Sent — tx <span class="mono">@Short(_sendResult)</span></div>
+        }
+        @if (_sendError is not null)
+        {
+            <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_sendError</div>
+        }
+    </div>
+
+    <div class="card" style="margin-bottom:1.1rem">
         <h3>Game identity</h3>
         @if (State.IsSignedIn)
         {
@@ -174,6 +196,13 @@ else // Ready
     string? _idError;
     string? _claimMsg;
     int _myHeroCount;
+
+    string _sendTo = "";
+    long _sendAmount;
+    bool _sending;
+    string? _sendResult;
+    string? _sendError;
+    bool _resumeTried;
 
     protected override async Task OnInitializedAsync()
     {
@@ -260,9 +289,14 @@ else // Ready
             _vtxoCount = vtxos.Count;
             State.SetActiveWallet(_activeId, _address);
             State.UpdateBalance(balance);
-            // Silently resume the game session (login if this wallet is registered), then
-            // surface the player's roster size.
-            await Session.ResumeAsync();
+            // Silently resume the game session ONCE (login if this wallet is registered),
+            // then surface the player's roster size. Guarded so repeated balance refreshes
+            // don't re-attempt (and re-log) a login for an unregistered wallet.
+            if (!_resumeTried)
+            {
+                _resumeTried = true;
+                await Session.ResumeAsync();
+            }
             await RefreshMineAsync();
         }
         finally
@@ -316,6 +350,31 @@ else // Ready
         try { _myHeroCount = (await Api.Heroes.MineAsync()).Count; }
         catch { /* roster count is best-effort */ }
     }
+
+    async Task Send()
+    {
+        if (_activeId is null) return;
+        _sending = true;
+        _sendError = null;
+        _sendResult = null;
+        try
+        {
+            _sendResult = await WalletSvc.SendSatsAsync(_activeId, _sendTo, _sendAmount);
+            _sendTo = "";
+            _sendAmount = 0;
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _sendError = ex.Message;
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+
+    static string Short(string s) => s.Length <= 14 ? s : $"{s[..8]}…{s[^4..]}";
 
     async Task RevealAsync()
     {

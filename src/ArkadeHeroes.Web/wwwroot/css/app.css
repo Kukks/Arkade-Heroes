@@ -296,6 +296,10 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 }
 .wallet-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
 
+.send-form { display: grid; gap: .6rem; }
+.send-row { display: flex; gap: .6rem; align-items: stretch; }
+.wallet-input.amt { flex: 1; }
+
 /* Recovery-phrase word grid */
 .seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; }
 .seed-word {
