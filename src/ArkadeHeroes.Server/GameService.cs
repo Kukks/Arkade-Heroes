@@ -1096,6 +1096,16 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             .OrderBy(o => o.CreatedAt).ToList();
     }
 
+    /// <summary>Recently sold (closed) offers — the marketplace's "just changed hands" strip.</summary>
+    public async Task<IReadOnlyList<OfferListing>> ListSoldOffersAsync(int take, CancellationToken ct)
+    {
+        // Reconcile still-active offers first, so one that just sold surfaces here immediately.
+        foreach (var offer in store.Offers.Values.Where(o => o.Status == "active").ToList())
+            await ReconcileOfferAsync(offer, ct);
+        return store.Offers.Values.Where(o => o.Status == "closed")
+            .OrderByDescending(o => o.CreatedAt).Take(Math.Clamp(take, 1, 24)).ToList();
+    }
+
     /// <summary>One offer's current listing, reconciled against on-chain truth.</summary>
     public async Task<OfferListing> GetOfferAsync(string offerId, CancellationToken ct)
     {

@@ -78,14 +78,14 @@ else
     {
         try
         {
-            var all = await Api.Offers.ListAsync();
             // A live market shows what a buyer can act on (resting / funding); a short
             // "recently sold" strip carries the SOLD flourish for what just changed hands.
-            _active = all.Where(o => o.Status is "active" or "pending").ToList();
-            _sold = all.Where(o => o.Status == "closed").TakeLast(4).Reverse().ToList();
+            _active = (await Api.Offers.ListAsync()).Where(o => o.Status is "active" or "pending").ToList();
+            try { _sold = await Api.Offers.SoldAsync(4); }
+            catch { _sold = new(); }
 
             // Resolve genome portraits for hero offers from the public roster (one call).
-            if (all.Any(o => o.Kind == "hero" && !string.IsNullOrEmpty(o.HeroId)))
+            if (_active.Concat(_sold).Any(o => o.Kind == "hero" && !string.IsNullOrEmpty(o.HeroId)))
             {
                 try { _heroes = (await Api.Heroes.AllAsync()).ToDictionary(h => h.Id); }
                 catch { /* portraits are a nicety; the cards still render without them */ }

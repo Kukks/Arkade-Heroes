@@ -7,6 +7,7 @@ namespace ArkadeHeroes.Client.Sdk;
 public sealed class OffersApi(ArkadeHeroesClient client)
 {
     public Task<List<OfferDto>> ListAsync() => client.GetAsync<List<OfferDto>>("/api/offers");
+    public Task<List<OfferDto>> SoldAsync(int take = 6) => client.GetAsync<List<OfferDto>>($"/api/offers/sold?take={take}");
     public Task<CreateOfferResponse> CreateItemAsync(CreateOfferRequest req) => client.PostAsync<CreateOfferResponse>("/api/offers", req);
     public Task<CreateOfferResponse> CreateHeroAsync(CreateHeroOfferRequest req) => client.PostAsync<CreateOfferResponse>("/api/offers/hero", req);
     public Task<OfferDto> GetAsync(string offerId) => client.GetAsync<OfferDto>($"/api/offers/{offerId}");

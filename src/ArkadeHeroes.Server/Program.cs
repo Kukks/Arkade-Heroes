@@ -354,6 +354,10 @@ api.MapPost("/offers/{offerId}/claim-hero", async (string offerId, HttpContext h
 api.MapGet("/offers", async (GameService game, GameStore store, CancellationToken ct) =>
     Results.Ok((await game.ListOffersAsync(ct)).Select(o => ToOfferDto(o, store)).ToList()));
 
+// Recently sold (closed) offers — the marketplace's "just changed hands" strip.
+api.MapGet("/offers/sold", async (GameService game, GameStore store, int? take, CancellationToken ct) =>
+    Results.Ok((await game.ListSoldOffersAsync(take ?? 6, ct)).Select(o => ToOfferDto(o, store)).ToList()));
+
 api.MapGet("/offers/{offerId}", async (string offerId, GameService game, GameStore store, CancellationToken ct) =>
 {
     try { return Results.Ok(ToOfferDto(await game.GetOfferAsync(offerId, ct), store)); }
