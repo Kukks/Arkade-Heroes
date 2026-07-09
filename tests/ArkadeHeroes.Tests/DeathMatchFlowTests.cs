@@ -1,6 +1,8 @@
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Fairness;
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
@@ -232,5 +234,100 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(
             () => alice.Dev.ReclaimDeathMatchAsync(new { DeathMatchId = open.DeathMatchId }));
+    }
+
+    /// <summary>Clones a hero with one dominant trait gene set — starters are blank on traits, so this
+    /// gives the loser a candidate the winner can absorb (Genome is init-only, so we replace the record).</summary>
+    private static Hero WithTrait(Hero h, TraitCategory cat, byte value)
+    {
+        var bytes = h.Genome.Bytes.ToArray();
+        bytes[16 + (int)cat * 2] = value;
+        return new Hero
+        {
+            Id = h.Id, OwnerId = h.OwnerId, Name = h.Name, Genome = new Genome(bytes),
+            Generation = h.Generation, ParentAId = h.ParentAId, ParentBId = h.ParentBId,
+            Level = h.Level, Xp = h.Xp, BreedCount = h.BreedCount,
+            EntropyHex = h.EntropyHex, ServerSeedHex = h.ServerSeedHex, PlayerNonce = h.PlayerNonce,
+            AssetId = h.AssetId, MintArkTxId = h.MintArkTxId,
+        };
+    }
+
+    [Fact]
+    public async Task AbsorbDeathMatch_MintsAbsorbedHeroToWinner_BothBurned_Verified()
+    {
+        // Force the absorb roll to (nearly always) fire; a ~1/256 keep roll just retries fresh heroes.
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:AbsorbChance", "255"));
+        var store = factory.Services.GetRequiredService<GameStore>();
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var (alice, _) = await factory.RegisterAsync($"DM-Absorb-A{attempt}");
+            var (bob, _) = await factory.RegisterAsync($"DM-Absorb-B{attempt}");
+            var aliceHeroId = (await alice.ClaimStartersAsync())[0].Id;
+            var bobHeroId = (await bob.ClaimStartersAsync())[0].Id;
+            store.Heroes[aliceHeroId].Level = 20;                                    // Alice wins (favored)
+            store.Heroes[bobHeroId] = WithTrait(store.Heroes[bobHeroId], TraitCategory.Aura, 255); // Bob has a Legendary Aura to absorb
+
+            var aliceBefore = await alice.Heroes.GetAsync(aliceHeroId);
+            var bobBefore = await bob.Heroes.GetAsync(bobHeroId);
+
+            var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHeroId, bobHeroId, Absorb: true));
+            await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+            await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+            await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+            var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("absorb-nonce"));
+            if (!settle.Minted) continue;   // rare keep roll — try again with fresh heroes
+
+            Assert.Equal(aliceHeroId, settle.WinnerHeroId);
+            Assert.NotNull(settle.NewHero);
+            Assert.True(settle.TraitsAbsorbed >= 1);
+
+            // BOTH old heroes are gone; the NEW absorbed hero belongs to the winner.
+            var aliceMine = await alice.Heroes.MineAsync();
+            Assert.DoesNotContain(aliceMine, h => h.Id == aliceHeroId);
+            Assert.DoesNotContain(aliceMine, h => h.Id == bobHeroId);
+            var absorbed = aliceMine.Single(h => h.Id == settle.NewHero!.Id);
+            Assert.Equal(20, absorbed.Level);                                        // inherited the winner's level
+            Assert.Equal(255, Genome.FromHex(absorbed.GenomeHex).DominantGene(TraitCategory.Aura)); // absorbed Bob's Aura
+
+            // Client-verifiable: recompute Absorb.Resolve from the revealed seed + published odds.
+            var verify = FairnessAudit.VerifyAbsorb(open.DeathMatchId, aliceBefore, bobBefore, challengerWon: true,
+                "absorb-nonce", open.CommitmentHex, new AbsorbOdds(255, 90),
+                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+            Assert.True(verify.Ok, verify.Detail);
+
+            // The absorb receipt replays to the inherited level (progression preserved).
+            Assert.Equal("absorb", settle.Receipt!.Type);
+            Assert.Equal(20, ReceiptVerifier.ReplayLevel(settle.NewHero!.Id, [settle.Receipt!]));
+            return;
+        }
+        Assert.Fail("expected an absorb mint within 8 attempts at AbsorbChance=255");
+    }
+
+    [Fact]
+    public async Task AbsorbDeathMatch_KeepRoll_WinnerKeepsExactHero()
+    {
+        // AbsorbChance=0 → the roll never fires → the classic keep outcome, even with a candidate present.
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:AbsorbChance", "0"));
+        var (alice, _) = await factory.RegisterAsync("DM-Keep-A");
+        var (bob, _) = await factory.RegisterAsync("DM-Keep-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[a[0].Id].Level = 20;
+        store.Heroes[b[0].Id] = WithTrait(store.Heroes[b[0].Id], TraitCategory.Aura, 255); // a candidate exists, but chance is 0
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id, Absorb: true));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("keep-nonce"));
+
+        Assert.False(settle.Minted);
+        Assert.Null(settle.NewHero);
+        // Classic keep: Alice keeps her EXACT hero; Bob's is burned.
+        var aliceMine = await alice.Heroes.MineAsync();
+        Assert.Contains(aliceMine, h => h.Id == a[0].Id);
+        Assert.DoesNotContain(aliceMine, h => h.Id == settle.LoserHeroId);
+        Assert.Equal("deathmatch", settle.Receipt!.Type);
     }
 }
