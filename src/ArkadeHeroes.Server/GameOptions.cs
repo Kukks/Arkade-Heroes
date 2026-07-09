@@ -1,3 +1,7 @@
+using ArkadeHeroes.Core;
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Progression;
+
 namespace ArkadeHeroes.Server;
 
 public class GameOptions
@@ -23,4 +27,23 @@ public class GameOptions
     /// ≈ AbsorbContinueChance/256 (front-loaded → mostly one trait, rarely a full concentrate).</summary>
     public byte AbsorbChance { get; set; } = 102;        // ≈40%
     public byte AbsorbContinueChance { get; set; } = 90;  // ≈35%
+
+    // ── Economy tunables (HOT: server-enforced, never re-verified). Defaults reference the
+    //    Core consts so there is a single literal source; an operator overrides via config. ──
+    public long MatchFeeBaseSats { get; set; } = Leveling.MatchFeeBaseSats;      // 500
+    public long MatchFeePerLevel { get; set; } = Leveling.MatchFeePerLevel;      // 20
+    public int BreedFeeDoublingCap { get; set; } = BreedingPolicy.FeeDoublingCap; // 3
+    public int MatchmakingTake { get; set; } = 10;
+
+    /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
+    public GameConfig ToGameConfig() => new(
+        Version: 0,
+        Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
+        Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
+        BreedingFeeSats: BreedingFeeSats,
+        MergeFeeSats: MergeFeeSats,
+        MatchFeeBaseSats: MatchFeeBaseSats,
+        MatchFeePerLevel: MatchFeePerLevel,
+        BreedFeeDoublingCap: BreedFeeDoublingCap,
+        MatchmakingTake: MatchmakingTake);
 }

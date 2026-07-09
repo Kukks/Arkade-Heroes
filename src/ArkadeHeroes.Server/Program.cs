@@ -368,7 +368,8 @@ api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IC
         info.EmulatorSignerKey, receipts.PublicKeyHex,
         isNArk ? config["Chain:NArk:EmulatorUri"] ?? "http://localhost:7073" : null,
         isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null,
-        g.AbsorbChance, g.AbsorbContinueChance));
+        g.AbsorbChance, g.AbsorbContinueChance,
+        GameConfigDto.From(g.ToGameConfig())));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and

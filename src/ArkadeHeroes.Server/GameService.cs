@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using ArkadeHeroes.Chain;
+using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
@@ -22,6 +23,7 @@ public class GameRuleException(string message) : Exception(message);
 public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options)
 {
     private readonly GameOptions _options = options.Value;
+    private readonly GameConfig _config = options.Value.ToGameConfig();
 
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
@@ -254,7 +256,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var parentB = GetOwnedHero(player, parentBId);
         // The breed fee escalates with how much the parents have already been bred
         // (their combined breed count) — a supply-side sats sink.
-        var breedFee = BreedingPolicy.FeeSats(_options.BreedingFeeSats, parentA.BreedCount + parentB.BreedCount);
+        var breedFee = BreedingPolicy.FeeSats(_config.BreedingFeeSats, parentA.BreedCount + parentB.BreedCount, _config);
 
         // Rarity-derived sterility: the rarest heroes can be born unable to breed,
         // capping the supply of legendary lines. Deterministic from the genome.
@@ -690,7 +692,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             // both modes). Separate from the pot — fielding a high-level hero costs
             // sats every staked fight, whoever wins, so idle-training isn't free.
             feeInvoice = await chain.CreateFeeInvoiceAsync(
-                $"match-fee:challenger:{matchId}", Leveling.MatchFee(challenger.Level), ct);
+                $"match-fee:challenger:{matchId}", Leveling.MatchFee(challenger.Level, _config), ct);
         }
 
         var session = new MatchSession
@@ -742,7 +744,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // The defender's per-character match fee, proportional to their OWN level
         // (both modes) — the same sats sink the challenger paid at open.
         var feeInvoice = await chain.CreateFeeInvoiceAsync(
-            $"match-fee:defender:{matchId}", Leveling.MatchFee(defender.Level), ct);
+            $"match-fee:defender:{matchId}", Leveling.MatchFee(defender.Level, _config), ct);
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
@@ -781,7 +783,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// conserved XP swing — what a staked win would gain and a loss would cost — so
     /// a player finds fights where XP is actually at stake, not lopsided ones.
     /// </summary>
-    public IReadOnlyList<Shared.OpponentSuggestionDto> SuggestOpponents(Player player, string heroId, int take = 10)
+    public IReadOnlyList<Shared.OpponentSuggestionDto> SuggestOpponents(Player player, string heroId, int? take = null)
     {
         var hero = GetOwnedHero(player, heroId);
         return store.Heroes.Values
@@ -793,7 +795,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 Matchmaking.XpIfLose(hero.Level, h.Level)))
             .OrderBy(s => s.LevelGap)
             .ThenByDescending(s => s.Hero.Level)
-            .Take(take)
+            .Take(take ?? _config.MatchmakingTake)
             .ToList();
     }
 

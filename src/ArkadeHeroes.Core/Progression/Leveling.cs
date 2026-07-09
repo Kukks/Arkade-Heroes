@@ -39,7 +39,11 @@ public static class Leveling
     public const long MatchFeePerLevel = 20;
 
     /// <summary>Sats a hero's owner pays to stage a staked match: a dust-clearing base plus a per-level surcharge.</summary>
-    public static long MatchFee(int level) => MatchFeeBaseSats + MatchFeePerLevel * Math.Max(1, level);
+    public static long MatchFee(int level, GameConfig? config = null)
+    {
+        var c = config ?? GameConfig.Default;
+        return c.MatchFeeBaseSats + c.MatchFeePerLevel * Math.Max(1, level);
+    }
 
     /// <summary>
     /// Applies a SIGNED XP delta. Positive levels up across thresholds; NEGATIVE

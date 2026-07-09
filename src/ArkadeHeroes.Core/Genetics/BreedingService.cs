@@ -26,8 +26,8 @@ public sealed record BreedingPolicy(TimeSpan CooldownBaseUnit)
     /// baseFeeSats × 2^min(total, cap). Fresh heroes breed at the base; a heavily-bred
     /// line pays progressively more — a supply-side sats sink alongside the cooldown.
     /// </summary>
-    public static long FeeSats(long baseFeeSats, int totalParentBreeds)
-        => baseFeeSats * (1L << Math.Min(Math.Max(totalParentBreeds, 0), FeeDoublingCap));
+    public static long FeeSats(long baseFeeSats, int totalParentBreeds, GameConfig? config = null)
+        => baseFeeSats * (1L << Math.Min(Math.Max(totalParentBreeds, 0), (config ?? GameConfig.Default).BreedFeeDoublingCap));
 }
 
 public sealed record BreedingOutcome(

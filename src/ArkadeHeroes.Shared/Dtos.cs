@@ -249,6 +249,37 @@ public record OfferDto(
 
 // ── Chain / misc ───────────────────────────────────────────────────────────
 
+/// <summary>
+/// The published game-balance config (current version). Flat wire mirror of
+/// <see cref="ArkadeHeroes.Core.GameConfig"/> — carries the HOT (economy) values for
+/// display plus the current <see cref="Version"/>; the PINNED subset grows here as those
+/// paths are threaded, and clients resolve a stamped version via GET /api/config/{version}.
+/// </summary>
+public record GameConfigDto(
+    int Version,
+    byte AbsorbChance,
+    byte AbsorbContinueChance,
+    long BreedingCooldownBaseSeconds,
+    long BreedingFeeSats,
+    long MergeFeeSats,
+    long MatchFeeBaseSats,
+    long MatchFeePerLevel,
+    int BreedFeeDoublingCap,
+    int MatchmakingTake)
+{
+    public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
+        c.Version,
+        c.Absorb.AbsorbChance,
+        c.Absorb.ContinueChance,
+        (long)c.Breeding.CooldownBaseUnit.TotalSeconds,
+        c.BreedingFeeSats,
+        c.MergeFeeSats,
+        c.MatchFeeBaseSats,
+        c.MatchFeePerLevel,
+        c.BreedFeeDoublingCap,
+        c.MatchmakingTake);
+}
+
 public record ChainInfoDto(
     string Mode, string Network, string TreasuryAddress, string? SpeciesAssetId,
     string? EmulatorSignerKey = null,
@@ -256,6 +287,7 @@ public record ChainInfoDto(
     string? EmulatorUri = null,
     string? EsploraApiUri = null,
     byte AbsorbChance = 102,
-    byte AbsorbContinueChance = 90);
+    byte AbsorbContinueChance = 90,
+    GameConfigDto? Config = null);
 
 public record ErrorResponse(string Error);
