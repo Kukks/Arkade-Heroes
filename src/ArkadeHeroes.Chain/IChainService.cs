@@ -223,6 +223,7 @@ public interface IChainService
         string defenderPlayerId, string defenderHeroAssetId,
         byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
         IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        bool absorb = false, string speciesId = "",
         CancellationToken ct = default);
 
     /// <summary>True once BOTH heroes sit at the one joint death-match escrow.</summary>
@@ -237,6 +238,19 @@ public interface IChainService
     /// </summary>
     Task<string> SettleDeathMatchAsync(
         string deathMatchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default);
+
+    /// <summary>
+    /// Executes an ABSORB death-match settle (opt-in absorb mode): BURNS BOTH staked heroes and
+    /// mints a NEW absorbed hero (from <paramref name="absorbedData"/>) UNDER THE SPECIES to the
+    /// winner — the fee-less merge shape, gated on the oracle's BIP340 signatures over BOTH the
+    /// absorb-mint outcome message (winner) AND the absorbed metadata root (genome). Staked gear
+    /// routes to the winner. Returns the new hero's asset id + settle tx id (like
+    /// <see cref="ExecuteMergeAsync"/>). Used only when the seed-driven <c>Absorb.Resolve</c>
+    /// minted; a keep outcome uses <see cref="SettleDeathMatchAsync"/> unchanged.
+    /// </summary>
+    Task<HeroMintResult> SettleDeathMatchAbsorbMintAsync(
+        string deathMatchId, bool challengerWon, HeroMintData absorbedData,
+        byte[] serverSeed, byte[] outcomeSignature64, byte[] rootSignature64, CancellationToken ct = default);
 
     /// <summary>Public joint death-match escrow params for a trustless refund rebuild. Null when unknown.</summary>
     Task<Covenants.DeathMatchJointEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, CancellationToken ct = default);

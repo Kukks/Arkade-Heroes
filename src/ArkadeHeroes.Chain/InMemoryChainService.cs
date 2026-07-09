@@ -484,8 +484,10 @@ public class InMemoryChainService : IChainService
         string defenderPlayerId, string defenderHeroAssetId,
         byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
         IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        bool absorb = false, string speciesId = "",
         CancellationToken ct = default)
     {
+        _ = (absorb, speciesId); // the sim picks keep-vs-mint by which settle method the server calls
         await GetPlayerAddressAsync(challengerPlayerId, ct);
         _deathMatchEscrows[deathMatchId] = new DeathMatchJointEscrow(
             challengerPlayerId, challengerHeroAssetId, defenderPlayerId, defenderHeroAssetId,
@@ -579,6 +581,46 @@ public class InMemoryChainService : IChainService
         escrow.StakedGear.Clear();
         return Task.FromResult(NewId("sim-dm-settle"));
     }
+
+    public Task<HeroMintResult> SettleDeathMatchAbsorbMintAsync(
+        string deathMatchId, bool challengerWon, HeroMintData absorbedData,
+        byte[] serverSeed, byte[] outcomeSignature64, byte[] rootSignature64, CancellationToken ct = default)
+    {
+        if (!_deathMatchEscrows.TryGetValue(deathMatchId, out var escrow))
+            throw new InvalidOperationException($"Death-match {deathMatchId} escrow is not created.");
+        if (!escrow.ChallengerFunded || !escrow.DefenderFunded)
+            throw new InvalidOperationException($"Death-match {deathMatchId} is not fully staked.");
+        if (_deathMatchSettled.ContainsKey(deathMatchId))
+            throw new InvalidOperationException("Death-match already settled.");
+
+        // The same TWO oracle gates the covenant enforces: the absorb-mint OUTCOME message
+        // (which side won) AND the absorbed metadata ROOT (the correct genome).
+        var outcomeMsg = Covenants.ArkadeCovenants.DeathMatchAbsorbMintMessage(deathMatchId, challengerWon);
+        var root = Covenants.ArkadeCovenants.MetadataMerkleRoot(Covenants.BreedEscrowContracts.ChildMetadata(
+            absorbedData.GenomeHex, absorbedData.Generation, absorbedData.ParentAId ?? "", absorbedData.ParentBId ?? "",
+            absorbedData.ServerSeedHex ?? "", absorbedData.PlayerNonce ?? ""));
+        if (!VerifyOracleSig(escrow.OraclePkHex, outcomeMsg, outcomeSignature64)
+            || !VerifyOracleSig(escrow.OraclePkHex, root, rootSignature64))
+            throw new InvalidOperationException("Oracle signatures do not authorize this absorb-mint settle.");
+
+        _deathMatchSettled[deathMatchId] = true;
+        var winnerPlayerId = challengerWon ? escrow.ChallengerPlayerId : escrow.DefenderPlayerId;
+        // BURN BOTH heroes; MINT the absorbed hero to the winner (a NEW asset).
+        _assetHolders.TryRemove(escrow.ChallengerHeroAssetId, out _);
+        _assetHolders.TryRemove(escrow.DefenderHeroAssetId, out _);
+        var absorbedAssetId = NewId("sim-asset");
+        _assetHolders[absorbedAssetId] = winnerPlayerId;
+        // ALL staked gear (both sides') → the winner — the covenant's routing.
+        foreach (var (itemId, units) in escrow.StakedGear)
+            _itemHoldings.AddOrUpdate((winnerPlayerId, itemId), units, (_, count) => count + units);
+        escrow.StakedGear.Clear();
+        return Task.FromResult(new HeroMintResult(absorbedAssetId, NewId("sim-absorb")));
+    }
+
+    private static bool VerifyOracleSig(string oraclePkHex, byte[] message, byte[] signature64) =>
+        NBitcoin.Secp256k1.ECXOnlyPubKey.TryCreate(Convert.FromHexString(oraclePkHex), out var pk) && pk is not null
+        && NBitcoin.Secp256k1.SecpSchnorrSignature.TryCreate(signature64, out var sig) && sig is not null
+        && pk.SigVerifyBIP340(sig, message);
 
     public Task<Covenants.DeathMatchJointEscrowParams?> GetDeathMatchEscrowParamsAsync(string deathMatchId, CancellationToken ct = default)
     {

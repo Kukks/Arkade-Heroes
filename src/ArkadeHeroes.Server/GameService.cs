@@ -496,7 +496,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var escrow = await chain.CreateDeathMatchJointEscrowAsync(
             id, player.Id, challenger.AssetId!, defender.OwnerId, defender.AssetId!,
             Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter,
-            challengerGearIds, defenderGearIds, ct);
+            challengerGearIds, defenderGearIds, ct: ct);
 
         var session = new DeathMatchSession
         {

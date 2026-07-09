@@ -873,6 +873,7 @@ public class NArkChainService(
         string defenderPlayerId, string defenderHeroAssetId,
         byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds,
         IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null,
+        bool absorb = false, string speciesId = "",
         CancellationToken ct = default)
     {
         await EnsureTreasuryAsync(ct);
@@ -901,7 +902,7 @@ public class NArkChainService(
             challengerAddress, challengerHeroAssetId, defenderAddress, defenderHeroAssetId,
             Convert.ToHexString(seedCommitment32).ToLowerInvariant(),
             oraclePubKeyHex, deathMatchId, serverInfo.Dust.Satoshi, refundAfterUnixSeconds,
-            ChallengerGear: challengerGear, DefenderGear: defenderGear);
+            ChallengerGear: challengerGear, DefenderGear: defenderGear, Absorb: absorb, SpeciesId: speciesId);
         await SetKvAsync($"deathmatch-escrow:{deathMatchId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
         var (contract, _) = await BuildDeathMatchContractAsync(parameters, ct);
@@ -1026,6 +1027,91 @@ public class NArkChainService(
             .GetGlobalTransaction().GetHash().ToString();
         logger.LogInformation("Death-match {Id} settled via JOINT covenant ({Branch}) → loser hero burned, winner retained", deathMatchId, branch);
         return settleTxId;
+    }
+
+    public async Task<HeroMintResult> SettleDeathMatchAbsorbMintAsync(
+        string deathMatchId, bool challengerWon, HeroMintData absorbedData,
+        byte[] serverSeed, byte[] outcomeSignature64, byte[] rootSignature64, CancellationToken ct = default)
+    {
+        var parameters = await RequireDeathMatchParamsAsync(deathMatchId, ct);
+        var (contract, serverInfo) = await BuildDeathMatchContractAsync(parameters, ct);
+
+        var vtxos = await DeathMatchVtxosAsync(parameters, ct);
+        var challengerVtxo = vtxos.FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.ChallengerHeroAssetId) == true);
+        var defenderVtxo = vtxos.FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.DefenderHeroAssetId) == true);
+        if (challengerVtxo is null || defenderVtxo is null)
+            throw new InvalidOperationException($"Death-match {deathMatchId} is not fully staked.");
+
+        var branch = challengerWon ? "settleMintChallenger" : "settleMintDefender";
+        var winnerVtxo = challengerWon ? challengerVtxo : defenderVtxo;
+        var loserVtxo = challengerWon ? defenderVtxo : challengerVtxo;
+        var winnerHeroAsset = global::NArk.Core.Assets.AssetId.FromString(
+            challengerWon ? parameters.ChallengerHeroAssetId : parameters.DefenderHeroAssetId);
+        var loserHeroAsset = global::NArk.Core.Assets.AssetId.FromString(
+            challengerWon ? parameters.DefenderHeroAssetId : parameters.ChallengerHeroAssetId);
+        var winnerScript = ArkAddress.Parse(
+            challengerWon ? parameters.ChallengerAddress : parameters.DefenderAddress).ScriptPubKey;
+        var species = global::NArk.Core.Assets.AssetId.FromString(parameters.SpeciesId);
+
+        // Ordered inputs (same as the keep settle): winner hero vin 0, loser hero vin 1, then gear carriers.
+        var gearCarriers = vtxos
+            .Where(v => v.Assets is { Count: > 0 } && v.OutPoint != challengerVtxo.OutPoint && v.OutPoint != defenderVtxo.OutPoint)
+            .OrderBy(v => v.OutPoint.ToString(), StringComparer.Ordinal)
+            .ToList();
+        var orderedVtxos = new List<ArkVtxo> { winnerVtxo, loserVtxo };
+        orderedVtxos.AddRange(gearCarriers);
+
+        // Witness for the settleMint leaf: root sig (bottom), the mint-group index (2) twice, loser
+        // vin (1), winner vin (0), seed, and the outcome sig (top). Every input spends settleMint.
+        var witness = Covenants.ArkadeCovenants.DeathMatchAbsorbMintWitness(
+            rootSignature64, childGroupIndex: 2, loserInputIndex: 1, winnerInputIndex: 0, serverSeed, outcomeSignature64);
+        var inputs = orderedVtxos
+            .Select(v => new Covenants.CovenantSpender.CovenantInput(contract, branch, witness, v))
+            .ToArray();
+
+        // Packet: BURN BOTH input heroes (declared as inputs with NO output — arkd destroys them);
+        // MINT the absorbed hero under the species (group index 2) → the winner at output 0; every
+        // staked gear asset → the winner at output 0. The settleMint leaf makes this the ONLY
+        // packet it will co-sign.
+        var absorbedMeta = Covenants.BreedEscrowContracts.ChildMetadata(
+            absorbedData.GenomeHex, absorbedData.Generation, absorbedData.ParentAId ?? "", absorbedData.ParentBId ?? "",
+            absorbedData.ServerSeedHex ?? "", absorbedData.PlayerNonce ?? "");
+        var gearGroups = new List<global::NArk.Core.Assets.AssetGroup>();
+        foreach (var (gearId, totalUnits) in MergedGear(parameters))
+        {
+            var gearInputs = new List<global::NArk.Core.Assets.AssetInput>();
+            for (var vin = 0; vin < orderedVtxos.Count; vin++)
+            {
+                var amt = orderedVtxos[vin].Assets?.Where(a => a.AssetId == gearId).Aggregate(0UL, (s, a) => s + a.Amount) ?? 0;
+                if (amt > 0) gearInputs.Add(global::NArk.Core.Assets.AssetInput.Create((ushort)vin, amt));
+            }
+            gearGroups.Add(global::NArk.Core.Assets.AssetGroup.Create(
+                global::NArk.Core.Assets.AssetId.FromString(gearId), null, gearInputs,
+                [global::NArk.Core.Assets.AssetOutput.Create(0, (ulong)totalUnits)], []));
+        }
+        var packet = global::NArk.Core.Assets.Packet.Create(
+        [
+            global::NArk.Core.Assets.AssetGroup.Create(winnerHeroAsset, null,
+                [global::NArk.Core.Assets.AssetInput.Create(0, 1)], [], []),   // burn old winner
+            global::NArk.Core.Assets.AssetGroup.Create(loserHeroAsset, null,
+                [global::NArk.Core.Assets.AssetInput.Create(1, 1)], [], []),   // burn loser
+            global::NArk.Core.Assets.AssetGroup.Create(null, global::NArk.Core.Assets.AssetRef.FromId(species),
+                [], [global::NArk.Core.Assets.AssetOutput.Create(0, 1)], absorbedMeta),  // mint absorbed → winner
+            .. gearGroups,
+        ]);
+
+        var total = orderedVtxos.Sum(v => (long)v.Amount);
+        var response = await Covenants.CovenantSpender.SpendManyCoreAsync(
+            transport, safetyService, walletProvider, intentStorage,
+            _treasuryWalletId!, new Uri(options.EmulatorUri), inputs,
+            [new TxOut(Money.Satoshis(total), winnerScript)],   // minted hero + burned dust → winner (no fee)
+            extraPackets: [packet], ct: ct);
+
+        var settleTxId = NBitcoin.PSBT.Parse(response.SignedArkTx, serverInfo.Network)
+            .GetGlobalTransaction().GetHash().ToString();
+        var absorbedAssetId = global::NArk.Core.Assets.AssetId.Create(settleTxId, 2).ToString(); // mint at group index 2
+        logger.LogInformation("Death-match {Id} settled via ABSORB-MINT ({Branch}) → BOTH heroes burned, absorbed {Asset} minted to winner", deathMatchId, branch, absorbedAssetId);
+        return new HeroMintResult(absorbedAssetId, settleTxId);
     }
 
     // ── Covenant item offers (resting, buyer-fulfilled) ────────────────
