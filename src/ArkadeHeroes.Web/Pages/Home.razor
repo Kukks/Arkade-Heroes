@@ -1,5 +1,6 @@
 @page "/"
 @inject ArkadeHeroesClient Api
+@inject HttpClient Http
 @inject NavigationManager Nav
 
 <PageTitle>Arkade Heroes</PageTitle>
@@ -60,6 +61,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _apiBase = Http.BaseAddress?.ToString() ?? "";
         try
         {
             _info = await Api.Chain.InfoAsync();
