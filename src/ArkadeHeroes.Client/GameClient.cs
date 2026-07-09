@@ -225,7 +225,7 @@ public class GameClient : IAsyncDisposable
             case "show": await ShowHeroAsync(Arg(parts, 1, "show <hero>")); break;
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB> [covenant]"), Arg(parts, 2, "breed <parentA> <parentB> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "merge": await MergeAsync(Arg(parts, 1, "merge <base> <sacrifice> [covenant]"), Arg(parts, 2, "merge <base> <sacrifice> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
-            case "deathmatch": await DeathMatchAsync(Arg(parts, 1, "deathmatch <mine> <theirs>"), Arg(parts, 2, "deathmatch <mine> <theirs>")); break;
+            case "deathmatch": await DeathMatchAsync(Arg(parts, 1, "deathmatch <mine> <theirs> [absorb]"), Arg(parts, 2, "deathmatch <mine> <theirs> [absorb]"), parts.Length > 3 && parts[3].Equals("absorb", StringComparison.OrdinalIgnoreCase)); break;
             case "accept-death": await AcceptDeathAsync(Arg(parts, 1, "accept-death <id>")); break;
             case "settle-death": await SettleDeathAsync(Arg(parts, 1, "settle-death <id>")); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
@@ -280,7 +280,7 @@ public class GameClient : IAsyncDisposable
           show <hero>            hero sheet (stats, skills, lineage, on-chain ids)
           breed <a> <b> [covenant]  breed two heroes; 'covenant' = emulator-enforced escrow mint
           merge <base> <sac> [covenant]  fuse two heroes into one (both consumed); concentrates traits, may be born sterile
-          deathmatch <m> <t>     STAKE YOUR HERO — winner-takes-all; the LOSER'S HERO BURNS (permadeath)
+          deathmatch <m> <t> [absorb]  STAKE YOUR HERO — the LOSER'S HERO BURNS (permadeath); 'absorb' = your winner may re-mint absorbing a trait
           accept-death <id>      accept a death-match (stakes your challenged hero)
           settle-death <id>      fight the death-match; the loser's hero dies (replay-audited)
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
@@ -804,14 +804,14 @@ public class GameClient : IAsyncDisposable
     }
 
     /// <summary>Open a death-match: STAKE YOUR HERO. Winner-takes-all; the loser's hero is permanently burned.</summary>
-    private async Task DeathMatchAsync(string mineRef, string theirsRef)
+    private async Task DeathMatchAsync(string mineRef, string theirsRef, bool absorb = false)
     {
         RequireSession();
         var mine = ResolveHero(mineRef);
         var theirs = ResolveHero(theirsRef);
 
         var open = await _api.DeathMatch.OpenAsync(
-            new DeathMatchOpenRequest(mine.Id, theirs.Id));
+            new DeathMatchOpenRequest(mine.Id, theirs.Id, Absorb: absorb));
 
         // Informed consent: show the level gap + the gear at stake before the hero is at risk.
         var gap = Math.Abs(open.Favorability.LevelGap);
@@ -819,6 +819,8 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine($"  ⚠ {open.Favorability.Label.ToUpperInvariant()} — the opponent is {gap} level(s) {dir} you.");
         if (open.ChallengerGear.Count > 0)
             Console.WriteLine($"    your equipped gear is AT STAKE too: {string.Join(", ", open.ChallengerGear.Select(g => $"{g.Amount}× {g.ItemId}"))}");
+        if (absorb)
+            Console.WriteLine("    ABSORB mode: if you WIN, a rare roll may RE-MINT your hero absorbing a trait from the loser (a NEW asset id, level kept).");
         Console.WriteLine($"    LOSING BURNS {mine.Name} FOREVER. Type 'yes' to stake it:");
         if ((Console.ReadLine() ?? "").Trim().ToLowerInvariant() != "yes")
         {
@@ -863,6 +865,22 @@ public class GameClient : IAsyncDisposable
             settle.ChallengerSnapshot, settle.DefenderSnapshot, settle.ChallengerSnapshot, settle.DefenderSnapshot);
         var (ok, detail) = FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr);
         Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
+
+        // Absorb mode: the winner may have RE-MINTED absorbing the loser's trait — verify the new
+        // genome too (mandatory hard gate: recompute the outcome from the revealed seed + the
+        // server-published odds, so a fabricated absorb or a wrong genome is caught).
+        if (settle.Minted)
+        {
+            Console.WriteLine($"  ✦ {winnerName} ABSORBED {settle.TraitsAbsorbed} trait(s) → re-minted as new hero {ShortId(settle.NewHero!.Id)}");
+            var info = await _api.Chain.InfoAsync();
+            var challengerWon = settle.WinnerHeroId == settle.ChallengerSnapshot.Id;
+            var (aok, adetail) = FairnessAudit.VerifyAbsorb(
+                deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
+                nonce, settle.Receipt!.CommitmentHex,
+                new ArkadeHeroes.Core.Genetics.AbsorbOdds(info.AbsorbChance, info.AbsorbContinueChance),
+                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+            Console.WriteLine(aok ? $"    absorb ✓ {adetail}" : $"    absorb ✗ SERVER CHEATED: {adetail}");
+        }
     }
 
     /// <summary>Stake a hero + their equipped gear units into a death-match escrow from the player's OWN wallet (or the dev simulator in InMemory mode, whose sim moves the gear internally).</summary>
