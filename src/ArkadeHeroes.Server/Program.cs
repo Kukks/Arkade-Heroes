@@ -11,6 +11,16 @@ builder.Services.AddSingleton<GameStore>();
 builder.Services.AddSingleton<ReceiptSigner>();
 builder.Services.AddSingleton<GameService>();
 
+// CORS for the Blazor WASM frontend. In dev the WASM runs on its own origin
+// (http://localhost:5132) and calls this API cross-origin; allow any localhost
+// port over http/https. Auth is a bearer header (no cookies), so no credentials
+// are needed. Serving the WASM from this host (same-origin) needs none of this.
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+    policy.SetIsOriginAllowed(origin =>
+            Uri.TryCreate(origin, UriKind.Absolute, out var u) && u.Host is "localhost" or "127.0.0.1")
+        .AllowAnyHeader()
+        .AllowAnyMethod()));
+
 // Chain mode: "InMemory" (default) or "NArk" (regtest denigiri stack).
 var chainMode = builder.Configuration.GetValue<string>("Chain:Mode") ?? "InMemory";
 if (chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
@@ -25,6 +35,8 @@ else
 }
 
 var app = builder.Build();
+
+app.UseCors();
 
 // GameRuleException → 400; anything else → 500, both with readable JSON.
 app.Use(async (context, next) =>
