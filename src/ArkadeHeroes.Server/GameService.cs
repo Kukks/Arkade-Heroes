@@ -23,7 +23,11 @@ public class GameRuleException(string message) : Exception(message);
 public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options, GameConfigRegistry configRegistry)
 {
     private readonly GameOptions _options = options.Value;
-    private readonly GameConfig _config = configRegistry.Current;
+
+    // Live (not cached at construction) so a PINNED retune appended to the registry reaches new work
+    // immediately. A given flow reads it a few times; a concurrent retune is a rare admin action, so
+    // within-request snapshotting is a noted hardening follow-up, not needed pre-launch.
+    private GameConfig _config => configRegistry.Current;
 
     /// <summary>Version the current config runs under — stamped into re-verifiable artifacts so clients resolve the config they were made under.</summary>
     public int ConfigVersion => _config.Version;
