@@ -93,6 +93,40 @@ public static class FairnessAudit
     }
 
     /// <summary>
+    /// Verifies a death-match ABSORB outcome: seed matches the commitment, entropy is the documented
+    /// fight derivation, and <c>Absorb.Resolve(winner, loser, entropy, odds)</c> reproduces the
+    /// server's mint decision — on a mint, the new genome; on a keep, that nothing was minted. The
+    /// odds are the server-published <see cref="AbsorbOdds"/> the client fetched. This is the
+    /// mandatory client-side gate: a server can't hand the winner a genome the seed didn't produce
+    /// (or fabricate an absorb) without this recompute catching it.
+    /// </summary>
+    public static (bool Ok, string Detail) VerifyAbsorb(
+        string deathMatchId, HeroDto challenger, HeroDto defender, bool challengerWon,
+        string nonce, string commitmentHex, AbsorbOdds odds,
+        bool minted, string? newGenomeHex, string serverSeedHex, string entropyHex)
+    {
+        var seed = Convert.FromHexString(serverSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        // Same entropy derivation the fight used (VerifyMatch): (seed, matchId, challenger, defender, nonce).
+        var entropy = CommitReveal.DeriveEntropy(seed, deathMatchId, challenger.Id, defender.Id, nonce);
+        if (!Convert.ToHexString(entropy).Equals(entropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, deathMatchId, challenger, defender, nonce)");
+
+        var winner = challengerWon ? challenger : defender;
+        var loser = challengerWon ? defender : challenger;
+        var outcome = Absorb.Resolve(
+            Genome.FromHex(winner.GenomeHex), Genome.FromHex(loser.GenomeHex), entropy, odds);
+        if (outcome.Minted != minted)
+            return (false, $"minted flag mismatch: recomputed {outcome.Minted}, server reported {minted}");
+        if (minted && !string.Equals(outcome.Result.ToHex(), newGenomeHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "absorbed genome does not equal Absorb.Resolve(winner, loser, entropy, odds)");
+
+        return (true, minted ? "seed, entropy, and absorbed genome verify" : "seed, entropy, and keep (no absorb) verify");
+    }
+
+    /// <summary>
     /// Verifies a match outcome: seed matches the commitment, entropy is the
     /// documented derivation, and replaying <c>BattleEngine.Fight</c> over the
     /// pre-fight snapshots reproduces the exact event log.
