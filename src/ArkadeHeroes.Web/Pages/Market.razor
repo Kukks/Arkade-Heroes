@@ -1,5 +1,6 @@
 @page "/market"
 @inject ArkadeHeroesClient Api
+@inject WalletState State
 
 <PageTitle>Market · Arkade Heroes</PageTitle>
 
@@ -7,9 +8,13 @@
     <h2>Market</h2>
     <span class="hud">covenant-enforced · buyer-funded</span>
     <span class="spacer"></span>
+    @if (State.IsSignedIn)
+    {
+        <a class="btn" href="sell">List a hero</a>
+    }
     @if (!_loading && !_error)
     {
-        <span class="chip mono">@_offers.Count live</span>
+        <span class="chip mono">@_active.Count live</span>
     }
 </div>
 
@@ -24,36 +29,48 @@ else if (_error)
         <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
     </div>
 }
-else if (_offers.Count == 0)
+else if (_active.Count == 0 && _sold.Count == 0)
 {
-    <div class="card muted">No resting offers right now. List a hero or item from your wallet to open the market.</div>
+    <div class="card muted">
+        No resting offers right now. List a hero from your wallet to open the market —
+        head to <a href="sell">Sell</a>.
+    </div>
 }
 else
 {
-    <div class="grid cols">
-        @foreach (var o in _offers)
-        {
-            <div class="card offer-card">
-                <div class="offer-head">
-                    <span class="offer-name">@o.ItemName</span>
-                    <span class="chip">@(o.Kind == "hero" ? "hero" : "item")</span>
-                </div>
-                @if (!string.IsNullOrEmpty(o.RarityTier))
-                {
-                    <span class="tier tag-@o.RarityTier.ToLowerInvariant()">@o.RarityTier</span>
-                }
-                <div class="offer-price"><b>@o.AskSats.ToString("N0")</b> <span>sats</span></div>
-                <div class="statline">
-                    <span>seller <span class="mono">@Short(o.SellerId)</span></span>
-                    <span class="offer-status @(o.Status == "active" ? "on" : "")">@o.Status</span>
-                </div>
-            </div>
-        }
-    </div>
+    @if (_active.Count > 0)
+    {
+        <div class="grid cols">
+            @foreach (var o in _active)
+            {
+                <OfferCard Offer="o" Hero="@HeroFor(o)" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="card muted">Nothing resting right now — but here's what just changed hands.</div>
+    }
+
+    @if (_sold.Count > 0)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Recently sold</h3>
+            <span class="hud">covenant delivered · seller paid</span>
+        </div>
+        <div class="grid cols">
+            @foreach (var o in _sold)
+            {
+                <OfferCard Offer="o" Hero="@HeroFor(o)" />
+            }
+        </div>
+    }
 }
 
 @code {
-    private List<OfferDto> _offers = new();
+    private List<OfferDto> _active = new();
+    private List<OfferDto> _sold = new();
+    private Dictionary<string, HeroDto> _heroes = new();
     private bool _loading = true;
     private bool _error;
 
@@ -62,8 +79,17 @@ else
         try
         {
             var all = await Api.Offers.ListAsync();
-            // A live market shows what a buyer can act on: resting (active) or funding (pending).
-            _offers = all.Where(o => o.Status is "active" or "pending").ToList();
+            // A live market shows what a buyer can act on (resting / funding); a short
+            // "recently sold" strip carries the SOLD flourish for what just changed hands.
+            _active = all.Where(o => o.Status is "active" or "pending").ToList();
+            _sold = all.Where(o => o.Status == "closed").TakeLast(4).Reverse().ToList();
+
+            // Resolve genome portraits for hero offers from the public roster (one call).
+            if (all.Any(o => o.Kind == "hero" && !string.IsNullOrEmpty(o.HeroId)))
+            {
+                try { _heroes = (await Api.Heroes.AllAsync()).ToDictionary(h => h.Id); }
+                catch { /* portraits are a nicety; the cards still render without them */ }
+            }
         }
         catch
         {
@@ -75,5 +101,6 @@ else
         }
     }
 
-    static string Short(string s) => s.Length <= 10 ? s : $"{s[..6]}…{s[^4..]}";
+    private HeroDto? HeroFor(OfferDto o) =>
+        !string.IsNullOrEmpty(o.HeroId) && _heroes.TryGetValue(o.HeroId, out var h) ? h : null;
 }

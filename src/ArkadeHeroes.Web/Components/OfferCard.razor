@@ -1,0 +1,73 @@
+@* A resting marketplace offer. Shows the listed hero's genome portrait when known,
+   the ask, and a SOLD stamp once it closes. Reveal plays the "listed" flourish. *@
+
+<div class="@CardClass" style="--flare:@FlareColor">
+    @if (Hero is not null)
+    {
+        <div class="offer-tile" style="background:@HeroCard.ArtGradient(Hero.GenomeHex)">
+            <span class="offer-kind mono">@KindLabel</span>
+            <span class="price-shine"></span>
+        </div>
+    }
+    <div class="offer-body">
+        <div class="offer-head">
+            <span class="offer-name">@Offer.ItemName</span>
+            @if (!string.IsNullOrEmpty(Offer.RarityTier))
+            {
+                <span class="tier tag-@Offer.RarityTier.ToLowerInvariant()">@Offer.RarityTier</span>
+            }
+            else
+            {
+                <span class="chip">@KindLabel.ToLowerInvariant()</span>
+            }
+        </div>
+        <div class="offer-price"><b>@Offer.AskSats.ToString("N0")</b> <span>sats</span></div>
+        <div class="statline">
+            <span>seller <span class="mono">@Short(Offer.SellerId)</span></span>
+            <span class="offer-status @StatusClass">@StatusLabel</span>
+        </div>
+    </div>
+    @if (Sold)
+    {
+        <div class="sold-stamp">SOLD</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public OfferDto Offer { get; set; } = default!;
+
+    /// <summary>The hero behind a hero offer, if resolved — supplies the genome portrait.</summary>
+    [Parameter] public HeroDto? Hero { get; set; }
+
+    /// <summary>Play the "just listed" flourish (a price tag drops in with a gold coin-shine).</summary>
+    [Parameter] public bool Reveal { get; set; }
+
+    private bool Sold => Offer.Status == "closed";
+
+    private string CardClass =>
+        $"card offer-card{(Reveal ? " reveal-offer" : "")}{(Sold ? " sold" : "")}";
+
+    private string KindLabel => Offer.Kind == "hero" ? "HERO" : "ITEM";
+
+    // A resting offer glows in its rarity colour; a freshly-listed one flares gold (a sale).
+    private string FlareColor => string.IsNullOrEmpty(Offer.RarityTier)
+        ? "var(--gold)"
+        : $"var(--r-{Offer.RarityTier.ToLowerInvariant()})";
+
+    private string StatusLabel => Offer.Status switch
+    {
+        "active" => "resting",
+        "pending" => "funding",
+        "closed" => "sold",
+        _ => Offer.Status,
+    };
+
+    private string StatusClass => Offer.Status switch
+    {
+        "active" => "on",
+        "closed" => "done",
+        _ => "",
+    };
+
+    private static string Short(string s) => s.Length <= 10 ? s : $"{s[..6]}…{s[^4..]}";
+}

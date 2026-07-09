@@ -1,0 +1,137 @@
+@page "/sell"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Sell · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Sell</h2>
+    <span class="hud">covenant-enforced · a buyer pays you direct</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Sign in with your wallet on the <a href="wallet">Wallet</a> page to list a hero for sale.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You have no heroes to sell yet — claim your starters (or breed) first.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            List one of your heroes at a fixed ask. Your wallet deposits the hero into a covenant offer
+            address; it rests on the market until a buyer pays the ask straight to you and the covenant
+            hands them the hero — no custodian, no middleman. Cancel any time to reclaim it.
+        </p>
+        <div class="sell-picks">
+            <label>Hero
+                <select @bind="_heroId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _mine)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+            <label>Ask <span class="mini">sats</span>
+                <input type="number" min="1" step="1000" class="ask-input" @bind="_ask" />
+            </label>
+        </div>
+        <button class="btn primary" style="margin-top:1.1rem" @onclick="DoList"
+                disabled="@(_listing || string.IsNullOrEmpty(_heroId) || _ask <= 0)">
+            @(_listing ? "Listing…" : "List for sale")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    @if (_listed is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Listed on the market</h3>
+            <span class="hud">resting · buyers pay you direct</span>
+        </div>
+        <div class="grid cols"><OfferCard Offer="_listed" Hero="_listedHero" Reveal="true" /></div>
+        <p class="muted" style="margin-top:1rem"><a href="market">See it resting in the Market →</a></p>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private string _heroId = "";
+    private long _ask = 25000;
+    private bool _loading = true;
+    private bool _listing;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private OfferDto? _listed;
+    private HeroDto? _listedHero;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoList()
+    {
+        _listing = true;
+        _error = null;
+        _listed = null;
+        _listedHero = _mine.FirstOrDefault(h => h.Id == _heroId);
+        _status = "Creating the offer, then depositing the hero into the covenant offer address…";
+        try
+        {
+            _listed = await Session.ListHeroAsync(_heroId, _ask);
+            _status = null;
+            _heroId = "";
+            await LoadAsync();  // the listed hero has left the wallet
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _listing = false;
+        }
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}

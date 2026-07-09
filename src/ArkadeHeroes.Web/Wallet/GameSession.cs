@@ -151,6 +151,34 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             $"The escrow deposits haven't settled yet — try merging again in a moment. ({last?.Message})");
     }
 
+    /// <summary>
+    /// List one of the player's heroes for sale under covenant enforcement, from the browser wallet:
+    /// create the offer, then deposit the hero (one asset unit) into the server-returned offer address
+    /// — a single non-custodial send. Once the deposit is observed on-chain the offer rests
+    /// <c>active</c> on the market for any buyer to fulfil trustlessly. Returns the resting offer.
+    /// </summary>
+    public async Task<OfferDto> ListHeroAsync(string heroId, long askSats)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        // 1. Create the offer — the server returns the offer address + the hero's asset id.
+        var offer = await api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, askSats));
+
+        // 2. Deposit the hero (one asset unit) into the offer address, waiting for the spend to settle.
+        await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
+
+        // 3. Poll until the server observes the funded offer resting active on the market.
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(90);
+        var resting = await api.Offers.GetAsync(offer.OfferId);
+        while (resting.Status != "active" && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(2500);
+            resting = await api.Offers.GetAsync(offer.OfferId);
+        }
+        return resting;
+    }
+
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
     // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
     // the just-spent (arkd-locked) BTC coin or race its change syncing back in.

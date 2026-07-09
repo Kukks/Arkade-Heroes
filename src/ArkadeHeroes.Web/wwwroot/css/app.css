@@ -415,7 +415,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .board td.num { font-family: var(--font-hud); }
 
 /* --- Market: offer cards -------------------------------------------------- */
-.offer-card { display: flex; flex-direction: column; gap: .55rem; }
+.offer-card { position: relative; display: flex; flex-direction: column; gap: .55rem; }
 .offer-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .offer-name { font-weight: 600; font-size: 1.02rem; }
 .offer-card .tier { align-self: flex-start; }
@@ -424,6 +424,53 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .offer-price span { color: var(--muted); font-size: .82rem; }
 .offer-status { text-transform: uppercase; letter-spacing: .08em; font-size: .62rem; }
 .offer-status.on { color: var(--ok); }
+.offer-status.done { color: var(--danger); }
+
+/* Hero portrait on a hero offer, with a periodic gold coin-shine (a "for sale" gleam). */
+.offer-tile { position: relative; aspect-ratio: 16/9; overflow: hidden; margin: -.15rem 0 .2rem; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.offer-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
+.offer-kind { position: absolute; top: .4rem; left: .5rem; z-index: 2; font-size: .56rem; letter-spacing: .14em; padding: .14rem .4rem; border-radius: 3px; background: rgba(8,11,17,.66); color: var(--text); }
+.price-shine { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+.price-shine::before {
+    content: ""; position: absolute; top: -60%; left: 0; width: 32%; height: 220%;
+    background: linear-gradient(100deg, transparent, rgba(255,212,71,.5), transparent);
+    transform: translateX(-140%) rotate(18deg); animation: coin-shine 3.6s ease-in-out infinite;
+}
+@keyframes coin-shine { 0%,72% { transform: translateX(-140%) rotate(18deg); opacity: 0; } 76% { opacity: 1; } 90% { opacity: 1; } 100% { transform: translateX(520%) rotate(18deg); opacity: 0; } }
+
+/* Sold: dim the card + slam a red SOLD stamp across the portrait. */
+.offer-card.sold { filter: saturate(.5) brightness(.82); }
+.offer-card.sold .offer-price b { color: var(--muted); }
+.sold-stamp {
+    position: absolute; top: 34%; left: 50%; transform: translate(-50%,-50%) rotate(-9deg); z-index: 5; pointer-events: none;
+    font-family: var(--font-hud); font-weight: 700; letter-spacing: .22em; font-size: 1.5rem; color: var(--danger);
+    border: 3px solid var(--danger); border-radius: 6px; padding: .25rem 1.1rem; background: rgba(20,8,10,.55);
+    text-shadow: 0 0 12px rgba(255,90,90,.6); box-shadow: 0 0 20px rgba(255,90,90,.35);
+    animation: stamp-in .5s cubic-bezier(.16,1,.3,1) backwards;
+}
+@keyframes stamp-in { 0% { opacity: 0; transform: translate(-50%,-50%) rotate(-9deg) scale(2.2); } 60% { opacity: 1; } 75% { transform: translate(-50%,-50%) rotate(-9deg) scale(.92); } 100% { transform: translate(-50%,-50%) rotate(-9deg) scale(1); } }
+
+/* Just-listed flourish: the card drops in with a gold flare (reuses @keyframes flare). */
+.offer-card.reveal-offer { animation: offer-drop .7s cubic-bezier(.16,1,.3,1) backwards; }
+@keyframes offer-drop { 0% { opacity: 0; transform: translateY(-16px) scale(.94); filter: brightness(1.8); } 60% { opacity: 1; transform: translateY(0) scale(1.02); } 100% { transform: scale(1); filter: none; } }
+.offer-card.reveal-offer::before {
+    content: ""; position: absolute; inset: -30%; z-index: -1; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, var(--flare, var(--gold)) 0%, transparent 62%); opacity: 0; animation: flare .9s ease-out backwards;
+}
+
+/* Sell page pickers (mirrors .breed-picks) + the ask input. */
+.sell-picks { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+.sell-picks label { display: flex; flex-direction: column; gap: .35rem; font-family: var(--font-hud); font-size: .66rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.sell-picks select, .ask-input { font-family: var(--font-body); font-size: .9rem; padding: .55rem .7rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg-2); color: var(--text); }
+.sell-picks select { min-width: 240px; }
+.ask-input { width: 160px; }
+.sell-picks select:focus, .ask-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
+.sell-picks label .mini { color: var(--faint); font-size: .58rem; letter-spacing: .06em; }
+
+@media (prefers-reduced-motion: reduce) {
+    .price-shine::before { display: none; }
+    .offer-card.reveal-offer, .offer-card.reveal-offer::before, .sold-stamp { animation: none; }
+}
 
 /* --- Hero detail page ----------------------------------------------------- */
 .page-head .back { text-decoration: none; }
