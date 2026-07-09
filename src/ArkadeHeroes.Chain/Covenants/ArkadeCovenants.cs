@@ -557,6 +557,26 @@ public static class ArkadeCovenants
         .. BreedWitness(oracleSig64, childGroupIndex, feeOutputIndex, parentAInputIndex, parentBInputIndex),
     ];
 
+    /// <summary>
+    /// The witness for the ABSORB-mint settle leaf (<see cref="DeathMatchEscrowContracts.SettleMintLeaf"/>).
+    /// Consumed top→bottom: <paramref name="oracleSigOutcome"/> (the absorb-mint message CSFS),
+    /// <paramref name="serverSeed"/> (the seed reveal), then the fee-less mint gate — winner input
+    /// index, loser input index, childK (species pin), childK (metadata-root), and
+    /// <paramref name="oracleSigRoot"/> (the root CSFS). No fee index (the absorb settle has no fee).
+    /// </summary>
+    public static byte[][] DeathMatchAbsorbMintWitness(
+        byte[] oracleSigRoot, int childGroupIndex, int loserInputIndex, int winnerInputIndex,
+        byte[] serverSeed, byte[] oracleSigOutcome) =>
+    [
+        oracleSigRoot,                    // bottom — consumed LAST by the root CSFS
+        EncodeIndex(childGroupIndex),     // metadata-root group index
+        EncodeIndex(childGroupIndex),     // species-pin group index
+        EncodeIndex(loserInputIndex),     // loser InputPresent
+        EncodeIndex(winnerInputIndex),    // winner InputPresent
+        serverSeed,                       // Sha256Gate reveal
+        oracleSigOutcome,                 // top — consumed FIRST by the absorb-mint CSFS
+    ];
+
     /// <summary>Minimal script-number PUSH opcodes for small non-negative values (0 → OP_0, 1..16 → OP_1..OP_16, else a minimal data push).</summary>
     private static byte[] PushScriptNum(int value)
     {

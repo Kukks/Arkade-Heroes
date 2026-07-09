@@ -143,4 +143,35 @@ public static class DeathMatchEscrowContracts
                 new("reclaimDefender", ReclaimBranch(isChallenger: false), refundLockTime),
             ]);
     }
+
+    /// <summary>
+    /// The <c>settleMint</c> leaf for an ABSORB death-match: oracle-authorize THIS (match, winner)
+    /// absorb-mint (a DISTINCT message from the keep settle) + reveal the seed, then STRUCTURALLY
+    /// burn BOTH staked heroes and mint the absorbed hero UNDER THE SPECIES to the winner (+ all
+    /// staked gear at output 0). The oracle signs the absorb-mint message AND the minted metadata
+    /// root; the burn/mint/route are covenant-enforced, not packet-trusted. Witness =
+    /// <see cref="ArkadeCovenants.DeathMatchAbsorbMintWitness"/>. Ends in OP_1. Shared by the
+    /// structural probe and (T3) the 6-leaf <see cref="BuildJoint"/>.
+    /// </summary>
+    public static byte[] SettleMintLeaf(
+        global::NArk.Core.Assets.AssetId winnerHero, global::NArk.Core.Assets.AssetId loserHero,
+        Script winnerScript, global::NArk.Core.Assets.AssetId species,
+        byte[] oraclePk, byte[] commitment, string deathMatchId, bool challengerWon,
+        IEnumerable<KeyValuePair<string, int>> mergedGear)
+    {
+        var s = new List<byte>();
+        s.AddRange(ArkadeCovenants.CheckSigFromStackGate(
+            ArkadeCovenants.DeathMatchAbsorbMintMessage(deathMatchId, challengerWon), oraclePk));
+        s.AddRange(ArkadeCovenants.Sha256Gate(commitment));
+        s.AddRange(ArkadeCovenants.MintUnderSpeciesAuthorized(species, winnerHero, loserHero, oraclePk));
+        s.Add(0x69); // OP_VERIFY — consume the oracle-root verdict
+        s.AddRange(ArkadeCovenants.AssetBurned(winnerHero, SettleOutputSweep)); // old winner hero destroyed
+        s.AddRange(ArkadeCovenants.AssetBurned(loserHero, SettleOutputSweep));  // loser hero destroyed
+        s.AddRange(ArkadeCovenants.MintToPlayer(winnerScript));                 // absorbed hero → winner (output 0)
+        foreach (var (gearId, total) in mergedGear)
+            s.AddRange(ArkadeCovenants.AssetAtOutput(
+                0, global::NArk.Core.Assets.AssetId.FromString(gearId), winnerScript, total));
+        s.Add(0x51); // OP_1 — leave EXACTLY one truthy item
+        return [.. s];
+    }
 }
