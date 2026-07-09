@@ -11,14 +11,14 @@ public readonly record struct RarityResult(
 
 public static class Rarity
 {
-    public static RarityResult Of(Genome genome)
+    public static RarityResult Of(Genome genome, GameConfig? config = null)
     {
         var expressed = Traits.Expressed(genome);
         var recessives = Traits.Recessives(genome);
-        var score = expressed.Sum(t => Traits.WeightOf(t.Value));
+        var score = expressed.Sum(t => Traits.WeightOf(t.Value, config));
         // Visible tier = the highest expressed trait's tier (a hero is as rare as its
-        // rarest showing trait); no expressed traits → Common.
-        var tier = expressed.Count == 0 ? RarityTier.Common : expressed.Max(t => t.Tier);
+        // rarest showing trait); no expressed traits → Common. Re-tiered under config.
+        var tier = expressed.Count == 0 ? RarityTier.Common : expressed.Max(t => Traits.TierOf(t.Value, config));
         return new RarityResult(score, tier, expressed, recessives);
     }
 }

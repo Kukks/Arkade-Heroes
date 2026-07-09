@@ -35,6 +35,8 @@ public sealed record GameConfig(
     GeneConfig Gene,            // GeneMixer mutation thresholds (breed genome derivation → VerifyBreeding)
     byte FusionConcentrateThreshold, // Fusion.Fuse concentrate probability (merge genome → VerifyMerge)
     SterilityChances Sterility, // per-tier sterile chance (rarity-derived breeding cap)
+    RarityBands Rarity,         // trait tier cutoffs + weights (rarity, fusion pick, sterility tier)
+    AffinityBonuses Affinity,   // per-tier combat affinity bonus + cap (BattleEngine → VerifyMatch)
 
     // ── HOT (economy — read live, never stamped) ──
     BreedingPolicy Breeding,    // composed: CooldownBaseUnit (breeding cooldown gate)
@@ -52,6 +54,8 @@ public sealed record GameConfig(
         Gene: GeneConfig.Default,
         FusionConcentrateThreshold: 217,
         Sterility: SterilityChances.Default,
+        Rarity: RarityBands.Default,
+        Affinity: AffinityBonuses.Default,
         Breeding: BreedingPolicy.Default,
         BreedingFeeSats: 1_000,
         MergeFeeSats: 1_000,
@@ -72,4 +76,19 @@ public sealed record GeneConfig(byte RegionMutationThreshold, byte TraitMutation
 public sealed record SterilityChances(int Legendary, int Epic, int Rare, int Uncommon)
 {
     public static SterilityChances Default { get; } = new(50, 30, 15, 5);
+}
+
+/// <summary>Trait rarity: gene-value cutoffs per tier + the scoring weight of each tier (a plain 0 gene weighs 0).</summary>
+public sealed record RarityBands(
+    byte LegendaryCutoff, byte EpicCutoff, byte RareCutoff, byte UncommonCutoff,
+    int LegendaryWeight, int EpicWeight, int RareWeight, int UncommonWeight, int CommonWeight)
+{
+    public static RarityBands Default { get; } = new(255, 253, 241, 206, 50, 20, 8, 3, 1);
+}
+
+/// <summary>Per-tier combat affinity bonus and the total cap — an expressed affinity nudges damage, never trumps.</summary>
+public sealed record AffinityBonuses(
+    double Legendary, double Epic, double Rare, double Uncommon, double Common, double Cap)
+{
+    public static AffinityBonuses Default { get; } = new(0.030, 0.020, 0.012, 0.006, 0.002, 0.05);
 }

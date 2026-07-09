@@ -28,8 +28,8 @@ public static class Fusion
             byte bRec = baseGenome.RecessiveGene(cat), sRec = sacrificeGenome.RecessiveGene(cat);
 
             // Dominant: usually the rarer of the two inputs (concentration); sometimes the lesser.
-            var rarer = Traits.WeightOf(bDom) >= Traits.WeightOf(sDom) ? bDom : sDom;
-            var lesser = Traits.WeightOf(bDom) >= Traits.WeightOf(sDom) ? sDom : bDom;
+            var rarer = Traits.WeightOf(bDom, cfg) >= Traits.WeightOf(sDom, cfg) ? bDom : sDom;
+            var lesser = Traits.WeightOf(bDom, cfg) >= Traits.WeightOf(sDom, cfg) ? sDom : bDom;
             child[16 + c * 2] = pool[c * 4] < cfg.FusionConcentrateThreshold ? rarer : lesser;
 
             // Recessive: entropy-pick among the four parent genes (hidden potential + variation).

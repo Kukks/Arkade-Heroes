@@ -22,25 +22,31 @@ public static class Traits
     public static bool IsAffinity(TraitCategory category)
         => category is TraitCategory.ElementAffinity or TraitCategory.Temperament;
 
-    /// <summary>Maps a gene byte to its rarity tier. Value 0 ("plain") reads as the Common floor.</summary>
-    public static RarityTier TierOf(byte value) => value switch
+    /// <summary>Maps a gene byte to its rarity tier. Value 0 ("plain") reads as the Common floor. Cutoffs from config.</summary>
+    public static RarityTier TierOf(byte value, GameConfig? config = null)
     {
-        >= 255 => RarityTier.Legendary,   // 255        (~0.4%)
-        >= 253 => RarityTier.Epic,         // 253..254   (~0.8%)
-        >= 241 => RarityTier.Rare,         // 241..252   (~4.7%)
-        >= 206 => RarityTier.Uncommon,     // 206..240   (~13.7%)
-        _ => RarityTier.Common,            // 0..205
-    };
+        var b = (config ?? GameConfig.Default).Rarity;
+        if (value >= b.LegendaryCutoff) return RarityTier.Legendary;   // 255        (~0.4%)
+        if (value >= b.EpicCutoff) return RarityTier.Epic;             // 253..254   (~0.8%)
+        if (value >= b.RareCutoff) return RarityTier.Rare;             // 241..252   (~4.7%)
+        if (value >= b.UncommonCutoff) return RarityTier.Uncommon;     // 206..240   (~13.7%)
+        return RarityTier.Common;                                      // 0..205
+    }
 
     /// <summary>Rarity weight of a gene value — used to score a hero. Common plain (0) weighs 0.</summary>
-    public static int WeightOf(byte value) => value == 0 ? 0 : TierOf(value) switch
+    public static int WeightOf(byte value, GameConfig? config = null)
     {
-        RarityTier.Legendary => 50,
-        RarityTier.Epic => 20,
-        RarityTier.Rare => 8,
-        RarityTier.Uncommon => 3,
-        _ => 1,
-    };
+        if (value == 0) return 0;
+        var w = (config ?? GameConfig.Default).Rarity;
+        return TierOf(value, config) switch
+        {
+            RarityTier.Legendary => w.LegendaryWeight,
+            RarityTier.Epic => w.EpicWeight,
+            RarityTier.Rare => w.RareWeight,
+            RarityTier.Uncommon => w.UncommonWeight,
+            _ => w.CommonWeight,
+        };
+    }
 
     /// <summary>The hero's EXPRESSED (visible) traits — non-zero dominant genes.</summary>
     public static IReadOnlyList<TraitVariant> Expressed(Genome genome) => Collect(genome, dominant: true);
@@ -68,21 +74,22 @@ public static class Traits
     /// Each affinity tier adds a small share; the sum is clamped to the cap so a
     /// max-rolled hero is a nudge, never a trump card. Deterministic — pure genome function.
     /// </summary>
-    public static double AffinityModifier(Genome genome)
+    public static double AffinityModifier(Genome genome, GameConfig? config = null)
     {
+        var a = (config ?? GameConfig.Default).Affinity;
         double bonus = 0;
         foreach (var trait in Expressed(genome))
         {
             if (!IsAffinity(trait.Category)) continue;
-            bonus += trait.Tier switch
+            bonus += TierOf(trait.Value, config) switch
             {
-                RarityTier.Legendary => 0.030,
-                RarityTier.Epic => 0.020,
-                RarityTier.Rare => 0.012,
-                RarityTier.Uncommon => 0.006,
-                _ => 0.002,
+                RarityTier.Legendary => a.Legendary,
+                RarityTier.Epic => a.Epic,
+                RarityTier.Rare => a.Rare,
+                RarityTier.Uncommon => a.Uncommon,
+                _ => a.Common,
             };
         }
-        return 1.0 + Math.Min(bonus, AffinityCap);
+        return 1.0 + Math.Min(bonus, a.Cap);
     }
 }

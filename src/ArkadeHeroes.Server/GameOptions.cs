@@ -42,6 +42,8 @@ public class GameOptions
         Gene: GeneConfig.Default,
         FusionConcentrateThreshold: 217,
         Sterility: SterilityChances.Default,
+        Rarity: RarityBands.Default,
+        Affinity: AffinityBonuses.Default,
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

@@ -29,7 +29,7 @@ public static class Sterility
     /// <summary>Whether the hero with this genome is born sterile (cannot breed) — deterministic and verifiable from the committed genome.</summary>
     public static bool IsSterile(Genome genome, GameConfig? config = null)
     {
-        var chance = ChancePercent(Rarity.Of(genome).Tier, config);
+        var chance = ChancePercent(Rarity.Of(genome, config).Tier, config);
         if (chance == 0) return false;
         Span<byte> preimage = stackalloc byte[Genome.Size + 1];
         genome.Bytes.CopyTo(preimage);
