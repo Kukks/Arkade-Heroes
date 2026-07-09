@@ -1,0 +1,142 @@
+@page "/merge"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Merge · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Merge</h2>
+    <span class="hud">covenant-enforced · burn two, forge one</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Sign in with your wallet on the <a href="wallet">Wallet</a> page to fuse your heroes.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
+}
+else if (_mine.Count < 2)
+{
+    <div class="card muted">You need at least two heroes to fuse — claim your starters (or breed more) first.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            Fuse a base with a sacrifice: your wallet deposits both into a covenant escrow; the arena
+            burns them and mints ONE trait-concentrated hero back to you. The fused genome is a gamble —
+            pushing toward the top tiers can breed in sterility. The base keeps its level and identity.
+        </p>
+        <div class="breed-picks">
+            <label>Base <span class="mini">keeps level + name</span>
+                <select @bind="_baseId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _mine)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+            <span class="breed-plus">✦</span>
+            <label>Sacrifice <span class="mini">burned</span>
+                <select @bind="_sacrificeId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _mine)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+        </div>
+        <button class="btn primary" style="margin-top:1.1rem" @onclick="DoMerge"
+                disabled="@(_merging || string.IsNullOrEmpty(_baseId) || string.IsNullOrEmpty(_sacrificeId) || _baseId == _sacrificeId)">
+            @(_merging ? "Fusing…" : "Fuse")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    @if (_fused is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Your fused hero</h3>
+            <span class="hud">two burned, one forged — into your wallet</span>
+        </div>
+        <div class="grid cols"><HeroCard Hero="_fused" /></div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private string _baseId = "";
+    private string _sacrificeId = "";
+    private bool _loading = true;
+    private bool _merging;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private HeroDto? _fused;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoMerge()
+    {
+        _merging = true;
+        _error = null;
+        _fused = null;
+        _status = "Committing, then depositing base + sacrifice + fee into the covenant escrow…";
+        try
+        {
+            _fused = await Session.MergeAsync(_baseId, _sacrificeId);
+            _status = null;
+            _baseId = "";
+            _sacrificeId = "";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _merging = false;
+        }
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}

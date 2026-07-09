@@ -335,6 +335,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .breed-picks select { font-family: var(--font-body); font-size: .9rem; padding: .55rem .7rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg-2); color: var(--text); min-width: 240px; }
 .breed-picks select:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
 .breed-plus { font-size: 1.5rem; color: var(--accent); padding-bottom: .35rem; }
+.breed-picks label .mini { color: var(--faint); font-size: .58rem; letter-spacing: .06em; }
 
 /* --- Blazor error UI ------------------------------------------------------ */
 #blazor-error-ui {

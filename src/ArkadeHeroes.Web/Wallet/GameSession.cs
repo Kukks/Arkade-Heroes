@@ -118,6 +118,51 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             $"The escrow deposits haven't settled yet — try revealing again in a moment. ({last?.Message})");
     }
 
+    /// <summary>
+    /// Merge (fuse) two heroes under covenant enforcement from the browser wallet: commit, deposit
+    /// the base + sacrifice + fee into the escrow (same plain-send pattern as breed), then reveal.
+    /// The server burns both inputs and mints ONE trait-concentrated fused hero to the player.
+    /// Returns the fused hero.
+    /// </summary>
+    public async Task<HeroDto> MergeAsync(string baseId, string sacrificeId)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        var commit = await api.Merge.CommitAsync(new MergeCommitRequest(baseId, sacrificeId, "covenant"));
+        if (string.IsNullOrEmpty(commit.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        var heroBase = await api.Heroes.GetAsync(baseId);
+        var heroSac = await api.Heroes.GetAsync(sacrificeId);
+        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 1);
+        await Task.Delay(10000);
+        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 1);
+        await Task.Delay(10000);
+        if (commit.FeeSats > 0)
+        {
+            await wallet.SendSatsAsync(w.Id, commit.EscrowAddress, commit.FeeSats);
+            await Task.Delay(10000);
+        }
+
+        var nonce = RandomNonce();
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                return (await api.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest(nonce))).Hero;
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("merge escrow", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                await Task.Delay(3000);
+            }
+        }
+        throw new GameWalletException(
+            $"The escrow deposits haven't settled yet — try merging again in a moment. ({last?.Message})");
+    }
+
     private static string RandomNonce() =>
         Convert.ToHexString(RandomUtils.GetBytes(16)).ToLowerInvariant();
 }
