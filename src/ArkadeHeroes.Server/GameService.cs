@@ -472,7 +472,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     // ── Death-match: open → both stake a hero → settle (loser's hero burns) ──
 
     public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability, IReadOnlyList<Shared.GearStakeDto> ChallengerGear, IReadOnlyList<Shared.GearStakeDto> DefenderGear)> OpenDeathMatchAsync(
-        Player player, string challengerHeroId, string defenderHeroId, CancellationToken ct)
+        Player player, string challengerHeroId, string defenderHeroId, bool absorb, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
@@ -493,10 +493,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // hero's equipped loadout AT OPEN (unequip before opening to shield gear).
         var challengerGearIds = challenger.Equipment.Slots.Values.ToList();
         var defenderGearIds = defender.Equipment.Slots.Values.ToList();
+        // Absorb mode → the 6-leaf escrow bakes the species the absorbed hero mints under.
+        var speciesId = absorb ? (await chain.GetInfoAsync(ct)).SpeciesAssetId ?? "" : "";
         var escrow = await chain.CreateDeathMatchJointEscrowAsync(
             id, player.Id, challenger.AssetId!, defender.OwnerId, defender.AssetId!,
             Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter,
-            challengerGearIds, defenderGearIds, ct: ct);
+            challengerGearIds, defenderGearIds, absorb: absorb, speciesId: speciesId, ct: ct);
 
         var session = new DeathMatchSession
         {
@@ -510,6 +512,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             JointEscrowAddress = escrow,
             ChallengerGearItemIds = challengerGearIds,
             DefenderGearItemIds = defenderGearIds,
+            Absorb = absorb,
+            SpeciesId = speciesId,
         };
         store.DeathMatches[session.Id] = session;
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
@@ -540,7 +544,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear));
     }
 
-    public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> SettleDeathMatchAsync(
+    public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt, bool Minted, int TraitsAbsorbed, string? NewGenomeHex, Shared.HeroDto? NewHero)> SettleDeathMatchAsync(
         Player player, string deathMatchId, string nonce, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -563,24 +567,65 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, challenger.Id, defender.Id, nonce);
         var result = BattleEngine.Fight(challenger, defender, entropy);
         var challengerWon = result.WinnerId == challenger.Id;
-        var (_, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
+        var (winner, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
-        // The oracle (game key) signs the winning branch; rung 2's covenant binds the on-chain
-        // burn of the loser's hero to exactly this attestation. A death-match awards NO XP —
-        // the reward is the permakill (+ the loser's gear in rung 2); the risk is your own hero.
-        // Settle the chain FIRST: if the covenant spend throws, nothing is mutated (the fight is
-        // deterministic and re-runs identically), so a retry surfaces the real error, not "resolved".
+        // ── ABSORB MODE: a seed-driven roll may RE-MINT the winner absorbing the loser's better
+        // traits — BOTH heroes burn and a new hero mints under species to the winner. A failed roll
+        // (or a classic match) falls through to the keep path (the winner keeps its exact hero).
+        if (session.Absorb)
+        {
+            var outcome = Absorb.Resolve(winner.Genome, loser.Genome, entropy,
+                new AbsorbOdds(_options.AbsorbChance, _options.AbsorbContinueChance));
+            if (outcome.Minted)
+            {
+                var absorbGen = Math.Max(winner.Generation, loser.Generation) + 1;
+                var absorbedData = new HeroMintData(outcome.Result.ToHex(), absorbGen, winner.Id, loser.Id, serverSeedHex, nonce);
+                // The oracle (game key) attests BOTH the winner (absorb-mint message) AND the absorbed
+                // genome root; the covenant binds the burn+mint to exactly these. Chain FIRST (retryable).
+                var outcomeSig = receipts.SignDigest(Chain.Covenants.ArkadeCovenants.DeathMatchAbsorbMintMessage(session.Id, challengerWon));
+                var root = Chain.Covenants.ArkadeCovenants.MetadataMerkleRoot(
+                    Chain.Covenants.BreedEscrowContracts.ChildMetadata(
+                        absorbedData.GenomeHex, absorbedData.Generation, absorbedData.ParentAId ?? "", absorbedData.ParentBId ?? "",
+                        absorbedData.ServerSeedHex ?? "", absorbedData.PlayerNonce ?? ""));
+                var rootSig = receipts.SignDigest(root);
+                var mint = await chain.SettleDeathMatchAbsorbMintAsync(session.Id, challengerWon, absorbedData, session.ServerSeed, outcomeSig, rootSig, ct);
+
+                session.Completed = true;
+                session.WinnerHeroId = result.WinnerId;
+                // The absorbed hero is a NEW asset owned by the WINNER (the settler may be the loser).
+                var winnerPlayer = store.Players[winner.OwnerId];
+                var absorbed = BuildAndStoreHero(winnerPlayer, mint, outcome.Result, absorbGen,
+                    winner.Id, loser.Id, serverSeedHex, nonce, entropyHex);
+                absorbed.Level = winner.Level;   // the winner keeps its progression (absorb receipt attests it)
+                absorbed.Name = winner.Name;     // the same hero, evolved — keep its name
+                // BOTH input heroes are burned on-chain — drop their server records.
+                store.Heroes.TryRemove(winner.Id, out _);
+                store.Heroes.TryRemove(loser.Id, out _);
+
+                var absorbReceipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                        "absorb", session.Id, session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id,
+                        serverSeedHex, nonce, session.CommitmentHex,
+                        0, 0, winner.Level, loser.Level,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+                    session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id);
+                return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot,
+                    serverSeedHex, entropyHex, absorbReceipt, true, outcome.TraitsAbsorbed, outcome.Result.ToHex(), absorbed.ToDto());
+            }
+        }
+
+        // ── KEEP PATH (classic death-match, or an absorb roll that didn't fire): the loser's hero
+        // is BURNED and the winner keeps its exact hero. The oracle signs the keep branch. Chain
+        // FIRST (deterministic fight re-runs identically, so a retry surfaces the real error).
         var settleMessage = Chain.Covenants.ArkadeCovenants.DeathMatchSettleMessage(session.Id, challengerWon);
         var oracleSig = receipts.SignDigest(settleMessage);
         await chain.SettleDeathMatchAsync(session.Id, challengerWon, session.ServerSeed, oracleSig, ct);
 
         session.Completed = true;
         session.WinnerHeroId = result.WinnerId;
-        // The loser's hero is permanently DEAD — drop its server record (its asset is burned on-chain).
         store.Heroes.TryRemove(loser.Id, out _);
 
-        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
-        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "deathmatch", session.Id, session.ChallengerHeroId, session.DefenderHeroId, result.WinnerId,
                 serverSeedHex, nonce, session.CommitmentHex,
@@ -588,7 +633,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.ChallengerHeroId, session.DefenderHeroId);
 
-        return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot, serverSeedHex, entropyHex, receipt);
+        return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot,
+            serverSeedHex, entropyHex, receipt, false, 0, null, null);
     }
 
     // ── Matches: open (invoice) → accept (invoice) → fight ─────────────

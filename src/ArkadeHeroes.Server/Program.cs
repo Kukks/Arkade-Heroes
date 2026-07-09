@@ -170,7 +170,7 @@ api.MapGet("/merges/{mergeId}/escrow", async (string mergeId, IChainService chai
 api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (session, escrow, favor, challengerGear, defenderGear) = await game.OpenDeathMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId, ct);
+    var (session, escrow, favor, challengerGear, defenderGear) = await game.OpenDeathMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId, request.Absorb, ct);
     return Results.Ok(new DeathMatchOpenResponse(session.Id, session.CommitmentHex, escrow, favor, challengerGear, defenderGear));
 });
 
@@ -184,8 +184,8 @@ api.MapPost("/deathmatch/{id}/accept", async (string id, HttpContext http, GameS
 api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt));
+    var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero));
 });
 
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>

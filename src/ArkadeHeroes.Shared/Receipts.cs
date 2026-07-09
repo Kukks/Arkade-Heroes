@@ -89,7 +89,7 @@ public static class ReceiptVerifier
         var all = receipts as IReadOnlyCollection<ProgressionReceiptDto> ?? receipts.ToList();
         // A merged hero inherits its base's level at genesis, attested by its merge receipt
         // (LevelA = the base's level). Non-merged heroes have no such receipt and start at 1.
-        var genesis = all.FirstOrDefault(r => r.Type == "merge" && r.ResultHeroId == heroId);
+        var genesis = all.FirstOrDefault(r => (r.Type == "merge" || r.Type == "absorb") && r.ResultHeroId == heroId);
         var level = genesis?.LevelA ?? 1;
         long xp = 0;
         foreach (var receipt in all

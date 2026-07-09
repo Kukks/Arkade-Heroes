@@ -112,7 +112,7 @@ public record MergeRevealResponse(
 /// <summary>Coarse pre-stake favorability from the challenger's view. LevelGap is signed (theirs − mine).</summary>
 public record FavorabilityDto(int LevelGap, string Label);
 
-public record DeathMatchOpenRequest(string ChallengerHeroId, string DefenderHeroId);
+public record DeathMatchOpenRequest(string ChallengerHeroId, string DefenderHeroId, bool Absorb = false);
 
 /// <summary>One required gear deposit for a death-match stake: the item units matching the hero's loadout-at-open (send Amount unit(s) of AssetId to the escrow alongside the hero).</summary>
 public record GearStakeDto(string ItemId, string AssetId, int Amount);
@@ -129,7 +129,9 @@ public record DeathMatchSettleRequest(string Nonce);
 public record DeathMatchSettleResponse(
     BattleResultDto Result, string WinnerHeroId, string LoserHeroId,
     HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot,
-    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt);
+    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt,
+    // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
+    bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null);
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 

@@ -74,6 +74,10 @@ public class DeathMatchSession
     public bool Accepted { get; set; }
     public bool Completed { get; set; }
     public string? WinnerHeroId { get; set; }
+    /// <summary>Opt-in absorb mode: on a seed-driven roll the winner re-mints absorbing the loser's traits (6-leaf escrow); a failed roll is the classic keep.</summary>
+    public bool Absorb { get; init; }
+    /// <summary>The species control asset the absorbed hero mints under (absorb mode only).</summary>
+    public string SpeciesId { get; init; } = "";
 }
 
 /// <summary>An item purchase awaiting its invoice payment. Status: pending → delivering → claimed (delivery failures return to pending so a paid purchase is always claimable).</summary>
