@@ -1,8 +1,6 @@
 # Bug report (ready to file) — arkd: a refused timelocked offchain tx poisons its txid, so the retry silently drops its VTXOs
 
-> **Status: NOT filed.** This is a prepared report for `arkade-os/arkd`. File it as a
-> GitHub issue from a session with repo access, or hand it to a maintainer. Do not
-> file it publicly without the go-ahead.
+> **Status: FILED** as [arkade-os/arkd#1146](https://github.com/arkade-os/arkd/issues/1146) on 2026-07-09.
 
 ## Summary
 
