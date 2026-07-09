@@ -329,6 +329,13 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .chip.as-btn.on { border-color: var(--accent); color: var(--text); background: var(--surface-2); }
 .toggle { display: inline-flex; gap: .35rem; }
 
+/* --- Breed pickers -------------------------------------------------------- */
+.breed-picks { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+.breed-picks label { display: flex; flex-direction: column; gap: .35rem; font-family: var(--font-hud); font-size: .66rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.breed-picks select { font-family: var(--font-body); font-size: .9rem; padding: .55rem .7rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg-2); color: var(--text); min-width: 240px; }
+.breed-picks select:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
+.breed-plus { font-size: 1.5rem; color: var(--accent); padding-bottom: .35rem; }
+
 /* --- Blazor error UI ------------------------------------------------------ */
 #blazor-error-ui {
     display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 10000;

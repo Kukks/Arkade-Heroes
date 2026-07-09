@@ -1,5 +1,7 @@
 using ArkadeHeroes.Shared;
 using NArk.Abstractions;
+using NArk.Abstractions.Assets;
+using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
 using NArk.Core.Services;
@@ -104,24 +106,95 @@ public class GameWallet(
 
     /// <summary>
     /// Send sats to another Arkade address — a real, non-custodial VTXO spend, built and signed
-    /// in the browser (the SDK selects coins). Returns the resulting Arkade tx id. Throws
-    /// <see cref="GameWalletException"/> on a bad address, non-positive amount, or a spend failure
-    /// (e.g. insufficient funds).
+    /// in the browser. Returns the resulting Arkade tx id. Throws <see cref="GameWalletException"/>
+    /// on a bad address, non-positive amount, or a spend failure (e.g. insufficient funds).
     /// </summary>
     public async Task<string> SendSatsAsync(string walletId, string destinationAddress, long amountSats)
     {
-        ArkAddress dest;
-        try { dest = ArkAddress.Parse(destinationAddress.Trim()); }
-        catch (Exception ex) { throw new GameWalletException("That isn't a valid Arkade address.", ex); }
         if (amountSats <= 0) throw new GameWalletException("Enter an amount greater than zero.");
+        var output = new ArkTxOut(ArkTxOutType.Vtxo, Money.Satoshis(amountSats), ParseAddress(destinationAddress));
+        return await SpendAsync(walletId, [output]);
+    }
+
+    /// <summary>
+    /// Send asset units (a hero or item) to an Arkade address — a plain non-custodial send used
+    /// for direct transfers AND for depositing into a covenant escrow (breed/merge/stake): the
+    /// escrow is just an opaque address, and the covenant enforcement lives server/emulator-side.
+    /// Built + signed in the browser.
+    /// </summary>
+    public async Task<string> SendAssetAsync(string walletId, string destinationAddress, string assetId, ulong amount = 1)
+    {
+        var dest = ParseAddress(destinationAddress);
+        var serverInfo = await transport.GetServerInfoAsync();
+        var output = new ArkTxOut(ArkTxOutType.Vtxo, serverInfo.Dust, dest)
+        {
+            Assets = [new ArkTxOutAsset(assetId, amount)],
+        };
+        return await SpendAsync(walletId, [output]);
+    }
+
+    private static ArkAddress ParseAddress(string address)
+    {
+        try { return ArkAddress.Parse(address.Trim()); }
+        catch (Exception ex) { throw new GameWalletException("That isn't a valid Arkade address.", ex); }
+    }
+
+    private async Task<string> SpendAsync(string walletId, ArkTxOut[] outputs)
+    {
         try
         {
-            var output = new ArkTxOut(ArkTxOutType.Vtxo, Money.Satoshis(amountSats), dest);
-            var txId = await spendingService.Spend(walletId, [output]);
+            var coins = await SelectSpendableCoinsAsync(walletId, outputs);
+            var txId = await spendingService.Spend(walletId, coins, outputs);
             return txId.ToString();
         }
         catch (GameWalletException) { throw; }
         catch (Exception ex) { throw new GameWalletException($"Send failed: {ex.Message}", ex); }
+    }
+
+    // Explicit coin selection mirroring SelfCustodyWallet: exclude recoverable (swept/expired)
+    // coins, cover each output asset with its carrier VTXOs, then the sats with the largest
+    // pure-BTC coins plus one for headroom (fee + change).
+    private async Task<ArkCoin[]> SelectSpendableCoinsAsync(string walletId, ArkTxOut[] outputs)
+    {
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var spendable = (await spendingService.GetAvailableCoins(walletId))
+            .Where(c => c.CanSpendOffchain(now))
+            .ToList();
+        var selected = new HashSet<ArkCoin>();
+
+        static ulong AssetHeld(ArkCoin c, string assetId) =>
+            c.Assets?.Where(a => a.AssetId == assetId).Aggregate(0UL, (s, a) => s + a.Amount) ?? 0;
+
+        var neededAssets = outputs
+            .Where(o => o.Assets is { Count: > 0 })
+            .SelectMany(o => o.Assets!)
+            .GroupBy(a => a.AssetId)
+            .ToDictionary(g => g.Key, g => g.Aggregate(0UL, (s, a) => s + a.Amount));
+        foreach (var (assetId, needed) in neededAssets)
+        {
+            ulong held = 0;
+            foreach (var coin in spendable.Where(c => AssetHeld(c, assetId) > 0)
+                         .OrderByDescending(c => AssetHeld(c, assetId)))
+            {
+                if (held >= needed) break;
+                if (selected.Add(coin)) held += AssetHeld(coin, assetId);
+            }
+            if (held < needed)
+                throw new GameWalletException($"You don't hold {needed} unit(s) of that asset yet.");
+        }
+
+        long required = outputs.Sum(o => o.Value.Satoshi);
+        var btc = spendable
+            .Where(c => !selected.Contains(c) && c.Assets is null or { Count: 0 })
+            .OrderByDescending(c => c.TxOut.Value.Satoshi).ToList();
+        var i = 0;
+        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
+            selected.Add(btc[i++]);
+        if (i < btc.Count) selected.Add(btc[i]);
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
+            throw new GameWalletException("Not enough spendable sats (you need funds for the amount plus the network fee).");
+
+        return [.. selected];
     }
 
     /// <summary>The wallet's mnemonic, for a backup/reveal screen (HD wallets only; null otherwise).</summary>

@@ -1,5 +1,6 @@
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
+using NBitcoin;
 
 namespace ArkadeHeroes.Web.Wallet;
 
@@ -64,4 +65,59 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             ?? throw new GameWalletException("This wallet can't sign in (no recovery phrase).");
         return await api.Players.LoginAsync(new LoginRequest(signed.PubKeyHex, challenge.NonceHex, signed.SignatureHex));
     }
+
+    /// <summary>
+    /// Breed two heroes under covenant enforcement, entirely from the browser wallet: commit,
+    /// deposit both parents + the fee into the server-returned escrow address (three plain
+    /// non-custodial sends — the covenant enforcement lives at the address, server-side), then
+    /// reveal. The server assembles the covenant mint (child under species to the player).
+    /// Returns the child hero.
+    /// </summary>
+    public async Task<HeroDto> BreedAsync(string parentAId, string parentBId)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        // 1. Commit (covenant mode) — the server returns the escrow address + fee.
+        var commit = await api.Breeding.CommitAsync(new BreedCommitRequest(parentAId, parentBId, "covenant"));
+        if (string.IsNullOrEmpty(commit.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        // 2. Deposit both parents + the fee into the escrow (plain sends to one opaque address).
+        //    Space the sends: each spends the wallet's BTC coin and produces change, and the
+        //    next send must wait for that change to sync in — otherwise it contends for the
+        //    just-spent (now arkd-locked) coin. A pause between sends lets the wallet catch up.
+        var heroA = await api.Heroes.GetAsync(parentAId);
+        var heroB = await api.Heroes.GetAsync(parentBId);
+        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 1);
+        await Task.Delay(10000);
+        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 1);
+        await Task.Delay(10000);
+        if (commit.EscrowFeeSats > 0)
+        {
+            await wallet.SendSatsAsync(w.Id, commit.EscrowAddress, commit.EscrowFeeSats);
+            await Task.Delay(10000);
+        }
+
+        // 3. Reveal — retry while the deposits settle into arkd's indexer (the funding gate).
+        var nonce = RandomNonce();
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                return (await api.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest(nonce))).Hero;
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("breed escrow", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                await Task.Delay(3000);
+            }
+        }
+        throw new GameWalletException(
+            $"The escrow deposits haven't settled yet — try revealing again in a moment. ({last?.Message})");
+    }
+
+    private static string RandomNonce() =>
+        Convert.ToHexString(RandomUtils.GetBytes(16)).ToLowerInvariant();
 }

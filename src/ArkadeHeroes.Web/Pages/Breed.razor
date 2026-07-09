@@ -1,0 +1,145 @@
+@page "/breed"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Breed · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Breed</h2>
+    <span class="hud">covenant-enforced · your wallet deposits the parents</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Sign in with your wallet on the <a href="wallet">Wallet</a> page to breed your heroes.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
+}
+else if (_fertile.Count < 2)
+{
+    <div class="card muted">You need at least two fertile heroes — claim your starters (or breed more) first.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            Pick two parents. Your wallet deposits both heroes + the fee into a covenant escrow;
+            the arena mints the child under species control straight back to you — no server can cheat the genome.
+        </p>
+        <div class="breed-picks">
+            <label>Parent A
+                <select @bind="_parentAId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _fertile)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+            <span class="breed-plus">+</span>
+            <label>Parent B
+                <select @bind="_parentBId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _fertile)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+        </div>
+        <button class="btn primary" style="margin-top:1.1rem" @onclick="DoBreed"
+                disabled="@(_breeding || string.IsNullOrEmpty(_parentAId) || string.IsNullOrEmpty(_parentBId) || _parentAId == _parentBId)">
+            @(_breeding ? "Breeding…" : "Breed")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    @if (_child is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Your new hero</h3>
+            <span class="hud">minted under species, into your wallet</span>
+        </div>
+        <div class="grid cols"><HeroCard Hero="_child" /></div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private List<HeroDto> _fertile = new();
+    private string _parentAId = "";
+    private string _parentBId = "";
+    private bool _loading = true;
+    private bool _breeding;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private HeroDto? _child;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _fertile = _mine.Where(h => !h.IsSterile).ToList();
+            _heroesLoaded = true;
+        }
+        catch { /* token may not be set yet on a fresh page load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoBreed()
+    {
+        _breeding = true;
+        _error = null;
+        _child = null;
+        _status = "Committing, then depositing both parents + fee into the covenant escrow (a few sends)…";
+        try
+        {
+            _child = await Session.BreedAsync(_parentAId, _parentBId);
+            _status = null;
+            _parentAId = "";
+            _parentBId = "";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _breeding = false;
+        }
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        // On a fresh page load the session resumes after this component inits; reload the
+        // roster once we're signed in (the first MineAsync may have raced the login token).
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}
