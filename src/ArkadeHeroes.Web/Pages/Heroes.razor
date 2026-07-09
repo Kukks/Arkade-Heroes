@@ -1,5 +1,7 @@
 @page "/heroes"
 @inject ArkadeHeroesClient Api
+@inject WalletState State
+@implements IDisposable
 
 <PageTitle>Heroes · Arkade Heroes</PageTitle>
 
@@ -7,9 +9,16 @@
     <h2>Heroes</h2>
     <span class="hud">every hero is an Arkade asset</span>
     <span class="spacer"></span>
+    @if (State.IsSignedIn)
+    {
+        <div class="toggle">
+            <button class="chip as-btn @(_mine ? "" : "on")" @onclick="() => Show(false)">All</button>
+            <button class="chip as-btn @(_mine ? "on" : "")" @onclick="() => Show(true)">Mine</button>
+        </div>
+    }
     @if (!_loading && !_error)
     {
-        <span class="chip mono">@_heroes.Count minted</span>
+        <span class="chip mono">@_heroes.Count @(_mine ? "yours" : "minted")</span>
     }
 </div>
 
@@ -26,7 +35,16 @@ else if (_error)
 }
 else if (_heroes.Count == 0)
 {
-    <div class="card muted">No heroes minted yet — claim starters from a client to populate the arena.</div>
+    <div class="card muted">
+        @if (_mine)
+        {
+            <text>You have no heroes yet — claim your starters on the <a href="wallet">Wallet</a> page.</text>
+        }
+        else
+        {
+            <text>No heroes minted yet — create a wallet and claim starters to populate the arena.</text>
+        }
+    </div>
 }
 else
 {
@@ -42,11 +60,40 @@ else
     private List<HeroDto> _heroes = new();
     private bool _loading = true;
     private bool _error;
+    private bool _mine;
 
     protected override async Task OnInitializedAsync()
     {
-        try { _heroes = await Api.Heroes.AllAsync(); }
-        catch { _error = true; }
-        finally { _loading = false; }
+        State.OnChange += OnStateChanged;
+        await LoadAsync();
     }
+
+    async Task Show(bool mine)
+    {
+        if (_mine == mine) return;
+        _mine = mine;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        _loading = true;
+        _error = false;
+        try
+        {
+            _heroes = _mine ? await Api.Heroes.MineAsync() : await Api.Heroes.AllAsync();
+        }
+        catch
+        {
+            _error = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.OnChange -= OnStateChanged;
 }

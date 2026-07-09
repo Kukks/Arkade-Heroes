@@ -1,6 +1,8 @@
 @page "/wallet"
 @inject GameWallet WalletSvc
 @inject WalletState State
+@inject GameSession Session
+@inject ArkadeHeroesClient Api
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -93,6 +95,46 @@ else // Ready
         </div>
     </div>
 
+    <div class="card" style="margin-bottom:1.1rem">
+        <h3>Game identity</h3>
+        @if (State.IsSignedIn)
+        {
+            <div class="status-line"><span class="dot ok"></span> Signed in as <b>@State.Player!.Name</b></div>
+            @if (!State.Player.StarterClaimed)
+            {
+                <p class="muted" style="margin:.6rem 0 .2rem">Claim your one-time starter heroes to enter the arena.</p>
+                <button class="btn primary" style="margin-top:.6rem" @onclick="ClaimStarters" disabled="@_busy">
+                    @(_busy ? "Claiming…" : "Claim starter heroes")
+                </button>
+            }
+            else
+            {
+                <p class="muted" style="margin:.6rem 0 0">
+                    @_myHeroCount hero@(_myHeroCount == 1 ? "" : "es") in your roster.
+                    <a href="heroes">View your heroes →</a>
+                </p>
+            }
+            @if (_claimMsg is not null)
+            {
+                <div class="status-line" style="margin-top:.7rem"><span class="dot ok"></span> @_claimMsg</div>
+            }
+        }
+        else
+        {
+            <p class="muted">Sign in with your wallet — no email, no password. Pick a name to register your address and login key.</p>
+            <div class="addr-box" style="margin-top:.5rem">
+                <input class="wallet-input" @bind="_name" @bind:event="oninput" placeholder="your arena name" disabled="@_busy" />
+                <button class="btn primary sm" @onclick="Register" disabled="@(_busy || string.IsNullOrWhiteSpace(_name))">
+                    @(_busy ? "…" : "Enter the arena")
+                </button>
+            </div>
+        }
+        @if (_idError is not null)
+        {
+            <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_idError</div>
+        }
+    </div>
+
     <div class="card">
         <h3>Recovery phrase</h3>
         @if (!_revealed)
@@ -127,6 +169,11 @@ else // Ready
     string? _address;
     string[] _freshWords = [];
     int _vtxoCount;
+
+    string _name = "";
+    string? _idError;
+    string? _claimMsg;
+    int _myHeroCount;
 
     protected override async Task OnInitializedAsync()
     {
@@ -213,11 +260,61 @@ else // Ready
             _vtxoCount = vtxos.Count;
             State.SetActiveWallet(_activeId, _address);
             State.UpdateBalance(balance);
+            // Silently resume the game session (login if this wallet is registered), then
+            // surface the player's roster size.
+            await Session.ResumeAsync();
+            await RefreshMineAsync();
         }
         finally
         {
             _busy = false;
         }
+    }
+
+    async Task Register()
+    {
+        _busy = true;
+        _idError = null;
+        try
+        {
+            await Session.RegisterAsync(_name);
+            await RefreshMineAsync();
+        }
+        catch (Exception ex)
+        {
+            _idError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task ClaimStarters()
+    {
+        _busy = true;
+        _idError = null;
+        try
+        {
+            var heroes = await Session.ClaimStartersAsync();
+            _myHeroCount = heroes.Count;
+            _claimMsg = $"Claimed {heroes.Count} starter hero{(heroes.Count == 1 ? "" : "es")}!";
+        }
+        catch (Exception ex)
+        {
+            _idError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task RefreshMineAsync()
+    {
+        if (!State.IsSignedIn) return;
+        try { _myHeroCount = (await Api.Heroes.MineAsync()).Count; }
+        catch { /* roster count is best-effort */ }
     }
 
     async Task RevealAsync()

@@ -1,3 +1,4 @@
+using ArkadeHeroes.Shared;
 using NArk.Abstractions.Contracts;
 using NArk.Abstractions.VTXOs;
 
@@ -17,6 +18,12 @@ public class WalletState : IDisposable
     public string? ActiveWalletId { get; private set; }
     public string? ActiveAddress { get; private set; }
     public long BalanceSats { get; private set; }
+
+    /// <summary>The game player this wallet is signed in as, or null (wallet exists but no game session).</summary>
+    public PlayerDto? Player { get; private set; }
+
+    /// <summary>True once the wallet has proven its login key to the game server this session.</summary>
+    public bool IsSignedIn => Player is not null;
 
     /// <summary>True once the player has a wallet loaded in this tab.</summary>
     public bool Connected => ActiveWalletId is not null;
@@ -48,6 +55,12 @@ public class WalletState : IDisposable
     public void UpdateBalance(long sats)
     {
         BalanceSats = sats;
+        OnChange?.Invoke();
+    }
+
+    public void SetPlayer(PlayerDto? player)
+    {
+        Player = player;
         OnChange?.Invoke();
     }
 

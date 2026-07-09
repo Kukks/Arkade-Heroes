@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @inject WalletState Wallet
 @inject GameWallet GameWallet
+@inject GameSession Session
 @implements IDisposable
 
 <div class="app">
@@ -48,6 +49,8 @@
                 var address = await GameWallet.GetReceiveAddressAsync(wallet.Id);
                 Wallet.SetActiveWallet(wallet.Id, address);
                 Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id));
+                // Resume the game session (sign in with the wallet) if it's a registered player.
+                await Session.ResumeAsync();
             }
         }
     }

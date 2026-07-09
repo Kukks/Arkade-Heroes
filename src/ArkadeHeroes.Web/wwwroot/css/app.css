@@ -282,6 +282,8 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .chip.as-btn { cursor: pointer; }
 .chip.as-btn:hover { border-color: var(--accent); color: var(--text); }
 .chip.as-btn:disabled { opacity: .5; cursor: not-allowed; }
+.chip.as-btn.on { border-color: var(--accent); color: var(--text); background: var(--surface-2); }
+.toggle { display: inline-flex; gap: .35rem; }
 
 /* --- Blazor error UI ------------------------------------------------------ */
 #blazor-error-ui {

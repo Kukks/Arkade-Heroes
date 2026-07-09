@@ -1,9 +1,11 @@
+using ArkadeHeroes.Shared;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
 using NArk.Core.Services;
 using NArk.Core.Transport;
 using NArk.Core.Wallet;
 using NBitcoin;
+using NBitcoin.Secp256k1;
 
 namespace ArkadeHeroes.Web.Wallet;
 
@@ -105,6 +107,53 @@ public class GameWallet(
         var wallet = (await walletStorage.LoadAllWallets()).FirstOrDefault(w => w.Id == walletId);
         return wallet is { WalletType: WalletType.HD } ? wallet.Secret : null;
     }
+
+    /// <summary>
+    /// The wallet's stable login pubkey (x-only, hex) — derived from the mnemonic on a fixed
+    /// path distinct from spending keys, so it survives restore and is the identity the game
+    /// server knows you by ("sign in with your wallet"). Null if the wallet has no HD secret.
+    /// </summary>
+    public async Task<string?> GetLoginPubKeyHexAsync(string walletId)
+    {
+        var mnemonic = await GetMnemonicAsync(walletId);
+        return mnemonic is null ? null : LoginPubKeyHex(mnemonic);
+    }
+
+    /// <summary>
+    /// Sign the login-challenge digest (BIP340) with the stable login key, proving control of
+    /// the login identity without revealing the key. Returns null if the wallet has no HD secret.
+    /// Mirrors SelfCustodyWallet.SignLoginDigest so a browser wallet and a restored console
+    /// wallet present the SAME identity to the server.
+    /// </summary>
+    public async Task<(string PubKeyHex, string SignatureHex)?> SignLoginAsync(string walletId, string nonceHex)
+    {
+        var mnemonic = await GetMnemonicAsync(walletId);
+        return mnemonic is null ? null : SignLogin(mnemonic, nonceHex);
+    }
+
+    private static string LoginPubKeyHex(string mnemonic)
+    {
+        var pub = new byte[32];
+        LoginKey(mnemonic).CreateXOnlyPubKey().WriteToSpan(pub);
+        return Convert.ToHexString(pub).ToLowerInvariant();
+    }
+
+    private static (string PubKeyHex, string SignatureHex) SignLogin(string mnemonic, string nonceHex)
+    {
+        var key = LoginKey(mnemonic);
+        var sig = key.SignBIP340(LoginChallenge.Digest(nonceHex));
+        var sigBytes = new byte[64];
+        sig.WriteToSpan(sigBytes);
+        var pub = new byte[32];
+        key.CreateXOnlyPubKey().WriteToSpan(pub);
+        return (Convert.ToHexString(pub).ToLowerInvariant(), Convert.ToHexString(sigBytes).ToLowerInvariant());
+    }
+
+    // Fixed login-key path (distinct from ark spending derivation), deterministic across
+    // restores — identical to SelfCustodyWallet so the same words yield the same identity.
+    private static ECPrivKey LoginKey(string mnemonic) =>
+        ECPrivKey.Create(new Mnemonic(mnemonic).DeriveExtKey()
+            .Derive(new KeyPath("83696968'/0'/0'")).PrivateKey.ToBytes());
 
     private static string NormalizeMnemonic(string mnemonic)
         => string.Join(' ', (mnemonic ?? string.Empty)
