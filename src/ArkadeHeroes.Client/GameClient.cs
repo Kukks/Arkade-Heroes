@@ -96,6 +96,8 @@ public class GameClient : IAsyncDisposable
         var passphrase = Environment.GetEnvironmentVariable("ARKADE_HEROES_WALLET_PASSPHRASE");
         var encrypted = !string.IsNullOrEmpty(passphrase);
         Console.WriteLine($"  opening self-custody wallet (keys stay on this machine{(encrypted ? ", encrypted at rest" : "")})…");
+        if (!encrypted)
+            Console.WriteLine("  ⚠ your mnemonic is stored UNENCRYPTED. Set ARKADE_HEROES_WALLET_PASSPHRASE (then restart) to encrypt it at rest (AES-256-GCM) — recommended before holding real value.");
         try
         {
             _wallet = await SelfCustodyWallet.CreateAsync(new SelfCustodyWalletOptions
