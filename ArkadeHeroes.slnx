@@ -13,6 +13,7 @@
     <Project Path="src/ArkadeHeroes.Core/ArkadeHeroes.Core.csproj" />
     <Project Path="src/ArkadeHeroes.Server/ArkadeHeroes.Server.csproj" />
     <Project Path="src/ArkadeHeroes.Shared/ArkadeHeroes.Shared.csproj" />
+    <Project Path="src/ArkadeHeroes.Web/ArkadeHeroes.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ArkadeHeroes.Tests.E2E/ArkadeHeroes.Tests.E2E.csproj" />

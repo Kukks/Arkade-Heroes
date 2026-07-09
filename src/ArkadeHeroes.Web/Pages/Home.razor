@@ -1,0 +1,76 @@
+@page "/"
+@inject ArkadeHeroesClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Arkade Heroes</PageTitle>
+
+<section class="hero-panel">
+    <div>
+        <div class="hud">Bitcoin L2 · non-custodial</div>
+        <h1>Breed, battle &amp; trade<br /><span class="neon">heroes you truly own.</span></h1>
+        <p>
+            Your heroes are Arkade assets and your keys never leave this browser.
+            Covenants — not our servers — enforce every breed, duel, and trade.
+        </p>
+        <div class="btn-row">
+            <button class="btn primary" disabled>Create wallet</button>
+            <button class="btn ghost" @onclick="@(() => Nav.NavigateTo("heroes"))">Browse heroes</button>
+        </div>
+    </div>
+    <div class="hero-art">GEN·0<br />STARTER</div>
+</section>
+
+<div class="card @(_state == Conn.Ok ? "glow" : "")">
+    <div class="status-line">
+        <span class="dot @(_state switch { Conn.Ok => "ok", Conn.Fail => "bad", _ => "wait" })"></span>
+        @(_state switch {
+            Conn.Ok       => "Arena online",
+            Conn.Fail     => "Arena unreachable",
+            _             => "Connecting to the arena…" })
+    </div>
+
+    @if (_state == Conn.Ok && _info is not null)
+    {
+        <div class="chips" style="margin-top:1rem">
+            <span class="chip">mode <b>@_info.Mode</b></span>
+            <span class="chip">network <b>@_info.Network</b></span>
+            @if (!string.IsNullOrEmpty(_info.SpeciesAssetId))
+            {
+                <span class="chip">species <b class="mono">@Short(_info.SpeciesAssetId)</b></span>
+            }
+            <span class="chip">breed fee <b>@(_info.Config?.BreedingFeeSats ?? 0) sat</b></span>
+            <span class="chip">absorb odds <b>@Pct(_info.AbsorbChance)</b></span>
+        </div>
+    }
+    else if (_state == Conn.Fail)
+    {
+        <p class="muted" style="margin:.8rem 0 0">
+            Couldn't reach the game server. Start it with
+            <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span>
+            (expected at <span class="mono">@_apiBase</span>).
+        </p>
+    }
+</div>
+
+@code {
+    enum Conn { Connecting, Ok, Fail }
+    Conn _state = Conn.Connecting;
+    ChainInfoDto? _info;
+    string _apiBase = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _info = await Api.Chain.InfoAsync();
+            _state = Conn.Ok;
+        }
+        catch
+        {
+            _state = Conn.Fail;
+        }
+    }
+
+    static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
+    static string Pct(byte chance) => $"{(int)Math.Round(chance / 256.0 * 100)}%";
+}
