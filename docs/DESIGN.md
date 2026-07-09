@@ -88,6 +88,8 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 6. **Oracle retirement**: replace outcome/genome oracles with in-script derivation + VRF entropy per the ArkadeKitties design doc, as compiler/emulator capabilities allow.
 7. **Upstream contributions to NArk**: the emulator client, packet builder, `ArkScriptHash` tweak, and covenant bytecode builders generalize beyond this game.
 
+**Shipped since this roadmap was written (as of 2026-07-09):** the covenant surface now spans FIVE escrows, all STRUCTURALLY enforced (asset/tx introspection opcodes — not oracle-outcome trust) with a trustless timelocked reclaim on each: **wager**, **merge** (burn two heroes → mint one trait-concentrated fused hero — `MergeAuthorized`), **breed** (parents retained, child bound by group-output), **hero/item offers** (fully oracle-less — pay-the-seller + conservation), and **hardcore death-match** (JOINT escrow, winner-takes-all + permadeath; covenant-staked gear routes to the winner; opt-in **trait-absorb** — on a provably-fair roll the winner RE-MINTS absorbing the loser's rarer traits, both heroes burned, proven live). The oracle is now a *verifiable relay* of only off-chain-computable facts (fight winner, genome), each client-recomputable. A hand-written typed **`ArkadeHeroes.Client.Sdk`** (12 resource facades over the HTTP API) is consumed by the console client + all tests. **Gate: 173 unit + 50 E2E green.** Filed upstream: [arkade-os/arkd#1146](https://github.com/arkade-os/arkd/issues/1146) (timelocked-txid poisoning).
+
 ## 3. Topology
 
 ```

@@ -1,12 +1,18 @@
 # Playing Arkade Heroes on regtest — the MVP walkthrough
 
-A complete two-player session on local regtest that exercises every shipped
-covenant feature: non-custodial wallets, **covenant breeding** (parents
-retained, child minted under the species with an oracle-attested genome),
-**covenant wagered duels** (emulator-enforced escrow settlement), **timelocked
-refunds** (reclaim an abandoned stake with no server), hero transfers, the
-receipts-computed leaderboard, and on-chain XP. Runs in three terminals: one
-server, two players.
+A complete two-player session on local regtest that exercises the CORE covenant
+loop: non-custodial wallets, **covenant breeding** (parents retained, child
+minted under the species with an oracle-attested genome), **covenant wagered
+duels** (emulator-enforced escrow settlement), **timelocked refunds** (reclaim
+an abandoned stake with no server), hero transfers, the receipts-computed
+leaderboard, and on-chain XP. Runs in three terminals: one server, two players.
+
+The fuller covenant surface shipped since — **merge** (burn two heroes → one
+fused), **hardcore death-match** (winner-takes-all + permadeath; covenant-staked
+gear; opt-in **trait-absorb**, e.g. `deathmatch <mine> <theirs> absorb`), the
+**hero/item marketplace** (resting offers), and **trustless timelocked reclaim
+on all five escrows** — is proven by the E2E suite rather than walked through
+here. All API calls now go through the typed `ArkadeHeroes.Client.Sdk`.
 
 Everything below is proven by the E2E suite (`tests/ArkadeHeroes.Tests.E2E`);
 this is the same story a human can drive by hand.
@@ -20,7 +26,7 @@ this is the same story a human can drive by hand.
   ```
   Verify: `docker ps` shows `arkd`, `emulator`, `bitcoin`. Faucet password is
   `secret`. (Ports: arkd `:7070`, emulator `:7073`.)
-- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 113 passing.
+- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 173 passing (plus 50 E2E behind the regtest, `tests/ArkadeHeroes.Tests.E2E`).
 
 ## 1. Start the server (NArk mode, covenants on)
 
