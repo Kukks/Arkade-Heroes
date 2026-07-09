@@ -480,7 +480,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
-arkade-heroes-chain.db*
+arkade-heroes-chain*.db*
 
 # The E2E test project is real source, not a Playwright artifact — the template's
 # *.e2e pattern (line ~130) matches the ArkadeHeroes.Tests.E2E directory name on
