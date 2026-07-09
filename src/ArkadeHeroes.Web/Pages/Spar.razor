@@ -135,6 +135,16 @@ else
                 </div>
             </div>
 
+            @if (_log.Count > 0)
+            {
+                <div class="battle-log mono">
+                    @foreach (var (text, kind) in _log.TakeLast(8))
+                    {
+                        <div class="log-line @kind">@text</div>
+                    }
+                </div>
+            }
+
             @if (_done && _result is not null)
             {
                 <div class="arena-outcome">
@@ -170,6 +180,9 @@ else
     private string _floatEff = "";
     private string? _banner;
     private string _bannerKind = "skill";
+
+    // A GBA-style running combat feed, appended per event as the replay plays.
+    private readonly List<(string Text, string Kind)> _log = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -217,6 +230,7 @@ else
         _fighting = true;
         _done = false;
         _koSide = _winSide = null;
+        _log.Clear();
         _maxA = MaxHp(_a); _hpA = _maxA;
         _maxB = MaxHp(_b); _hpB = _maxB;
         ClearTransient();
@@ -258,6 +272,7 @@ else
         var winName = result.WinnerId == _aId ? _a.Name : _b.Name;
         _winSide = result.WinnerId == _aId ? "a" : "b";
         _banner = $"{winName} wins"; _bannerKind = "win";
+        _log.Add(($"{winName} wins the bout!", "win"));
         _fighting = false;
         _done = true;
         StateHasChanged();
@@ -313,6 +328,38 @@ else
                 _banner = "TIME"; _bannerKind = "skill";
                 break;
         }
+
+        _log.Add(LogFor(ev, actor == "a" ? _a!.Name : _b!.Name, target == "a" ? _a!.Name : _b!.Name));
+    }
+
+    // One combat-feed line for an event (text + colour kind).
+    (string Text, string Kind) LogFor(BattleEvent ev, string actorName, string targetName)
+    {
+        string line, kind;
+        switch (ev.Kind)
+        {
+            case BattleEventKind.SkillUsed when ev.Crit:
+                line = $"{actorName} lands a CRITICAL {Pretty(ev.SkillId)} — {ev.Damage}!"; kind = "crit"; break;
+            case BattleEventKind.SkillUsed when ev.Damage > 0:
+                var eff = ev.Note == "super effective" ? " · super effective!"
+                    : ev.Note == "not very effective" ? " · resisted" : "";
+                line = $"{actorName} hits with {Pretty(ev.SkillId)} — {ev.Damage} dmg{eff}";
+                kind = ev.Note == "super effective" ? "super" : "hit"; break;
+            case BattleEventKind.SkillUsed:
+                line = $"{actorName} uses {Pretty(ev.SkillId)}"; kind = "hit"; break;
+            case BattleEventKind.Missed:
+                line = $"{actorName}'s {Pretty(ev.SkillId)} misses"; kind = "miss"; break;
+            case BattleEventKind.Dodged:
+                line = $"{targetName} dodges {actorName}'s {Pretty(ev.SkillId)}"; kind = "dodge"; break;
+            case BattleEventKind.Defeated:
+                line = $"{targetName} faints!"; kind = "ko"; break;
+            case BattleEventKind.TimeoutDecision:
+                line = "Time! — decided on remaining HP"; kind = "hit"; break;
+            default:
+                line = ""; kind = "hit"; break;
+        }
+        var heal = ev.Kind == BattleEventKind.SkillUsed && ev.Healed > 0 ? $" (+{ev.Healed} HP)" : "";
+        return ($"T{ev.Turn} · {line}{heal}", kind);
     }
 
     void ClearTransient()

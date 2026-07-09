@@ -380,6 +380,17 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 
 .arena-outcome { position: relative; z-index: 1; text-align: center; margin-top: 1rem; }
 
+/* GBA-style running combat feed. */
+.battle-log { position: relative; z-index: 1; margin-top: 1rem; padding: .7rem .9rem; display: flex; flex-direction: column; gap: .25rem; min-height: 4.4rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(4,7,12,.55); }
+.log-line { font-size: .72rem; letter-spacing: .01em; color: var(--muted); animation: log-in .3s ease-out backwards; }
+.log-line:last-child { color: var(--text); }
+.log-line.crit, .log-line.crit:last-child { color: var(--gold); }
+.log-line.super { color: #ff8a3d; }
+.log-line.miss, .log-line.dodge { font-style: italic; }
+.log-line.ko, .log-line.ko:last-child { color: var(--danger); }
+.log-line.win, .log-line.win:last-child { color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+@keyframes log-in { 0% { opacity: 0; transform: translateX(-6px); } 100% { opacity: 1; transform: translateX(0); } }
+
 @media (max-width: 640px) {
     .arena-row { gap: .2rem; }
     .dmg { font-size: 1.2rem; } .dmg.crit { font-size: 1.6rem; }
@@ -388,7 +399,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 @media (prefers-reduced-motion: reduce) {
     .f-portrait, .fighter.left.attack .f-portrait, .fighter.right.attack .f-portrait { transition: none; transform: none; }
     .fighter.hit .f-portrait, .fighter.hit .f-portrait::before, .fighter.left.dodge, .fighter.right.dodge,
-    .fighter.ko .f-portrait, .fighter.win .f-portrait, .dmg, .heal, .banner, .shock { animation: none; }
+    .fighter.ko .f-portrait, .fighter.win .f-portrait, .dmg, .heal, .banner, .shock, .log-line { animation: none; }
 }
 .hero-tile { position: relative; aspect-ratio: 16/10; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
