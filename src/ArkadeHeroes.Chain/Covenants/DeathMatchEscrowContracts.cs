@@ -28,7 +28,9 @@ public sealed record DeathMatchJointEscrowParams(
     long EscrowSats,
     long RefundAfterUnixSeconds,
     IReadOnlyList<GearStake>? ChallengerGear = null,
-    IReadOnlyList<GearStake>? DefenderGear = null);
+    IReadOnlyList<GearStake>? DefenderGear = null,
+    bool Absorb = false,
+    string SpeciesId = "");
 
 /// <summary>
 /// The canonical construction of the JOINT death-match escrow contract — shared by
@@ -134,11 +136,25 @@ public static class DeathMatchEscrowContracts
         }
 
         var refundLockTime = new LockTime((uint)p.RefundAfterUnixSeconds);
+        // Absorb mode adds two settleMint leaves (burn both + mint the absorbed hero under species);
+        // the classic death-match stays at 4 leaves, byte-identical (its address does not shift).
+        var species = p.Absorb ? global::NArk.Core.Assets.AssetId.FromString(p.SpeciesId) : default;
         return new ArkadeArtifactContract(
             "deathmatch-joint", operatorKey, emulatorSignerKeyHex,
             [
                 new("settleToChallenger", SettleBranch(challengerWon: true)),
                 new("settleToDefender", SettleBranch(challengerWon: false)),
+                .. (p.Absorb
+                    ? new ArkadeContractFunction[]
+                    {
+                        new("settleMintChallenger", SettleMintLeaf(
+                            challengerHero, defenderHero, challengerScript, species, oraclePk, commitment,
+                            p.DeathMatchId, challengerWon: true, mergedGear)),
+                        new("settleMintDefender", SettleMintLeaf(
+                            defenderHero, challengerHero, defenderScript, species, oraclePk, commitment,
+                            p.DeathMatchId, challengerWon: false, mergedGear)),
+                    }
+                    : []),
                 new("reclaimChallenger", ReclaimBranch(isChallenger: true), refundLockTime),
                 new("reclaimDefender", ReclaimBranch(isChallenger: false), refundLockTime),
             ]);

@@ -102,12 +102,14 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
         var loserHero = AssetId.FromString(loserHeroId);
         var chalScript = ArkAddress.Parse(_challenger.Address).ScriptPubKey;
 
-        // Build a contract carrying JUST the settleMint leaf (challenger = winner).
-        var settleLeaf = DeathMatchEscrowContracts.SettleMintLeaf(
-            winnerHero, loserHero, chalScript, species, oraclePk, commitment, matchId,
-            challengerWon: true, mergedGear: []);
-        var contract = new ArkadeArtifactContract(
-            "absorb-probe", serverInfo.SignerKey, emulatorInfo.SignerPubkey, [new("settleMint", settleLeaf)]);
+        // Build the FULL 6-leaf absorb escrow via the shipped BuildJoint (challenger = winner) —
+        // proving the builder emits the proven settleMint leaf, not an inline one.
+        var parameters = new DeathMatchJointEscrowParams(
+            _challenger.Address, winnerHeroId, _defender.Address, loserHeroId,
+            Convert.ToHexString(commitment).ToLowerInvariant(), Convert.ToHexString(oraclePk).ToLowerInvariant(),
+            matchId, serverInfo.Dust.Satoshi, DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            Absorb: true, SpeciesId: speciesId);
+        var contract = DeathMatchEscrowContracts.BuildJoint(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
         var addr = contract.GetArkAddress().ToString(isMain);
 
         // Stake both heroes: winner first (→ input 0), loser second (→ input 1).
@@ -137,7 +139,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
         AssetGroup BurnLoser() => AssetGroup.Create(loserHero, null, [AssetInput.Create(1, 1)], [], []);
         AssetGroup Mint(ushort vout) => AssetGroup.Create(null, AssetRef.FromId(species), [], [AssetOutput.Create(vout, 1)], meta);
         CovenantSpender.CovenantInput[] Inputs(byte[][] w) =>
-            ordered.Select(v => new CovenantSpender.CovenantInput(contract, "settleMint", w, v)).ToArray();
+            ordered.Select(v => new CovenantSpender.CovenantInput(contract, "settleMintChallenger", w, v)).ToArray();
 
         // ── Cheat: un-attested genome — mint a DIFFERENT genome (the oracle only signed `meta`'s
         //    root) → the minted root ≠ the signed root → the root CSFS refuses.
