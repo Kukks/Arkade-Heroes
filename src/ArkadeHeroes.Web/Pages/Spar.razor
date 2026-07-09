@@ -156,6 +156,9 @@ else
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "a")] public string? PreA { get; set; }
+    [SupplyParameterFromQuery(Name = "b")] public string? PreB { get; set; }
+
     private List<HeroDto> _heroes = new();
     private bool _loading = true;
     private string? _error;
@@ -188,6 +191,11 @@ else
     {
         State.OnChange += OnState;
         await LoadAsync();
+
+        // Deep-link: /spar?a=<heroId>&b=<heroId> pre-selects the fighters (e.g. from a hero page).
+        if (!string.IsNullOrEmpty(PreA) && _heroes.Any(h => h.Id == PreA)) _aId = PreA;
+        if (!string.IsNullOrEmpty(PreB) && _heroes.Any(h => h.Id == PreB)) _bId = PreB;
+        if (_aId.Length > 0 || _bId.Length > 0) Stage();
     }
 
     async Task LoadAsync()
