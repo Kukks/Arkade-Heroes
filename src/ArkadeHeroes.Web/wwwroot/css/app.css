@@ -207,6 +207,31 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .tier { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; padding: .22rem .45rem; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
 .statline { display: flex; flex-wrap: wrap; gap: .45rem .9rem; font-size: .68rem; color: var(--muted); }
 
+/* --- Ranks: leaderboard table --------------------------------------------- */
+.board { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.board thead th {
+    text-align: left; font-family: var(--font-hud); font-weight: 500; text-transform: uppercase;
+    letter-spacing: .08em; font-size: .64rem; color: var(--muted);
+    padding: .35rem .6rem .55rem; border-bottom: 1px solid var(--line);
+}
+.board th.num, .board td.num { text-align: right; }
+.board tbody td { padding: .55rem .6rem; border-bottom: 1px solid var(--line-soft); }
+.board tbody tr:last-child td { border-bottom: none; }
+.board tbody tr:hover { background: var(--surface); }
+.board .rank { font-family: var(--font-hud); color: var(--accent); width: 2.5rem; }
+.board td.num { font-family: var(--font-hud); }
+
+/* --- Market: offer cards -------------------------------------------------- */
+.offer-card { display: flex; flex-direction: column; gap: .55rem; }
+.offer-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.offer-name { font-weight: 600; font-size: 1.02rem; }
+.offer-card .tier { align-self: flex-start; }
+.offer-price { font-family: var(--font-hud); }
+.offer-price b { font-size: 1.5rem; color: var(--accent); letter-spacing: -.02em; }
+.offer-price span { color: var(--muted); font-size: .82rem; }
+.offer-status { text-transform: uppercase; letter-spacing: .08em; font-size: .62rem; }
+.offer-status.on { color: var(--ok); }
+
 /* --- Wallet pill: address + balance, as a link --------------------------- */
 .pill { text-decoration: none; }
 .pill:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }

@@ -1,0 +1,96 @@
+@page "/leaderboard"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>Ranks · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Ranks</h2>
+    <span class="hud">recomputed from signed receipts</span>
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> tallying the boards…</div>
+}
+else if (_error)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't reach the arena.</div>
+        <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
+    </div>
+}
+else
+{
+    <div class="card" style="margin-bottom:1.6rem">
+        <h3>Top champions</h3>
+        @if (_top.Count == 0)
+        {
+            <p class="muted">No ranked matches yet — win a staked duel to climb the board.</p>
+        }
+        else
+        {
+            <table class="board">
+                <thead>
+                    <tr><th>#</th><th>Hero</th><th class="num">Lvl</th><th class="num">Wins</th><th class="num">Matches</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in _top)
+                    {
+                        <tr>
+                            <td class="rank">@e.Rank</td>
+                            <td>@e.Name</td>
+                            <td class="num">@e.Level</td>
+                            <td class="num">@e.Wins</td>
+                            <td class="num">@e.Matches</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="page-head">
+        <h3 style="margin:0">Rarest heroes</h3>
+        <span class="hud">genome-derived, trustless</span>
+    </div>
+    @if (_rarest.Count == 0)
+    {
+        <div class="card muted">No heroes minted yet.</div>
+    }
+    else
+    {
+        <div class="grid cols">
+            @foreach (var h in _rarest)
+            {
+                <HeroCard Hero="h" />
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<LeaderboardEntryDto> _top = new();
+    private List<HeroDto> _rarest = new();
+    private bool _loading = true;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var top = Api.Leaderboard.TopAsync();
+            var rarest = Api.Leaderboard.RarestAsync();
+            await Task.WhenAll(top, rarest);
+            _top = await top;
+            _rarest = await rarest;
+        }
+        catch
+        {
+            _error = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

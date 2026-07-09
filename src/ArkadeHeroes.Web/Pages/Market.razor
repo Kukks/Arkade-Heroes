@@ -1,0 +1,79 @@
+@page "/market"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>Market · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Market</h2>
+    <span class="hud">covenant-enforced · buyer-funded</span>
+    <span class="spacer"></span>
+    @if (!_loading && !_error)
+    {
+        <span class="chip mono">@_offers.Count live</span>
+    }
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> browsing the stalls…</div>
+}
+else if (_error)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't reach the arena.</div>
+        <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
+    </div>
+}
+else if (_offers.Count == 0)
+{
+    <div class="card muted">No resting offers right now. List a hero or item from your wallet to open the market.</div>
+}
+else
+{
+    <div class="grid cols">
+        @foreach (var o in _offers)
+        {
+            <div class="card offer-card">
+                <div class="offer-head">
+                    <span class="offer-name">@o.ItemName</span>
+                    <span class="chip">@(o.Kind == "hero" ? "hero" : "item")</span>
+                </div>
+                @if (!string.IsNullOrEmpty(o.RarityTier))
+                {
+                    <span class="tier tag-@o.RarityTier.ToLowerInvariant()">@o.RarityTier</span>
+                }
+                <div class="offer-price"><b>@o.AskSats.ToString("N0")</b> <span>sats</span></div>
+                <div class="statline">
+                    <span>seller <span class="mono">@Short(o.SellerId)</span></span>
+                    <span class="offer-status @(o.Status == "active" ? "on" : "")">@o.Status</span>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<OfferDto> _offers = new();
+    private bool _loading = true;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var all = await Api.Offers.ListAsync();
+            // A live market shows what a buyer can act on: resting (active) or funding (pending).
+            _offers = all.Where(o => o.Status is "active" or "pending").ToList();
+        }
+        catch
+        {
+            _error = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    static string Short(string s) => s.Length <= 10 ? s : $"{s[..6]}…{s[^4..]}";
+}
