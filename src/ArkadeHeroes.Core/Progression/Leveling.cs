@@ -6,10 +6,11 @@ public static class Leveling
     public const int MaxLevel = 50;
 
     /// <summary>XP required to advance from <paramref name="level"/> to the next.</summary>
-    public static long XpToNext(int level)
+    public static long XpToNext(int level, GameConfig? config = null)
     {
         if (level < 1) throw new ArgumentOutOfRangeException(nameof(level));
-        return 80 + (long)(45 * Math.Pow(level, 1.35));
+        var c = (config ?? GameConfig.Default).Curve;
+        return c.Base + (long)(c.Coefficient * Math.Pow(level, c.Exponent));
     }
 
     // ── The conserved match transfer ───────────────────────────────────
@@ -51,26 +52,27 @@ public static class Leveling
     /// so a lost staked fight can knock a champion down. Returns the resulting
     /// level, remaining XP toward the next, and the signed level change.
     /// </summary>
-    public static (int Level, long Xp, int LevelsChanged) Apply(int level, long xp, long delta)
+    public static (int Level, long Xp, int LevelsChanged) Apply(int level, long xp, long delta, GameConfig? config = null)
     {
         if (level < 1) throw new ArgumentOutOfRangeException(nameof(level));
+        var maxLevel = (config ?? GameConfig.Default).Curve.MaxLevel;
         var startLevel = level;
         xp += delta;
         if (delta >= 0)
         {
-            while (level < MaxLevel && xp >= XpToNext(level))
+            while (level < maxLevel && xp >= XpToNext(level, config))
             {
-                xp -= XpToNext(level);
+                xp -= XpToNext(level, config);
                 level++;
             }
-            if (level >= MaxLevel) xp = 0;
+            if (level >= maxLevel) xp = 0;
         }
         else
         {
             while (xp < 0 && level > 1)
             {
                 level--;
-                xp += XpToNext(level);
+                xp += XpToNext(level, config);
             }
             if (xp < 0) xp = 0;
         }

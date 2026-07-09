@@ -44,6 +44,7 @@ public class GameOptions
         Sterility: SterilityChances.Default,
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
+        Curve: XpCurve.Default,
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

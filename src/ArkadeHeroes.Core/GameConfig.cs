@@ -37,6 +37,7 @@ public sealed record GameConfig(
     SterilityChances Sterility, // per-tier sterile chance (rarity-derived breeding cap)
     RarityBands Rarity,         // trait tier cutoffs + weights (rarity, fusion pick, sterility tier)
     AffinityBonuses Affinity,   // per-tier combat affinity bonus + cap (BattleEngine → VerifyMatch)
+    XpCurve Curve,              // leveling curve + max level (Leveling.Apply → ReplayLevel folds it)
 
     // ── HOT (economy — read live, never stamped) ──
     BreedingPolicy Breeding,    // composed: CooldownBaseUnit (breeding cooldown gate)
@@ -56,6 +57,7 @@ public sealed record GameConfig(
         Sterility: SterilityChances.Default,
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
+        Curve: XpCurve.Default,
         Breeding: BreedingPolicy.Default,
         BreedingFeeSats: 1_000,
         MergeFeeSats: 1_000,
@@ -91,4 +93,10 @@ public sealed record AffinityBonuses(
     double Legendary, double Epic, double Rare, double Uncommon, double Common, double Cap)
 {
     public static AffinityBonuses Default { get; } = new(0.030, 0.020, 0.012, 0.006, 0.002, 0.05);
+}
+
+/// <summary>The XP-to-next-level curve — XpToNext(level) = Base + Coefficient·level^Exponent — and the level ceiling.</summary>
+public sealed record XpCurve(long Base, double Coefficient, double Exponent, int MaxLevel)
+{
+    public static XpCurve Default { get; } = new(80, 45, 1.35, 50);
 }

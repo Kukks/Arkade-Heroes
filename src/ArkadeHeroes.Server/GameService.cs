@@ -914,9 +914,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             challengerSnapshot, defenderSnapshot, winnerPayout, receipt);
     }
 
-    private static void ApplyXp(Hero hero, long award)
+    private void ApplyXp(Hero hero, long award)
     {
-        var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award);
+        var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award, _config);
         hero.Level = level;
         hero.Xp = xp;
     }
