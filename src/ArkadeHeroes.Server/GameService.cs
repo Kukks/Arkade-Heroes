@@ -260,9 +260,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         // Rarity-derived sterility: the rarest heroes can be born unable to breed,
         // capping the supply of legendary lines. Deterministic from the genome.
-        if (Sterility.IsSterile(parentA.Genome))
+        if (Sterility.IsSterile(parentA.Genome, _config))
             throw new GameRuleException($"{parentA.Name} is sterile — it cannot breed.");
-        if (Sterility.IsSterile(parentB.Genome))
+        if (Sterility.IsSterile(parentB.Genome, _config))
             throw new GameRuleException($"{parentB.Name} is sterile — it cannot breed.");
 
         if (BreedingService.Validate(parentA, parentB, DateTimeOffset.UtcNow) is { } error)
@@ -336,7 +336,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.ParentAId, session.ParentBId, nonce);
         var policy = new BreedingPolicy(_options.BreedingCooldownBaseUnit);
-        var outcome = BreedingService.Breed(parentA, parentB, entropy, policy);
+        var outcome = BreedingService.Breed(parentA, parentB, entropy, policy, _config);
 
         parentA.BreedCount++;
         parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
@@ -432,7 +432,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // genome (hence its sterility) can't be precomputed — the gamble that keeps
         // sterility meaningful. Deterministic given (seed, ids, nonce).
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.BaseId, session.SacrificeId, nonce);
-        var fusedGenome = Fusion.Fuse(baseHero.Genome, sacrificeHero.Genome, entropy);
+        var fusedGenome = Fusion.Fuse(baseHero.Genome, sacrificeHero.Genome, entropy, _config);
         var fusedGeneration = Math.Max(baseHero.Generation, sacrificeHero.Generation) + 1;
 
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
@@ -579,7 +579,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (session.Absorb)
         {
             var outcome = Absorb.Resolve(winner.Genome, loser.Genome, entropy,
-                new AbsorbOdds(_options.AbsorbChance, _options.AbsorbContinueChance));
+                _config.Absorb);
             if (outcome.Minted)
             {
                 var absorbGen = Math.Max(winner.Generation, loser.Generation) + 1;

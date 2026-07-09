@@ -53,11 +53,11 @@ public static class BreedingService
     }
 
     public static BreedingOutcome Breed(
-        Hero parentA, Hero parentB, ReadOnlySpan<byte> entropy, BreedingPolicy? policy = null)
+        Hero parentA, Hero parentB, ReadOnlySpan<byte> entropy, BreedingPolicy? policy = null, GameConfig? config = null)
     {
         policy ??= BreedingPolicy.Default;
 
-        var childGenome = GeneMixer.Mix(parentA.Genome, parentB.Genome, entropy);
+        var childGenome = GeneMixer.Mix(parentA.Genome, parentB.Genome, entropy, config);
         var generation = GeneMixer.ChildGeneration(parentA.Generation, parentB.Generation);
 
         return new BreedingOutcome(

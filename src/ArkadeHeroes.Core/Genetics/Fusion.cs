@@ -11,11 +11,9 @@ namespace ArkadeHeroes.Core.Genetics;
 /// </summary>
 public static class Fusion
 {
-    /// <summary>Per-category concentrate probability: pool byte &lt; 217 (~85%) takes the rarer dominant.</summary>
-    private const byte ConcentrateThreshold = 217;
-
-    public static Genome Fuse(Genome baseGenome, Genome sacrificeGenome, ReadOnlySpan<byte> entropy)
+    public static Genome Fuse(Genome baseGenome, Genome sacrificeGenome, ReadOnlySpan<byte> entropy, GameConfig? config = null)
     {
+        var cfg = config ?? GameConfig.Default;
         Span<byte> child = stackalloc byte[Genome.Size];
         baseGenome.Bytes[..16].CopyTo(child); // stats/element/skills/growth/cooldown/appearance from base
 
@@ -32,7 +30,7 @@ public static class Fusion
             // Dominant: usually the rarer of the two inputs (concentration); sometimes the lesser.
             var rarer = Traits.WeightOf(bDom) >= Traits.WeightOf(sDom) ? bDom : sDom;
             var lesser = Traits.WeightOf(bDom) >= Traits.WeightOf(sDom) ? sDom : bDom;
-            child[16 + c * 2] = pool[c * 4] < ConcentrateThreshold ? rarer : lesser;
+            child[16 + c * 2] = pool[c * 4] < cfg.FusionConcentrateThreshold ? rarer : lesser;
 
             // Recessive: entropy-pick among the four parent genes (hidden potential + variation).
             child[16 + c * 2 + 1] = (pool[c * 4 + 1] & 0b11) switch

@@ -39,6 +39,9 @@ public class GameOptions
     public GameConfig ToGameConfig() => new(
         Version: 0,
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
+        Gene: GeneConfig.Default,
+        FusionConcentrateThreshold: 217,
+        Sterility: SterilityChances.Default,
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

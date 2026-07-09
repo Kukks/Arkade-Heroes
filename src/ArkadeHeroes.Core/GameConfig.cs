@@ -30,8 +30,11 @@ public sealed record GameConfig(
     // Stamped into every re-verified artifact so verification resolves the right config.
     int Version,
 
-    // ── PINNED (composed; pinning wired as later tasks stamp/resolve it) ──
+    // ── PINNED (verification-critical; stamped per-artifact + resolved by version) ──
     AbsorbOdds Absorb,          // absorb death-match odds (VerifyAbsorb recomputes under these)
+    GeneConfig Gene,            // GeneMixer mutation thresholds (breed genome derivation → VerifyBreeding)
+    byte FusionConcentrateThreshold, // Fusion.Fuse concentrate probability (merge genome → VerifyMerge)
+    SterilityChances Sterility, // per-tier sterile chance (rarity-derived breeding cap)
 
     // ── HOT (economy — read live, never stamped) ──
     BreedingPolicy Breeding,    // composed: CooldownBaseUnit (breeding cooldown gate)
@@ -46,6 +49,9 @@ public sealed record GameConfig(
     public static GameConfig Default { get; } = new(
         Version: 0,
         Absorb: AbsorbOdds.Default,
+        Gene: GeneConfig.Default,
+        FusionConcentrateThreshold: 217,
+        Sterility: SterilityChances.Default,
         Breeding: BreedingPolicy.Default,
         BreedingFeeSats: 1_000,
         MergeFeeSats: 1_000,
@@ -53,4 +59,17 @@ public sealed record GameConfig(
         MatchFeePerLevel: Leveling.MatchFeePerLevel,
         BreedFeeDoublingCap: BreedingPolicy.FeeDoublingCap,
         MatchmakingTake: 10);
+}
+
+/// <summary>GeneMixer's mutation thresholds — selector byte ≥ threshold triggers a mutation.</summary>
+public sealed record GeneConfig(byte RegionMutationThreshold, byte TraitMutationThreshold)
+{
+    /// <summary>Region crossover mutation at ≥ 248 (8/256); per-category trait mutation at ≥ 250 (~2.3%).</summary>
+    public static GeneConfig Default { get; } = new(248, 250);
+}
+
+/// <summary>Per-rarity-tier sterile chance (percent). Common (incl. all gen-0) is always fertile.</summary>
+public sealed record SterilityChances(int Legendary, int Epic, int Rare, int Uncommon)
+{
+    public static SterilityChances Default { get; } = new(50, 30, 15, 5);
 }

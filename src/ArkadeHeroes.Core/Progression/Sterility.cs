@@ -13,19 +13,23 @@ namespace ArkadeHeroes.Core.Progression;
 public static class Sterility
 {
     /// <summary>Sterility chance (percent) by rarity tier.</summary>
-    public static int ChancePercent(RarityTier tier) => tier switch
+    public static int ChancePercent(RarityTier tier, GameConfig? config = null)
     {
-        RarityTier.Legendary => 50,
-        RarityTier.Epic => 30,
-        RarityTier.Rare => 15,
-        RarityTier.Uncommon => 5,
-        _ => 0, // Common (incl. all gen-0) → always fertile
-    };
+        var s = (config ?? GameConfig.Default).Sterility;
+        return tier switch
+        {
+            RarityTier.Legendary => s.Legendary,
+            RarityTier.Epic => s.Epic,
+            RarityTier.Rare => s.Rare,
+            RarityTier.Uncommon => s.Uncommon,
+            _ => 0, // Common (incl. all gen-0) → always fertile
+        };
+    }
 
     /// <summary>Whether the hero with this genome is born sterile (cannot breed) — deterministic and verifiable from the committed genome.</summary>
-    public static bool IsSterile(Genome genome)
+    public static bool IsSterile(Genome genome, GameConfig? config = null)
     {
-        var chance = ChancePercent(Rarity.Of(genome).Tier);
+        var chance = ChancePercent(Rarity.Of(genome).Tier, config);
         if (chance == 0) return false;
         Span<byte> preimage = stackalloc byte[Genome.Size + 1];
         genome.Bytes.CopyTo(preimage);

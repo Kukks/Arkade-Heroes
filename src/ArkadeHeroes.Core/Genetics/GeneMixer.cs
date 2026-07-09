@@ -27,14 +27,12 @@ public static class GeneMixer
         // [16..31] are the trait categories — handled by MixTraits, not crossover regions.
     ];
 
-    /// <summary>Mutation triggers when the selector byte is ≥ 248 — an 8/256 (1/32) chance per trait.</summary>
-    private const byte MutationThreshold = 248;
-
-    public static Genome Mix(Genome parentA, Genome parentB, ReadOnlySpan<byte> entropy)
+    public static Genome Mix(Genome parentA, Genome parentB, ReadOnlySpan<byte> entropy, GameConfig? config = null)
     {
         if (entropy.Length != 32)
             throw new ArgumentException("Entropy must be exactly 32 bytes.", nameof(entropy));
 
+        var cfg = config ?? GameConfig.Default;
         Span<byte> child = stackalloc byte[Genome.Size];
 
         // Trait-region mutation source: one hash per breeding, sliced per trait.
@@ -46,7 +44,7 @@ public static class GeneMixer
             var (offset, length) = TraitRegions[t];
             var selector = entropy[offset];
 
-            if (selector >= MutationThreshold)
+            if (selector >= cfg.Gene.RegionMutationThreshold)
             {
                 // Mutation: reroll this trait region from the pool.
                 for (var i = 0; i < length; i++)
@@ -62,7 +60,7 @@ public static class GeneMixer
 
         // Trait categories [16..31]: dominant/recessive inheritance + rare mutation,
         // all seeded deterministically from the parents + entropy (covenant-critical).
-        MixTraits(parentA, parentB, entropy, child);
+        MixTraits(parentA, parentB, entropy, child, cfg);
 
         return new Genome(child);
     }
@@ -81,10 +79,7 @@ public static class GeneMixer
         SHA256.HashData(preimage, destination);
     }
 
-    /// <summary>Per-category mutation trigger: pool byte ≥ 250 → ~2.3% chance to introduce a new variant.</summary>
-    private const byte TraitMutationThreshold = 250;
-
-    private static void MixTraits(Genome a, Genome b, ReadOnlySpan<byte> entropy, Span<byte> child)
+    private static void MixTraits(Genome a, Genome b, ReadOnlySpan<byte> entropy, Span<byte> child, GameConfig cfg)
     {
         // Dedicated deterministic pool: 4 bytes per category (dom-select, rec-select,
         // mutation-roll, mutation-variant). Domain-separated from the region pool.
@@ -123,7 +118,7 @@ public static class GeneMixer
 
             // Mutation introduces a NEW variant into the DOMINANT slot (rarity-weighted,
             // biased common so legendaries are vanishingly rare).
-            if (mutRoll >= TraitMutationThreshold)
+            if (mutRoll >= cfg.Gene.TraitMutationThreshold)
                 childDom = MutatedVariant(mutVar);
 
             child[16 + c * 2] = childDom;
