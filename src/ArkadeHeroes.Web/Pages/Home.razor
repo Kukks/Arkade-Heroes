@@ -53,11 +53,28 @@
     }
 </div>
 
+@if (_featured.Count > 0)
+{
+    <div class="page-head" style="margin-top:2rem">
+        <h2 style="margin:0">Featured heroes</h2>
+        <span class="hud">the rarest on the ladder</span>
+        <span class="spacer"></span>
+        <a class="btn ghost" href="spar">Enter the arena →</a>
+    </div>
+    <div class="grid cols">
+        @foreach (var h in _featured)
+        {
+            <HeroCard Hero="h" />
+        }
+    </div>
+}
+
 @code {
     enum Conn { Connecting, Ok, Fail }
     Conn _state = Conn.Connecting;
     ChainInfoDto? _info;
     string _apiBase = "";
+    List<HeroDto> _featured = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -71,6 +88,16 @@
         {
             _state = Conn.Fail;
         }
+
+        // Showcase the rarest heroes on the ladder (best-effort — a stat, not a gate).
+        try
+        {
+            _featured = (await Api.Heroes.AllAsync())
+                .OrderByDescending(h => h.Rarity?.Score ?? 0)
+                .ThenByDescending(h => h.Level)
+                .Take(4).ToList();
+        }
+        catch { /* no roster yet — the strip just stays hidden */ }
     }
 
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
