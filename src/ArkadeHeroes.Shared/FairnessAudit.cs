@@ -1,4 +1,3 @@
-using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Fairness;
@@ -41,7 +40,7 @@ public static class FairnessAudit
     /// </summary>
     public static (bool Ok, string Detail) VerifyBreeding(
         HeroDto parentA, HeroDto parentB, string nonce,
-        string commitmentHex, BreedRevealResponse reveal, GameConfig? config = null)
+        string commitmentHex, BreedRevealResponse reveal)
     {
         var seed = Convert.FromHexString(reveal.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -52,7 +51,7 @@ public static class FairnessAudit
             return (false, "entropy does not match DeriveEntropy(seed, parentA, parentB, nonce)");
 
         var expected = GeneMixer.Mix(
-            Genome.FromHex(parentA.GenomeHex), Genome.FromHex(parentB.GenomeHex), entropy, config);
+            Genome.FromHex(parentA.GenomeHex), Genome.FromHex(parentB.GenomeHex), entropy);
         if (expected.ToHex() != reveal.Hero.GenomeHex)
             return (false, "child genome does not equal GeneMixer.Mix(parents, entropy)");
 
@@ -71,7 +70,7 @@ public static class FairnessAudit
     /// </summary>
     public static (bool Ok, string Detail) VerifyMerge(
         string mergeId, HeroDto baseHero, HeroDto sacrificeHero, string nonce,
-        string commitmentHex, MergeRevealResponse reveal, GameConfig? config = null)
+        string commitmentHex, MergeRevealResponse reveal)
     {
         var seed = Convert.FromHexString(reveal.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -82,7 +81,7 @@ public static class FairnessAudit
             return (false, "entropy does not match DeriveEntropy(seed, mergeId, base, sacrifice, nonce)");
 
         var expected = Fusion.Fuse(
-            Genome.FromHex(baseHero.GenomeHex), Genome.FromHex(sacrificeHero.GenomeHex), entropy, config);
+            Genome.FromHex(baseHero.GenomeHex), Genome.FromHex(sacrificeHero.GenomeHex), entropy);
         if (expected.ToHex() != reveal.Hero.GenomeHex)
             return (false, "fused genome does not equal Fusion.Fuse(base, sacrifice, entropy)");
 

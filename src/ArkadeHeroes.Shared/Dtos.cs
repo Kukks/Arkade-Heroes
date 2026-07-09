@@ -91,8 +91,7 @@ public record BreedRevealRequest(string Nonce);
 
 public record BreedRevealResponse(
     HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef,
-    ProgressionReceiptDto? Receipt = null,
-    int ConfigVersion = 0);  // GameConfig version the child genome was derived under — client resolves + verifies against it
+    ProgressionReceiptDto? Receipt = null);
 
 // ── Merge / fusion (two-phase commit–reveal, escrow-funded) ────────────────
 
@@ -106,8 +105,7 @@ public record MergeRevealRequest(string Nonce);
 
 /// <summary><see cref="EntropyHex"/> is the revealed commit–reveal entropy — the client recomputes Fusion.Fuse from it to audit the mint.</summary>
 public record MergeRevealResponse(
-    HeroDto Hero, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt = null,
-    int ConfigVersion = 0);  // GameConfig version the fused genome was derived under
+    HeroDto Hero, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt = null);
 
 // ── Death-match (winner-takes-all, both stake a hero) ──────────────────────
 
@@ -133,8 +131,7 @@ public record DeathMatchSettleResponse(
     HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot,
     string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt,
     // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
-    bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null,
-    int ConfigVersion = 0);  // GameConfig version the absorb outcome was resolved under
+    bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null);
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
@@ -259,7 +256,6 @@ public record OfferDto(
 /// paths are threaded, and clients resolve a stamped version via GET /api/config/{version}.
 /// </summary>
 public record GameConfigDto(
-    int Version,
     byte AbsorbChance,
     byte AbsorbContinueChance,
     long BreedingCooldownBaseSeconds,
@@ -271,7 +267,6 @@ public record GameConfigDto(
     int MatchmakingTake)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
-        c.Version,
         c.Absorb.AbsorbChance,
         c.Absorb.ContinueChance,
         (long)c.Breeding.CooldownBaseUnit.TotalSeconds,

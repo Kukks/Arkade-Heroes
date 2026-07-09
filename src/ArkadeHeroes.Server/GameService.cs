@@ -20,21 +20,17 @@ public class GameRuleException(string message) : Exception(message);
 /// only its own outputs (mints, item deliveries, payouts); asset ownership is
 /// checked against the chain, never against server records alone.
 /// </summary>
-public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options, GameConfigRegistry configRegistry)
+public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options)
 {
     private readonly GameOptions _options = options.Value;
 
-    // Live (not cached at construction) so a PINNED retune appended to the registry reaches new work
-    // immediately. A given flow reads it a few times; a concurrent retune is a rare admin action, so
-    // within-request snapshotting is a noted hardening follow-up, not needed pre-launch.
-    private GameConfig _config => configRegistry.Current;
-
-    /// <summary>Version the current config runs under — stamped into re-verifiable artifacts so clients resolve the config they were made under.</summary>
-    public int ConfigVersion => _config.Version;
+    // The game-balance config the server runs under (economy from GameOptions; the rest from
+    // GameConfig.Default, which the client shares at compile time — so verification matches).
+    private readonly GameConfig _config = options.Value.ToGameConfig();
 
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
-        var receipt = receipts.Issue(unsigned with { ConfigVersion = _config.Version });
+        var receipt = receipts.Issue(unsigned);
         foreach (var heroId in heroIds)
             store.ReceiptsByHero.AddOrUpdate(heroId,
                 _ => [receipt],

@@ -9,7 +9,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<GameOptions>(builder.Configuration.GetSection(GameOptions.SectionName));
 builder.Services.AddSingleton<GameStore>();
 builder.Services.AddSingleton<ReceiptSigner>();
-builder.Services.AddSingleton<GameConfigRegistry>();
 builder.Services.AddSingleton<GameService>();
 
 // Chain mode: "InMemory" (default) or "NArk" (regtest denigiri stack).
@@ -142,7 +141,7 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
 {
     var player = game.Authenticate(BearerToken(http));
     var (child, serverSeedHex, entropyHex, receipt) = await game.RevealBreedingAsync(player, breedingId, request.Nonce, ct);
-    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt, game.ConfigVersion));
+    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt));
 });
 
 // ── Merge / fusion (commit → deposit base+sacrifice+fee → reveal) ───────────
@@ -158,7 +157,7 @@ api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (fused, serverSeedHex, entropyHex, receipt) = await game.RevealMergeAsync(player, mergeId, request.Nonce, ct);
-    return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt, game.ConfigVersion));
+    return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt));
 });
 
 // Public merge-escrow parameters: everything a player needs to rebuild the merge
@@ -186,7 +185,7 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion));
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero));
 });
 
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
@@ -358,27 +357,19 @@ api.MapGet("/offers/{offerId}/params", async (string offerId, IChainService chai
 // ── Chain / health ─────────────────────────────────────────────────────────
 
 api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config,
-    GameConfigRegistry registry, CancellationToken ct) =>
+    Microsoft.Extensions.Options.IOptions<GameOptions> gameOptions, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
     // Advertised so clients can run covenant refunds without out-of-band
     // config; defaults mirror NArkChainOptions. Meaningless in InMemory mode.
     var isNArk = info.Mode.Equals("NArk", StringComparison.OrdinalIgnoreCase);
-    var current = registry.Current;
+    var g = gameOptions.Value;
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
         info.EmulatorSignerKey, receipts.PublicKeyHex,
         isNArk ? config["Chain:NArk:EmulatorUri"] ?? "http://localhost:7073" : null,
         isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null,
-        current.Absorb.AbsorbChance, current.Absorb.ContinueChance,
-        GameConfigDto.From(current)));
-});
-
-// Immutable, cache-forever config for a stamped version — clients resolve an artifact's
-// pinned version here so verification uses the config it was created under, not the current one.
-api.MapGet("/config/{version:int}", (int version, GameConfigRegistry registry) =>
-{
-    var c = registry.Get(version);
-    return c is null ? Results.NotFound() : Results.Ok(GameConfigDto.From(c));
+        g.AbsorbChance, g.AbsorbContinueChance,
+        GameConfigDto.From(g.ToGameConfig())));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and

@@ -37,7 +37,6 @@ public class GameOptions
 
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
-        Version: 0,
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
         Gene: GeneConfig.Default,
         FusionConcentrateThreshold: 217,
