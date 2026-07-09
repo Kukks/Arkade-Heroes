@@ -1,0 +1,52 @@
+@* A single hero, its "portrait" generated deterministically from its genome bytes. *@
+
+<div class="hero-card">
+    <div class="hero-tile" style="background:@ArtGradient(Hero.GenomeHex)">
+        <span class="hero-gen mono">GEN·@Hero.Generation</span>
+        @if (Hero.IsSterile)
+        {
+            <span class="hero-sterile mono" title="sterile — cannot breed">⌀</span>
+        }
+    </div>
+    <div class="hero-body">
+        <div class="hero-head">
+            <span class="hero-name">@Hero.Name</span>
+            <span class="tier tag-@Tier.ToLowerInvariant()">@Tier</span>
+        </div>
+        <div class="chips">
+            <span class="chip">lvl <b>@Hero.Level</b></span>
+            <span class="chip">@Hero.Element</span>
+            @if (Hero.Rarity is not null)
+            {
+                <span class="chip">rarity <b>@Hero.Rarity.Score</b></span>
+            }
+        </div>
+        <div class="statline mono">
+            <span>HP @Hero.Stats.MaxHp</span>
+            <span>ATK @Hero.Stats.Attack</span>
+            <span>DEF @Hero.Stats.Defense</span>
+            <span>SPD @Hero.Stats.Speed</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;
+
+    private string Tier => Hero.Rarity?.Tier ?? "Common";
+
+    // Turn the immutable genome into a stable, unique portrait — a conic gradient seeded
+    // from the trait + appearance bytes, so every hero looks like itself and re-renders identically.
+    private static string ArtGradient(string hex)
+    {
+        if (hex.Length < 40) return "var(--bg-2)";
+        int Hue(int byteIndex) => B(hex, byteIndex) * 360 / 255;
+        var a = Hue(15); // appearance palette gene
+        var b = Hue(16); // first trait dominant
+        var c = Hue(20); // another trait
+        var rot = B(hex, 14);
+        return $"conic-gradient(from {rot}deg, hsl({a} 68% 24%), hsl({b} 74% 32%), hsl({c} 66% 20%), hsl({a} 68% 24%))";
+    }
+
+    private static byte B(string hex, int i) => Convert.ToByte(hex.Substring(i * 2, 2), 16);
+}

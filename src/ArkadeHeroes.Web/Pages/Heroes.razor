@@ -1,0 +1,52 @@
+@page "/heroes"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>Heroes · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Heroes</h2>
+    <span class="hud">every hero is an Arkade asset</span>
+    <span class="spacer"></span>
+    @if (!_loading && !_error)
+    {
+        <span class="chip mono">@_heroes.Count minted</span>
+    }
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the roster…</div>
+}
+else if (_error)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't reach the arena.</div>
+        <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
+    </div>
+}
+else if (_heroes.Count == 0)
+{
+    <div class="card muted">No heroes minted yet — claim starters from a client to populate the arena.</div>
+}
+else
+{
+    <div class="grid cols">
+        @foreach (var h in _heroes.OrderByDescending(h => h.Rarity?.Score ?? 0).ThenByDescending(h => h.Level))
+        {
+            <HeroCard Hero="h" />
+        }
+    </div>
+}
+
+@code {
+    private List<HeroDto> _heroes = new();
+    private bool _loading = true;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _heroes = await Api.Heroes.AllAsync(); }
+        catch { _error = true; }
+        finally { _loading = false; }
+    }
+}
