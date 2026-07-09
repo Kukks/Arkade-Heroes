@@ -1,0 +1,403 @@
+@page "/spar"
+@using ArkadeHeroes.Core.Combat
+@using ArkadeHeroes.Core.Genetics
+@using ArkadeHeroes.Core.Heroes
+@using NBitcoin
+@inject ArkadeHeroesClient Api
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Spar · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Spar</h2>
+    <span class="hud">a friendly duel · the real engine, replayed in your browser</span>
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the roster…</div>
+}
+else if (_error is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot bad"></span> @_error</div></div>
+}
+else if (_heroes.Count < 2)
+{
+    <div class="card muted">The arena needs at least two minted heroes — claim starters (or breed) to fill the roster.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            No stakes, nothing burned — a sparring match. It runs the exact deterministic battle engine
+            right here in your browser and replays it blow by blow. Same maths as a ranked bout, minus the wager.
+            Pick any two heroes on the ladder and watch them go.
+        </p>
+        <div class="breed-picks">
+            <label>Red corner
+                <select @bind="_aId" @bind:after="Stage">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _heroes)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+            <span class="breed-plus vs-plus">VS</span>
+            <label>Blue corner
+                <select @bind="_bId" @bind:after="Stage">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _heroes)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+        </div>
+        <div class="spar-actions">
+            <button class="btn primary" @onclick="DoFight"
+                    disabled="@(_fighting || string.IsNullOrEmpty(_aId) || string.IsNullOrEmpty(_bId) || _aId == _bId)">
+                @(_fighting ? "Fighting…" : _done ? "Rematch" : "Fight!")
+            </button>
+            @if (_aId == _bId && !string.IsNullOrEmpty(_aId))
+            {
+                <span class="mini">a hero can't fight itself</span>
+            }
+        </div>
+    </div>
+
+    @if (_a is not null && _b is not null)
+    {
+        <div class="arena">
+            <div class="turn-ticker mono">@TickerText</div>
+
+            <div class="arena-row">
+                @* ---- Red corner (A / left) ---- *@
+                <div class="@FighterCss('a')">
+                    <div class="f-head">
+                        <span class="f-name">@_a.Name</span>
+                        <span class="f-corner red">RED</span>
+                    </div>
+                    <div class="hpbar"><i class="@HpClass(_hpA, _maxA)" style="width:@Pct(_hpA, _maxA)%"></i></div>
+                    <div class="f-hp mono">@_hpA<span>/@_maxA</span></div>
+                    <div class="f-portrait" style="background:@HeroCard.ArtGradient(_a.GenomeHex)">
+                        <span class="f-el mono">@_a.Element</span>
+                        @if (_floatSide == "a" && _floatDmg is int da)
+                        {
+                            <div class="@DmgClass()">-@da</div>
+                        }
+                        @if (_healSide == "a" && _healAmt is int ha)
+                        {
+                            <div class="heal">+@ha</div>
+                        }
+                    </div>
+                    <div class="f-stats mono">
+                        <span>Lv @_a.Level</span><span>ATK @_a.Stats.Attack</span><span>DEF @_a.Stats.Defense</span><span>SPD @_a.Stats.Speed</span>
+                    </div>
+                </div>
+
+                @* ---- Centre ---- *@
+                <div class="arena-mid">
+                    <div class="vs mono">VS</div>
+                    @if (_banner is not null)
+                    {
+                        <div class="banner @_bannerKind">@_banner</div>
+                    }
+                    @if (_critNow)
+                    {
+                        <div class="shock"></div>
+                    }
+                </div>
+
+                @* ---- Blue corner (B / right) ---- *@
+                <div class="@FighterCss('b')">
+                    <div class="f-head">
+                        <span class="f-corner blue">BLUE</span>
+                        <span class="f-name">@_b.Name</span>
+                    </div>
+                    <div class="hpbar"><i class="@HpClass(_hpB, _maxB)" style="width:@Pct(_hpB, _maxB)%"></i></div>
+                    <div class="f-hp mono">@_hpB<span>/@_maxB</span></div>
+                    <div class="f-portrait" style="background:@HeroCard.ArtGradient(_b.GenomeHex)">
+                        <span class="f-el mono">@_b.Element</span>
+                        @if (_floatSide == "b" && _floatDmg is int db)
+                        {
+                            <div class="@DmgClass()">-@db</div>
+                        }
+                        @if (_healSide == "b" && _healAmt is int hb)
+                        {
+                            <div class="heal">+@hb</div>
+                        }
+                    </div>
+                    <div class="f-stats mono">
+                        <span>Lv @_b.Level</span><span>ATK @_b.Stats.Attack</span><span>DEF @_b.Stats.Defense</span><span>SPD @_b.Stats.Speed</span>
+                    </div>
+                </div>
+            </div>
+
+            @if (_done && _result is not null)
+            {
+                <div class="arena-outcome">
+                    <span class="hud">@(_result.Turns) turns · settled on @(_result.WinnerRemainingHp)/@(_result.WinnerMaxHp) HP</span>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _heroes = new();
+    private bool _loading = true;
+    private string? _error;
+
+    private string _aId = "";
+    private string _bId = "";
+    private HeroDto? _a;
+    private HeroDto? _b;
+    private int _maxA, _maxB, _hpA, _hpB;
+
+    private BattleResult? _result;
+    private bool _fighting;
+    private bool _done;
+    private int _runId;   // guards against overlapping replays (rematch / navigate away)
+
+    // Replay transient state — mutated per event, cleared between events.
+    private int _turn;
+    private string? _actorSide, _hitSide, _dodgeSide, _koSide, _winSide;
+    private bool _critNow;
+    private int? _floatDmg, _healAmt;
+    private string? _floatSide, _healSide;
+    private string _floatEff = "";
+    private string? _banner;
+    private string _bannerKind = "skill";
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _heroes = await Api.Heroes.AllAsync();
+        }
+        catch
+        {
+            _error = "Couldn't reach the arena — start the server and try again.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // Stage the two fighters at full HP the moment both are picked, so the matchup
+    // shows before the bell (and a fresh pick resets any finished bout).
+    void Stage()
+    {
+        _a = _heroes.FirstOrDefault(h => h.Id == _aId);
+        _b = _heroes.FirstOrDefault(h => h.Id == _bId);
+        _done = false;
+        _result = null;
+        ClearTransient();
+        _koSide = _winSide = null;
+        if (_a is not null) { _maxA = MaxHp(_a); _hpA = _maxA; }
+        if (_b is not null) { _maxB = MaxHp(_b); _hpB = _maxB; }
+    }
+
+    async Task DoFight()
+    {
+        if (_a is null || _b is null || _aId == _bId) return;
+
+        var run = ++_runId;
+        _fighting = true;
+        _done = false;
+        _koSide = _winSide = null;
+        _maxA = MaxHp(_a); _hpA = _maxA;
+        _maxB = MaxHp(_b); _hpB = _maxB;
+        ClearTransient();
+
+        BattleResult result;
+        try
+        {
+            var seed = RandomUtils.GetBytes(32);
+            result = BattleEngine.Fight(ToHero(_a), ToHero(_b), seed);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _fighting = false;
+            return;
+        }
+        _result = result;
+
+        // The bell.
+        _turn = 0;
+        _banner = "FIGHT!"; _bannerKind = "fight";
+        StateHasChanged();
+        await Task.Delay(900);
+        if (run != _runId) return;
+
+        foreach (var ev in result.Events)
+        {
+            Apply(ev);
+            StateHasChanged();
+            await Task.Delay(Pace(ev));
+            if (run != _runId) return;
+
+            ClearTransient();      // drop motion + banner so the next beat re-triggers cleanly (hp/ko persist)
+            StateHasChanged();
+            await Task.Delay(120);
+            if (run != _runId) return;
+        }
+
+        var winName = result.WinnerId == _aId ? _a.Name : _b.Name;
+        _winSide = result.WinnerId == _aId ? "a" : "b";
+        _banner = $"{winName} wins"; _bannerKind = "win";
+        _fighting = false;
+        _done = true;
+        StateHasChanged();
+    }
+
+    // Advance the display by one battle event. HP is taken straight from the engine's
+    // authoritative TargetHpAfter; a drain-skill's self-heal mirrors the engine's own cap.
+    void Apply(BattleEvent ev)
+    {
+        _turn = ev.Turn;
+        var actor = ev.ActorId == _aId ? "a" : "b";
+        var target = actor == "a" ? "b" : "a";
+        _actorSide = actor;
+
+        switch (ev.Kind)
+        {
+            case BattleEventKind.SkillUsed:
+                _hitSide = target;
+                _critNow = ev.Crit;
+                SetHp(target, ev.TargetHpAfter);
+                if (ev.Damage > 0)
+                {
+                    _floatDmg = ev.Damage;
+                    _floatSide = target;
+                    _floatEff = ev.Note == "super effective" ? "super"
+                        : ev.Note == "not very effective" ? "resist" : "";
+                }
+                if (ev.Healed > 0)
+                {
+                    _healAmt = ev.Healed;
+                    _healSide = actor;
+                    AddHp(actor, ev.Healed);
+                }
+                _banner = Pretty(ev.SkillId);
+                _bannerKind = ev.Crit ? "crit" : "skill";
+                break;
+
+            case BattleEventKind.Missed:
+                _banner = "MISS"; _bannerKind = "miss";
+                break;
+
+            case BattleEventKind.Dodged:
+                _dodgeSide = target;
+                _banner = "DODGE"; _bannerKind = "dodge";
+                break;
+
+            case BattleEventKind.Defeated:
+                _koSide = target;
+                _banner = "K.O."; _bannerKind = "ko";
+                break;
+
+            case BattleEventKind.TimeoutDecision:
+                _banner = "TIME"; _bannerKind = "skill";
+                break;
+        }
+    }
+
+    void ClearTransient()
+    {
+        _actorSide = _hitSide = _dodgeSide = null;
+        _critNow = false;
+        _floatDmg = _healAmt = null;
+        _floatSide = _healSide = null;
+        _floatEff = "";
+        _banner = null;
+    }
+
+    void SetHp(string side, int hp) { if (side == "a") _hpA = hp; else _hpB = hp; }
+    void AddHp(string side, int amt)
+    {
+        if (side == "a") _hpA = Math.Min(_maxA, _hpA + amt);
+        else _hpB = Math.Min(_maxB, _hpB + amt);
+    }
+
+    string TickerText => _done ? "FINISHED" : _fighting ? $"TURN {_turn}" : "READY";
+
+    // Pacing: a killing blow and a crit land heavier; whiffs snap past.
+    static int Pace(BattleEvent ev) => ev.Kind switch
+    {
+        BattleEventKind.Defeated => 1500,
+        BattleEventKind.TimeoutDecision => 1400,
+        BattleEventKind.SkillUsed => ev.Crit ? 1000 : ev.Damage > 0 ? 760 : 700,
+        _ => 640,
+    };
+
+    static Hero ToHero(HeroDto d) => new()
+    {
+        Id = d.Id,
+        OwnerId = d.OwnerId,
+        Name = d.Name,
+        Genome = Genome.FromHex(d.GenomeHex),
+        Level = d.Level,
+    };
+
+    // The engine's own max-HP formula, empty-equipment — matches the fight's internal max exactly.
+    static int MaxHp(HeroDto d) => StatBlock.ComputeFor(Genome.FromHex(d.GenomeHex), d.Level).MaxHp;
+
+    static double Pct(int hp, int max) => max <= 0 ? 0 : Math.Clamp(100.0 * hp / max, 0, 100);
+
+    static string HpClass(int hp, int max)
+    {
+        var f = max <= 0 ? 0 : (double)hp / max;
+        return f > .5 ? "ok" : f > .2 ? "warn" : "low";
+    }
+
+    // Built in code (not inline @(...)) so the string literals don't collide with the class="" quotes.
+    string FighterCss(char side)
+    {
+        var s = side == 'a' ? "a" : "b";
+        var c = side == 'a' ? "fighter left" : "fighter right";
+        if (_actorSide == s) c += " attack";
+        if (_hitSide == s) { c += " hit"; if (_critNow) c += " crit"; }
+        if (_dodgeSide == s) c += " dodge";
+        if (_koSide == s) c += " ko";
+        if (_winSide == s) c += " win";
+        return c;
+    }
+
+    string DmgClass()
+    {
+        var c = "dmg";
+        if (_critNow) c += " crit";
+        if (!string.IsNullOrEmpty(_floatEff)) c += " " + _floatEff;
+        return c;
+    }
+
+    static string Pretty(string id) => string.IsNullOrEmpty(id)
+        ? ""
+        : string.Join(' ', id.Split('-', '_')
+            .Select(w => w.Length == 0 ? w : char.ToUpperInvariant(w[0]) + w[1..]));
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (!_fighting) await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        _runId++;   // stop any in-flight replay
+        State.OnChange -= OnState;
+    }
+}
