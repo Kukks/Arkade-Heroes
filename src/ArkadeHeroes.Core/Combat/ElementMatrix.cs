@@ -12,12 +12,13 @@ public static class ElementMatrix
     public const double Weak = 0.75;
     public const double Neutral = 1.0;
 
-    public static double Multiplier(Element attacker, Element defender)
+    public static double Multiplier(Element attacker, Element defender, GameConfig? config = null)
     {
+        var c = (config ?? GameConfig.Default).Combat;
         var a = (int)attacker;
         var d = (int)defender;
-        if ((a + 1) % 8 == d) return Strong;
-        if ((d + 1) % 8 == a) return Weak;
+        if ((a + 1) % 8 == d) return c.ElementStrong;
+        if ((d + 1) % 8 == a) return c.ElementWeak;
         return Neutral;
     }
 }

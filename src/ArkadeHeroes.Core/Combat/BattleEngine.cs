@@ -16,23 +16,25 @@ public static class BattleEngine
     private const int DefenseBreakMaxStacks = 3;
     private const int FocusMaxStacks = 3;
 
-    public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed)
+    public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed, GameConfig? config = null)
     {
         if (a.Id == b.Id) throw new ArgumentException("A hero cannot fight itself.");
+        var cfg = config ?? GameConfig.Default;
+        var maxTurns = cfg.Combat.MaxTurns;
         var rng = new DeterministicRng(matchSeed);
 
         var fighterA = new FighterState(a);
         var fighterB = new FighterState(b);
         var events = new List<BattleEvent>();
 
-        for (var turn = 1; turn <= MaxTurns; turn++)
+        for (var turn = 1; turn <= maxTurns; turn++)
         {
             foreach (var (actor, target) in TurnOrder(fighterA, fighterB))
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
                 actor.TickCooldowns();
                 var skill = ChooseSkill(actor);
-                Execute(turn, actor, target, skill, rng, events);
+                Execute(turn, actor, target, skill, rng, events, cfg);
 
                 if (target.Hp <= 0)
                 {
@@ -50,10 +52,10 @@ public static class BattleEngine
             : fracB > fracA ? (fighterB, fighterA)
             : fighterA.Stats.Luck > fighterB.Stats.Luck ? (fighterA, fighterB) : (fighterB, fighterA);
 
-        events.Add(new BattleEvent(MaxTurns, winner.Hero.Id, loser.Hero.Id,
+        events.Add(new BattleEvent(maxTurns, winner.Hero.Id, loser.Hero.Id,
             BattleEventKind.TimeoutDecision, "", 0, false, 0, loser.Hp,
-            $"Timeout after {MaxTurns} turns — decided on remaining HP."));
-        return new BattleResult(winner.Hero.Id, loser.Hero.Id, MaxTurns, events, winner.Hp, winner.Stats.MaxHp);
+            $"Timeout after {maxTurns} turns — decided on remaining HP."));
+        return new BattleResult(winner.Hero.Id, loser.Hero.Id, maxTurns, events, winner.Hp, winner.Stats.MaxHp);
     }
 
     private static (FighterState, FighterState)[] TurnOrder(FighterState a, FighterState b)
@@ -88,7 +90,7 @@ public static class BattleEngine
 
     private static void Execute(
         int turn, FighterState actor, FighterState target, Skill skill,
-        DeterministicRng rng, List<BattleEvent> events)
+        DeterministicRng rng, List<BattleEvent> events, GameConfig cfg)
     {
         actor.StartCooldown(skill);
 
@@ -108,15 +110,15 @@ public static class BattleEngine
 
         var scale = skill.Scaling == SkillScaling.Attack ? actor.EffectiveAttack : actor.EffectiveMagic;
         var element = skill.Element ?? actor.Hero.Genome.Element;
-        var elementMult = ElementMatrix.Multiplier(element, target.Hero.Genome.Element);
+        var elementMult = ElementMatrix.Multiplier(element, target.Hero.Genome.Element, cfg);
         var variance = (90 + rng.Next(21)) / 100.0; // 0.90 .. 1.10
         var crit = rng.Chance(actor.Stats.CritPercent);
 
-        var raw = skill.Power * scale / (target.EffectiveDefense + 25.0);
+        var raw = skill.Power * scale / (target.EffectiveDefense + cfg.Combat.ArmorConstant);
         // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
         // so replays stay verifiable.
-        var affinity = Traits.AffinityModifier(actor.Hero.Genome);
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? 1.5 : 1.0) * affinity));
+        var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity));
 
         target.Hp = Math.Max(0, target.Hp - damage);
 

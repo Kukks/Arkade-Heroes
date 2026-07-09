@@ -45,6 +45,7 @@ public class GameOptions
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
         Curve: XpCurve.Default,
+        Combat: CombatConfig.Default,
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

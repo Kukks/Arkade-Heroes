@@ -570,7 +570,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var defenderSnapshot = defender.ToDto();
 
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, challenger.Id, defender.Id, nonce);
-        var result = BattleEngine.Fight(challenger, defender, entropy);
+        var result = BattleEngine.Fight(challenger, defender, entropy, _config);
         var challengerWon = result.WinnerId == challenger.Id;
         var (winner, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
@@ -853,7 +853,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var entropy = CommitReveal.DeriveEntropy(
             session.ServerSeed, session.Id, challenger.Id, defender.Id, nonce);
-        var result = BattleEngine.Fight(challenger, defender, entropy);
+        var result = BattleEngine.Fight(challenger, defender, entropy, _config);
 
         var challengerWon = result.WinnerId == challenger.Id;
         var (winner, loser) = challengerWon ? (challenger, defender) : (defender, challenger);

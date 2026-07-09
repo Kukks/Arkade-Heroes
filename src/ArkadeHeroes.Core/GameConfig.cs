@@ -38,6 +38,7 @@ public sealed record GameConfig(
     RarityBands Rarity,         // trait tier cutoffs + weights (rarity, fusion pick, sterility tier)
     AffinityBonuses Affinity,   // per-tier combat affinity bonus + cap (BattleEngine → VerifyMatch)
     XpCurve Curve,              // leveling curve + max level (Leveling.Apply → ReplayLevel folds it)
+    CombatConfig Combat,        // BattleEngine multipliers + turn cap (fight → VerifyMatch replay)
 
     // ── HOT (economy — read live, never stamped) ──
     BreedingPolicy Breeding,    // composed: CooldownBaseUnit (breeding cooldown gate)
@@ -58,6 +59,7 @@ public sealed record GameConfig(
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
         Curve: XpCurve.Default,
+        Combat: CombatConfig.Default,
         Breeding: BreedingPolicy.Default,
         BreedingFeeSats: 1_000,
         MergeFeeSats: 1_000,
@@ -99,4 +101,10 @@ public sealed record AffinityBonuses(
 public sealed record XpCurve(long Base, double Coefficient, double Exponent, int MaxLevel)
 {
     public static XpCurve Default { get; } = new(80, 45, 1.35, 50);
+}
+
+/// <summary>Combat tuning: the turn cap, element ring multipliers, crit multiplier, and the damage-softening armor constant.</summary>
+public sealed record CombatConfig(int MaxTurns, double ElementStrong, double ElementWeak, double CritMultiplier, double ArmorConstant)
+{
+    public static CombatConfig Default { get; } = new(60, 1.3, 0.75, 1.5, 25.0);
 }
