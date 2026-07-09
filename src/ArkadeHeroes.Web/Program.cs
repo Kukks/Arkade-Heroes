@@ -42,6 +42,11 @@ builder.Services.AddArkCoreServices();
 builder.Services.AddArkRestTransport(networkConfig);
 
 builder.Services.AddSingleton<IIntentScheduler, SimpleIntentScheduler>();
+// The scheduler REQUIRES a renewal threshold — without it, it throws every intent-generation
+// cycle and the wallet's VTXO auto-renewal never runs (VTXOs would eventually expire unspendable).
+// Mirror the NArk sample wallet: re-board VTXOs approaching expiry.
+builder.Services.Configure<NArk.Core.Models.Options.SimpleIntentSchedulerOptions>(opts =>
+    opts.Threshold = TimeSpan.FromDays(1));
 builder.Services.AddSingleton<ISafetyService, WasmSafetyService>();
 builder.Services.AddSingleton<IBitcoinBlockchain>(_ =>
     new EsploraBlockchain(new Uri("http://localhost:3000/api/")));
