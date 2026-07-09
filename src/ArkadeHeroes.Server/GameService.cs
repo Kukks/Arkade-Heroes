@@ -20,10 +20,10 @@ public class GameRuleException(string message) : Exception(message);
 /// only its own outputs (mints, item deliveries, payouts); asset ownership is
 /// checked against the chain, never against server records alone.
 /// </summary>
-public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options)
+public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options, GameConfigRegistry configRegistry)
 {
     private readonly GameOptions _options = options.Value;
-    private readonly GameConfig _config = options.Value.ToGameConfig();
+    private readonly GameConfig _config = configRegistry.Current;
 
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {

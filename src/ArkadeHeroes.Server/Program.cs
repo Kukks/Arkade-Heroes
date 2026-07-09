@@ -9,6 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<GameOptions>(builder.Configuration.GetSection(GameOptions.SectionName));
 builder.Services.AddSingleton<GameStore>();
 builder.Services.AddSingleton<ReceiptSigner>();
+builder.Services.AddSingleton<GameConfigRegistry>();
 builder.Services.AddSingleton<GameService>();
 
 // Chain mode: "InMemory" (default) or "NArk" (regtest denigiri stack).
@@ -357,19 +358,27 @@ api.MapGet("/offers/{offerId}/params", async (string offerId, IChainService chai
 // ── Chain / health ─────────────────────────────────────────────────────────
 
 api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config,
-    Microsoft.Extensions.Options.IOptions<GameOptions> gameOptions, CancellationToken ct) =>
+    GameConfigRegistry registry, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
     // Advertised so clients can run covenant refunds without out-of-band
     // config; defaults mirror NArkChainOptions. Meaningless in InMemory mode.
     var isNArk = info.Mode.Equals("NArk", StringComparison.OrdinalIgnoreCase);
-    var g = gameOptions.Value;
+    var current = registry.Current;
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
         info.EmulatorSignerKey, receipts.PublicKeyHex,
         isNArk ? config["Chain:NArk:EmulatorUri"] ?? "http://localhost:7073" : null,
         isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null,
-        g.AbsorbChance, g.AbsorbContinueChance,
-        GameConfigDto.From(g.ToGameConfig())));
+        current.Absorb.AbsorbChance, current.Absorb.ContinueChance,
+        GameConfigDto.From(current)));
+});
+
+// Immutable, cache-forever config for a stamped version — clients resolve an artifact's
+// pinned version here so verification uses the config it was created under, not the current one.
+api.MapGet("/config/{version:int}", (int version, GameConfigRegistry registry) =>
+{
+    var c = registry.Get(version);
+    return c is null ? Results.NotFound() : Results.Ok(GameConfigDto.From(c));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and
