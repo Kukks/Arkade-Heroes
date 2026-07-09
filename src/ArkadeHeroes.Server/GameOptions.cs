@@ -17,4 +17,10 @@ public class GameOptions
 
     /// <summary>How long after a covenant match opens its escrow refund leaves unlock (player liveness).</summary>
     public TimeSpan WagerEscrowRefundAfter { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>Absorb death-match odds — server game config PUBLISHED on /api/chain/info so the client's
+    /// VerifyAbsorb recomputes the same outcome. P(absorb happens) ≈ AbsorbChance/256; each further trait
+    /// ≈ AbsorbContinueChance/256 (front-loaded → mostly one trait, rarely a full concentrate).</summary>
+    public byte AbsorbChance { get; set; } = 102;        // ≈40%
+    public byte AbsorbContinueChance { get; set; } = 90;  // ≈35%
 }

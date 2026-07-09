@@ -356,16 +356,19 @@ api.MapGet("/offers/{offerId}/params", async (string offerId, IChainService chai
 
 // ── Chain / health ─────────────────────────────────────────────────────────
 
-api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config, CancellationToken ct) =>
+api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IConfiguration config,
+    Microsoft.Extensions.Options.IOptions<GameOptions> gameOptions, CancellationToken ct) =>
 {
     var info = await chain.GetInfoAsync(ct);
     // Advertised so clients can run covenant refunds without out-of-band
     // config; defaults mirror NArkChainOptions. Meaningless in InMemory mode.
     var isNArk = info.Mode.Equals("NArk", StringComparison.OrdinalIgnoreCase);
+    var g = gameOptions.Value;
     return Results.Ok(new ChainInfoDto(info.Mode, info.Network, info.TreasuryAddress, info.SpeciesAssetId,
         info.EmulatorSignerKey, receipts.PublicKeyHex,
         isNArk ? config["Chain:NArk:EmulatorUri"] ?? "http://localhost:7073" : null,
-        isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null));
+        isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null,
+        g.AbsorbChance, g.AbsorbContinueChance));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and

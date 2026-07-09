@@ -252,6 +252,8 @@ public record ChainInfoDto(
     string? EmulatorSignerKey = null,
     string? GameSignerKey = null,
     string? EmulatorUri = null,
-    string? EsploraApiUri = null);
+    string? EsploraApiUri = null,
+    byte AbsorbChance = 102,
+    byte AbsorbContinueChance = 90);
 
 public record ErrorResponse(string Error);
