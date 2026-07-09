@@ -14,7 +14,7 @@
             Covenants — not our servers — enforce every breed, duel, and trade.
         </p>
         <div class="btn-row">
-            <button class="btn primary" disabled>Create wallet</button>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("wallet"))">Create wallet</button>
             <button class="btn ghost" @onclick="@(() => Nav.NavigateTo("heroes"))">Browse heroes</button>
         </div>
     </div>

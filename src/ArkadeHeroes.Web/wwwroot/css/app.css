@@ -207,6 +207,57 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .tier { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; padding: .22rem .45rem; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
 .statline { display: flex; flex-wrap: wrap; gap: .45rem .9rem; font-size: .68rem; color: var(--muted); }
 
+/* --- Wallet pill: address + balance, as a link --------------------------- */
+.pill { text-decoration: none; }
+.pill:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }
+.pill .bal { color: var(--accent); font-weight: 600; }
+
+/* --- Wallet page ---------------------------------------------------------- */
+.wallet-head { margin-bottom: 1.4rem; }
+.wallet-head h1 { font-size: 2rem; }
+.wallet-head h1 .neon { color: var(--accent); text-shadow: 0 0 24px rgba(53,240,208,.5); }
+
+.wallet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-bottom: 1.1rem; }
+.wallet-grid .card { display: flex; flex-direction: column; gap: .5rem; }
+.wallet-grid .card .btn { margin-top: auto; align-self: flex-start; }
+
+.card.err { display: flex; align-items: center; gap: .6rem; color: #ffd0d0; border-color: var(--danger); font-family: var(--font-hud); font-size: .8rem; margin-top: 1.1rem; }
+
+.wallet-input {
+    width: 100%; resize: vertical;
+    font-family: var(--font-hud); font-size: .82rem; line-height: 1.5;
+    padding: .7rem .8rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--line); background: var(--bg-2); color: var(--text);
+}
+.wallet-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
+
+/* Recovery-phrase word grid */
+.seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; }
+.seed-word {
+    display: flex; align-items: baseline; gap: .5rem;
+    font-family: var(--font-hud); font-size: .86rem;
+    padding: .5rem .65rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--line); background: var(--bg-2);
+}
+.seed-word .idx { color: var(--faint); font-size: .68rem; min-width: 1.1rem; text-align: right; }
+
+/* Receive address */
+.addr-box { display: flex; align-items: center; gap: .6rem; margin-top: .3rem; }
+.addr-box .addr {
+    flex: 1; word-break: break-all; font-size: .8rem; color: var(--text);
+    padding: .6rem .7rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--line); background: var(--bg-2);
+}
+.btn.sm { padding: .45rem .7rem; font-size: .66rem; }
+
+/* Balance */
+.balance-card .balance { font-family: var(--font-hud); }
+.balance-card .balance b { font-size: 2.1rem; letter-spacing: -.02em; color: var(--text); }
+.balance-card .balance span { color: var(--muted); font-size: .9rem; margin-left: .3rem; }
+.chip.as-btn { cursor: pointer; }
+.chip.as-btn:hover { border-color: var(--accent); color: var(--text); }
+.chip.as-btn:disabled { opacity: .5; cursor: not-allowed; }
+
 /* --- Blazor error UI ------------------------------------------------------ */
 #blazor-error-ui {
     display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 10000;

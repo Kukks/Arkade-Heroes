@@ -1,4 +1,7 @@
 @inherits LayoutComponentBase
+@inject WalletState Wallet
+@inject GameWallet GameWallet
+@implements IDisposable
 
 <div class="app">
     <header class="topbar">
@@ -11,10 +14,18 @@
             <NavLink href="wallet">Wallet</NavLink>
         </nav>
         <span class="spacer"></span>
-        <span class="pill @(WalletState.Connected ? "on" : "")">
+        <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@(Wallet.Connected ? Wallet.ActiveAddress : "Create or import a wallet")">
             <span class="dot"></span>
-            @(WalletState.Connected ? WalletState.ShortAddress : "no wallet")
-        </span>
+            @if (Wallet.Connected)
+            {
+                <span class="mono">@Wallet.ShortAddress</span>
+                <b class="bal">@Wallet.BalanceSats.ToString("N0") sat</b>
+            }
+            else
+            {
+                <span>no wallet</span>
+            }
+        </a>
     </header>
 
     <div class="content">
@@ -23,11 +34,25 @@
 </div>
 
 @code {
-    // Placeholder until the in-browser wallet lands (P2). Kept here so the shell
-    // already reflects a real connection state rather than a hard-coded string.
-    private static class WalletState
+    protected override async Task OnInitializedAsync()
     {
-        public static bool Connected => false;
-        public static string ShortAddress => "";
+        Wallet.OnChange += OnWalletChanged;
+
+        // Bootstrap the pill from any wallet already in the tab's SQLite store, so the
+        // shell reflects the real wallet on every page (the Wallet page keeps it fresh).
+        if (!Wallet.Connected)
+        {
+            var wallet = await GameWallet.GetActiveWalletAsync();
+            if (wallet is not null)
+            {
+                var address = await GameWallet.GetReceiveAddressAsync(wallet.Id);
+                Wallet.SetActiveWallet(wallet.Id, address);
+                Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id));
+            }
+        }
     }
+
+    void OnWalletChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Wallet.OnChange -= OnWalletChanged;
 }

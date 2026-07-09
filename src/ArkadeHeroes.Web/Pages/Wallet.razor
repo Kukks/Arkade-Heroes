@@ -1,0 +1,251 @@
+@page "/wallet"
+@inject GameWallet WalletSvc
+@inject WalletState State
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>Wallet · Arkade Heroes</PageTitle>
+
+<section class="wallet-head">
+    <div class="hud">Non-custodial · keys stay in this browser</div>
+    <h1>Your <span class="neon">wallet</span></h1>
+</section>
+
+@if (_view == View.Loading)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot wait"></span> Opening your wallet…</div>
+    </div>
+}
+else if (_view == View.NoWallet)
+{
+    <div class="wallet-grid">
+        <div class="card">
+            <h3>Create a new wallet</h3>
+            <p class="muted">
+                Generates a fresh 12-word recovery phrase in this browser. It is the ONLY
+                key to your heroes and funds — we never see it. Write it down before you fund it.
+            </p>
+            <button class="btn primary" @onclick="CreateAsync" disabled="@_busy">
+                @(_busy ? "Creating…" : "Create new wallet")
+            </button>
+        </div>
+
+        <div class="card">
+            <h3>Import a recovery phrase</h3>
+            <p class="muted">Restore an existing wallet from its 12 or 24 words.</p>
+            <textarea class="wallet-input" rows="3" placeholder="word one word two word three…"
+                      @bind="_importText" @bind:event="oninput" disabled="@_busy"></textarea>
+            <button class="btn ghost" @onclick="ImportAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_importText))">
+                @(_busy ? "Importing…" : "Import wallet")
+            </button>
+        </div>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="card err"><span class="dot bad"></span> @_error</div>
+    }
+}
+else if (_view == View.ShowMnemonic)
+{
+    <div class="card glow">
+        <div class="status-line"><span class="dot ok"></span> Wallet created — back up your recovery phrase</div>
+        <p class="muted" style="margin:.6rem 0 1rem">
+            These 12 words restore your wallet on any device. Anyone with them controls your heroes.
+            Store them offline — this is the only time they're shown by default.
+        </p>
+        <div class="seed-grid">
+            @for (var i = 0; i < _freshWords.Length; i++)
+            {
+                <div class="seed-word"><span class="idx">@(i + 1)</span> @_freshWords[i]</div>
+            }
+        </div>
+        <div class="btn-row" style="margin-top:1.2rem">
+            <button class="btn ghost" @onclick="CopyMnemonic">@(_copied ? "Copied ✓" : "Copy phrase")</button>
+            <button class="btn primary" @onclick="ConfirmBackup">I've saved it — continue</button>
+        </div>
+    </div>
+}
+else // Ready
+{
+    <div class="wallet-grid">
+        <div class="card">
+            <h3>Receive address</h3>
+            <p class="muted">Send heroes and funds here.</p>
+            <div class="addr-box">
+                <span class="mono addr">@(_address ?? "…")</span>
+                <button class="btn ghost sm" @onclick="CopyAddress" disabled="@(_address is null)">
+                    @(_copied ? "Copied ✓" : "Copy")
+                </button>
+            </div>
+        </div>
+
+        <div class="card balance-card">
+            <h3>Balance</h3>
+            <div class="balance"><b>@State.BalanceSats.ToString("N0")</b> <span>sats</span></div>
+            <div class="chips" style="margin-top:.8rem">
+                <span class="chip">@_vtxoCount VTXO@(_vtxoCount == 1 ? "" : "s")</span>
+                <button class="chip as-btn" @onclick="RefreshAsync" disabled="@_busy">
+                    @(_busy ? "…" : "↻ refresh")
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Recovery phrase</h3>
+        @if (!_revealed)
+        {
+            <p class="muted">Your 12 words — the only way to recover this wallet. Keep them offline.</p>
+            <button class="btn ghost" @onclick="RevealAsync">Reveal recovery phrase</button>
+        }
+        else
+        {
+            <div class="seed-grid">
+                @for (var i = 0; i < _freshWords.Length; i++)
+                {
+                    <div class="seed-word"><span class="idx">@(i + 1)</span> @_freshWords[i]</div>
+                }
+            </div>
+            <button class="btn ghost" style="margin-top:1rem" @onclick="() => _revealed = false">Hide</button>
+        }
+    </div>
+}
+
+@code {
+    enum View { Loading, NoWallet, ShowMnemonic, Ready }
+    View _view = View.Loading;
+
+    bool _busy;
+    bool _copied;
+    bool _revealed;
+    string? _error;
+    string _importText = "";
+
+    string? _activeId;
+    string? _address;
+    string[] _freshWords = [];
+    int _vtxoCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnStateChanged;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        var wallet = await WalletSvc.GetActiveWalletAsync();
+        if (wallet is null)
+        {
+            _view = View.NoWallet;
+            return;
+        }
+        _activeId = wallet.Id;
+        _view = View.Ready;
+        await RefreshAsync();
+    }
+
+    async Task CreateAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var (wallet, mnemonic) = await WalletSvc.CreateAsync();
+            _activeId = wallet.Id;
+            _freshWords = mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            _view = View.ShowMnemonic;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task ImportAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var wallet = await WalletSvc.ImportAsync(_importText);
+            _activeId = wallet.Id;
+            _importText = "";
+            _view = View.Ready;
+            await RefreshAsync();
+        }
+        catch (GameWalletException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task ConfirmBackup()
+    {
+        _freshWords = [];
+        _view = View.Ready;
+        await RefreshAsync();
+    }
+
+    async Task RefreshAsync()
+    {
+        if (_activeId is null) return;
+        _busy = true;
+        try
+        {
+            _address ??= await WalletSvc.GetReceiveAddressAsync(_activeId);
+            var balance = await WalletSvc.GetBalanceAsync(_activeId);
+            var vtxos = await WalletSvc.GetVtxosAsync(_activeId);
+            _vtxoCount = vtxos.Count;
+            State.SetActiveWallet(_activeId, _address);
+            State.UpdateBalance(balance);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task RevealAsync()
+    {
+        if (_activeId is null) return;
+        var mnemonic = await WalletSvc.GetMnemonicAsync(_activeId);
+        if (mnemonic is not null)
+        {
+            _freshWords = mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            _revealed = true;
+        }
+    }
+
+    async Task CopyMnemonic() => await Copy(string.Join(' ', _freshWords));
+    async Task CopyAddress() => await Copy(_address ?? "");
+
+    async Task Copy(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); } catch { }
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(1400);
+        _copied = false;
+        StateHasChanged();
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.OnChange -= OnStateChanged;
+}

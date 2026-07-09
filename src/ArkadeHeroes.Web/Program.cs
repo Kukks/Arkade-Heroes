@@ -48,6 +48,10 @@ builder.Services.AddSingleton<IBitcoinBlockchain>(_ =>
 builder.Services.AddSingleton<IWalletProvider, DefaultWalletProvider>();
 builder.Services.AddSingleton<IAssetManager, AssetManager>();
 
+// The game's wallet facade + shared session state (the in-tab, non-custodial player wallet).
+builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.GameWallet>();
+builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.WalletState>();
+
 var host = builder.Build();
 
 // Create the wallet DB on first launch, then start the SDK lifecycle manually (WASM has no IHostedService).
