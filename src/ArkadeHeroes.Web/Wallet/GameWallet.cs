@@ -197,6 +197,39 @@ public class GameWallet(
         return [.. selected];
     }
 
+    /// <summary>
+    /// A snapshot of the wallet's currently-spendable pure-BTC coin outpoints. Take one before a
+    /// send, then pass it to <see cref="WaitForSpendToSettleAsync"/> to know when that send has
+    /// settled — essential when chaining sends that all draw on the same BTC coin (breed/merge deposits).
+    /// </summary>
+    public async Task<IReadOnlySet<string>> SpendableBtcOutpointsAsync(string walletId)
+    {
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        return (await spendingService.GetAvailableCoins(walletId))
+            .Where(c => c.CanSpendOffchain(now) && c.Assets is null or { Count: 0 })
+            .Select(c => c.Outpoint.ToString())
+            .ToHashSet();
+    }
+
+    /// <summary>
+    /// After a send, wait until the wallet's spendable BTC set reflects it: a prior coin is GONE
+    /// (the input was spent) AND a fresh coin has appeared (the change re-synced). Only then can the
+    /// next send safely select — otherwise it may reuse the just-spent coin, which arkd has locked
+    /// ("VTXO temporarily locked"), or find no change yet ("not enough spendable sats"). Returns on
+    /// timeout so the caller can still try (the reveal step retries the funding gate anyway).
+    /// </summary>
+    public async Task WaitForSpendToSettleAsync(string walletId, IReadOnlySet<string> before, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var now = await SpendableBtcOutpointsAsync(walletId);
+            if (before.Except(now).Any() && now.Except(before).Any())
+                return;
+            await Task.Delay(1500);
+        }
+    }
+
     /// <summary>The wallet's mnemonic, for a backup/reveal screen (HD wallets only; null otherwise).</summary>
     public async Task<string?> GetMnemonicAsync(string walletId)
     {

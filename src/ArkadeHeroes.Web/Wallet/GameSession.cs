@@ -83,21 +83,14 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(commit.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
-        // 2. Deposit both parents + the fee into the escrow (plain sends to one opaque address).
-        //    Space the sends: each spends the wallet's BTC coin and produces change, and the
-        //    next send must wait for that change to sync in — otherwise it contends for the
-        //    just-spent (now arkd-locked) coin. A pause between sends lets the wallet catch up.
+        // 2. Deposit both parents + the fee into the escrow (plain sends to one opaque address),
+        //    each waiting for its spend to settle before the next so they don't contend for one coin.
         var heroA = await api.Heroes.GetAsync(parentAId);
         var heroB = await api.Heroes.GetAsync(parentBId);
-        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 1);
-        await Task.Delay(10000);
-        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 1);
-        await Task.Delay(10000);
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 0);
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 0);
         if (commit.EscrowFeeSats > 0)
-        {
-            await wallet.SendSatsAsync(w.Id, commit.EscrowAddress, commit.EscrowFeeSats);
-            await Task.Delay(10000);
-        }
+            await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.EscrowFeeSats);
 
         // 3. Reveal — retry while the deposits settle into arkd's indexer (the funding gate).
         var nonce = RandomNonce();
@@ -135,15 +128,10 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
         var heroBase = await api.Heroes.GetAsync(baseId);
         var heroSac = await api.Heroes.GetAsync(sacrificeId);
-        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 1);
-        await Task.Delay(10000);
-        await wallet.SendAssetAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 1);
-        await Task.Delay(10000);
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 0);
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 0);
         if (commit.FeeSats > 0)
-        {
-            await wallet.SendSatsAsync(w.Id, commit.EscrowAddress, commit.FeeSats);
-            await Task.Delay(10000);
-        }
+            await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.FeeSats);
 
         var nonce = RandomNonce();
         ArkadeHeroesApiException? last = null;
@@ -161,6 +149,19 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         }
         throw new GameWalletException(
             $"The escrow deposits haven't settled yet — try merging again in a moment. ({last?.Message})");
+    }
+
+    // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
+    // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
+    // the just-spent (arkd-locked) BTC coin or race its change syncing back in.
+    private async Task DepositAndSettleAsync(string walletId, string escrow, string? assetId, long sats)
+    {
+        var before = await wallet.SpendableBtcOutpointsAsync(walletId);
+        if (assetId is not null)
+            await wallet.SendAssetAsync(walletId, escrow, assetId, 1);
+        else
+            await wallet.SendSatsAsync(walletId, escrow, sats);
+        await wallet.WaitForSpendToSettleAsync(walletId, before, TimeSpan.FromSeconds(60));
     }
 
     private static string RandomNonce() =>
