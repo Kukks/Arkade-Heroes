@@ -142,7 +142,7 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
 {
     var player = game.Authenticate(BearerToken(http));
     var (child, serverSeedHex, entropyHex, receipt) = await game.RevealBreedingAsync(player, breedingId, request.Nonce, ct);
-    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt));
+    return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt, game.ConfigVersion));
 });
 
 // ── Merge / fusion (commit → deposit base+sacrifice+fee → reveal) ───────────
@@ -158,7 +158,7 @@ api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (fused, serverSeedHex, entropyHex, receipt) = await game.RevealMergeAsync(player, mergeId, request.Nonce, ct);
-    return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt));
+    return Results.Ok(new MergeRevealResponse(fused.ToDto(), serverSeedHex, entropyHex, receipt, game.ConfigVersion));
 });
 
 // Public merge-escrow parameters: everything a player needs to rebuild the merge
@@ -186,7 +186,7 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero));
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion));
 });
 
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>

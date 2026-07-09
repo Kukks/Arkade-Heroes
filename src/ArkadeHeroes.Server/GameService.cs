@@ -25,6 +25,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     private readonly GameOptions _options = options.Value;
     private readonly GameConfig _config = configRegistry.Current;
 
+    /// <summary>Version the current config runs under — stamped into re-verifiable artifacts so clients resolve the config they were made under.</summary>
+    public int ConfigVersion => _config.Version;
+
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
         var receipt = receipts.Issue(unsigned);
