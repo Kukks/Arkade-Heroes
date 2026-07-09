@@ -30,7 +30,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
-        var receipt = receipts.Issue(unsigned);
+        var receipt = receipts.Issue(unsigned with { ConfigVersion = _config.Version });
         foreach (var heroId in heroIds)
             store.ReceiptsByHero.AddOrUpdate(heroId,
                 _ => [receipt],

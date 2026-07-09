@@ -1,4 +1,5 @@
 using System.Text;
+using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Progression;
 using NBitcoin.Secp256k1;
@@ -28,7 +29,8 @@ public record ProgressionReceiptDto(
     int LevelB,
     long UnixSeconds,
     string GameSignerKeyHex,
-    string SignatureHex);
+    string SignatureHex,
+    int ConfigVersion = 0);  // PINNED config version this fact was made under — ReplayLevel folds it under this version's curve
 
 /// <summary>Canonical payload + BIP340 signing/verification + level replay for receipts.</summary>
 public static class ReceiptVerifier
@@ -43,7 +45,7 @@ public static class ReceiptVerifier
             receipt.HeroAId, receipt.HeroBId, receipt.ResultHeroId ?? "",
             receipt.ServerSeedHex, receipt.Nonce, receipt.CommitmentHex,
             receipt.XpAwardA, receipt.XpAwardB, receipt.LevelA, receipt.LevelB,
-            receipt.UnixSeconds);
+            receipt.UnixSeconds, receipt.ConfigVersion);
         return SHA256.HashData(Encoding.UTF8.GetBytes(text));
     }
 
@@ -84,7 +86,8 @@ public static class ReceiptVerifier
     /// Replays a hero's match receipts (timestamp order) into its expected
     /// level — progression recomputed from player-held facts alone.
     /// </summary>
-    public static int ReplayLevel(string heroId, IEnumerable<ProgressionReceiptDto> receipts)
+    public static int ReplayLevel(string heroId, IEnumerable<ProgressionReceiptDto> receipts,
+        IReadOnlyDictionary<int, GameConfig>? configsByVersion = null)
     {
         var all = receipts as IReadOnlyCollection<ProgressionReceiptDto> ?? receipts.ToList();
         // A merged hero inherits its base's level at genesis, attested by its merge receipt
@@ -98,7 +101,11 @@ public static class ReceiptVerifier
                      .ThenBy(r => r.Id, StringComparer.Ordinal))
         {
             var award = receipt.HeroAId == heroId ? receipt.XpAwardA : receipt.XpAwardB;
-            (level, xp, _) = Leveling.Apply(level, xp, award);
+            // Fold each receipt under the CURVE it was created with — pinned per receipt, so a
+            // later curve retune can't retroactively re-level heroes. Unknown version → Default.
+            var cfg = configsByVersion is not null && configsByVersion.TryGetValue(receipt.ConfigVersion, out var c)
+                ? c : GameConfig.Default;
+            (level, xp, _) = Leveling.Apply(level, xp, award, cfg);
         }
         return level;
     }
