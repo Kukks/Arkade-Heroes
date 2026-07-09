@@ -301,6 +301,17 @@ public static class ArkadeCovenants
             System.Text.Encoding.UTF8.GetBytes(
                 $"arkade-heroes-deathmatch-v1|{deathMatchId}|{(challengerWon ? "challenger" : "defender")}"));
 
+    /// <summary>The death-match ABSORB-mint settle message — a DISTINCT tag from the passthrough/keep
+    /// settle (<see cref="DeathMatchSettleMessage"/>). An absorb match's settleMint leaf gates on THIS
+    /// message and settleKeep on the keep message, so the seed-determined outcome the oracle signs is the
+    /// ONLY signable branch (neither player can force keep-vs-mint). Byte-identical in the sim, server
+    /// signer, and covenant; the classic death-match keeps using <see cref="DeathMatchSettleMessage"/>
+    /// unchanged (its escrow address does not shift).</summary>
+    public static byte[] DeathMatchAbsorbMintMessage(string deathMatchId, bool challengerWon)
+        => System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"arkade-heroes-deathmatch-absorb-mint-v1|{deathMatchId}|{(challengerWon ? "challenger" : "defender")}"));
+
     /// <summary>
     /// The full oracle-authorized settle branch:
     /// oracle signature over THIS branch's message + revealed seed + atomic sweep.
@@ -399,48 +410,77 @@ public static class ArkadeCovenants
         global::NArk.Core.Assets.AssetId parentA,
         global::NArk.Core.Assets.AssetId parentB,
         byte[] oraclePk32, Script feeP2tr, long feeSats)
+        => MintUnderSpeciesCore(species, parentA, parentB, oraclePk32, feeP2tr, feeSats);
+
+    /// <summary>
+    /// The shared "mint one hero UNDER THE SPECIES, oracle-signs the metadata root" gate: both
+    /// inputs present (0xf2, txid REVERSED), the minted group's control == the species (0xe7,
+    /// txid REVERSED — gidx pin dropped), an OPTIONAL fee output (breed/merge pay a treasury fee;
+    /// the death-match absorb settle has none → <paramref name="feeP2tr"/> null), then the oracle
+    /// CSFS over the minted group's metadata root — verdict LEFT on the stack for the caller to
+    /// VERIFY (as <see cref="MergeAuthorized"/> does). Byte-identical to the previous inline
+    /// BreedAuthorized when a fee is present (breed/merge addresses unchanged — proven by their
+    /// structural probes). Witness (top→bottom): [inAIdx, inBIdx, childK, (feeOutIdx?), childK, oracleSig].
+    /// </summary>
+    private static byte[] MintUnderSpeciesCore(
+        global::NArk.Core.Assets.AssetId species,
+        global::NArk.Core.Assets.AssetId inputA,
+        global::NArk.Core.Assets.AssetId inputB,
+        byte[] oraclePk32, Script? feeP2tr, long feeSats)
     {
         if (oraclePk32.Length != 32) throw new ArgumentException("Oracle key must be 32 bytes (x-only).", nameof(oraclePk32));
 
-        // Per parent (stack top: i): push txid(internal), gidx; 0xf2 pops
+        // Per input (stack top: i): push txid(internal), gidx; 0xf2 pops
         // gidx, txid, i → pushes amount, found; VERIFY found; amount==1.
-        static byte[] ParentPresent(global::NArk.Core.Assets.AssetId parent) =>
+        static byte[] InputPresent(global::NArk.Core.Assets.AssetId a) =>
         [
-            32, .. parent.Txid.Reverse(),
-            .. PushScriptNum(parent.GroupIndex),
+            32, .. a.Txid.Reverse(),
+            .. PushScriptNum(a.GroupIndex),
             OpInspectInAssetLookup,
             OpVerify,
             Op1, OpEqualVerify88,
         ];
 
-        return
-        [
-            // Parents (consume iA, then iB from the witness top).
-            .. ParentPresent(parentA),
-            .. ParentPresent(parentB),
-            // Species pin (consumes childK): 0xe7 pushes ctrl_txid, ctrl_gidx,
-            // found (top). VERIFY found; DROP gidx; txid EQUALVERIFY. The txid
-            // uniquely identifies the species; gidx pinning is dropped because
-            // the VM pushes a canonical-empty scriptNum for index 0, which a
-            // data push of 0x00 does not equal. ctrl_txid is REVERSED
-            // (internal) order — SAME as the 0xf1/0xf2 family (proven live,
-            // CtrlTxidFormat_Resolves).
-            OpInspectAssetGroupCtrl,
-            OpVerify,
-            OpDrop,
-            32, .. species.Txid.Reverse(), OpEqualVerify88,
-            // Fee (consumes feeOutIdx): payTo ends with EQUAL — VERIFY it. The
-            // fee output MUST pay a different address than the change, or the
-            // builder coalesces same-script outputs and the fee vanishes.
-            .. PayTo(feeP2tr, feeSats),
-            OpVerify,
-            // Oracle (consumes childK then oracleSig): root from the tx, key
-            // baked, CSFS pops pk, msg, sig and leaves the verdict.
-            OpInspectAssetGroupMetadataHash,
-            32, .. oraclePk32,
-            OpCheckSigFromStack,
-        ];
+        var s = new List<byte>();
+        // Inputs (consume iA, then iB from the witness top).
+        s.AddRange(InputPresent(inputA));
+        s.AddRange(InputPresent(inputB));
+        // Species pin (consumes childK): 0xe7 pushes ctrl_txid, ctrl_gidx, found (top).
+        // VERIFY found; DROP gidx; txid EQUALVERIFY. gidx pinning dropped (VM pushes a
+        // canonical-empty scriptNum for index 0). ctrl_txid REVERSED (internal) order.
+        s.Add(OpInspectAssetGroupCtrl);
+        s.Add(OpVerify);
+        s.Add(OpDrop);
+        s.AddRange([32, .. species.Txid.Reverse()]);
+        s.Add(OpEqualVerify88);
+        if (feeP2tr is not null)
+        {
+            // Fee (consumes feeOutIdx): payTo ends with EQUAL — VERIFY it. The fee output MUST
+            // pay a different address than the change, or the builder coalesces the outputs.
+            s.AddRange(PayTo(feeP2tr, feeSats));
+            s.Add(OpVerify);
+        }
+        // Oracle (consumes childK then oracleSig): root from the tx, key baked, CSFS pops
+        // pk, msg, sig and leaves the verdict.
+        s.Add(OpInspectAssetGroupMetadataHash);
+        s.AddRange([32, .. oraclePk32]);
+        s.Add(OpCheckSigFromStack);
+        return [.. s];
     }
+
+    /// <summary>
+    /// Fee-less <see cref="MintUnderSpeciesCore"/> for the death-match ABSORB settle: burn BOTH
+    /// staked heroes (<paramref name="inputA"/>=winner, <paramref name="inputB"/>=loser) and mint
+    /// ONE absorbed hero under the species, oracle-signing its metadata root — no treasury fee.
+    /// The verdict is LEFT on the stack; the composed settle-mint leaf VERIFYs it, then
+    /// AssetBurned×2 + MintToPlayer(winner) route the shape.
+    /// </summary>
+    public static byte[] MintUnderSpeciesAuthorized(
+        global::NArk.Core.Assets.AssetId species,
+        global::NArk.Core.Assets.AssetId inputA,
+        global::NArk.Core.Assets.AssetId inputB,
+        byte[] oraclePk32)
+        => MintUnderSpeciesCore(species, inputA, inputB, oraclePk32, feeP2tr: null, feeSats: 0);
 
     /// <summary>
     /// The FULL merge covenant gate (covenant-v2): everything <see cref="BreedAuthorized"/>
