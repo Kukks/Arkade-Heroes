@@ -40,6 +40,17 @@
         </nav>
     }
 
+    @if (Wallet.BackupPending)
+    {
+        @* Non-custodial safety: the wallet was auto-created during "Play"; nudge to back it up. *@
+        <div class="backup-nudge">
+            <span class="dot bad"></span>
+            <span>Your account isn't backed up yet — save your recovery phrase so you never lose your heroes.</span>
+            <a class="btn ghost sm" href="wallet">Back up now</a>
+            <button class="nudge-x" @onclick="() => Wallet.SetBackupPending(false)" title="Dismiss">✕</button>
+        </div>
+    }
+
     <div class="content">
         @Body
     </div>

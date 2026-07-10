@@ -1,6 +1,7 @@
 @page "/heroes"
 @inject ArkadeHeroesClient Api
 @inject WalletState State
+@inject GameSession Session
 @implements IDisposable
 
 <PageTitle>Heroes · Arkade Heroes</PageTitle>
@@ -38,11 +39,22 @@ else if (_heroes.Count == 0)
     <div class="card muted">
         @if (_mine)
         {
-            <text>You have no heroes yet — claim your starters on the <a href="wallet">Wallet</a> page.</text>
+            <p style="margin:0 0 .8rem">You don't have any heroes yet.</p>
+            <button class="btn primary" @onclick="ClaimStarters" disabled="@_claiming">
+                @(_claiming ? "Summoning…" : "Claim your starter heroes")
+            </button>
+            @if (_claimError is not null)
+            {
+                <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_claimError</div>
+            }
+        }
+        else if (State.IsSignedIn)
+        {
+            <text>No heroes minted yet — switch to <b>Mine</b> to claim your starters.</text>
         }
         else
         {
-            <text>No heroes minted yet — create a wallet and claim starters to populate the arena.</text>
+            <text>No heroes yet — <a href="">start playing</a> to summon your first heroes.</text>
         }
     </div>
 }
@@ -61,6 +73,8 @@ else
     private bool _loading = true;
     private bool _error;
     private bool _mine;
+    private bool _claiming;
+    private string? _claimError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -90,6 +104,25 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    async Task ClaimStarters()
+    {
+        _claiming = true;
+        _claimError = null;
+        try
+        {
+            await Session.ClaimStartersAsync();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _claimError = ex.Message;
+        }
+        finally
+        {
+            _claiming = false;
         }
     }
 

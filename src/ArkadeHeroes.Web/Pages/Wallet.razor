@@ -433,6 +433,7 @@ else // Ready
         {
             _freshWords = mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             _revealed = true;
+            State.SetBackupPending(false); // they've seen their phrase — clear the shell nudge
         }
     }
 

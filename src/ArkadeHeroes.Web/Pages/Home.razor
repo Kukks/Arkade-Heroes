@@ -2,6 +2,9 @@
 @inject ArkadeHeroesClient Api
 @inject HttpClient Http
 @inject NavigationManager Nav
+@inject WalletState State
+@inject GameSession Session
+@implements IDisposable
 
 <PageTitle>Arkade Heroes</PageTitle>
 
@@ -13,10 +16,30 @@
             Your heroes are Arkade assets and your keys never leave this browser.
             Covenants — not our servers — enforce every breed, duel, and trade.
         </p>
-        <div class="btn-row">
-            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("wallet"))">Create wallet</button>
-            <button class="btn ghost" @onclick="@(() => Nav.NavigateTo("heroes"))">Browse heroes</button>
-        </div>
+
+        @if (State.IsSignedIn)
+        {
+            <div class="btn-row">
+                <button class="btn primary" @onclick="@(() => Nav.NavigateTo("heroes"))">Enter the arena</button>
+                <button class="btn ghost" @onclick="@(() => Nav.NavigateTo("market"))">Browse the market</button>
+            </div>
+        }
+        else
+        {
+            @* Game-first onboarding: pick a name and play. The wallet is provisioned behind the scenes. *@
+            <div class="play-box">
+                <input class="wallet-input" @bind="_name" @bind:event="oninput" @onkeydown="OnKey"
+                       placeholder="your arena name" maxlength="24" disabled="@_starting" />
+                <button class="btn primary" @onclick="Play" disabled="@(_starting || string.IsNullOrWhiteSpace(_name))">
+                    @(_starting ? "Summoning…" : "Play →")
+                </button>
+            </div>
+            <p class="muted play-note">No signup, no email — we set up your wallet automatically. You can back it up any time.</p>
+            @if (_playError is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_playError</div>
+            }
+        }
     </div>
     <div class="hero-art">GEN·0<br />STARTER</div>
 </section>
@@ -76,8 +99,13 @@
     string _apiBase = "";
     List<HeroDto> _featured = new();
 
+    string _name = "";
+    bool _starting;
+    string? _playError;
+
     protected override async Task OnInitializedAsync()
     {
+        State.OnChange += OnState;
         _apiBase = Http.BaseAddress?.ToString() ?? "";
         try
         {
@@ -100,6 +128,36 @@
         catch { /* no roster yet — the strip just stays hidden */ }
     }
 
+    async Task Play()
+    {
+        if (_starting || string.IsNullOrWhiteSpace(_name)) return;
+        _starting = true;
+        _playError = null;
+        try
+        {
+            await Session.StartPlayingAsync(_name.Trim());
+            Nav.NavigateTo("heroes");
+        }
+        catch (Exception ex)
+        {
+            // Registered but the starter mint may not have landed (e.g. treasury syncing) — the
+            // player can retry from the Heroes page; surface the reason without losing the session.
+            _playError = ex.Message;
+        }
+        finally
+        {
+            _starting = false;
+        }
+    }
+
+    async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Play();
+    }
+
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
     static string Pct(byte chance) => $"{(int)Math.Round(chance / 256.0 * 100)}%";
+
+    void OnState() => InvokeAsync(StateHasChanged);
+    public void Dispose() => State.OnChange -= OnState;
 }

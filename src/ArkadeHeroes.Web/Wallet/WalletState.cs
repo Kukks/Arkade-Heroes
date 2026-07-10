@@ -64,6 +64,17 @@ public class WalletState : IDisposable
         OnChange?.Invoke();
     }
 
+    /// <summary>True when the wallet was auto-provisioned during "Play" onboarding and its recovery
+    /// phrase hasn't been backed up yet — the shell nudges until the player backs up (non-custodial:
+    /// the key exists, the backup step is just deferred off the critical path).</summary>
+    public bool BackupPending { get; private set; }
+
+    public void SetBackupPending(bool pending)
+    {
+        BackupPending = pending;
+        OnChange?.Invoke();
+    }
+
     public void NotifyChanged() => OnChange?.Invoke();
 
     private void OnVtxosChanged(object? sender, ArkVtxo vtxo) => OnChange?.Invoke();

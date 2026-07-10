@@ -122,6 +122,23 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .subnav a:hover { color: var(--text); background: var(--surface); text-decoration: none; }
 .subnav a.active { color: var(--accent-2); background: var(--surface); }
 
+/* Backup nudge (shell) — shown until an auto-provisioned wallet's phrase is saved. */
+.backup-nudge {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .55rem 1.6rem; font-size: .8rem;
+    background: rgba(240,180,60,.10); border-bottom: 1px solid rgba(240,180,60,.35); color: var(--text);
+}
+.nudge-x {
+    margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: .85rem; padding: .1rem .4rem; border-radius: var(--radius-sm);
+}
+.nudge-x:hover { color: var(--text); background: var(--surface); }
+
+/* Game-first "Play" onboarding on the Home hero panel. */
+.play-box { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: 1.1rem; }
+.play-box .wallet-input { max-width: 260px; }
+.play-note { font-size: .78rem; margin: .55rem 0 0; }
+
 .spacer { flex: 1; }
 .content { flex: 1; padding: 1.8rem 1.6rem 4rem; max-width: 1160px; width: 100%; margin: 0 auto; }
 

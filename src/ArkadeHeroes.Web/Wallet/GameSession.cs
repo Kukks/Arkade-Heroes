@@ -59,6 +59,40 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return res.Heroes;
     }
 
+    /// <summary>
+    /// The game-first "start playing" entry — keeps the wallet out of the player's way. Auto-provisions
+    /// a wallet if there isn't one (flagging a deferred recovery-phrase backup), signs in with it under
+    /// the chosen arena name (resuming an already-registered wallet, else registering), and claims the
+    /// starter heroes. The player only ever picks a name and plays. Returns the roster.
+    /// </summary>
+    public async Task<IReadOnlyList<HeroDto>> StartPlayingAsync(string name)
+    {
+        // 1. Ensure a wallet exists — auto-create silently and flag that its recovery phrase still
+        //    needs backing up (non-custodial: the key exists, the backup is just deferred off the path).
+        if (await wallet.GetActiveWalletAsync() is null)
+        {
+            var (created, _) = await wallet.CreateAsync();
+            var address = await wallet.GetReceiveAddressAsync(created.Id);
+            state.SetActiveWallet(created.Id, address);
+            state.UpdateBalance(await wallet.GetBalanceAsync(created.Id));
+            state.SetBackupPending(true);
+        }
+
+        // 2. Sign in: resume this wallet if it's already a registered player, else register the name.
+        if (!state.IsSignedIn)
+        {
+            await ResumeAsync();
+            if (!state.IsSignedIn)
+                await RegisterAsync(name);
+        }
+
+        // 3. Claim starters so the player lands already owning a roster (idempotent; a returning
+        //    player who already claimed just gets their current roster back).
+        if (state.Player is { StarterClaimed: false })
+            return await ClaimStartersAsync();
+        return await api.Heroes.MineAsync();
+    }
+
     private async Task<PlayerDto> LoginAsync(string walletId)
     {
         var challenge = await api.Players.LoginChallengeAsync();
