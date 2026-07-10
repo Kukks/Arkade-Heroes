@@ -14,11 +14,14 @@ public class SkillTests
     }
 
     [Fact]
-    public void Level1KnowsOnlyStrike()
+    public void Level1KnowsStrikeAndGeneSkill()
     {
+        // Gene-A is now learned from level 1 (was level 3), so no hero is ever Strike-only.
         var skills = SkillCatalog.SkillsFor(GenomeWithSkills(3, 9), 1);
-        Assert.Single(skills);
+        Assert.Equal(2, skills.Count);
         Assert.Equal("strike", skills[0].Id);
+        Assert.Equal("gale-dance", skills[1].Id);              // gene-A = GeneSkills[3]
+        Assert.DoesNotContain(skills, s => s.Id == "war-cry");  // gene-B stays gated to level 6
     }
 
     [Fact]

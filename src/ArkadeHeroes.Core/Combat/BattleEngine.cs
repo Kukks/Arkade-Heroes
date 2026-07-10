@@ -13,8 +13,6 @@ namespace ArkadeHeroes.Core.Combat;
 public static class BattleEngine
 {
     public const int MaxTurns = 60;
-    private const int DefenseBreakMaxStacks = 3;
-    private const int FocusMaxStacks = 3;
 
     public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed, GameConfig? config = null)
     {
@@ -23,8 +21,8 @@ public static class BattleEngine
         var maxTurns = cfg.Combat.MaxTurns;
         var rng = new DeterministicRng(matchSeed);
 
-        var fighterA = new FighterState(a);
-        var fighterB = new FighterState(b);
+        var fighterA = new FighterState(a, cfg.Combat);
+        var fighterB = new FighterState(b, cfg.Combat);
         var events = new List<BattleEvent>();
 
         for (var turn = 1; turn <= maxTurns; turn++)
@@ -33,7 +31,7 @@ public static class BattleEngine
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
                 actor.TickCooldowns();
-                var skill = ChooseSkill(actor);
+                var skill = ChooseSkill(actor, target, cfg.Combat);
                 Execute(turn, actor, target, skill, rng, events, cfg);
 
                 if (target.Hp <= 0)
@@ -69,14 +67,48 @@ public static class BattleEngine
         return aFirst ? [(a, b), (b, a)] : [(b, a), (a, b)];
     }
 
-    private static Skill ChooseSkill(FighterState actor)
+    // Which move a fighter casts this turn. Fully deterministic (a pure function of both fighters'
+    // state), so a replay picks the same move — no RNG is drawn here. Tactical play makes status
+    // skills worth casting: heal when hurt, land one buff early, soften a target once, else hit hard.
+    private static Skill ChooseSkill(FighterState actor, FighterState target, CombatConfig cfg)
     {
-        // Deterministic pick: highest expected damage among off-cooldown skills.
+        var available = actor.Skills.Where(s => actor.CooldownRemaining(s.Id) == 0).ToList();
+        if (available.Count == 0) return SkillCatalog.Strike;
+
+        if (cfg.SelectionPolicy == CombatSelectionPolicy.Tactical)
+        {
+            // 1. Survive: when hurt past the threshold, prefer a drain skill (it damages AND heals).
+            if (actor.Hp * 100 <= actor.Stats.MaxHp * cfg.HealHpThresholdPercent)
+            {
+                var drain = BestByDamage(available.Where(s => s.Effect == SkillEffect.DrainHalf), actor);
+                if (drain is not null) return drain;
+            }
+            // 2. Open with a buff: land one Focus stack early, then let it compound the rest of the fight.
+            if (actor.FocusStacks == 0)
+            {
+                var buff = BestByDamage(available.Where(s => s.Effect == SkillEffect.Focus), actor);
+                if (buff is not null) return buff;
+            }
+            // 3. Soften the target: land one DefenseBreak, then swing for full damage after.
+            if (target.DefenseBreakStacks == 0)
+            {
+                var debuff = BestByDamage(available.Where(s => s.Effect == SkillEffect.DefenseBreak), actor);
+                if (debuff is not null) return debuff;
+            }
+        }
+
+        // Default (and Greedy policy): the highest expected-damage move available.
+        return BestByDamage(available, actor) ?? SkillCatalog.Strike;
+    }
+
+    // The highest expected-damage skill among the candidates, or null if there are none. Ties keep the
+    // earlier-learned skill (strict >), so the pick is stable and order-independent of the seed.
+    private static Skill? BestByDamage(IEnumerable<Skill> candidates, FighterState actor)
+    {
         Skill? best = null;
         var bestScore = double.MinValue;
-        foreach (var skill in actor.Skills)
+        foreach (var skill in candidates)
         {
-            if (actor.CooldownRemaining(skill.Id) > 0) continue;
             var scale = skill.Scaling == SkillScaling.Attack ? actor.EffectiveAttack : actor.EffectiveMagic;
             var score = skill.Power * scale * (skill.Accuracy / 100.0);
             if (score > bestScore)
@@ -85,7 +117,7 @@ public static class BattleEngine
                 best = skill;
             }
         }
-        return best ?? SkillCatalog.Strike;
+        return best;
     }
 
     private static void Execute(
@@ -126,20 +158,21 @@ public static class BattleEngine
         switch (skill.Effect)
         {
             case SkillEffect.DrainHalf:
-                healed = damage / 2;
+                healed = (int)(damage * cfg.Combat.DrainFraction);
                 actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + healed);
                 break;
             case SkillEffect.DefenseBreak:
-                target.DefenseBreakStacks = Math.Min(DefenseBreakMaxStacks, target.DefenseBreakStacks + 1);
+                target.DefenseBreakStacks = Math.Min(cfg.Combat.MaxEffectStacks, target.DefenseBreakStacks + 1);
                 break;
             case SkillEffect.Focus:
-                actor.FocusStacks = Math.Min(FocusMaxStacks, actor.FocusStacks + 1);
+                actor.FocusStacks = Math.Min(cfg.Combat.MaxEffectStacks, actor.FocusStacks + 1);
                 break;
         }
 
         events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
             BattleEventKind.SkillUsed, skill.Id, damage, crit, healed, target.Hp,
-            elementMult > 1.0 ? "super effective" : elementMult < 1.0 ? "not very effective" : null));
+            elementMult > 1.0 ? "super effective" : elementMult < 1.0 ? "not very effective" : null,
+            skill.Effect));
     }
 
     private sealed class FighterState
@@ -150,19 +183,21 @@ public static class BattleEngine
         public int Hp { get; set; }
         public int DefenseBreakStacks { get; set; }
         public int FocusStacks { get; set; }
+        private readonly CombatConfig _cfg;
         private readonly Dictionary<string, int> _cooldowns = [];
 
-        public FighterState(Hero hero)
+        public FighterState(Hero hero, CombatConfig cfg)
         {
             Hero = hero;
+            _cfg = cfg;
             Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
-            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level);
+            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, cfg);
             Hp = Stats.MaxHp;
         }
 
-        public int EffectiveAttack => (int)(Stats.Attack * (1 + 0.12 * FocusStacks));
-        public int EffectiveMagic => (int)(Stats.Magic * (1 + 0.12 * FocusStacks));
-        public int EffectiveDefense => Math.Max(1, (int)(Stats.Defense * (1 - 0.12 * DefenseBreakStacks)));
+        public int EffectiveAttack => (int)(Stats.Attack * (1 + _cfg.FocusPerStack * FocusStacks));
+        public int EffectiveMagic => (int)(Stats.Magic * (1 + _cfg.FocusPerStack * FocusStacks));
+        public int EffectiveDefense => Math.Max(1, (int)(Stats.Defense * (1 - _cfg.DefenseBreakPerStack * DefenseBreakStacks)));
 
         public int CooldownRemaining(string skillId) => _cooldowns.GetValueOrDefault(skillId);
 

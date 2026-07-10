@@ -89,8 +89,35 @@ public sealed record XpCurve(long Base, double Coefficient, double Exponent, int
     public static XpCurve Default { get; } = new(80, 45, 1.35, 50);
 }
 
-/// <summary>Combat tuning: the turn cap, element ring multipliers, crit multiplier, and the damage-softening armor constant.</summary>
-public sealed record CombatConfig(int MaxTurns, double ElementStrong, double ElementWeak, double CritMultiplier, double ArmorConstant)
+/// <summary>How a fighter picks its move each turn. <see cref="Greedy"/> always maxes expected damage
+/// (the original v1 behaviour); <see cref="Tactical"/> also opens with a buff, softens a durable target
+/// with a debuff, and heals when hurt — so status skills are actually worth casting. Both are fully
+/// deterministic (pure functions of fighter state), so replays still verify.</summary>
+public enum CombatSelectionPolicy { Greedy, Tactical }
+
+/// <summary>
+/// Combat tuning. Everything the deterministic battle depends on lives here, so a fight is a pure
+/// function of (heroes, seed, this config): the turn cap, element ring + crit + armor constants, the
+/// level at which each extra skill is learned, the status-effect magnitudes + stack cap, and the
+/// move-selection policy. Client and server share <see cref="Default"/> at compile time, so both
+/// resolve identically; versioning a live corpus later means pinning the config that produced each
+/// match (see <see cref="GameConfig"/>).
+/// </summary>
+public sealed record CombatConfig(
+    int MaxTurns, double ElementStrong, double ElementWeak, double CritMultiplier, double ArmorConstant,
+    // Skill unlock gating — the level at which a hero learns its gene-A skill, gene-B skill, and Elemental Burst.
+    int GeneSkillALevel, int GeneSkillBLevel, int BurstLevel,
+    // Status-effect magnitudes: per-stack Focus (attack/magic up) and DefenseBreak (defense down)
+    // fractions, the shared stack cap, and the DrainHalf heal as a fraction of the damage dealt.
+    double FocusPerStack, double DefenseBreakPerStack, int MaxEffectStacks, double DrainFraction,
+    // Move selection: the policy, and (Tactical only) the HP% at/below which a hero prefers a drain skill.
+    CombatSelectionPolicy SelectionPolicy, int HealHpThresholdPercent)
 {
-    public static CombatConfig Default { get; } = new(60, 1.3, 0.75, 1.5, 25.0);
+    public static CombatConfig Default { get; } = new(
+        MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,
+        // gene-A from level 1 so every hero has a second move immediately (no more Strike-only starters);
+        // gene-B at 6 and Elemental Burst at 9 keep progression milestones.
+        GeneSkillALevel: 1, GeneSkillBLevel: 6, BurstLevel: 9,
+        FocusPerStack: 0.12, DefenseBreakPerStack: 0.12, MaxEffectStacks: 3, DrainFraction: 0.5,
+        SelectionPolicy: CombatSelectionPolicy.Tactical, HealHpThresholdPercent: 45);
 }

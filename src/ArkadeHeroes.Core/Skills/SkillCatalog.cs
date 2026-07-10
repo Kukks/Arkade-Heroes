@@ -38,17 +38,22 @@ public static class SkillCatalog
         new("twin-fangs", "Twin Fangs", 52, 95, SkillScaling.Attack, null, 1),
     ];
 
-    /// <summary>The skills a hero of the given genome and level has unlocked, in learn order.</summary>
-    public static IReadOnlyList<Skill> SkillsFor(Genome genome, int level)
+    /// <summary>
+    /// The skills a hero of the given genome and level has unlocked, in learn order. Unlock levels
+    /// come from <paramref name="config"/> (defaulting to <see cref="GameConfig.Default"/>), so the
+    /// gating is a tunable, versionable part of the combat rules rather than a baked constant.
+    /// </summary>
+    public static IReadOnlyList<Skill> SkillsFor(Genome genome, int level, CombatConfig? config = null)
     {
+        var cfg = config ?? GameConfig.Default.Combat;
         var skills = new List<Skill> { Strike };
-        if (level >= 3) skills.Add(GeneSkills[genome.SkillGeneA % GeneSkills.Count]);
-        if (level >= 6)
+        if (level >= cfg.GeneSkillALevel) skills.Add(GeneSkills[genome.SkillGeneA % GeneSkills.Count]);
+        if (level >= cfg.GeneSkillBLevel)
         {
             var second = GeneSkills[genome.SkillGeneB % GeneSkills.Count];
             if (!skills.Any(s => s.Id == second.Id)) skills.Add(second);
         }
-        if (level >= 9) skills.Add(ElementalBurst);
+        if (level >= cfg.BurstLevel) skills.Add(ElementalBurst);
         return skills;
     }
 }
