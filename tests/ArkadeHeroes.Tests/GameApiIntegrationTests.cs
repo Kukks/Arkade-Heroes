@@ -156,4 +156,35 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
             () => alice.Breeding.CommitAsync(new BreedCommitRequest("sterile", heroes[0].Id)));
         Assert.Contains("sterile", ex.Message);
     }
+
+    [Fact]
+    public async Task Heroes_AreRarityOrderedAndPaged()
+    {
+        var (alice, _) = await _factory.RegisterAsync("Pager");
+        var starters = await alice.ClaimStartersAsync();
+        var owner = starters[0].OwnerId;
+
+        // Inject a clearly-rarest hero so the rarity sort is observable.
+        var store = _factory.Services.GetRequiredService<ArkadeHeroes.Server.GameStore>();
+        var b = new byte[32];
+        b[16 + (int)TraitCategory.Aura * 2] = 255; // Legendary aura → top rarity score
+        store.Heroes["legend"] = new Hero
+            { Id = "legend", OwnerId = owner, Name = "Legend", Genome = new Genome(b), Generation = 1 };
+
+        // Full set (no take): rarity-descending, the injected hero first.
+        var all = await alice.Heroes.MineAsync();
+        Assert.Equal(3, all.Count);
+        Assert.Equal("legend", all[0].Id);
+        for (var i = 1; i < all.Count; i++)
+            Assert.True((all[i - 1].Rarity?.Score ?? 0) >= (all[i].Rarity?.Score ?? 0), "heroes must be rarity-descending");
+
+        // Paged: take slices the same ordered sequence; pages reconstruct the full set.
+        var page0 = await alice.Heroes.MineAsync(0, 2);
+        var page1 = await alice.Heroes.MineAsync(2, 2);
+        Assert.Equal(new[] { all[0].Id, all[1].Id }, page0.Select(h => h.Id));
+        Assert.Equal(new[] { all[2].Id }, page1.Select(h => h.Id));
+
+        // Skip past the end → empty.
+        Assert.Empty(await alice.Heroes.MineAsync(3, 2));
+    }
 }

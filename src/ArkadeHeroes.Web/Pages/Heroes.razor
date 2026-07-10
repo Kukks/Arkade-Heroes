@@ -61,11 +61,19 @@ else if (_heroes.Count == 0)
 else
 {
     <div class="grid cols">
-        @foreach (var h in _heroes.OrderByDescending(h => h.Rarity?.Score ?? 0).ThenByDescending(h => h.Level))
+        @foreach (var h in _heroes)
         {
             <HeroCard Hero="h" />
         }
     </div>
+    @if (_hasMore)
+    {
+        <div style="text-align:center;margin-top:1.4rem">
+            <button class="btn ghost" @onclick="LoadMore" disabled="@_loadingMore">
+                @(_loadingMore ? "Loading…" : "Load more heroes")
+            </button>
+        </div>
+    }
 }
 
 @code {
@@ -75,6 +83,10 @@ else
     private bool _mine;
     private bool _claiming;
     private string? _claimError;
+
+    private const int PageSize = 24;   // server-side page; "Load more" fetches the next
+    private bool _hasMore;
+    private bool _loadingMore;
 
     protected override async Task OnInitializedAsync()
     {
@@ -93,9 +105,11 @@ else
     {
         _loading = true;
         _error = false;
+        _hasMore = false;
         try
         {
-            _heroes = _mine ? await Api.Heroes.MineAsync() : await Api.Heroes.AllAsync();
+            _heroes = _mine ? await Api.Heroes.MineAsync(0, PageSize) : await Api.Heroes.AllAsync(0, PageSize);
+            _hasMore = _heroes.Count == PageSize;   // a full page suggests there may be more
         }
         catch
         {
@@ -104,6 +118,23 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    async Task LoadMore()
+    {
+        _loadingMore = true;
+        try
+        {
+            var next = _mine ? await Api.Heroes.MineAsync(_heroes.Count, PageSize)
+                             : await Api.Heroes.AllAsync(_heroes.Count, PageSize);
+            _heroes.AddRange(next);
+            _hasMore = next.Count == PageSize;
+        }
+        catch { /* keep what's already loaded */ }
+        finally
+        {
+            _loadingMore = false;
         }
     }
 

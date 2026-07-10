@@ -109,22 +109,32 @@ api.MapPost("/heroes/starter", async (HttpContext http, GameService game, Cancel
     return Results.Ok(new StarterResponse(heroes.Select(h => h.ToDto()).ToList()));
 });
 
-api.MapGet("/heroes", (string? owner, GameStore store) =>
+// Rarity-ordered so paging composes globally. skip/take are optional — omit take for the
+// full set (Home's featured strip + Market's portrait lookup rely on that); capped at 200 when set.
+api.MapGet("/heroes", (string? owner, int? skip, int? take, GameStore store) =>
 {
     var heroes = store.Heroes.Values
         .Where(h => owner is null || h.OwnerId == owner)
-        .OrderBy(h => h.Name)
+        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
+        .ThenByDescending(h => h.Level)
+        .ThenBy(h => h.Name)
+        .Skip(skip ?? 0)
+        .Take(take is int t ? Math.Min(t, 200) : int.MaxValue)
         .Select(h => h.ToDto())
         .ToList();
     return Results.Ok(heroes);
 });
 
-api.MapGet("/heroes/mine", (HttpContext http, GameService game, GameStore store) =>
+api.MapGet("/heroes/mine", (HttpContext http, int? skip, int? take, GameService game, GameStore store) =>
 {
     var player = game.Authenticate(BearerToken(http));
     return Results.Ok(store.Heroes.Values
         .Where(h => h.OwnerId == player.Id)
-        .OrderBy(h => h.Name)
+        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
+        .ThenByDescending(h => h.Level)
+        .ThenBy(h => h.Name)
+        .Skip(skip ?? 0)
+        .Take(take is int t ? Math.Min(t, 200) : int.MaxValue)
         .Select(h => h.ToDto())
         .ToList());
 });
