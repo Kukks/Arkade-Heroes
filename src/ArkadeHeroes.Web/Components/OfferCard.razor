@@ -27,6 +27,12 @@
             <span class="offer-status @StatusClass">@StatusLabel</span>
         </div>
     </div>
+    @if (Buyable)
+    {
+        <button class="btn primary buy-btn" @onclick="OnBuy" disabled="@Busy">
+            @(Busy ? "Buying…" : "Buy")
+        </button>
+    }
     @if (Sold)
     {
         <div class="sold-stamp">SOLD</div>
@@ -41,6 +47,14 @@
 
     /// <summary>Play the "just listed" flourish (a price tag drops in with a gold coin-shine).</summary>
     [Parameter] public bool Reveal { get; set; }
+
+    /// <summary>Show a Buy button (a signed-in viewer looking at someone else's resting offer).</summary>
+    [Parameter] public bool Buyable { get; set; }
+
+    /// <summary>This offer's purchase is in flight.</summary>
+    [Parameter] public bool Busy { get; set; }
+
+    [Parameter] public EventCallback OnBuy { get; set; }
 
     private bool Sold => Offer.Status == "closed";
 

@@ -1,3 +1,4 @@
+using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using NBitcoin;
@@ -10,7 +11,7 @@ namespace ArkadeHeroes.Web.Wallet;
 /// a player — the server never holds a key. Scoped so it can use the request-scoped SDK client
 /// (whose bearer token, set on register/login, persists for the app in WASM's single scope).
 /// </summary>
-public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state)
+public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state, IServiceProvider services)
 {
     /// <summary>
     /// Silently resume the player this wallet is registered as (sign a fresh challenge and log in).
@@ -177,6 +178,51 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             resting = await api.Offers.GetAsync(offer.OfferId);
         }
         return resting;
+    }
+
+    /// <summary>
+    /// Buy a resting hero offer, entirely from the browser wallet: rebuild the offer covenant
+    /// locally and fulfil it — the buyer pays the ask straight to the seller and the covenant
+    /// hands over the hero (the emulator co-signs only if the seller is paid exactly the ask).
+    /// Then claim game-side ownership. Non-custodial: the server never touches the buyer's key.
+    /// Returns the bought hero.
+    /// </summary>
+    public async Task<HeroDto> BuyHeroAsync(string offerId)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        var offer = await api.Offers.ParamsAsync(offerId);
+        var info = await api.Chain.InfoAsync();
+        if (string.IsNullOrEmpty(info.EmulatorUri))
+            throw new GameWalletException("This arena isn't in covenant mode (no emulator advertised).");
+
+        // Deliver the hero to the player's REGISTERED address — the one the server verifies for
+        // the claim. A fresh GetReceiveAddressAsync advances once an address is funded, so it
+        // would land the hero on a derivation the server doesn't check (the wallet still controls
+        // it, but the game-side claim would never see it). Fall back only if somehow unsigned-in.
+        var address = state.Player?.ArkadeAddress ?? await wallet.GetReceiveAddressAsync(w.Id);
+
+        // Fulfil the offer covenant from THIS wallet's NArk services (the browser's DI graph):
+        // pay the ask, take the hero. Trustless — the contract is rebuilt from the public params.
+        await OfferFulfillFlow.FulfillAsync(services, w.Id, address, new Uri(info.EmulatorUri), offer);
+
+        // Claim game-side ownership — retry while the hero lands + the server observes it on-chain.
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                return (await api.Offers.ClaimHeroAsync(offerId)).Hero;
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("chain does not show", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                await Task.Delay(3000);
+            }
+        }
+        throw new GameWalletException(
+            $"Paid on-chain, but the hero hasn't synced for the claim yet — try again in a moment. ({last?.Message})");
     }
 
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's

@@ -76,6 +76,11 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
     /// </summary>
     public T GetService<T>() where T : notnull => _services.GetRequiredService<T>();
 
+    /// <summary>The wallet's isolated NArk service graph — lets covenant flows run against
+    /// this wallet or, via the same entry points, against any other NArk service container
+    /// (e.g. a browser's Blazor DI).</summary>
+    public IServiceProvider Services => _services;
+
     private SelfCustodyWallet(ServiceProvider services, string walletId, string mnemonic, string address)
     {
         _services = services;

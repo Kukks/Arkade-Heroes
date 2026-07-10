@@ -27,12 +27,20 @@ public static class CovenantSpender
         => (await WaitForVtxosAsync(observer, contract, 1, timeout, ct))[0];
 
     /// <summary>Waits for at least <paramref name="count"/> unspent VTXOs at the contract's address (e.g. both wager stakes).</summary>
-    public static async Task<IReadOnlyList<ArkVtxo>> WaitForVtxosAsync(
+    public static Task<IReadOnlyList<ArkVtxo>> WaitForVtxosAsync(
         SelfCustodyWallet observer, ArkadeArtifactContract contract, int count, TimeSpan timeout, CancellationToken ct = default)
+        => WaitForVtxosCoreAsync(observer.GetService<VtxoSynchronizationService>(),
+            observer.GetService<IVtxoStorage>(), contract, count, timeout, ct);
+
+    /// <summary>
+    /// Service-level wait — usable from any NArk service graph (a player wallet's isolated
+    /// container or a browser's Blazor DI). Polls arkd for VTXOs at the contract address.
+    /// </summary>
+    public static async Task<IReadOnlyList<ArkVtxo>> WaitForVtxosCoreAsync(
+        VtxoSynchronizationService vtxoSync, IVtxoStorage vtxoStorage,
+        ArkadeArtifactContract contract, int count, TimeSpan timeout, CancellationToken ct = default)
     {
         var script = contract.GetArkAddress().ScriptPubKey.ToHex();
-        var vtxoSync = observer.GetService<VtxoSynchronizationService>();
-        var vtxoStorage = observer.GetService<IVtxoStorage>();
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {

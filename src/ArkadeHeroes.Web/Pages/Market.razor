@@ -1,6 +1,8 @@
 @page "/market"
 @inject ArkadeHeroesClient Api
 @inject WalletState State
+@inject GameSession Session
+@implements IDisposable
 
 <PageTitle>Market · Arkade Heroes</PageTitle>
 
@@ -17,6 +19,19 @@
         <span class="chip mono">@_active.Count live</span>
     }
 </div>
+
+@if (_buyError is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot bad"></span> @_buyError</div></div>
+}
+@if (_bought is not null)
+{
+    <div class="page-head" style="margin-top:.4rem">
+        <h3 style="margin:0">Bought!</h3>
+        <span class="hud">you paid the seller direct · the hero is yours</span>
+    </div>
+    <div class="grid cols"><HeroCard Hero="_bought" Reveal="true" /></div>
+}
 
 @if (_loading)
 {
@@ -43,7 +58,8 @@ else
         <div class="grid cols">
             @foreach (var o in _active)
             {
-                <OfferCard Offer="o" Hero="@HeroFor(o)" />
+                <OfferCard Offer="o" Hero="@HeroFor(o)"
+                           Buyable="@CanBuy(o)" Busy="@(_buyingId == o.OfferId)" OnBuy="@(() => DoBuy(o))" />
             }
         </div>
     }
@@ -73,9 +89,20 @@ else
     private Dictionary<string, HeroDto> _heroes = new();
     private bool _loading = true;
     private bool _error;
+    private string? _buyingId;
+    private string? _buyError;
+    private HeroDto? _bought;
 
     protected override async Task OnInitializedAsync()
     {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        _loading = true;
+        _error = false;
         try
         {
             // A live market shows what a buyer can act on (resting / funding); a short
@@ -101,6 +128,35 @@ else
         }
     }
 
+    // Buyable = a signed-in viewer looking at someone else's resting hero offer.
+    bool CanBuy(OfferDto o) =>
+        State.IsSignedIn && _buyingId is null && o.Kind == "hero"
+        && o.Status == "active" && o.SellerId != State.Player?.PlayerId;
+
+    async Task DoBuy(OfferDto o)
+    {
+        _buyingId = o.OfferId;
+        _buyError = null;
+        _bought = null;
+        try
+        {
+            _bought = await Session.BuyHeroAsync(o.OfferId);
+            await LoadAsync();  // the offer has closed; refresh active + sold
+        }
+        catch (Exception ex)
+        {
+            _buyError = ex.Message;
+        }
+        finally
+        {
+            _buyingId = null;
+        }
+    }
+
     private HeroDto? HeroFor(OfferDto o) =>
         !string.IsNullOrEmpty(o.HeroId) && _heroes.TryGetValue(o.HeroId, out var h) ? h : null;
+
+    void OnState() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.OnChange -= OnState;
 }

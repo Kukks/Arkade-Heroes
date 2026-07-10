@@ -1,5 +1,10 @@
 using ArkadeHeroes.Chain.NArk;
+using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
+using NArk.Abstractions.Intents;
+using NArk.Abstractions.Safety;
+using NArk.Abstractions.VTXOs;
+using NArk.Abstractions.Wallets;
 using NArk.Core.Assets;
 using NArk.Core.Services;
 using NBitcoin;
@@ -17,27 +22,40 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// </summary>
 public static class OfferFulfillFlow
 {
-    /// <summary>Fulfils the offer, paying the seller the ask and delivering the item to the buyer's wallet.</summary>
-    public static async Task<EmulatorSubmitResponse> FulfillAsync(
+    /// <summary>Fulfils the offer from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
+    public static Task<EmulatorSubmitResponse> FulfillAsync(
         SelfCustodyWallet buyer, Uri emulatorUri, OfferParams offer, CancellationToken ct = default)
+        => FulfillAsync(buyer.Services, buyer.WalletId, buyer.Address, emulatorUri, offer, ct);
+
+    /// <summary>
+    /// Service-level fulfil — runs against any NArk service graph (a player wallet's isolated
+    /// container OR a browser's Blazor DI). Pays the seller the ask from the buyer's own coins
+    /// and delivers the item to <paramref name="buyerAddress"/>.
+    /// </summary>
+    public static async Task<EmulatorSubmitResponse> FulfillAsync(
+        IServiceProvider services, string walletId, string buyerAddress,
+        Uri emulatorUri, OfferParams offer, CancellationToken ct = default)
     {
-        var transport = buyer.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
 
         var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
-        var offerVtxo = (await CovenantSpender.WaitForVtxosAsync(buyer, contract, 1, TimeSpan.FromSeconds(20), ct))
+        var offerVtxo = (await CovenantSpender.WaitForVtxosCoreAsync(
+                services.GetRequiredService<VtxoSynchronizationService>(),
+                services.GetRequiredService<IVtxoStorage>(),
+                contract, 1, TimeSpan.FromSeconds(20), ct))
             .FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == offer.ItemAssetId) == true)
             ?? throw new InvalidOperationException($"Offer {offer.OfferId} is not funded with the item, or already fulfilled/reclaimed.");
 
         var sellerScript = ArkAddress.Parse(offer.SellerAddress).ScriptPubKey;
-        var buyerScript = ArkAddress.Parse(buyer.Address).ScriptPubKey;
+        var buyerScript = ArkAddress.Parse(buyerAddress).ScriptPubKey;
         var item = AssetId.FromString(offer.ItemAssetId);
 
         // The buyer's funding coins cover the ask (the offer's own carrier dust
         // covers the item output). Select from the buyer's spendable wallet.
-        var spending = buyer.GetService<ISpendingService>();
-        var available = (await spending.GetAvailableCoins(buyer.WalletId, ct))
+        var spending = services.GetRequiredService<ISpendingService>();
+        var available = (await spending.GetAvailableCoins(walletId, ct))
             .Where(c => c.Assets is null or { Count: 0 })
             .OrderByDescending(c => c.Amount)
             .ToList();
@@ -64,8 +82,12 @@ public static class OfferFulfillFlow
                 [AssetInput.Create(0, 1)], [AssetOutput.Create(1, 1)], []),
         ]);
 
-        return await CovenantSpender.SpendManyAsync(
-            buyer, emulatorUri,
+        return await CovenantSpender.SpendManyCoreAsync(
+            transport,
+            services.GetRequiredService<ISafetyService>(),
+            services.GetRequiredService<IWalletProvider>(),
+            services.GetRequiredService<IIntentStorage>(),
+            walletId, emulatorUri,
             // Witness (bottom→top): [itemOutIdx=1, payToOutIdx=0] — the item rides the
             // buyer's output 1; the seller is paid at output 0 (PayTo consumes the top).
             [new CovenantSpender.CovenantInput(contract, "fulfill",

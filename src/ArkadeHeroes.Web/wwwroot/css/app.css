@@ -436,6 +436,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .offer-status { text-transform: uppercase; letter-spacing: .08em; font-size: .62rem; }
 .offer-status.on { color: var(--ok); }
 .offer-status.done { color: var(--danger); }
+.buy-btn { width: 100%; margin-top: .35rem; }
 
 /* Hero portrait on a hero offer, with a periodic gold coin-shine (a "for sale" gleam). */
 .offer-tile { position: relative; aspect-ratio: 16/9; overflow: hidden; margin: -.15rem 0 .2rem; border: 1px solid var(--line); border-radius: var(--radius-sm); }
