@@ -4,7 +4,8 @@
 <div class="@CardClass" style="--flare:@FlareColor">
     @if (Hero is not null)
     {
-        <div class="offer-tile" style="background:@HeroCard.ArtGradient(Hero.GenomeHex)">
+        <div class="offer-tile">
+            <HeroSprite Hero="Hero" Size="118" />
             <span class="offer-kind mono">@KindLabel</span>
             <span class="price-shine"></span>
         </div>

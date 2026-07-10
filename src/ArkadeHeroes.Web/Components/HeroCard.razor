@@ -1,7 +1,8 @@
 @* A single hero, its "portrait" generated deterministically from its genome bytes. *@
 
 <a class="@CardClass" href="@($"heroes/{Hero.Id}")" style="--flare:@FlareColor">
-    <div class="hero-tile" style="background:@ArtGradient(Hero.GenomeHex)">
+    <div class="hero-tile">
+        <HeroSprite Hero="Hero" Size="118" />
         <span class="hero-gen mono">GEN·@Hero.Generation</span>
         @if (Hero.IsSterile)
         {
@@ -45,19 +46,4 @@
 
     // The reveal flare colour: fusion burns hot-red; a birth glows in the hero's rarity colour.
     private string FlareColor => Fuse ? "var(--danger)" : $"var(--r-{Tier.ToLowerInvariant()})";
-
-    // Turn the immutable genome into a stable, unique portrait — a conic gradient seeded
-    // from the trait + appearance bytes, so every hero looks like itself and re-renders identically.
-    public static string ArtGradient(string hex)
-    {
-        if (hex.Length < 40) return "var(--bg-2)";
-        int Hue(int byteIndex) => B(hex, byteIndex) * 360 / 255;
-        var a = Hue(15); // appearance palette gene
-        var b = Hue(16); // first trait dominant
-        var c = Hue(20); // another trait
-        var rot = B(hex, 14);
-        return $"conic-gradient(from {rot}deg, hsl({a} 68% 24%), hsl({b} 74% 32%), hsl({c} 66% 20%), hsl({a} 68% 24%))";
-    }
-
-    private static byte B(string hex, int i) => Convert.ToByte(hex.Substring(i * 2, 2), 16);
 }

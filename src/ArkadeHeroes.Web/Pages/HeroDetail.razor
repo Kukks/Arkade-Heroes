@@ -24,7 +24,8 @@ else
     var tier = h.Rarity?.Tier ?? "Common";
 
     <section class="detail-hero">
-        <div class="detail-portrait" style="background:@HeroCard.ArtGradient(h.GenomeHex)">
+        <div class="detail-portrait">
+            <HeroSprite Hero="h" Size="210" />
             <span class="hero-gen mono">GEN·@h.Generation</span>
             @if (h.IsSterile)
             {

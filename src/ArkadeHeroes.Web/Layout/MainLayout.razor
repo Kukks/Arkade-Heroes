@@ -2,21 +2,18 @@
 @inject WalletState Wallet
 @inject GameWallet GameWallet
 @inject GameSession Session
+@inject NavigationManager Nav
 @implements IDisposable
 
 <div class="app">
     <header class="topbar">
         <span class="brand">ARKADE<b>·</b><em>HEROES</em></span>
         <nav class="nav">
+            @* Game-first: only the three game sections live in the nav. The wallet is a
+               lower-level system — it's reachable from the subtle pill on the right, not here. *@
             <NavLink href="" Match="NavLinkMatch.All">Arena</NavLink>
-            <NavLink href="heroes">Heroes</NavLink>
-            <NavLink href="spar">Spar</NavLink>
-            <NavLink href="breed">Breed</NavLink>
-            <NavLink href="merge">Merge</NavLink>
-            <NavLink href="market">Market</NavLink>
-            <NavLink href="sell">Sell</NavLink>
-            <NavLink href="leaderboard">Ranks</NavLink>
-            <NavLink href="wallet">Wallet</NavLink>
+            <a href="heroes" class="@(Section == "heroes" ? "active" : "")">Heroes</a>
+            <a href="market" class="@(Section == "market" ? "active" : "")">Market</a>
         </nav>
         <span class="spacer"></span>
         <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@(Wallet.Connected ? Wallet.ActiveAddress : "Create or import a wallet")">
@@ -33,15 +30,41 @@
         </a>
     </header>
 
+    @if (_subnav.Length > 0)
+    {
+        <nav class="subnav">
+            @foreach (var tab in _subnav)
+            {
+                <NavLink href="@tab.Href" Match="@tab.Match">@tab.Label</NavLink>
+            }
+        </nav>
+    }
+
     <div class="content">
         @Body
     </div>
 </div>
 
 @code {
+    private string _path = "";
+    private (string Label, string Href, NavLinkMatch Match)[] _subnav = [];
+
+    // The active top-level section, so the parent nav item stays lit across its sub-pages.
+    private string Section => _path switch
+    {
+        "" => "arena",
+        "market" or "sell" => "market",
+        "wallet" => "wallet",
+        var p when p == "heroes" || p.StartsWith("heroes/")
+                   || p is "spar" or "breed" or "merge" or "leaderboard" => "heroes",
+        _ => "",
+    };
+
     protected override async Task OnInitializedAsync()
     {
         Wallet.OnChange += OnWalletChanged;
+        Nav.LocationChanged += OnLocationChanged;
+        UpdateSection();
 
         // Bootstrap the pill from any wallet already in the tab's SQLite store, so the
         // shell reflects the real wallet on every page (the Wallet page keeps it fresh).
@@ -59,7 +82,36 @@
         }
     }
 
+    private void UpdateSection()
+    {
+        _path = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/').ToLowerInvariant();
+        _subnav = Section switch
+        {
+            "heroes" =>
+            [
+                ("Roster", "heroes", NavLinkMatch.All),
+                ("Spar", "spar", NavLinkMatch.Prefix),
+                ("Breed", "breed", NavLinkMatch.Prefix),
+                ("Merge", "merge", NavLinkMatch.Prefix),
+                ("Ranks", "leaderboard", NavLinkMatch.Prefix),
+            ],
+            "market" =>
+            [
+                ("Browse", "market", NavLinkMatch.All),
+                ("Sell", "sell", NavLinkMatch.Prefix),
+            ],
+            _ => [],
+        };
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
+        InvokeAsync(() => { UpdateSection(); StateHasChanged(); });
+
     void OnWalletChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Wallet.OnChange -= OnWalletChanged;
+    public void Dispose()
+    {
+        Wallet.OnChange -= OnWalletChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
 }

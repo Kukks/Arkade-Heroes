@@ -108,6 +108,20 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .nav a:hover { color: var(--text); background: var(--surface); text-decoration: none; }
 .nav a.active { color: var(--accent); border-color: var(--line); background: var(--surface); }
 
+/* --- Section sub-nav (secondary tabs under the topbar) -------------------- */
+.subnav {
+    display: flex; gap: .25rem; flex-wrap: wrap; align-items: center;
+    padding: .5rem 1.6rem;
+    background: rgba(8,11,17,.45);
+    border-bottom: 1px solid var(--line);
+}
+.subnav a {
+    font-family: var(--font-hud); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: .3rem .65rem; border-radius: var(--radius-sm);
+}
+.subnav a:hover { color: var(--text); background: var(--surface); text-decoration: none; }
+.subnav a.active { color: var(--accent-2); background: var(--surface); }
+
 .spacer { flex: 1; }
 .content { flex: 1; padding: 1.8rem 1.6rem 4rem; max-width: 1160px; width: 100%; margin: 0 auto; }
 
@@ -304,6 +318,8 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 
 .f-portrait {
     position: relative; aspect-ratio: 16/12; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c);
     border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
     transition: transform .18s cubic-bezier(.2,.85,.25,1), box-shadow .3s ease;
 }
@@ -401,7 +417,12 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
     .fighter.hit .f-portrait, .fighter.hit .f-portrait::before, .fighter.left.dodge, .fighter.right.dodge,
     .fighter.ko .f-portrait, .fighter.win .f-portrait, .dmg, .heal, .banner, .shock, .log-line { animation: none; }
 }
-.hero-tile { position: relative; aspect-ratio: 16/10; }
+.hero-tile { position: relative; aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; overflow: hidden; background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c); }
+
+/* Genome + equipment driven pixel hero (HeroSprite), composited from layered LPC art. */
+.hero-sprite { position: relative; overflow: hidden; }
+.hs-stage { position: absolute; top: 0; left: 0; width: 64px; height: 64px; transform-origin: top left; image-rendering: pixelated; }
+.hs-layer { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 -640px; image-rendering: pixelated; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 .hero-gen { position: absolute; top: .5rem; left: .6rem; z-index: 1; font-size: .6rem; padding: .2rem .45rem; border-radius: 4px; background: rgba(8,11,17,.62); color: var(--text); letter-spacing: .12em; }
 .hero-sterile { position: absolute; top: .5rem; right: .6rem; z-index: 1; color: var(--danger); background: rgba(8,11,17,.62); border-radius: 4px; padding: .05rem .4rem; font-size: .8rem; }
@@ -439,7 +460,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .buy-btn { width: 100%; margin-top: .35rem; }
 
 /* Hero portrait on a hero offer, with a periodic gold coin-shine (a "for sale" gleam). */
-.offer-tile { position: relative; aspect-ratio: 16/9; overflow: hidden; margin: -.15rem 0 .2rem; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.offer-tile { position: relative; aspect-ratio: 16/9; overflow: hidden; margin: -.15rem 0 .2rem; border: 1px solid var(--line); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c); }
 .offer-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 .offer-kind { position: absolute; top: .4rem; left: .5rem; z-index: 2; font-size: .56rem; letter-spacing: .14em; padding: .14rem .4rem; border-radius: 3px; background: rgba(8,11,17,.66); color: var(--text); }
 .price-shine { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
@@ -491,6 +512,8 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .detail-hero { display: grid; grid-template-columns: 260px 1fr; gap: 1.6rem; align-items: center; margin-bottom: 1.4rem; }
 .detail-portrait {
     position: relative; aspect-ratio: 1; border-radius: var(--radius); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c);
     box-shadow: var(--shadow);
 }
 .detail-portrait::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); background: repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 2px, transparent 2px 4px); }
@@ -580,6 +603,42 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .chip.as-btn:disabled { opacity: .5; cursor: not-allowed; }
 .chip.as-btn.on { border-color: var(--accent); color: var(--text); background: var(--surface-2); }
 .toggle { display: inline-flex; gap: .35rem; }
+
+/* The "…and X assets" breakdown line under the sats, and its modal. */
+.asset-line {
+    display: inline-block; margin-top: .55rem;
+    background: none; border: none; cursor: pointer; padding: 0;
+    font-family: var(--font-hud); font-size: .72rem; letter-spacing: .04em; color: var(--accent-2);
+}
+.asset-line:hover { text-decoration: underline; }
+
+.modal-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 1.5rem;
+    background: rgba(4,6,10,.72); backdrop-filter: blur(4px);
+}
+.modal {
+    width: 100%; max-width: 440px; max-height: 80vh; overflow-y: auto;
+    background: linear-gradient(180deg, var(--surface), var(--bg-2));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.2rem 1.3rem; box-shadow: var(--shadow);
+}
+.modal-head { display: flex; align-items: center; gap: 1rem; margin-bottom: .5rem; }
+.modal-head h3 { margin: 0; flex: 1; }
+.modal-x {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 1rem; padding: .2rem .45rem; border-radius: var(--radius-sm);
+}
+.modal-x:hover { color: var(--text); background: var(--bg-2); }
+
+.asset-list { display: flex; flex-direction: column; gap: .35rem; }
+.asset-row {
+    display: flex; align-items: center; gap: .7rem;
+    padding: .5rem .7rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2);
+}
+.asset-name { flex: 1; font-weight: 600; }
+.asset-id { color: var(--muted); font-size: .72rem; }
+.asset-amt { color: var(--accent); font-family: var(--font-hud); font-size: .8rem; }
 
 /* --- Breed pickers -------------------------------------------------------- */
 .breed-picks { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }

@@ -1,0 +1,95 @@
+@* A genome + equipment driven pixel hero, composited from layered LPC art.
+   Art: Universal LPC Spritesheet (CC-BY-SA 3.0 / GPL 3.0) — see wwwroot/heroes/lpc/CREDITS.csv.
+   Each layer is one full LPC sheet cropped (via CSS) to the down-facing standing frame and
+   pixel-scaled. Deterministic: the same genome + equipment always composes the same hero. *@
+@using System.Globalization
+
+<div class="hero-sprite" style="width:@(Size)px;height:@(Size)px">
+    <div class="hs-stage" style="transform:scale(@ScaleStr)">
+        @foreach (var url in Layers())
+        {
+            <div class="hs-layer" style="background-image:url(@url)"></div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;
+
+    /// <summary>Rendered pixel size (square). The 64px art frame is scaled to fit.</summary>
+    [Parameter] public int Size { get; set; } = 112;
+
+    private string ScaleStr => (Size / 64.0).ToString(CultureInfo.InvariantCulture);
+
+    // Curated LPC variant sets (mirrors the files under wwwroot/heroes/lpc/).
+    private static readonly string[] Skins = ["light", "amber", "olive", "bronze", "black", "fur_grey"];
+    private static readonly string[] Hairs = ["blonde", "ash", "sandy", "platinum", "redhead", "ginger"];
+    private static readonly string[] LegColors = ["black", "brown", "charcoal", "forest", "blue", "bluegray"];
+    private static readonly string[] ClothColors = ["black", "blue", "brown", "charcoal", "forest", "bluegray"];
+    private static readonly string[] HornMetals = ["steel", "iron", "brass", "copper"];
+
+    private const string P = "heroes/lpc/";
+
+    // The layer URLs in z-order (low → high), matching the LPC zPos of each piece.
+    private IEnumerable<string> Layers()
+    {
+        var g = ParseGenome(Hero.GenomeHex);
+        byte B(int i) => i < g.Length ? g[i] : (byte)0;
+
+        yield return P + $"body_{Skins[B(15) % Skins.Length]}.png";        // skin  (z10)
+        yield return P + $"legs_{LegColors[B(2) % LegColors.Length]}.png"; // legs  (z20)
+
+        // Torso: real plate when armored, else a cloth tunic tinted by the genome.
+        var armor = Equipped("Armor");
+        yield return armor is not null
+            ? P + $"plate_{ArmorMetal(armor)}.png"                         // armor (z60)
+            : P + $"cloth_{ClothColors[B(1) % ClothColors.Length]}.png";   // cloth (z35)
+
+        yield return P + $"hair_{Hairs[B(14) % Hairs.Length]}.png";        // hair  (z120)
+
+        // A strong/horned genome expresses horns (a visible trait), metal by rarity tier.
+        if (B(0) > 160)
+        {
+            var hm = HornMetals[TierIndex() % HornMetals.Length];
+            yield return P + $"hornsbg_{hm}.png";                          // horns back (z125)
+            yield return P + $"hornsfg_{hm}.png";                          // horns front (z139)
+        }
+
+        // Equipped weapon shows as a real sword layer, metal by the item's tier.
+        var weapon = Equipped("Weapon");
+        if (weapon is not null)
+            yield return P + $"sword_{WeaponMetal(weapon)}.png";           // weapon (z140)
+    }
+
+    private string? Equipped(string slot) =>
+        Hero.Equipment is not null && Hero.Equipment.TryGetValue(slot, out var id) && !string.IsNullOrEmpty(id) ? id : null;
+
+    private static string WeaponMetal(string itemId) => itemId switch
+    {
+        "arkforged-edge" => "gold",
+        "steel-saber" => "iron",
+        _ => "bronze",
+    };
+
+    private static string ArmorMetal(string itemId) => itemId switch
+    {
+        "covenant-plate" => "steel",
+        "chain-hauberk" => "iron",
+        _ => "bronze",
+    };
+
+    private int TierIndex() => Hero.Rarity?.Tier switch
+    {
+        "Legendary" => 4,
+        "Epic" => 3,
+        "Rare" => 2,
+        "Uncommon" => 1,
+        _ => 0,
+    };
+
+    private static byte[] ParseGenome(string hex)
+    {
+        try { return Convert.FromHexString(hex); }
+        catch { return new byte[32]; }
+    }
+}

@@ -81,7 +81,8 @@ else
                     </div>
                     <div class="hpbar"><i class="@HpClass(_hpA, _maxA)" style="width:@Pct(_hpA, _maxA)%"></i></div>
                     <div class="f-hp mono">@_hpA<span>/@_maxA</span></div>
-                    <div class="f-portrait" style="background:@HeroCard.ArtGradient(_a.GenomeHex)">
+                    <div class="f-portrait">
+                        <HeroSprite Hero="_a" Size="120" />
                         <span class="f-el mono">@_a.Element</span>
                         @if (_floatSide == "a" && _floatDmg is int da)
                         {
@@ -118,7 +119,8 @@ else
                     </div>
                     <div class="hpbar"><i class="@HpClass(_hpB, _maxB)" style="width:@Pct(_hpB, _maxB)%"></i></div>
                     <div class="f-hp mono">@_hpB<span>/@_maxB</span></div>
-                    <div class="f-portrait" style="background:@HeroCard.ArtGradient(_b.GenomeHex)">
+                    <div class="f-portrait">
+                        <HeroSprite Hero="_b" Size="120" />
                         <span class="f-el mono">@_b.Element</span>
                         @if (_floatSide == "b" && _floatDmg is int db)
                         {

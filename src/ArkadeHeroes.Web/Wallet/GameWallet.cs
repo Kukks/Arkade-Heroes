@@ -105,6 +105,29 @@ public class GameWallet(
         => await vtxoStorage.GetVtxos(walletIds: [walletId], skip: skip, take: take);
 
     /// <summary>
+    /// The distinct on-chain assets this wallet holds (heroes, XP, items) with total units each —
+    /// grouped across all of the wallet's VTXO carriers. Mirrors SelfCustodyWallet.GetAssetsAsync.
+    /// Returns empty on any sync error (the balance card degrades to sats-only).
+    /// </summary>
+    public async Task<IReadOnlyList<(string AssetId, ulong Amount)>> GetAssetsAsync(string walletId)
+    {
+        try
+        {
+            var vtxos = await vtxoStorage.GetVtxos(walletIds: [walletId]);
+            return vtxos
+                .Where(v => v.Assets is { Count: > 0 })
+                .SelectMany(v => v.Assets!)
+                .GroupBy(a => a.AssetId)
+                .Select(g => (g.Key, g.Aggregate(0UL, (sum, a) => sum + a.Amount)))
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
     /// Send sats to another Arkade address — a real, non-custodial VTXO spend, built and signed
     /// in the browser. Returns the resulting Arkade tx id. Throws <see cref="GameWalletException"/>
     /// on a bad address, non-positive amount, or a spend failure (e.g. insufficient funds).

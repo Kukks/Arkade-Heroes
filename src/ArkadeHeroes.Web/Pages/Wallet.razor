@@ -86,6 +86,12 @@ else // Ready
         <div class="card balance-card">
             <h3>Balance</h3>
             <div class="balance"><b>@State.BalanceSats.ToString("N0")</b> <span>sats</span></div>
+            @if (_assets.Count > 0)
+            {
+                <button class="asset-line" @onclick="() => _showAssets = true">
+                    …and @_assets.Count asset@(_assets.Count == 1 ? "" : "s") →
+                </button>
+            }
             <div class="chips" style="margin-top:.8rem">
                 <span class="chip">@_vtxoCount VTXO@(_vtxoCount == 1 ? "" : "s")</span>
                 <button class="chip as-btn" @onclick="RefreshAsync" disabled="@_busy">
@@ -175,6 +181,31 @@ else // Ready
             <button class="btn ghost" style="margin-top:1rem" @onclick="() => _revealed = false">Hide</button>
         }
     </div>
+
+    @if (_showAssets)
+    {
+        <div class="modal-backdrop" @onclick="() => _showAssets = false">
+            <div class="modal" @onclick:stopPropagation="true">
+                <div class="modal-head">
+                    <h3>Your assets</h3>
+                    <button class="modal-x" @onclick="() => _showAssets = false" aria-label="Close">✕</button>
+                </div>
+                <p class="muted" style="margin:0 0 .9rem">
+                    On-chain assets carried by your VTXOs — each is covenant-enforced, not held by the server.
+                </p>
+                <div class="asset-list">
+                    @foreach (var a in _assets)
+                    {
+                        <div class="asset-row">
+                            <span class="asset-name">@AssetLabel(a.AssetId)</span>
+                            <span class="mono asset-id">@ShortId(a.AssetId)</span>
+                            <span class="asset-amt">×@a.Amount</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -191,6 +222,11 @@ else // Ready
     string? _address;
     string[] _freshWords = [];
     int _vtxoCount;
+
+    // The wallet's distinct on-chain assets (heroes/XP/items) for the "…and X assets" breakdown modal.
+    IReadOnlyList<(string AssetId, ulong Amount)> _assets = [];
+    Dictionary<string, string> _assetNames = new();  // assetId → hero name, when we can resolve it
+    bool _showAssets;
 
     string _name = "";
     string? _idError;
@@ -287,6 +323,7 @@ else // Ready
             var balance = await WalletSvc.GetBalanceAsync(_activeId);
             var vtxos = await WalletSvc.GetVtxosAsync(_activeId);
             _vtxoCount = vtxos.Count;
+            _assets = await WalletSvc.GetAssetsAsync(_activeId);
             State.SetActiveWallet(_activeId, _address);
             State.UpdateBalance(balance);
             // Silently resume the game session ONCE (login if this wallet is registered),
@@ -347,9 +384,21 @@ else // Ready
     async Task RefreshMineAsync()
     {
         if (!State.IsSignedIn) return;
-        try { _myHeroCount = (await Api.Heroes.MineAsync()).Count; }
-        catch { /* roster count is best-effort */ }
+        try
+        {
+            var mine = await Api.Heroes.MineAsync();
+            _myHeroCount = mine.Count;
+            // Best-effort assetId → hero name, so the breakdown reads "Blaze" not a raw id.
+            _assetNames = mine.Where(h => !string.IsNullOrEmpty(h.AssetId))
+                              .ToDictionary(h => h.AssetId!, h => h.Name);
+        }
+        catch { /* roster count + asset names are best-effort */ }
     }
+
+    // A held asset's friendly label: the hero's name when we can resolve it, else a generic tag.
+    string AssetLabel(string assetId) => _assetNames.TryGetValue(assetId, out var name) ? name : "Asset";
+
+    static string ShortId(string id) => id.Length <= 14 ? id : $"{id[..6]}…{id[^6..]}";
 
     async Task Send()
     {
