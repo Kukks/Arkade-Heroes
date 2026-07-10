@@ -2,6 +2,7 @@
 @using ArkadeHeroes.Core.Combat
 @using ArkadeHeroes.Core.Genetics
 @using ArkadeHeroes.Core.Heroes
+@using ArkadeHeroes.Core.Skills
 @using NBitcoin
 @inject ArkadeHeroesClient Api
 @inject WalletState State
@@ -369,7 +370,13 @@ else
                 line = ""; kind = "hit"; break;
         }
         var heal = ev.Kind == BattleEventKind.SkillUsed && ev.Healed > 0 ? $" (+{ev.Healed} HP)" : "";
-        return ($"T{ev.Turn} · {line}{heal}", kind);
+        var fx = ev.Kind == BattleEventKind.SkillUsed ? ev.Effect switch
+        {
+            SkillEffect.Focus => " · focus up!",
+            SkillEffect.DefenseBreak => $" · {targetName}'s guard broken!",
+            _ => "",
+        } : "";
+        return ($"T{ev.Turn} · {line}{heal}{fx}", kind);
     }
 
     void ClearTransient()
