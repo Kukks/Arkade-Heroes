@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NArk.Abstractions;
 using NArk.Abstractions.Assets;
+using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.Contracts;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
@@ -101,7 +102,9 @@ public class NArkChainService(
     /// </summary>
     private async Task ConsolidateTreasuryBtcIfNeededAsync(CancellationToken ct)
     {
-        var coins = await spendingService.GetAvailableCoins(_treasuryWalletId!, ct);
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var coins = (await spendingService.GetAvailableCoins(_treasuryWalletId!, ct))
+            .Where(c => c.CanSpendOffchain(now));
         var btcCoins = coins.Where(c => c.Assets is null or { Count: 0 }).ToArray();
         // Consolidate at 2+ coins: with exactly [one large faucet coin, one small
         // invoice-payment coin] the issuance's AUTO selection can pick the tiny coin
@@ -131,7 +134,10 @@ public class NArkChainService(
     /// </summary>
     private async Task<global::NArk.Abstractions.ArkCoin[]> SelectDeliveryCoinsAsync(string assetId, CancellationToken ct)
     {
-        var coins = await spendingService.GetAvailableCoins(_treasuryWalletId!, ct);
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var coins = (await spendingService.GetAvailableCoins(_treasuryWalletId!, ct))
+            .Where(c => c.CanSpendOffchain(now))
+            .ToList();
         var assetCoin = coins.FirstOrDefault(c => c.Assets?.Any(a => a.AssetId == assetId) == true)
             ?? throw new InvalidOperationException($"Treasury does not hold asset {assetId} — issuance may still be syncing.");
         var btcCoin = coins
