@@ -489,3 +489,8 @@ arkade-heroes-chain*.db*
 !tests/ArkadeHeroes.Tests.E2E/**
 tests/ArkadeHeroes.Tests.E2E/bin/
 tests/ArkadeHeroes.Tests.E2E/obj/
+
+# Superpowers specs/plans — working-tree only, never publish
+docs/superpowers/
+# Local browser/MCP artifacts
+.playwright-mcp/
