@@ -441,6 +441,30 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .hs-stage { position: absolute; top: 0; left: 0; width: 64px; height: 64px; transform-origin: top left; image-rendering: pixelated; }
 .hs-layer { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 -640px; image-rendering: pixelated; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
+
+/* ── holographic rarity treatment ─────────────────────────────── */
+.hero-card { border-color: color-mix(in srgb, var(--tier, var(--line)) 32%, var(--line)); }
+.hero-card:hover { border-color: var(--tier); box-shadow: 0 0 22px -8px var(--tier), var(--glow), var(--shadow); }
+.hero-tile .hero-foil {
+    position: absolute; inset: 0; pointer-events: none; mix-blend-mode: color-dodge; opacity: 0; z-index: 2;
+    background: repeating-linear-gradient(112deg,
+        rgba(255,60,140,.55) 0%, rgba(255,220,60,.55) 9%, rgba(70,255,180,.55) 18%,
+        rgba(60,170,255,.55) 27%, rgba(190,80,255,.55) 36%, rgba(255,60,140,.55) 45%);
+    background-size: 300% 300%; transition: opacity .25s ease;
+}
+.hero-tile.tier-1 .hero-foil { opacity: .06; }
+.hero-tile.tier-2 .hero-foil { opacity: .13; }
+.hero-tile.tier-3 .hero-foil { opacity: .20; }
+.hero-tile.tier-4 .hero-foil { opacity: .30; animation: foil-drift 7s ease-in-out infinite alternate; }
+.hero-card:hover .hero-tile .hero-foil { opacity: .34; }
+@keyframes foil-drift { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+.rar-pips { display: flex; gap: 3px; }
+.rar-pips .pip { height: 3px; flex: 1; border-radius: 2px; background: rgba(255,255,255,.09); }
+.rar-pips .pip.on { background: var(--tier); box-shadow: 0 0 6px -1px var(--tier); }
+.trait-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.tbadge { font-family: var(--font-hud); font-size: .5rem; letter-spacing: .06em; padding: .18rem .32rem;
+    border-radius: 3px; border: 1px solid currentColor; text-transform: uppercase; opacity: .92; }
+@media (prefers-reduced-motion: reduce) { .hero-tile.tier-4 .hero-foil { animation: none; } }
 .hero-gen { position: absolute; top: .5rem; left: .6rem; z-index: 1; font-size: .6rem; padding: .2rem .45rem; border-radius: 4px; background: rgba(8,11,17,.62); color: var(--text); letter-spacing: .12em; }
 .hero-sterile { position: absolute; top: .5rem; right: .6rem; z-index: 1; color: var(--danger); background: rgba(8,11,17,.62); border-radius: 4px; padding: .05rem .4rem; font-size: .8rem; }
 .hero-body { padding: .85rem .9rem 1rem; display: grid; gap: .6rem; }
