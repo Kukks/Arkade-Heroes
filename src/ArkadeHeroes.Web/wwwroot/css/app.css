@@ -436,10 +436,6 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 }
 .hero-tile { position: relative; aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; overflow: hidden; background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c); }
 
-/* Genome + equipment driven pixel hero (HeroSprite), composited from layered LPC art. */
-.hero-sprite { position: relative; overflow: hidden; }
-.hs-stage { position: absolute; top: 0; left: 0; width: 64px; height: 64px; transform-origin: top left; image-rendering: pixelated; }
-.hs-layer { position: absolute; inset: 0; background-repeat: no-repeat; background-position: 0 -640px; image-rendering: pixelated; }
 .hero-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 
 /* ── holographic rarity treatment ─────────────────────────────── */
