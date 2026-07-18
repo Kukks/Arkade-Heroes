@@ -1,11 +1,12 @@
 @* A resting marketplace offer. Shows the listed hero's genome portrait when known,
    the ask, and a SOLD stamp once it closes. Reveal plays the "listed" flourish. *@
 
-<div class="@CardClass" style="--flare:@FlareColor">
+<div class="@CardClass" style="--tier:@TierVar;--flare:@FlareColor">
     @if (Hero is not null)
     {
-        <div class="offer-tile">
+        <div class="offer-tile tier-@TierIndex">
             <HeroSprite Hero="Hero" Size="118" />
+            <span class="hero-foil"></span>
             <span class="offer-kind mono">@KindLabel</span>
             <span class="price-shine"></span>
         </div>
@@ -22,6 +23,15 @@
                 <span class="chip">@KindLabel.ToLowerInvariant()</span>
             }
         </div>
+        @if (HasTier)
+        {
+            <div class="rar-pips" title="@Offer.RarityTier">
+                @for (var i = 0; i < 5; i++)
+                {
+                    <span class="pip @(i <= TierIndex ? "on" : "")"></span>
+                }
+            </div>
+        }
         <div class="offer-price"><b>@Offer.AskSats.ToString("N0")</b> <span>sats</span></div>
         <div class="statline">
             <span>seller <span class="mono">@Short(Offer.SellerId)</span></span>
@@ -63,6 +73,15 @@
         $"card offer-card{(Reveal ? " reveal-offer" : "")}{(Sold ? " sold" : "")}";
 
     private string KindLabel => Offer.Kind == "hero" ? "HERO" : "ITEM";
+
+    // Holographic rarity framing: known tier drives the foil sheen, pips, and tinted frame.
+    private bool HasTier => !string.IsNullOrEmpty(Offer.RarityTier);
+    private string TierKey => (Offer.RarityTier ?? "").ToLowerInvariant();
+    private int TierIndex => TierKey switch
+    {
+        "legendary" => 4, "epic" => 3, "rare" => 2, "uncommon" => 1, _ => 0,
+    };
+    private string TierVar => HasTier ? $"var(--r-{TierKey})" : "var(--line)";
 
     // A resting offer glows in its rarity colour; a freshly-listed one flares gold (a sale).
     private string FlareColor => string.IsNullOrEmpty(Offer.RarityTier)

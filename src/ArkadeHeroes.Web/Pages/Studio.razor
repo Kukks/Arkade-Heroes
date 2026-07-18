@@ -18,6 +18,7 @@
     <button class="btn" @onclick="RenderHex">FORGE</button>
     <button class="btn ghost" @onclick="() => Load(RARITY_LADDER)">Rarity ladder</button>
     <button class="btn ghost" @onclick="() => Load(CREST_FORMS)">Crest forms</button>
+    <button class="btn ghost" @onclick="LoadOfferPreviews">Offer cards</button>
 </div>
 
 <div class="grid cols">
@@ -59,11 +60,25 @@
     }
 </div>
 
+@if (_offers.Count > 0)
+{
+    <h3 style="margin:1.8rem 0 .8rem;color:#8ea2c6;font-size:.8rem;letter-spacing:.08em;text-transform:uppercase">
+        Offer cards — holographic marketplace treatment
+    </h3>
+    <div class="grid cols">
+        @foreach (var o in _offers)
+        {
+            <OfferCard Offer="o.Offer" Hero="o.Hero" Buyable="true" />
+        }
+    </div>
+}
+
 @code {
     private string _status = "loading…";
     private string _hex = "";
     private IJSObjectReference? _mod;
     private readonly List<Card> _cards = new();
+    private readonly List<OfferPreview> _offers = new();
 
     private static readonly string BASE = "40806050300511660a0b0c0d0e003344";
     // one Crest trait (byte 22) at each tier band → card tier climbs Common→Legendary
@@ -115,6 +130,43 @@
         _status = $"{_cards.Count} rendered";
         StateHasChanged();
     }
+
+    // Synthetic marketplace offers (no server): one hero offer per tier + a tier-less item offer,
+    // to eyeball the OfferCard holo treatment (foil tile, tinted frame, pips) without a live market.
+    private void LoadOfferPreviews()
+    {
+        _offers.Clear();
+        var band = new (string tier, int score, long ask)[]
+        {
+            ("Uncommon", 3, 12_000), ("Rare", 8, 45_000), ("Epic", 20, 120_000), ("Legendary", 50, 500_000),
+        };
+        foreach (var (genome, i) in RARITY_LADDER.Skip(1).Select((g, i) => (g, i)))
+        {
+            var (tier, score, ask) = band[i];
+            _offers.Add(new OfferPreview(FakeOffer(tier, ask, FakeHero(genome, tier, score)), FakeHero(genome, tier, score)));
+        }
+        _offers.Add(new OfferPreview(FakeOffer("", 8_000, null), null)); // tier-less item offer (fallback path)
+        _status = $"{_offers.Count} offer previews";
+        StateHasChanged();
+    }
+
+    private static HeroDto FakeHero(string genome, string tier, int score) => new(
+        Id: "hero-" + tier, Name: "Frost Sentinel", OwnerId: "seller", GenomeHex: genome,
+        Generation: 2, Element: "Frost", Level: 7, Xp: 120, XpToNext: 200,
+        Stats: new StatsDto(340, 88, 40, 72, 60, 30, 12, 8),
+        Skills: new List<SkillDto>(), Equipment: new Dictionary<string, string>(),
+        BreedCount: 0, BreedCooldownUntil: null, ParentAId: null, ParentBId: null,
+        AssetId: null, MintArkTxId: null, Provenance: null,
+        Rarity: new RarityDto(tier, score, new List<TraitDto> { new("Crest", 255, tier) }, new List<TraitDto>()));
+
+    private static OfferDto FakeOffer(string tier, long ask, HeroDto? hero) => new(
+        OfferId: "offer-" + (tier.Length == 0 ? "item" : tier), SellerId: "npub1seller0abcd", ItemId: hero?.Id ?? "elixir",
+        ItemName: hero is null ? "Elixir of Focus" : "Frost Sentinel", AskSats: ask,
+        OfferAddress: "tark1qexampleoffer", ItemAssetId: "asset123", OfferValueSats: 330,
+        RefundAfterUnixSeconds: 0, Status: "active", Kind: hero is null ? "item" : "hero",
+        HeroId: hero?.Id, RarityTier: hero?.Rarity?.Tier);
+
+    private sealed record OfferPreview(OfferDto Offer, HeroDto? Hero);
 
     private record Meta(int tier, string tierName, int score, string element, string className, bool gen0, MetaTrait[] expressed);
     private record MetaTrait(int cat, string catName, int tier, int form);
