@@ -291,6 +291,14 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             $"Paid on-chain, but the payment hasn't settled for the claim yet — try again in a moment. ({last?.Message})");
     }
 
+    /// <summary>Equip an owned item onto one of the player's heroes (server enforces ownership + slot).</summary>
+    public async Task<HeroDto> EquipAsync(string heroId, string itemId) =>
+        (await api.Heroes.EquipAsync(heroId, new EquipRequest(itemId))).Hero;
+
+    /// <summary>Clear a hero's equipment slot (Weapon/Armor/Trinket), returning the item to the player.</summary>
+    public async Task<HeroDto> UnequipAsync(string heroId, string slot) =>
+        (await api.Heroes.UnequipAsync(heroId, new UnequipRequest(slot))).Hero;
+
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
     // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
     // the just-spent (arkd-locked) BTC coin or race its change syncing back in.

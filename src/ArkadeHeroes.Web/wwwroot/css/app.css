@@ -508,6 +508,8 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .equip-meta { display: flex; flex-direction: column; gap: .1rem; line-height: 1.15; }
 .equip-slot { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
 .equip-name { font-size: .92rem; }
+.equip-row .equip-x { margin-left: auto; padding: .12rem .5rem; font-size: .95rem; line-height: 1; }
+.equip-add { margin-top: .7rem; width: 100%; background: #11141d; border: 1px solid var(--line); color: var(--text); font: inherit; padding: .5rem .6rem; border-radius: var(--radius-sm); }
 /* Gear catalog cards (the /gear armory) */
 .gear-card { display: flex; flex-direction: column; gap: .55rem; }
 .gear-tile { position: relative; aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: -.15rem 0 .1rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: radial-gradient(120% 120% at 50% 14%, var(--bg-2), #06080c); }
