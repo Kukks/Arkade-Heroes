@@ -408,34 +408,28 @@ function renderHero(hx){
     }
   }
 
-  /* ---- crest (trait badge on head) ---- */
-  if(crest===0){        /* nub horns */
-    for(const s of[-1,1]) ribbon(b,[cx+s*hrx*0.5,hcy-hry*0.7],[cx+s*hrx*0.64,hcy-hry*1.0],[cx+s*hrx*0.72,hcy-hry*1.35],1.6,0.4,BONE);
-  }else if(crest===1){  /* twin swept horns, glowing tips */
-    for(const s of[-1,1]){
-      ribbon(b,[cx+s*hrx*0.55,hcy-hry*0.58],[cx+s*hrx*1.2,hcy-hry*1.3],[cx+s*hrx*0.82,hcy-hry*1.9],2.1,0.5,BONE);
-      ribbon(b,[cx+s*hrx*1.0,hcy-hry*1.5],[cx+s*hrx*0.94,hcy-hry*1.72],[cx+s*hrx*0.82,hcy-hry*1.9],1.0,0.4,ACC);
+  /* ---- crest (trait badge on head) ----
+     The RECESSIVE crest byte picks the heritable FORM/family; the dominant tier
+     scales how elaborate it is. Three families: horns, fins, crown. */
+  if(crest>=0){
+    const cf=g[23]%3, t=crest;
+    if(cf===0){            /* HORNS — nubs → swept → antlers, glowing tips at high tier */
+      for(const s of[-1,1]){
+        ribbon(b,[cx+s*hrx*0.54,hcy-hry*0.6],[cx+s*hrx*(0.62+t*0.17),hcy-hry*(0.86+t*0.26)],[cx+s*hrx*(0.7+t*0.05),hcy-hry*(1.14+t*0.2)],1.5+t*0.18,0.45,BONE);
+        if(t>=3) ribbon(b,[cx+s*hrx*0.95,hcy-hry*1.25],[cx+s*hrx*1.5,hcy-hry*1.45],[cx+s*hrx*1.8,hcy-hry*1.75],1.1,0.4,BONE);
+        if(t>=2) sphere(b,cx+s*hrx*(0.7+t*0.05),hcy-hry*(1.14+t*0.2),1.1,1.1,ACC,{gamma:0.8});
+      }
+    }else if(cf===1){      /* FINS / BLADES — a central blade + spreading side fins */
+      ribbon(b,[cx,hcy-hry*0.7],[cx,hcy-hry*(1.14+t*0.16)],[cx,hcy-hry*(1.42+t*0.12)],1.8+t*0.16,0.5,ACC);
+      const nf=1+Math.min(2,t);
+      for(const s of[-1,1]) for(let k=1;k<=nf;k++){ const sp=0.42+k*0.26;
+        ribbon(b,[cx+s*hrx*sp,hcy-hry*0.56],[cx+s*hrx*(sp+0.28),hcy-hry*(0.9+t*0.1)],[cx+s*hrx*(sp+0.38),hcy-hry*(1.12+t*0.1)],1.5,0.5,ACC); }
+    }else{                 /* CROWN / regal — circlet → full floating crown */
+      const cw = t>=4 ? ['.3..4..3.','.3.444.3.','.3344433.','3g34443g3','333333333','223333322']
+               : t>=2 ? ['.3.4.3.','.34443.','3g444g3','3333333']
+               :        ['3.4.3','34443','23332'];
+      blit(b,cx-((cw[0].length-1)>>1),Math.max(0,hcy-hry-cw.length-1),cw,GOLD,{g:[ACC,4]});
     }
-  }else if(crest===2){  /* blade fin crest */
-    ribbon(b,[cx,hcy-hry*0.7],[cx,hcy-hry*1.4],[cx,hcy-hry*1.95],2.4,0.5,ACC);
-    for(const s of[-1,1]) ribbon(b,[cx+s*hrx*0.52,hcy-hry*0.58],[cx+s*hrx*0.9,hcy-hry*1.1],[cx+s*hrx*1.1,hcy-hry*1.5],2.0,0.5,ACC);
-  }else if(crest===3){  /* antler rack, glowing tips */
-    for(const s of[-1,1]){
-      ribbon(b,[cx+s*hrx*0.5,hcy-hry*0.62],[cx+s*hrx*1.28,hcy-hry*1.4],[cx+s*hrx*1.14,hcy-hry*2.0],1.9,0.6,BONE);
-      ribbon(b,[cx+s*hrx*1.02,hcy-hry*1.3],[cx+s*hrx*1.72,hcy-hry*1.5],[cx+s*hrx*2.04,hcy-hry*1.82],1.2,0.4,BONE);
-      sphere(b,cx+s*hrx*1.14,hcy-hry*2.0,1.3,1.3,ACC,{gamma:0.8});
-      sphere(b,cx+s*hrx*2.04,hcy-hry*1.82,1.1,1.1,ACC,{gamma:0.8});
-    }
-  }else if(crest===4){  /* THE floating crown */
-    const cw=[
-      '.3..4..3.',
-      '.3.444.3.',
-      '.3344433.',
-      '3g34443g3',
-      '333333333',
-      '223333322',
-    ];
-    blit(b,cx-4,Math.max(0,hcy-hry-9),cw,GOLD,{g:[ACC,4]});
   }
 
   /* ---- face ---- */

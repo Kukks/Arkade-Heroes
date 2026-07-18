@@ -17,6 +17,7 @@
            style="flex:1;background:#11141d;border:1px solid #262b3a;color:#cfd6e6;font:12px monospace;padding:.6rem .8rem" />
     <button class="btn" @onclick="RenderHex">FORGE</button>
     <button class="btn ghost" @onclick="() => Load(RARITY_LADDER)">Rarity ladder</button>
+    <button class="btn ghost" @onclick="() => Load(CREST_FORMS)">Crest forms</button>
 </div>
 
 <div class="grid cols">
@@ -73,6 +74,13 @@
         BASE + "000000000000f5050000000000000000", // Rare crest
         BASE + "000000000000fe050000000000000000", // Epic crest
         BASE + "000000000000ff050000000000000000", // Legendary crest
+    };
+    // same Legendary crest tier, recessive byte 0/1/2 → the 3 crest forms (horns/fins/crown)
+    private static readonly string[] CREST_FORMS =
+    {
+        BASE + "000000000000ff000000000000000000",
+        BASE + "000000000000ff010000000000000000",
+        BASE + "000000000000ff020000000000000000",
     };
 
     private static readonly string[] TIERKEY = { "common", "uncommon", "rare", "epic", "legendary" };
