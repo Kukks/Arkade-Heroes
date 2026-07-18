@@ -508,6 +508,16 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .equip-meta { display: flex; flex-direction: column; gap: .1rem; line-height: 1.15; }
 .equip-slot { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
 .equip-name { font-size: .92rem; }
+/* Gear catalog cards (the /gear armory) */
+.gear-card { display: flex; flex-direction: column; gap: .55rem; }
+.gear-tile { position: relative; aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: -.15rem 0 .1rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: radial-gradient(120% 120% at 50% 14%, var(--bg-2), #06080c); }
+.gear-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
+.gear-tile .item-px { position: relative; z-index: 1; filter: drop-shadow(0 3px 7px rgba(0,0,0,.55)); }
+.gear-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.gear-name { font-weight: 600; font-size: 1rem; }
+.gear-price { font-family: var(--font-hud); }
+.gear-price b { font-size: 1.3rem; color: var(--accent); letter-spacing: -.02em; }
+.gear-price span { color: var(--muted); font-size: .8rem; }
 .offer-kind { position: absolute; top: .4rem; left: .5rem; z-index: 2; font-size: .56rem; letter-spacing: .14em; padding: .14rem .4rem; border-radius: 3px; background: rgba(8,11,17,.66); color: var(--text); }
 .price-shine { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
 .price-shine::before {

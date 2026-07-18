@@ -1,0 +1,95 @@
+@page "/gear"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>Gear · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Gear</h2>
+    <span class="hud">forge-grade equipment — arm a hero to sharpen its edge</span>
+    <span class="spacer"></span>
+    @if (!_loading && !_error)
+    {
+        <span class="chip mono">@_items.Count items</span>
+    }
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> opening the armory…</div>
+}
+else if (_error)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't reach the armory.</div>
+        <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
+    </div>
+}
+else
+{
+    @foreach (var slot in SLOTS)
+    {
+        var items = _items.Where(i => i.Slot == slot).OrderBy(i => i.PriceSats).ToList();
+        if (items.Count == 0) { continue; }
+        <div class="page-head" style="margin-top:1.4rem">
+            <h3 style="margin:0">@slot</h3>
+            <span class="hud">@SlotHint(slot)</span>
+        </div>
+        <div class="grid cols">
+            @foreach (var it in items)
+            {
+                <div class="card gear-card">
+                    <div class="gear-tile"><ItemSprite ItemId="@it.Id" Size="104" /></div>
+                    <div class="gear-head">
+                        <span class="gear-name">@it.Name</span>
+                        <span class="chip">@it.Slot</span>
+                    </div>
+                    <div class="statline mono">
+                        @foreach (var m in Mods(it))
+                        {
+                            <span>@m</span>
+                        }
+                    </div>
+                    <div class="gear-price"><b>@it.PriceSats.ToString("N0")</b> <span>sats</span></div>
+                </div>
+            }
+        </div>
+    }
+    <p class="muted" style="margin-top:1.8rem;font-size:.82rem">
+        Browsing the catalog for now — buying + equipping from the browser is the next drop.
+    </p>
+}
+
+@code {
+    private static readonly string[] SLOTS = { "Weapon", "Armor", "Trinket" };
+    private List<ItemDto> _items = new();
+    private bool _loading = true;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _items = await Api.Items.ShopAsync(); }
+        catch { _error = true; }
+        finally { _loading = false; }
+    }
+
+    static string SlotHint(string slot) => slot switch
+    {
+        "Weapon" => "raises Attack / Magic",
+        "Armor" => "raises Max HP / Defense",
+        "Trinket" => "raises Speed / Crit",
+        _ => "",
+    };
+
+    // Non-zero stat modifiers this item confers, ready to render as chips.
+    static IEnumerable<string> Mods(ItemDto i)
+    {
+        if (i.MaxHp != 0) yield return $"{Signed(i.MaxHp)} HP";
+        if (i.Attack != 0) yield return $"{Signed(i.Attack)} ATK";
+        if (i.Magic != 0) yield return $"{Signed(i.Magic)} MAG";
+        if (i.Defense != 0) yield return $"{Signed(i.Defense)} DEF";
+        if (i.Speed != 0) yield return $"{Signed(i.Speed)} SPD";
+        if (i.CritPercent != 0) yield return $"{Signed(i.CritPercent)}% CRIT";
+    }
+
+    static string Signed(int n) => n > 0 ? $"+{n}" : n.ToString();
+}
