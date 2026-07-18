@@ -518,6 +518,9 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .gear-price { font-family: var(--font-hud); }
 .gear-price b { font-size: 1.3rem; color: var(--accent); letter-spacing: -.02em; }
 .gear-price span { color: var(--muted); font-size: .8rem; }
+.gear-buy { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .1rem; }
+.gear-buy .btn { padding: .4rem .95rem; }
+.chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
 .offer-kind { position: absolute; top: .4rem; left: .5rem; z-index: 2; font-size: .56rem; letter-spacing: .14em; padding: .14rem .4rem; border-radius: 3px; background: rgba(8,11,17,.66); color: var(--text); }
 .price-shine { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
 .price-shine::before {
