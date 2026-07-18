@@ -500,6 +500,14 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .offer-tile { position: relative; aspect-ratio: 16/9; overflow: hidden; margin: -.15rem 0 .2rem; border: 1px solid var(--line); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c); }
 .offer-tile::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 2px, transparent 2px 4px); }
 .offer-tile { border-color: color-mix(in srgb, var(--tier, var(--line)) 40%, var(--line)); }
+/* Procedural item icons (ItemSprite): market item tiles + hero equipment rows */
+.item-tile .item-px { filter: drop-shadow(0 3px 7px rgba(0,0,0,.55)); }
+.equip-list { display: grid; gap: .5rem; }
+.equip-row { display: flex; align-items: center; gap: .65rem; }
+.equip-row .item-px { flex: none; background: radial-gradient(120% 120% at 50% 15%, var(--bg-2), #06080c); border: 1px solid var(--line); border-radius: 6px; padding: 3px; }
+.equip-meta { display: flex; flex-direction: column; gap: .1rem; line-height: 1.15; }
+.equip-slot { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.equip-name { font-size: .92rem; }
 .offer-kind { position: absolute; top: .4rem; left: .5rem; z-index: 2; font-size: .56rem; letter-spacing: .14em; padding: .14rem .4rem; border-radius: 3px; background: rgba(8,11,17,.66); color: var(--text); }
 .price-shine { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
 .price-shine::before {

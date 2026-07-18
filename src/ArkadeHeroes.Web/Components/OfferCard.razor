@@ -11,6 +11,14 @@
             <span class="price-shine"></span>
         </div>
     }
+    else if (Offer.Kind == "item")
+    {
+        <div class="offer-tile item-tile">
+            <ItemSprite ItemId="@Offer.ItemId" Size="96" />
+            <span class="offer-kind mono">@KindLabel</span>
+            <span class="price-shine"></span>
+        </div>
+    }
     <div class="offer-body">
         <div class="offer-head">
             <span class="offer-name">@Offer.ItemName</span>

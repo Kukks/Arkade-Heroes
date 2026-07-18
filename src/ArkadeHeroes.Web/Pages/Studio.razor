@@ -71,6 +71,20 @@
             <OfferCard Offer="o.Offer" Hero="o.Hero" Buyable="true" />
         }
     </div>
+    <h3 style="margin:1.8rem 0 .8rem;color:#8ea2c6;font-size:.8rem;letter-spacing:.08em;text-transform:uppercase">
+        Equipment rows — item icons on the hero detail
+    </h3>
+    <div class="card" style="max-width:340px">
+        <div class="equip-list">
+            @foreach (var (slot, id) in new[] { ("Weapon", "steel-saber"), ("Armor", "covenant-plate"), ("Trinket", "lucky-feather") })
+            {
+                <div class="equip-row">
+                    <ItemSprite ItemId="@id" Size="40" />
+                    <div class="equip-meta"><span class="equip-slot">@slot</span><b class="equip-name">@id</b></div>
+                </div>
+            }
+        </div>
+    </div>
 }
 
 @code {
@@ -145,10 +159,23 @@
             var (tier, score, ask) = band[i];
             _offers.Add(new OfferPreview(FakeOffer(tier, ask, FakeHero(genome, tier, score)), FakeHero(genome, tier, score)));
         }
-        _offers.Add(new OfferPreview(FakeOffer("", 8_000, null), null)); // tier-less item offer (fallback path)
+        // item offers (tier-less path) — real catalog ids so the icon slot/tier resolve
+        foreach (var (id, name, ask) in new[]
+        {
+            ("arkforged-edge", "Arkforged Edge", 10_000L),
+            ("chain-hauberk", "Chain Hauberk", 2_500L),
+            ("vtxo-charm", "VTXO Charm", 10_000L),
+        })
+            _offers.Add(new OfferPreview(FakeItemOffer(id, name, ask), null));
         _status = $"{_offers.Count} offer previews";
         StateHasChanged();
     }
+
+    private static OfferDto FakeItemOffer(string itemId, string name, long ask) => new(
+        OfferId: "offer-" + itemId, SellerId: "npub1seller0abcd", ItemId: itemId, ItemName: name,
+        AskSats: ask, OfferAddress: "tark1qexampleoffer", ItemAssetId: "asset-" + itemId,
+        OfferValueSats: 330, RefundAfterUnixSeconds: 0, Status: "active", Kind: "item",
+        HeroId: null, RarityTier: null);
 
     private static HeroDto FakeHero(string genome, string tier, int score) => new(
         Id: "hero-" + tier, Name: "Frost Sentinel", OwnerId: "seller", GenomeHex: genome,

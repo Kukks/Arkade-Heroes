@@ -131,10 +131,16 @@ else
             }
             else
             {
-                <div class="kv">
+                <div class="equip-list">
                     @foreach (var (slot, item) in h.Equipment)
                     {
-                        <div><span>@slot</span><b>@item</b></div>
+                        <div class="equip-row">
+                            <ItemSprite ItemId="@item" Size="40" />
+                            <div class="equip-meta">
+                                <span class="equip-slot">@slot</span>
+                                <b class="equip-name">@Pretty(item)</b>
+                            </div>
+                        </div>
                     }
                 </div>
             }
@@ -278,4 +284,9 @@ else
 
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
     static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();
+
+    // Prettify a catalog item id for display ("steel-saber" -> "Steel Saber").
+    static string Pretty(string id) => string.IsNullOrEmpty(id) ? id
+        : string.Join(' ', id.Split('-', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
 }
