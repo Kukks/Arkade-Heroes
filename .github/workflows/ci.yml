@@ -22,6 +22,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # The Blazor WASM frontend (ArkadeHeroes.Web) sets WasmBuildNative, so the
+      # whole-solution build below needs the wasm-tools workload on the runner.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
       - name: Restore
         run: dotnet restore ArkadeHeroes.slnx
 
