@@ -437,50 +437,43 @@ function renderHero(hx){
   const ex0=Math.round(hrx*0.42), eyy=Math.round(hcy-0.6);
   const E=(x,y,m,s)=>bset(b,x,y,m,s);
   const socket=(x,w,hgt)=>{ for(let j=0;j<hgt;j++)for(let i=0;i<w;i++) E(x+i,eyy-1+j,DARK,0); };
-  if(eyes<0){           /* gen-0 default: sharp determined glare (fierce, not cute) */
+  /* eyes: RECESSIVE byte picks the FORM family (orbs / slits / visor); tier = glow */
+  const ef = eyes>=0 ? g[21]%3 : -1, et = eyes;
+  if(ef<0){             /* gen-0 default: sharp determined glare (fierce, not cute) */
     for(const s of[-1,1]){ const x=cx+s*ex0;
-      /* slanted lid — outer high, inner corner dips toward nose = narrowed glare */
       E(x+s,eyy-1,DARK,0);E(x,eyy-1,DARK,0);
       E(x-s,eyy,DARK,0);
       E(x,eyy,ACC,4);E(x+s,eyy,ACC,3);
       E(x+s,eyy-1,ACC,2);
       E(x,eyy+1,DARK,0);E(x+s,eyy+1,DARK,0);
     }
-  }else if(eyes===0){   /* almond glow */
-    for(const s of[-1,1]){ const x=cx+s*ex0-1;
-      socket(x-1,4,2);
-      E(x,eyy,ACC,4);E(x+1,eyy,ACC,3);E(x+(s>0?1:0),eyy-1,WHITE,4);
+  }else if(ef===0){     /* ROUND — glowing orbs, brighter + flaring with tier */
+    for(const s of[-1,1]){ const x=cx+s*ex0;
+      socket(x-2,5,et>=3?4:3);
+      E(x-1,eyy,ACC,4);E(x,eyy,WHITE,4);E(x+1,eyy,ACC,3);
+      if(et>=2){ E(x-1,eyy+1,ACC,2);E(x,eyy+1,ACC,4);E(x+1,eyy+1,ACC,3); }
+      if(et>=3){ E(x+s,eyy-2,ACC,3);E(x+s*2,eyy-3,ACC,1); }
     }
-  }else if(eyes===1){   /* fierce slits */
+  }else if(ef===1){     /* SLIT — fierce narrow, hotter with tier */
     for(const s of[-1,1]){ const x=cx+s*ex0-1;
       E(x-1,eyy-1,DARK,0);E(x,eyy-1,DARK,0);E(x+1,eyy-1,DARK,0);E(x+2,eyy-1,DARK,0);
-      E(x-1,eyy,DARK,0);E(x,eyy,ACC,4);E(x+1,eyy,ACC,3);E(x+2,eyy,DARK,0);
+      E(x-1,eyy,DARK,0);E(x,eyy,et>=3?WHITE:ACC,4);E(x+1,eyy,ACC,3);E(x+2,eyy,DARK,0);
       E(x,eyy+1,DARK,0);E(x+1,eyy+1,DARK,0);
     }
-  }else if(eyes===2){   /* VISOR band */
-    const vw=Math.round(hrx*0.78);
+  }else{                /* VISOR — cyclopean band, wider + brighter with tier */
+    const vw=Math.round(hrx*(0.66+Math.min(et,4)*0.03));
     for(let x=cx-vw;x<=cx+vw;x++){ E(x,eyy-2,DARK,0);E(x,eyy-1,DARK,1);E(x,eyy,DARK,1);E(x,eyy+1,DARK,0); }
     for(let x=cx-vw+1;x<=cx+vw-1;x++){ E(x,eyy-1,ACC,((x+seed)&3)===0?4:3); }
     E(cx-vw+1,eyy-1,WHITE,4);
-  }else if(eyes===3){   /* blazing */
-    for(const s of[-1,1]){ const x=cx+s*ex0;
-      socket(x-2,5,4);
-      E(x-1,eyy,ACC,4);E(x,eyy,WHITE,4);E(x+1,eyy,WHITE,4);
-      E(x-1,eyy+1,ACC,2);E(x,eyy+1,ACC,4);E(x+1,eyy+1,ACC,3);
-      E(x+s,eyy-2,ACC,3);E(x+s*2,eyy-3,ACC,1);
-    }
-  }else{                /* legendary: three burning eyes */
-    for(const s of[-1,1]){ const x=cx+s*ex0;
-      socket(x-2,5,3);
-      E(x-1,eyy,ACC,3);E(x,eyy,WHITE,4);E(x+1,eyy,ACC,3);E(x,eyy+1,ACC,2);
-    }
+  }
+  if(et>=4){            /* legendary: awakened third eye, any form */
     const fy=Math.round(hcy-hry*0.52);
     E(cx,fy-1,ACC,2);E(cx-1,fy,ACC,3);E(cx,fy,WHITE,4);E(cx+1,fy,ACC,3);E(cx,fy+1,ACC,2);
   }
   /* brow ridge — angled down toward the nose = default scowl (fiercer proportions) */
   const temp=h.ttier(7);
   const fierce=temp>=1||PR.fierce>=1;
-  if(eyes!==2){
+  if(ef!==2){
     for(const s of[-1,1]){ const x=cx+s*ex0;
       E(x+s,eyy-2,BODY,1);E(x,eyy-2,BODY,0);   /* outer high + hard shadow */
       E(x-s,eyy-1,BODY,0);                      /* inner corner dips (angry V) */
@@ -516,38 +509,43 @@ function renderHero(hx){
 
   /* ---- markings (recolor body, keep shade) ---- */
   const mark=h.ttier(1);
+  /* markings: RECESSIVE byte picks the FORM family (spots / stripes / circuits); tier = density */
+  const mform = mark>=0 ? g[19]%3 : -1, mt = mark;
   const remap=(cond)=>{ for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     const i=y*W+x; if(b.m[i]!==BODY)continue; const r=cond(x,y); if(r)b.m[i]=r; } };
-  if(mark===0){ /* shoulder patches */
+  if(mform===0){ /* SPOTS — shoulder patches, adding rosette rings with tier */
     remap((x,y)=>{ const d1=Math.hypot((x-(cx-trx*0.72))/3.6,(y-(tcy-trY*0.4))/4.4);
       const d2=Math.hypot((x-(cx+trx*0.72))/3.6,(y-(tcy-trY*0.4))/4.4);
       return (d1<1||d2<1)?MARK:0; });
-  }else if(mark===1){ /* chevron stripes */
-    remap((x,y)=>{ if(y<tcy-trY+2||y>tcy+trY-1)return 0;
-      const k=Math.abs(x-cx); const band=Math.floor((y-tcy+k*0.45)/3.1);
-      return (((band%2)+2)%2===0&&k>trx*0.2&&k<trx*0.99)?MARK:0; });
-  }else if(mark===2){ /* rosette rings, deliberately placed */
-    const spots=[[cx-trx*0.68,tcy-trY*0.2],[cx+trx*0.68,tcy+trY*0.02],[cx-trx*0.6,tcy+trY*0.42],
-                 [cx+trx*0.58,tcy-trY*0.45],[cx-hrx*0.55,hcy-hry*0.32],[cx+hrx*0.52,hcy-hry*0.05]];
-    for(const [sx,sy] of spots){
-      const x0=Math.round(sx),y0=Math.round(sy);
-      for(const [dx,dy] of[[-1,-1],[0,-2],[1,-1],[2,0],[1,1],[0,2],[-1,1],[-2,0]])
-        if(bmat(b,x0+dx,y0+dy)===BODY){const i=(y0+dy)*W+x0+dx;b.m[i]=MARK;}
+    if(mt>=2){
+      const spots=[[cx-trx*0.68,tcy-trY*0.2],[cx+trx*0.68,tcy+trY*0.02],[cx-trx*0.6,tcy+trY*0.42],
+                   [cx+trx*0.58,tcy-trY*0.45],[cx-hrx*0.55,hcy-hry*0.32],[cx+hrx*0.52,hcy-hry*0.05]];
+      const n=mt>=4?6:mt>=3?4:2;
+      for(let si=0;si<n;si++){ const x0=Math.round(spots[si][0]),y0=Math.round(spots[si][1]);
+        for(const [dx,dy] of[[-1,-1],[0,-2],[1,-1],[2,0],[1,1],[0,2],[-1,1],[-2,0]])
+          if(bmat(b,x0+dx,y0+dy)===BODY){const i=(y0+dy)*W+x0+dx;b.m[i]=MARK;}
+      }
     }
-  }else if(mark===3){ /* glowing circuit seams */
+  }else if(mform===1){ /* STRIPES — chevron bands, tighter with tier */
+    const spc=mt>=3?2.4:3.1;
+    remap((x,y)=>{ if(y<tcy-trY+2||y>tcy+trY-1)return 0;
+      const k=Math.abs(x-cx); const band=Math.floor((y-tcy+k*0.45)/spc);
+      return (((band%2)+2)%2===0&&k>trx*0.2&&k<trx*0.99)?MARK:0; });
+  }else if(mform===2){ /* CIRCUITS — glowing seams, adding constellation stars with tier */
     remap((x,y)=>{ const k=Math.abs(x-cx);
       const on=(k===Math.round(trx*0.55)&&y>tcy-trY+3&&y<tcy+trY-1)||
                (y===Math.round(tcy-trY*0.12)&&k<trx*0.85&&k>trx*0.22)||
                (k===Math.round(hrx*0.82)&&y>hcy-1&&y<hcy+4);
       return on?MARKG:0; });
-  }else if(mark===4){ /* constellation: deliberate stars */
-    const stars=[[cx-trx*0.55,tcy-trY*0.3],[cx+trx*0.5,tcy+trY*0.1],[cx-trx*0.2,tcy+trY*0.55],[cx+trx*0.25,tcy-trY*0.55]];
-    for(const [sx,sy] of stars){
-      const x=sx|0,y=sy|0;
-      if(bmat(b,x,y)!==BODY)continue;
-      for(const [dx,dy] of[[0,0],[1,0],[-1,0],[0,1],[0,-1]])
-        if(bmat(b,x+dx,y+dy)===BODY){const i=(y+dy)*W+x+dx;b.m[i]=MARKG;}
-      const i=y*W+x; b.s[i]=4;
+    if(mt>=2){
+      const stars=[[cx-trx*0.55,tcy-trY*0.3],[cx+trx*0.5,tcy+trY*0.1],[cx-trx*0.2,tcy+trY*0.55],[cx+trx*0.25,tcy-trY*0.55]];
+      const n=mt>=4?4:mt>=3?3:2;
+      for(let si=0;si<n;si++){ const x=stars[si][0]|0,y=stars[si][1]|0;
+        if(bmat(b,x,y)!==BODY)continue;
+        for(const [dx,dy] of[[0,0],[1,0],[-1,0],[0,1],[0,-1]])
+          if(bmat(b,x+dx,y+dy)===BODY){const i=(y+dy)*W+x+dx;b.m[i]=MARKG;}
+        const i=y*W+x; b.s[i]=4;
+      }
     }
   }
 
