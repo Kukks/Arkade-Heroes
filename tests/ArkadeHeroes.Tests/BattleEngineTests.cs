@@ -99,6 +99,44 @@ public class BattleEngineTests
         Assert.Equal(ElementMatrix.Strong, ElementMatrix.Multiplier(Element.Umbral, Element.Ember)); // ring wraps
     }
 
+    // A fighter with a chosen element (byte 5) and two gene skills (bytes 6/7 → GeneSkills[b % 16]).
+    private static Hero Fighter(string id, int elementByte, int geneA, int geneB, int level)
+    {
+        var bytes = new byte[32];
+        for (var i = 0; i < 5; i++) bytes[i] = 128;
+        bytes[5] = (byte)elementByte;
+        bytes[6] = (byte)geneA;
+        bytes[7] = (byte)geneB;
+        var g = new Genome(bytes);
+        return new Hero { Id = id, OwnerId = "tester", Name = HeroNamer.DeriveName(g), Genome = g, Level = level };
+    }
+
+    [Fact]
+    public void ElementAwareSelection_PrefersTheTypeAdvantagedSkill()
+    {
+        // Actor knows Volt Surge (65 power, Volt) and Frost Bite (55 power, Frost) — both Magic-scaling,
+        // so ONLY element differs between them. Raw expected damage favours Volt Surge (higher power×acc);
+        // against a defender Frost is strong against but Volt is not, element-aware selection flips to Frost.
+        Element? target = null;
+        foreach (Element e in Enum.GetValues<Element>())
+            if (ElementMatrix.Multiplier(Element.Frost, e) >= 1.3 && ElementMatrix.Multiplier(Element.Volt, e) <= 1.0)
+                { target = e; break; }
+        Assert.True(target is not null, "expected a defender element Frost beats but Volt does not");
+
+        var actor = Fighter("actor", elementByte: 0, geneA: 5 /* volt-surge */, geneB: 6 /* frost-bite */, level: 6);
+        var defender = Fighter("foe", elementByte: (int)target!.Value, geneA: 15, geneB: 15, level: 6);
+        var seed = SHA256.HashData([7]);
+
+        static string FirstCast(BattleResult r) => r.Events.First(e => e.ActorId == "actor").SkillId;
+
+        // Default (flag off): pure expected damage — Volt Surge's higher power×accuracy wins.
+        Assert.Equal("volt-surge", FirstCast(BattleEngine.Fight(actor, defender, seed)));
+
+        // Flag on: the element multiplier is folded into the score, flipping the pick to Frost Bite.
+        var aware = GameConfig.Default with { Combat = GameConfig.Default.Combat with { ElementAwareSelection = true } };
+        Assert.Equal("frost-bite", FirstCast(BattleEngine.Fight(actor, defender, seed, aware)));
+    }
+
     // A hero whose gene-A skill is a specific catalog entry (SkillGeneA = Bytes[6] → GeneSkills[byte % 16]).
     private static Hero HeroWithGeneSkill(string id, byte geneAByte, int level = 5, byte statGenes = 128)
     {

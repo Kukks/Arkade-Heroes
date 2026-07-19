@@ -31,7 +31,7 @@ public static class BattleEngine
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
                 actor.TickCooldowns();
-                var skill = ChooseSkill(actor, target, cfg.Combat);
+                var skill = ChooseSkill(actor, target, cfg);
                 Execute(turn, actor, target, skill, rng, events, cfg);
 
                 if (target.Hp <= 0)
@@ -70,40 +70,42 @@ public static class BattleEngine
     // Which move a fighter casts this turn. Fully deterministic (a pure function of both fighters'
     // state), so a replay picks the same move — no RNG is drawn here. Tactical play makes status
     // skills worth casting: heal when hurt, land one buff early, soften a target once, else hit hard.
-    private static Skill ChooseSkill(FighterState actor, FighterState target, CombatConfig cfg)
+    private static Skill ChooseSkill(FighterState actor, FighterState target, GameConfig cfg)
     {
         var available = actor.Skills.Where(s => actor.CooldownRemaining(s.Id) == 0).ToList();
         if (available.Count == 0) return SkillCatalog.Strike;
 
-        if (cfg.SelectionPolicy == CombatSelectionPolicy.Tactical)
+        if (cfg.Combat.SelectionPolicy == CombatSelectionPolicy.Tactical)
         {
             // 1. Survive: when hurt past the threshold, prefer a drain skill (it damages AND heals).
-            if (actor.Hp * 100 <= actor.Stats.MaxHp * cfg.HealHpThresholdPercent)
+            if (actor.Hp * 100 <= actor.Stats.MaxHp * cfg.Combat.HealHpThresholdPercent)
             {
-                var drain = BestByDamage(available.Where(s => s.Effect == SkillEffect.DrainHalf), actor);
+                var drain = BestByDamage(available.Where(s => s.Effect == SkillEffect.DrainHalf), actor, target, cfg);
                 if (drain is not null) return drain;
             }
             // 2. Open with a buff: land one Focus stack early, then let it compound the rest of the fight.
             if (actor.FocusStacks == 0)
             {
-                var buff = BestByDamage(available.Where(s => s.Effect == SkillEffect.Focus), actor);
+                var buff = BestByDamage(available.Where(s => s.Effect == SkillEffect.Focus), actor, target, cfg);
                 if (buff is not null) return buff;
             }
             // 3. Soften the target: land one DefenseBreak, then swing for full damage after.
             if (target.DefenseBreakStacks == 0)
             {
-                var debuff = BestByDamage(available.Where(s => s.Effect == SkillEffect.DefenseBreak), actor);
+                var debuff = BestByDamage(available.Where(s => s.Effect == SkillEffect.DefenseBreak), actor, target, cfg);
                 if (debuff is not null) return debuff;
             }
         }
 
         // Default (and Greedy policy): the highest expected-damage move available.
-        return BestByDamage(available, actor) ?? SkillCatalog.Strike;
+        return BestByDamage(available, actor, target, cfg) ?? SkillCatalog.Strike;
     }
 
     // The highest expected-damage skill among the candidates, or null if there are none. Ties keep the
-    // earlier-learned skill (strict >), so the pick is stable and order-independent of the seed.
-    private static Skill? BestByDamage(IEnumerable<Skill> candidates, FighterState actor)
+    // earlier-learned skill (strict >), so the pick is stable and order-independent of the seed. With
+    // ElementAwareSelection ON, the score also folds the element multiplier — the true EV term the
+    // resolver already applies (Execute), and the only per-skill factor the base scorer omits.
+    private static Skill? BestByDamage(IEnumerable<Skill> candidates, FighterState actor, FighterState target, GameConfig cfg)
     {
         Skill? best = null;
         var bestScore = double.MinValue;
@@ -111,6 +113,11 @@ public static class BattleEngine
         {
             var scale = skill.Scaling == SkillScaling.Attack ? actor.EffectiveAttack : actor.EffectiveMagic;
             var score = skill.Power * scale * (skill.Accuracy / 100.0);
+            if (cfg.Combat.ElementAwareSelection)
+            {
+                var element = skill.Element ?? actor.Hero.Genome.Element;
+                score *= ElementMatrix.Multiplier(element, target.Hero.Genome.Element, cfg);
+            }
             if (score > bestScore)
             {
                 bestScore = score;
