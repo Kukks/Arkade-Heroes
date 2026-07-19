@@ -341,6 +341,54 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             $"Paid on-chain, but the payment hasn't settled for the claim yet — try again in a moment. ({last?.Message})");
     }
 
+    /// <summary>
+    /// Run the solo PvE gauntlet from the browser wallet: open (commit + entry fee), pay the fee with a
+    /// plain non-custodial send (the same deposit-and-settle primitive breed/merge/buy use), then run the
+    /// 5 ghost waves. The server resolves the waves against the paid, committed seed and awards the capped
+    /// XP + a full-clear item. Retries the run while the fee settles into arkd's indexer, then CLIENT-VERIFIES
+    /// the outcome (re-derives the ghosts + fights from the revealed seed, re-checks the capped XP + item
+    /// against the signed receipt) so a server can't pick soft foes or over-award. Returns the verified outcome.
+    /// </summary>
+    public async Task<GauntletOutcome> RunGauntletAsync(string heroId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Sealing the gauntlet…");
+        var open = await api.Gauntlet.OpenAsync(heroId);
+        if (open.FeeInvoice.AmountSats > 0)
+        {
+            onProgress?.Invoke("Paying the entry fee…");
+            await DepositAndSettleAsync(w.Id, open.FeeInvoice.PayToAddress, null, open.FeeInvoice.AmountSats);
+        }
+
+        // Run — retry while the fee deposit settles into arkd's indexer (the run's gate).
+        onProgress?.Invoke("Entering the gauntlet…");
+        var nonce = RandomNonce();
+        GauntletRunResponse? run = null;
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20 && run is null; attempt++)
+        {
+            try
+            {
+                run = await api.Gauntlet.RunAsync(open.GauntletId, nonce);
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("not been paid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Fee still settling — retrying ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        if (run is null)
+            throw new GameWalletException(
+                $"Paid the entry fee on-chain, but it hasn't settled for the run yet — try again in a moment. ({last?.Message})");
+
+        // Client-side fairness recompute — the same gate the console client applies.
+        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run);
+        return new GauntletOutcome(run, ok, detail);
+    }
+
     /// <summary>Equip an owned item onto one of the player's heroes (server enforces ownership + slot).</summary>
     public async Task<HeroDto> EquipAsync(string heroId, string itemId) =>
         (await api.Heroes.EquipAsync(heroId, new EquipRequest(itemId))).Hero;
@@ -365,3 +413,6 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     private static string RandomNonce() =>
         Convert.ToHexString(RandomUtils.GetBytes(16)).ToLowerInvariant();
 }
+
+/// <summary>A completed gauntlet run bundled with its client-side fairness verdict, ready to render.</summary>
+public record GauntletOutcome(GauntletRunResponse Run, bool FairnessOk, string FairnessDetail);
