@@ -38,6 +38,16 @@ public class GauntletFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, "g-nonce", run.Receipt.CommitmentHex, run);
         Assert.True(ok, detail);
 
+        // Each wave carries the ghost snapshot + fight log the browser replays in the arena: the
+        // reconstructed ghost matches its wave level, and the fight has events + a winner in {hero, ghost}.
+        Assert.NotEmpty(run.Waves);
+        Assert.All(run.Waves, w =>
+        {
+            Assert.Equal(w.GhostLevel, w.Ghost.Level);
+            Assert.NotEmpty(w.Result.Events);
+            Assert.True(w.Result.WinnerId == hero.Id || w.Result.WinnerId == w.Ghost.Id);
+        });
+
         // The gauntlet receipt folds its XP into the receipt-replayed level (from a level-1 genesis) —
         // recomputed purely from the player-held receipt, not from the server's stored level.
         Assert.Equal(
