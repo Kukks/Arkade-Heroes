@@ -335,6 +335,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 .hpbar > i { display: block; height: 100%; border-radius: 5px 0 0 5px; transition: width .45s cubic-bezier(.3,.7,.3,1), background .45s ease; }
 .hpbar > i.ok   { background: linear-gradient(90deg, #2fb36a, var(--ok)); }
 .hpbar > i.warn { background: linear-gradient(90deg, #c99a1e, var(--gold)); }
+.hpbar > i.xp   { background: linear-gradient(90deg, var(--accent), var(--gold)); }
+
+/* Slim XP-to-next bar under a hero's name — same primitive as the combat HP bar. */
+.xpbar { height: 6px; margin-top: .6rem; max-width: 320px; }
 .hpbar > i.low  { background: linear-gradient(90deg, #c13b3b, var(--danger)); }
 .f-hp { font-size: .66rem; color: var(--muted); }
 .f-hp span { opacity: .55; }
