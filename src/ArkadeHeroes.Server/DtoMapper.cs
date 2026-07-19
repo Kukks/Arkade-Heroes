@@ -63,7 +63,7 @@ public static class DtoMapper
         result.Turns,
         result.Events.Select(e => new BattleEventDto(
             e.Turn, e.ActorId, e.TargetId, e.Kind.ToString(), e.SkillId,
-            e.Damage, e.Crit, e.Healed, e.TargetHpAfter, e.Note)).ToList(),
+            e.Damage, e.Crit, e.Healed, e.TargetHpAfter, e.Note, e.Effect.ToString())).ToList(),
         result.WinnerRemainingHp,
         result.WinnerMaxHp);
 

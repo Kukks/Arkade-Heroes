@@ -1,0 +1,337 @@
+@* Reusable battle arena: replays an already-resolved fight (BattleResultDto) blow-by-blow over two
+   hero snapshots. Pure DTO in — no combat engine here; the fight is already decided (locally by Spar,
+   or by the server for a duel / death-match / gauntlet wave). Set Fight to a new instance to play it;
+   set it to null (with A+B) to just stage the matchup at full HP. *@
+@implements IDisposable
+
+@if (A is not null && B is not null)
+{
+    <div class="arena">
+        <div class="turn-ticker mono">@TickerText</div>
+
+        <div class="arena-row">
+            @* ---- Red corner (A / left) ---- *@
+            <div class="@FighterCss('a')">
+                <div class="f-head">
+                    <span class="f-name">@A.Name</span>
+                    <span class="f-corner red">RED</span>
+                </div>
+                <div class="hpbar"><i class="@HpClass(_hpA, _maxA)" style="width:@Pct(_hpA, _maxA)%"></i></div>
+                <div class="f-hp mono">@_hpA<span>/@_maxA</span></div>
+                <div class="f-portrait">
+                    <HeroSprite Hero="A" Size="120" />
+                    <span class="f-el mono">@A.Element</span>
+                    @if (_floatSide == "a" && _floatDmg is int da)
+                    {
+                        <div class="@DmgClass()">-@da</div>
+                    }
+                    @if (_healSide == "a" && _healAmt is int ha)
+                    {
+                        <div class="heal">+@ha</div>
+                    }
+                </div>
+                <div class="f-stats mono">
+                    <span>Lv @A.Level</span><span>ATK @A.Stats.Attack</span><span>DEF @A.Stats.Defense</span><span>SPD @A.Stats.Speed</span>
+                </div>
+            </div>
+
+            @* ---- Centre ---- *@
+            <div class="arena-mid">
+                <div class="vs mono">VS</div>
+                @if (_banner is not null)
+                {
+                    <div class="banner @_bannerKind">@_banner</div>
+                }
+                @if (_critNow)
+                {
+                    <div class="shock"></div>
+                }
+            </div>
+
+            @* ---- Blue corner (B / right) ---- *@
+            <div class="@FighterCss('b')">
+                <div class="f-head">
+                    <span class="f-corner blue">BLUE</span>
+                    <span class="f-name">@B.Name</span>
+                </div>
+                <div class="hpbar"><i class="@HpClass(_hpB, _maxB)" style="width:@Pct(_hpB, _maxB)%"></i></div>
+                <div class="f-hp mono">@_hpB<span>/@_maxB</span></div>
+                <div class="f-portrait">
+                    <HeroSprite Hero="B" Size="120" />
+                    <span class="f-el mono">@B.Element</span>
+                    @if (_floatSide == "b" && _floatDmg is int db)
+                    {
+                        <div class="@DmgClass()">-@db</div>
+                    }
+                    @if (_healSide == "b" && _healAmt is int hb)
+                    {
+                        <div class="heal">+@hb</div>
+                    }
+                </div>
+                <div class="f-stats mono">
+                    <span>Lv @B.Level</span><span>ATK @B.Stats.Attack</span><span>DEF @B.Stats.Defense</span><span>SPD @B.Stats.Speed</span>
+                </div>
+            </div>
+        </div>
+
+        @if (_log.Count > 0)
+        {
+            <div class="battle-log mono">
+                @foreach (var (text, kind) in _log.TakeLast(8))
+                {
+                    <div class="log-line @kind">@text</div>
+                }
+            </div>
+        }
+
+        @if (_done && Fight is not null)
+        {
+            <div class="arena-outcome">
+                <span class="hud">@Fight.Turns turns · settled on @Fight.WinnerRemainingHp/@Fight.WinnerMaxHp HP</span>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public HeroDto? A { get; set; }
+    [Parameter, EditorRequired] public HeroDto? B { get; set; }
+    /// <summary>The resolved fight to replay. A new instance triggers a fresh replay; null just stages the matchup.</summary>
+    [Parameter] public BattleResultDto? Fight { get; set; }
+    /// <summary>Fired once the replay finishes (so a parent can re-enable a "rematch" button, etc.).</summary>
+    [Parameter] public EventCallback OnFinished { get; set; }
+
+    private BattleResultDto? _played;   // the Fight instance already animated — guards re-entry on re-render
+    private int _maxA, _maxB, _hpA, _hpB;
+    private bool _done;
+    private int _runId;   // guards against overlapping replays (rematch / navigate away)
+
+    // Replay transient state — mutated per event, cleared between events.
+    private int _turn;
+    private string? _actorSide, _hitSide, _dodgeSide, _koSide, _winSide;
+    private bool _critNow;
+    private int? _floatDmg, _healAmt;
+    private string? _floatSide, _healSide;
+    private string _floatEff = "";
+    private string? _banner;
+    private string _bannerKind = "skill";
+
+    private readonly List<(string Text, string Kind)> _log = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (A is null || B is null) return;
+
+        // Staged (no fight yet): always reflect the CURRENT fighters at full HP. A fresh pick in Spar
+        // changes A/B while Fight stays null, so this path can't be short-circuited on Fight alone.
+        if (Fight is null)
+        {
+            _played = null;
+            ++_runId;          // cancel any stale replay
+            ResetBars();
+            return;
+        }
+
+        if (ReferenceEquals(Fight, _played)) return;   // this fight already played — don't replay on re-render
+        _played = Fight;
+        var run = ++_runId;
+        ResetBars();
+        await Play(Fight, run);
+    }
+
+    // Reset both HP bars to full for the current fighters and clear the last bout's replay state.
+    void ResetBars()
+    {
+        _maxA = A!.Stats.MaxHp; _hpA = _maxA;
+        _maxB = B!.Stats.MaxHp; _hpB = _maxB;
+        _log.Clear();
+        _done = false;
+        _koSide = _winSide = null;
+        ClearTransient();
+    }
+
+    async Task Play(BattleResultDto fight, int run)
+    {
+        // The bell.
+        _turn = 0;
+        _banner = "FIGHT!"; _bannerKind = "fight";
+        StateHasChanged();
+        await Task.Delay(900);
+        if (run != _runId) return;
+
+        foreach (var ev in fight.Events)
+        {
+            Apply(ev);
+            StateHasChanged();
+            await Task.Delay(Pace(ev));
+            if (run != _runId) return;
+
+            ClearTransient();      // drop motion + banner so the next beat re-triggers cleanly (hp/ko persist)
+            StateHasChanged();
+            await Task.Delay(120);
+            if (run != _runId) return;
+        }
+
+        var winIsA = fight.WinnerId == A!.Id;
+        _winSide = winIsA ? "a" : "b";
+        var winName = winIsA ? A!.Name : B!.Name;
+        _banner = $"{winName} wins"; _bannerKind = "win";
+        _log.Add(($"{winName} wins the bout!", "win"));
+        _done = true;
+        StateHasChanged();
+        await OnFinished.InvokeAsync();
+    }
+
+    // Advance the display by one battle event. HP is taken straight from the engine's authoritative
+    // TargetHpAfter; a drain-skill's self-heal mirrors the engine's own cap.
+    void Apply(BattleEventDto ev)
+    {
+        _turn = ev.Turn;
+        var actor = ev.ActorId == A!.Id ? "a" : "b";
+        var target = actor == "a" ? "b" : "a";
+        _actorSide = actor;
+
+        switch (ev.Kind)
+        {
+            case "SkillUsed":
+                _hitSide = target;
+                _critNow = ev.Crit;
+                SetHp(target, ev.TargetHpAfter);
+                if (ev.Damage > 0)
+                {
+                    _floatDmg = ev.Damage;
+                    _floatSide = target;
+                    _floatEff = ev.Note == "super effective" ? "super"
+                        : ev.Note == "not very effective" ? "resist" : "";
+                }
+                if (ev.Healed > 0)
+                {
+                    _healAmt = ev.Healed;
+                    _healSide = actor;
+                    AddHp(actor, ev.Healed);
+                }
+                _banner = Pretty(ev.SkillId);
+                _bannerKind = ev.Crit ? "crit" : "skill";
+                break;
+
+            case "Missed":
+                _banner = "MISS"; _bannerKind = "miss";
+                break;
+
+            case "Dodged":
+                _dodgeSide = target;
+                _banner = "DODGE"; _bannerKind = "dodge";
+                break;
+
+            case "Defeated":
+                _koSide = target;
+                _banner = "K.O."; _bannerKind = "ko";
+                break;
+
+            case "TimeoutDecision":
+                _banner = "TIME"; _bannerKind = "skill";
+                break;
+        }
+
+        _log.Add(LogFor(ev, actor == "a" ? A!.Name : B!.Name, target == "a" ? A!.Name : B!.Name));
+    }
+
+    (string Text, string Kind) LogFor(BattleEventDto ev, string actorName, string targetName)
+    {
+        string line, kind;
+        switch (ev.Kind)
+        {
+            case "SkillUsed" when ev.Crit:
+                line = $"{actorName} lands a CRITICAL {Pretty(ev.SkillId)} — {ev.Damage}!"; kind = "crit"; break;
+            case "SkillUsed" when ev.Damage > 0:
+                var eff = ev.Note == "super effective" ? " · super effective!"
+                    : ev.Note == "not very effective" ? " · resisted" : "";
+                line = $"{actorName} hits with {Pretty(ev.SkillId)} — {ev.Damage} dmg{eff}";
+                kind = ev.Note == "super effective" ? "super" : "hit"; break;
+            case "SkillUsed":
+                line = $"{actorName} uses {Pretty(ev.SkillId)}"; kind = "hit"; break;
+            case "Missed":
+                line = $"{actorName}'s {Pretty(ev.SkillId)} misses"; kind = "miss"; break;
+            case "Dodged":
+                line = $"{targetName} dodges {actorName}'s {Pretty(ev.SkillId)}"; kind = "dodge"; break;
+            case "Defeated":
+                line = $"{targetName} faints!"; kind = "ko"; break;
+            case "TimeoutDecision":
+                line = "Time! — decided on remaining HP"; kind = "hit"; break;
+            default:
+                line = ""; kind = "hit"; break;
+        }
+        var heal = ev.Kind == "SkillUsed" && ev.Healed > 0 ? $" (+{ev.Healed} HP)" : "";
+        var fx = ev.Kind == "SkillUsed" ? ev.Effect switch
+        {
+            "Focus" => " · focus up!",
+            "DefenseBreak" => $" · {targetName}'s guard broken!",
+            _ => "",
+        } : "";
+        return ($"T{ev.Turn} · {line}{heal}{fx}", kind);
+    }
+
+    void ClearTransient()
+    {
+        _actorSide = _hitSide = _dodgeSide = null;
+        _critNow = false;
+        _floatDmg = _healAmt = null;
+        _floatSide = _healSide = null;
+        _floatEff = "";
+        _banner = null;
+    }
+
+    void SetHp(string side, int hp) { if (side == "a") _hpA = hp; else _hpB = hp; }
+    void AddHp(string side, int amt)
+    {
+        if (side == "a") _hpA = Math.Min(_maxA, _hpA + amt);
+        else _hpB = Math.Min(_maxB, _hpB + amt);
+    }
+
+    string TickerText => _done ? "FINISHED" : Fight is not null ? $"TURN {_turn}" : "READY";
+
+    // Pacing: a killing blow and a crit land heavier; whiffs snap past.
+    static int Pace(BattleEventDto ev) => ev.Kind switch
+    {
+        "Defeated" => 1500,
+        "TimeoutDecision" => 1400,
+        "SkillUsed" => ev.Crit ? 1000 : ev.Damage > 0 ? 760 : 700,
+        _ => 640,
+    };
+
+    static double Pct(int hp, int max) => max <= 0 ? 0 : Math.Clamp(100.0 * hp / max, 0, 100);
+
+    static string HpClass(int hp, int max)
+    {
+        var f = max <= 0 ? 0 : (double)hp / max;
+        return f > .5 ? "ok" : f > .2 ? "warn" : "low";
+    }
+
+    // Built in code (not inline @(...)) so the string literals don't collide with the class="" quotes.
+    string FighterCss(char side)
+    {
+        var s = side == 'a' ? "a" : "b";
+        var c = side == 'a' ? "fighter left" : "fighter right";
+        if (_actorSide == s) c += " attack";
+        if (_hitSide == s) { c += " hit"; if (_critNow) c += " crit"; }
+        if (_dodgeSide == s) c += " dodge";
+        if (_koSide == s) c += " ko";
+        if (_winSide == s) c += " win";
+        return c;
+    }
+
+    string DmgClass()
+    {
+        var c = "dmg";
+        if (_critNow) c += " crit";
+        if (!string.IsNullOrEmpty(_floatEff)) c += " " + _floatEff;
+        return c;
+    }
+
+    static string Pretty(string id) => string.IsNullOrEmpty(id)
+        ? ""
+        : string.Join(' ', id.Split('-', '_')
+            .Select(w => w.Length == 0 ? w : char.ToUpperInvariant(w[0]) + w[1..]));
+
+    public void Dispose() => _runId++;   // stop any in-flight replay when the arena is torn down
+}
