@@ -102,6 +102,7 @@ else
     private string? _buyError;
     private string? _justBought;
     private readonly HashSet<string> _owned = new();
+    private bool _ownedHydrated;
 
     protected override async Task OnInitializedAsync()
     {
@@ -109,6 +110,21 @@ else
         try { _items = await Api.Items.ShopAsync(); }
         catch { _error = true; }
         finally { _loading = false; }
+        await HydrateOwnedAsync();
+    }
+
+    // Reflect items the player already holds so the "owned" markers survive a refresh (they were
+    // session-only before). Best-effort: the login token may still be settling on a cold load, so
+    // OnState retries this once the wallet signs in.
+    async Task HydrateOwnedAsync()
+    {
+        if (_ownedHydrated || !State.IsSignedIn) return;
+        try
+        {
+            foreach (var id in await Api.Items.MineAsync()) _owned.Add(id);
+            _ownedHydrated = true;
+        }
+        catch { /* not signed in yet / token racing — retried on the next state change */ }
     }
 
     async Task DoBuy(ItemDto it)
@@ -156,7 +172,11 @@ else
 
     static string Signed(int n) => n > 0 ? $"+{n}" : n.ToString();
 
-    void OnState() => InvokeAsync(StateHasChanged);
+    void OnState() => InvokeAsync(async () =>
+    {
+        await HydrateOwnedAsync();   // hydrate owned markers once the wallet signs in on a cold load
+        StateHasChanged();
+    });
 
     public void Dispose() => State.OnChange -= OnState;
 }

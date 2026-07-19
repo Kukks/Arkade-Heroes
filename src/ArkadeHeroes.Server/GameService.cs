@@ -1013,6 +1013,20 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         }
     }
 
+    /// <summary>
+    /// The catalog item ids the player currently holds at least one unit of — the shop marks these
+    /// as owned. Ownership is on-chain (the same balance the equip check reads), so it survives
+    /// across sessions with no server-side inventory bookkeeping.
+    /// </summary>
+    public async Task<List<string>> OwnedItemIdsAsync(Player player, CancellationToken ct)
+    {
+        var owned = new List<string>();
+        foreach (var item in Core.Equipment.ItemCatalog.All)
+            if (await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct) > 0)
+                owned.Add(item.Id);
+        return owned;
+    }
+
     public async Task<Hero> EquipAsync(Player player, string heroId, string itemId, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId);

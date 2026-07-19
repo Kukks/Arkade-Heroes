@@ -69,4 +69,21 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
         await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("swift-anklet"));
         await client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("swift-anklet"));
     }
+
+    [Fact]
+    public async Task MineListsOnlyOwnedItems()
+    {
+        var (client, _) = await _factory.RegisterAsync("I-Owned");
+
+        // Nothing owned before any purchase.
+        Assert.Empty(await client.Items.MineAsync());
+
+        await client.BuyItemAsync("steel-saber");
+        await client.BuyItemAsync("lucky-feather");
+
+        var owned = await client.Items.MineAsync();
+        Assert.Contains("steel-saber", owned);
+        Assert.Contains("lucky-feather", owned);
+        Assert.DoesNotContain("covenant-plate", owned);   // never bought
+    }
 }
