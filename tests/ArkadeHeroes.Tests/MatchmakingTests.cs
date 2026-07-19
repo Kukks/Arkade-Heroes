@@ -62,6 +62,11 @@ public class MatchmakingTests : IDisposable
         Assert.Equal(Leveling.XpTransfer(5, 5), peer.XpIfYouWin);   // peer win: the base
         Assert.Equal(Leveling.XpTransfer(5, 12), far.XpIfYouWin);   // upset win: a lot
         Assert.Equal(0, far.XpIfYouLose);                           // losing to the far hero costs nothing
+
+        // F2: the coarse favor label rides along the suggestion. The peer is "even"; the far hero is
+        // an "underdog" shot — and since XpIfYouLose == 0 above, it's the "free shot" the UI badges.
+        Assert.Equal("even", peer.Favor);
+        Assert.Equal("underdog", far.Favor);
     }
 
     [Theory]

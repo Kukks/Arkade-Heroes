@@ -212,7 +212,10 @@ public record MatchDto(
 public record OpponentSuggestionDto(
     HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose,
     // F18: the opponent's realized power and how far it is from yours (percent of the stronger).
-    int PowerScore = 0, int PowerGapPercent = 0);
+    int PowerScore = 0, int PowerGapPercent = 0,
+    // F2: coarse level-based favorability — "favored" / "even" / "underdog". An "underdog" line with
+    // XpIfYouLose == 0 is the "free shot": nothing to lose, a big conserved swing to win.
+    string Favor = "even");
 
 // ── Hero transfer (client-signed spend; server verifies + confirms) ────────
 

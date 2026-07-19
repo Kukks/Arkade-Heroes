@@ -892,7 +892,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                     Matchmaking.XpIfWin(hero.Level, h.Level),
                     Matchmaking.XpIfLose(hero.Level, h.Level),
                     oppPower,
-                    Matchmaking.PowerGapPercent(heroPower, oppPower));
+                    Matchmaking.PowerGapPercent(heroPower, oppPower),
+                    // F2: the free-underdog-shot label rides along the (level-based) conserved swings.
+                    Matchmaking.Favor(hero.Level, h.Level));
             })
             // Closest realized-power fights first (F18); level gap + a stable id keep a total order.
             .OrderBy(s => s.PowerGapPercent)

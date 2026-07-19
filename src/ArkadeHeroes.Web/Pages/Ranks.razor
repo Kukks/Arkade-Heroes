@@ -29,9 +29,10 @@ else
         }
         else
         {
+            <p class="muted" style="margin:-.3rem 0 .8rem">ranked by wins, then level — a win tally only ever climbs</p>
             <table class="board">
                 <thead>
-                    <tr><th>#</th><th>Hero</th><th class="num">Lvl</th><th class="num">Wins</th><th class="num">Matches</th></tr>
+                    <tr><th>#</th><th>Hero</th><th class="num">Wins</th><th class="num">Lvl</th><th class="num">Matches</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var e in _top)
@@ -39,8 +40,8 @@ else
                         <tr>
                             <td class="rank">@e.Rank</td>
                             <td>@e.Name</td>
-                            <td class="num">@e.Level</td>
                             <td class="num">@e.Wins</td>
+                            <td class="num">@e.Level</td>
                             <td class="num">@e.Matches</td>
                         </tr>
                     }
