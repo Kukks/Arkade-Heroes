@@ -50,10 +50,12 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var aliceBefore = await alice.Heroes.GetAsync(aliceHeroId);
         var bobBefore = await bob.Heroes.GetAsync(bobHeroId);
 
-        // Both stake their hero.
+        // Both stake their hero + pay the per-character death-match fee (F13).
         await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
 
         var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("dm-nonce"));
 
@@ -130,8 +132,10 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Empty(open.ChallengerGear);
 
         await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
 
         // Staking moved Bob's unit INTO the escrow — he no longer holds it (can't sell it).
         Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(bobPlayer.PlayerId, "rusty-blade"));
@@ -272,8 +276,10 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
             var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHeroId, bobHeroId, Absorb: true));
             await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-            await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+            await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+            var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
             await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+            await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
             var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("absorb-nonce"));
             if (!settle.Minted) continue;   // rare keep roll — try again with fresh heroes
 
@@ -318,8 +324,10 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id, Absorb: true));
         await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
-        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
         var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("keep-nonce"));
 
         Assert.False(settle.Minted);
@@ -329,5 +337,51 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains(aliceMine, h => h.Id == a[0].Id);
         Assert.DoesNotContain(aliceMine, h => h.Id == settle.LoserHeroId);
         Assert.Equal("deathmatch", settle.Receipt!.Type);
+    }
+
+    [Fact]
+    public async Task DeathMatch_SettleRefusedUntilBothFeesPaid_FeeScalesWithLevel()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DM-Fee-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-Fee-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+        var store = _factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[a[0].Id].Level = 10;   // challenger level 10 → higher fee than the level-1 defender
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        Assert.Equal(2 * (500 + 20 * 10), open.FeeInvoice!.AmountSats);   // classic = 2× MatchFee(10)
+
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        Assert.Equal(2 * (500 + 20 * 1), accept.FeeInvoice!.AmountSats);  // defender level 1
+
+        // Fully staked but no fee paid → settle refused.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("n")));
+        // Only the challenger's fee paid → still refused.
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("n")));
+        // Both fees paid → settles.
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+        var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("n"));
+        Assert.Equal("deathmatch", settle.Receipt!.Type);
+    }
+
+    [Fact]
+    public async Task AbsorbDeathMatch_FeeIsHigherThanClassic()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DM-AbsorbFee-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-AbsorbFee-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var classic = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        var absorb = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[1].Id, b[0].Id, Absorb: true));
+
+        Assert.Equal(2 * (500 + 20 * 1), classic.FeeInvoice!.AmountSats);  // 2× MatchFee(1)
+        Assert.Equal(3 * (500 + 20 * 1), absorb.FeeInvoice!.AmountSats);   // 3× MatchFee(1) — the absorb premium
     }
 }

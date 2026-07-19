@@ -831,6 +831,7 @@ public class GameClient : IAsyncDisposable
         }
 
         await StakeDeathMatchAsync(open.DeathMatchId, "challenger", open.EscrowAddress, mine, open.ChallengerGear);
+        if (open.FeeInvoice is not null) await SettleInvoiceAsync(open.FeeInvoice);   // per-character death-match fee
         Console.WriteLine($"  ✓ death-match opened: {open.DeathMatchId}  (commitment {ShortId(open.CommitmentHex)})");
         Console.WriteLine($"    opponent runs 'accept-death {open.DeathMatchId}', then you run 'settle-death {open.DeathMatchId}'");
     }
@@ -844,6 +845,7 @@ public class GameClient : IAsyncDisposable
         if (accept.DefenderGear.Count > 0)
             Console.WriteLine($"    your equipped gear is AT STAKE too: {string.Join(", ", accept.DefenderGear.Select(g => $"{g.Amount}× {g.ItemId}"))}");
         await StakeDeathMatchAsync(deathMatchId, "defender", accept.EscrowAddress, accept.DefenderHero, accept.DefenderGear);
+        if (accept.FeeInvoice is not null) await SettleInvoiceAsync(accept.FeeInvoice);   // per-character death-match fee
         Console.WriteLine($"  ✓ staked. The challenger runs 'settle-death {deathMatchId}'.");
     }
 

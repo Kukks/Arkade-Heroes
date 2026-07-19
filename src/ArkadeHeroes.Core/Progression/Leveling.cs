@@ -46,6 +46,22 @@ public static class Leveling
         return c.MatchFeeBaseSats + c.MatchFeePerLevel * Math.Max(1, level);
     }
 
+    // ── The death-match fee (a MULTIPLE of the per-character match fee) ──
+    // Permadeath is the highest-stakes match, so entering costs more than a wager
+    // match; absorb mode costs more still (extra escrow leaves + a possible re-mint,
+    // and the extra EV the winner buys). NO rarity term: the staked hero IS the risk
+    // — a Legendary already wagers its full market value — so the fee prices spam and
+    // a consistent house take, not the sink (which is the permakill itself).
+    public const int DeathMatchFeeMultiplier = 2;
+    public const int AbsorbFeeMultiplier = 3;
+
+    /// <summary>Sats a hero's owner pays to stage a death-match: a multiple of its <see cref="MatchFee"/> (higher for absorb).</summary>
+    public static long DeathMatchFee(int level, bool absorb, GameConfig? config = null)
+    {
+        var c = config ?? GameConfig.Default;
+        return (absorb ? c.AbsorbFeeMultiplier : c.DeathMatchFeeMultiplier) * MatchFee(level, config);
+    }
+
     /// <summary>
     /// Applies a SIGNED XP delta. Positive levels up across thresholds; NEGATIVE
     /// can delevel — it refunds into the level below and floors at level 1 / 0 XP,

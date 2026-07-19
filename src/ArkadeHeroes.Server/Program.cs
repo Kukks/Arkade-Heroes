@@ -192,15 +192,15 @@ api.MapGet("/merges/{mergeId}/escrow", async (string mergeId, IChainService chai
 api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (session, escrow, favor, challengerGear, defenderGear) = await game.OpenDeathMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId, request.Absorb, ct);
-    return Results.Ok(new DeathMatchOpenResponse(session.Id, session.CommitmentHex, escrow, favor, challengerGear, defenderGear));
+    var (session, escrow, favor, challengerGear, defenderGear, feeInvoice) = await game.OpenDeathMatchAsync(player, request.ChallengerHeroId, request.DefenderHeroId, request.Absorb, ct);
+    return Results.Ok(new DeathMatchOpenResponse(session.Id, session.CommitmentHex, escrow, favor, challengerGear, defenderGear, feeInvoice.ToDto()));
 });
 
 api.MapPost("/deathmatch/{id}/accept", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (_, escrow, defender, defenderGear) = await game.AcceptDeathMatchAsync(player, id, ct);
-    return Results.Ok(new DeathMatchAcceptResponse(escrow, defender.ToDto(), defenderGear));
+    var (_, escrow, defender, defenderGear, feeInvoice) = await game.AcceptDeathMatchAsync(player, id, ct);
+    return Results.Ok(new DeathMatchAcceptResponse(escrow, defender.ToDto(), defenderGear, feeInvoice.ToDto()));
 });
 
 api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest request, HttpContext http, GameService game, CancellationToken ct) =>

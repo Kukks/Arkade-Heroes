@@ -70,6 +70,9 @@ public class DeathMatchSession
     /// <summary>Each side's equipped-item snapshot at OPEN — the gear units staked alongside the heroes.</summary>
     public IReadOnlyList<string> ChallengerGearItemIds { get; init; } = [];
     public IReadOnlyList<string> DefenderGearItemIds { get; init; } = [];
+    /// <summary>Per-character death-match fee invoices (a level-scaled sats sink); BOTH must be paid before settle.</summary>
+    public string? ChallengerFeeInvoiceId { get; set; }
+    public string? DefenderFeeInvoiceId { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Accepted { get; set; }
     public bool Completed { get; set; }
