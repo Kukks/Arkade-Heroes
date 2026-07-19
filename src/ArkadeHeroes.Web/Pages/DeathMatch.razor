@@ -172,7 +172,8 @@ else
             <h3 style="margin:0">Death-match resolved</h3>
             <span class="hud">winner takes the spoils</span>
         </div>
-        <div class="card">
+        <BattleArena A="s.ChallengerSnapshot" B="s.DefenderSnapshot" Fight="s.Result" />
+        <div class="card" style="margin-top:1.2rem">
             <div class="status-line"><span class="dot bad"></span> <span>☠ <b>@loserName</b> is dead — burned on-chain.</span></div>
             <div class="status-line" style="margin-top:.4rem"><span class="dot ok"></span> <span><b>@winnerName</b> takes the win and all staked gear (@s.Result.Turns turns).</span></div>
             @if (_dm.Settle.Minted)

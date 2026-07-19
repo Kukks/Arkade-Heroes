@@ -157,7 +157,8 @@ else
             <h3 style="margin:0">Duel resolved</h3>
             <span class="hud">the pot swept to the winner</span>
         </div>
-        <div class="card">
+        <BattleArena A="f.ChallengerSnapshot" B="f.DefenderSnapshot" Fight="f.Result" />
+        <div class="card" style="margin-top:1.2rem">
             <div class="status-line">
                 <span class="dot ok"></span>
                 <span><b>@winner.Name</b> wins — <b class="mono">@f.WinnerPayoutSats.ToString("N0")</b> sats to the winner’s wallet</span>

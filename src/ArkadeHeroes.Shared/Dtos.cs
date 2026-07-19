@@ -179,7 +179,9 @@ public record FightRequest(string Nonce);
 
 public record BattleEventDto(
     int Turn, string ActorId, string TargetId, string Kind, string SkillId,
-    int Damage, bool Crit, int Healed, int TargetHpAfter, string? Note);
+    int Damage, bool Crit, int Healed, int TargetHpAfter, string? Note,
+    // The skill's status effect ("Focus" / "DefenseBreak" / "None"), so a replay can narrate the beat.
+    string? Effect = null);
 
 public record BattleResultDto(
     string WinnerId, string LoserId, int Turns,
