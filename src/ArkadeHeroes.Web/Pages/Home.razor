@@ -20,7 +20,7 @@
         @if (State.IsSignedIn)
         {
             <div class="btn-row">
-                <button class="btn primary" @onclick="@(() => Nav.NavigateTo("heroes"))">Enter the arena</button>
+                <button class="btn primary" @onclick="@(() => Nav.NavigateTo("heroes?mine=1"))">Enter the arena</button>
                 <button class="btn ghost" @onclick="@(() => Nav.NavigateTo("market"))">Browse the market</button>
             </div>
         }
@@ -35,10 +35,12 @@
                 </button>
             </div>
             <p class="muted play-note">No signup, no email — we set up your wallet automatically. You can back it up any time.</p>
-            @if (_playError is not null)
-            {
-                <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_playError</div>
-            }
+        }
+        @* Outside the signed-in/out branch: a partial-failure (registered, but the starter
+           mint didn't land) flips IsSignedIn, so the error must survive that switch. *@
+        @if (_playError is not null)
+        {
+            <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_playError</div>
         }
     </div>
     <div class="hero-art">GEN·0<br />STARTER</div>
@@ -136,7 +138,7 @@
         try
         {
             await Session.StartPlayingAsync(_name.Trim());
-            Nav.NavigateTo("heroes");
+            Nav.NavigateTo("heroes?mine=1");
         }
         catch (Exception ex)
         {
