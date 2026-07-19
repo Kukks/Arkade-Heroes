@@ -733,3 +733,20 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
     .topbar { flex-wrap: wrap; gap: .8rem; }
     .content { padding: 1.2rem 1rem 3rem; }
 }
+
+/* --- Duel (staked PvP) ---------------------------------------------------- */
+.pos { color: var(--ok); }
+.neg { color: var(--danger); }
+.oppgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .6rem; margin-bottom: .3rem; }
+.oppcard {
+    text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: .3rem;
+    padding: .6rem .7rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--bg-2); color: var(--text); font: inherit;
+}
+.oppcard:hover { border-color: var(--accent); }
+.oppcard.sel { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 1px var(--accent) inset; }
+.oppcard-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.oppcard-stats { font-size: .72rem; color: var(--muted); }
+.oppcard-xp { font-size: .72rem; }
+.match-row { display: flex; align-items: center; gap: .6rem; padding: .5rem 0; font-size: .86rem; }
+.match-row + .match-row { border-top: 1px solid var(--line); }
