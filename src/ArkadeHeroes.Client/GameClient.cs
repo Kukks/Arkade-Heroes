@@ -288,7 +288,7 @@ public class GameClient : IAsyncDisposable
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
           challenge <m> <t> <w> [covenant]  wagered match; 'covenant' = emulator-enforced escrow
           matches                list open/accepted wagered matches
-          opponents <hero>       suggested opponents by level (XP-weighted matchmaking)
+          opponents <hero>       suggested opponents by realized power (matchmaking)
           accept <matchId>       accept a wagered challenge against your hero
           duel <matchId>         resolve an accepted wagered match (challenger)
           refund <matchId>       reclaim your covenant stake after expiry (no server trust)
@@ -952,7 +952,7 @@ public class GameClient : IAsyncDisposable
         }
         Console.WriteLine($"  opponents for {ShortId(hero.Id)} (level {hero.Level}), closest match first:");
         foreach (var o in opponents)
-            Console.WriteLine($"    {ShortId(o.Hero.Id)}  L{o.Hero.Level}  gap {o.LevelGap}  " +
+            Console.WriteLine($"    {ShortId(o.Hero.Id)}  L{o.Hero.Level}  pow {o.PowerScore} (Δ{o.PowerGapPercent}%)  " +
                               $"win +{o.XpIfYouWin} / lose -{o.XpIfYouLose} xp  owner {ShortId(o.OwnerPlayerId)}");
     }
 

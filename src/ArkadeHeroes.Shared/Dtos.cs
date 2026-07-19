@@ -192,7 +192,9 @@ public record MatchDto(
 
 // ── XP-weighted matchmaking: suggested opponents ranked by level proximity ──────
 public record OpponentSuggestionDto(
-    HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose);
+    HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose,
+    // F18: the opponent's realized power and how far it is from yours (percent of the stronger).
+    int PowerScore = 0, int PowerGapPercent = 0);
 
 // ── Hero transfer (client-signed spend; server verifies + confirms) ────────
 
