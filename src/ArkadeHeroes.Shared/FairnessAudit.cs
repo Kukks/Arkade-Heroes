@@ -3,6 +3,7 @@ using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
+using ArkadeHeroes.Core.Progression;
 
 namespace ArkadeHeroes.Shared;
 
@@ -162,5 +163,38 @@ public static class FairnessAudit
         }
 
         return (true, $"battle replays identically over {replay.Events.Count} events");
+    }
+
+    /// <summary>
+    /// Verifies a PvE gauntlet run (F1): seed matches the commitment, entropy is the documented
+    /// derivation, and re-running <c>Gauntlet.Resolve</c> over the PRE-run hero snapshot reproduces the
+    /// waves cleared — the ghosts and fights are pure in the entropy, so the server can't have picked
+    /// soft foes. Then the capped XP and item are recomputed and checked against the SIGNED receipt, so a
+    /// server can't over-award XP (past the level-10 cap) or fabricate a drop.
+    /// </summary>
+    public static (bool Ok, string Detail) VerifyGauntlet(
+        string gauntletId, string nonce, string commitmentHex, GauntletRunResponse run)
+    {
+        var seed = Convert.FromHexString(run.ServerSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        var entropy = CommitReveal.DeriveEntropy(seed, gauntletId, run.HeroSnapshot.Id, nonce);
+        if (!Convert.ToHexString(entropy).Equals(run.EntropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, gauntletId, hero, nonce)");
+
+        var resolved = Gauntlet.Resolve(RebuildHero(run.HeroSnapshot), entropy);
+        if (resolved.WavesCleared != run.WavesCleared)
+            return (false, $"replayed waves cleared ({resolved.WavesCleared}) differs from reported ({run.WavesCleared})");
+
+        // Recompute the capped XP + item from the PRE-run level and check them against the signed receipt.
+        var expectedXp = Gauntlet.XpForRun(run.HeroSnapshot.Level, resolved.WavesCleared);
+        if (expectedXp != run.Receipt.XpAwardA)
+            return (false, $"XP mismatch: recomputed {expectedXp}, receipt awarded {run.Receipt.XpAwardA}");
+        var expectedItem = Gauntlet.RewardItem(entropy, resolved.WavesCleared);
+        if (!string.Equals(expectedItem, run.ItemAwarded, StringComparison.Ordinal))
+            return (false, $"item mismatch: recomputed {expectedItem ?? "none"}, server reported {run.ItemAwarded ?? "none"}");
+
+        return (true, $"gauntlet verifies: {resolved.WavesCleared}/{Gauntlet.WaveCount} waves, {expectedXp} xp");
     }
 }

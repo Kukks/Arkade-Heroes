@@ -14,7 +14,7 @@ namespace ArkadeHeroes.Shared;
 /// the server database is just a cache of receipt-provable state.
 /// </summary>
 public record ProgressionReceiptDto(
-    string Type,            // "match" | "breeding" | "merge"
+    string Type,            // "match" | "friendly" | "breeding" | "merge" | "absorb" | "deathmatch" | "gauntlet"
     string Id,              // matchId / breedingId / mergeId
     string HeroAId,         // challenger / parentA / base
     string HeroBId,         // defender / parentB / sacrifice
@@ -93,7 +93,8 @@ public static class ReceiptVerifier
         var level = genesis?.LevelA ?? 1;
         long xp = 0;
         foreach (var receipt in all
-                     .Where(r => r.Type == "match" && (r.HeroAId == heroId || r.HeroBId == heroId))
+                     // "gauntlet" (F1) also awards XP toward this hero's level — capped, so bounded.
+                     .Where(r => (r.Type == "match" || r.Type == "gauntlet") && (r.HeroAId == heroId || r.HeroBId == heroId))
                      .OrderBy(r => r.UnixSeconds)
                      .ThenBy(r => r.Id, StringComparer.Ordinal))
         {

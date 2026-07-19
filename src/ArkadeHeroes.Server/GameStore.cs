@@ -14,6 +14,21 @@ public class Player
     public string? LoginPubKeyHex { get; set; }
 }
 
+/// <summary>A pending PvE gauntlet run (F1): the seed is committed at open; the run resolves once the
+/// fee invoice is paid, awarding capped XP + a full-clear item, then rate-limits the hero.</summary>
+public class GauntletSession
+{
+    public required string Id { get; init; }
+    public required string PlayerId { get; init; }
+    public required string HeroId { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    public required string FeeInvoiceId { get; init; }
+    public required long FeeSats { get; init; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public bool Completed { get; set; }
+}
+
 public class BreedingSession
 {
     public required string Id { get; init; }
@@ -169,6 +184,7 @@ public class GameStore
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
     public ConcurrentDictionary<string, Hero> Heroes { get; } = new();
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
+    public ConcurrentDictionary<string, GauntletSession> Gauntlets { get; } = new();
 
     public ConcurrentDictionary<string, MergeSession> Merges { get; } = new();
 

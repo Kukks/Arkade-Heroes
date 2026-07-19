@@ -187,6 +187,23 @@ api.MapPost("/merge/{mergeId}/reveal", async (string mergeId, MergeRevealRequest
 api.MapGet("/merges/{mergeId}/escrow", async (string mergeId, IChainService chain, CancellationToken ct) =>
     await chain.GetMergeEscrowParamsAsync(mergeId, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
+// ── PvE gauntlet (F1): open (commit + fee) → pay → run (5 ghost waves) ──────
+
+api.MapPost("/gauntlet/open", async (GauntletOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, invoice) = await game.OpenGauntletAsync(player, request.HeroId, ct);
+    return Results.Ok(new GauntletOpenResponse(session.Id, session.CommitmentHex, invoice.ToDto()));
+});
+
+api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (run, xp, snapshot, item, itemAssetId, seed, entropy, receipt) = await game.RunGauntletAsync(player, id, request.Nonce, ct);
+    var waves = run.Waves.Select(w => new GauntletWaveDto(w.Wave, w.GhostLevel, w.Won)).ToList();
+    return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt));
+});
+
 // ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────
 
 api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>

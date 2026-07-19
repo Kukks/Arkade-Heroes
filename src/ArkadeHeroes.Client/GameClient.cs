@@ -228,6 +228,7 @@ public class GameClient : IAsyncDisposable
             case "breed": await BreedAsync(Arg(parts, 1, "breed <parentA> <parentB> [covenant]"), Arg(parts, 2, "breed <parentA> <parentB> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "merge": await MergeAsync(Arg(parts, 1, "merge <base> <sacrifice> [covenant]"), Arg(parts, 2, "merge <base> <sacrifice> [covenant]"), parts.Length > 3 && parts[3].Equals("covenant", StringComparison.OrdinalIgnoreCase)); break;
             case "deathmatch": await DeathMatchAsync(Arg(parts, 1, "deathmatch <mine> <theirs> [absorb]"), Arg(parts, 2, "deathmatch <mine> <theirs> [absorb]"), parts.Length > 3 && parts[3].Equals("absorb", StringComparison.OrdinalIgnoreCase)); break;
+            case "gauntlet": await GauntletAsync(Arg(parts, 1, "gauntlet <hero>")); break;
             case "accept-death": await AcceptDeathAsync(Arg(parts, 1, "accept-death <id>")); break;
             case "settle-death": await SettleDeathAsync(Arg(parts, 1, "settle-death <id>")); break;
             case "fight": await FightAsync(Arg(parts, 1, "fight <mine> <theirs>"), Arg(parts, 2, "fight <mine> <theirs>")); break;
@@ -283,6 +284,7 @@ public class GameClient : IAsyncDisposable
           breed <a> <b> [covenant]  breed two heroes; 'covenant' = emulator-enforced escrow mint
           merge <base> <sac> [covenant]  fuse two heroes into one (both consumed); concentrates traits, may be born sterile
           deathmatch <m> <t> [absorb]  STAKE YOUR HERO — the LOSER'S HERO BURNS (permadeath); 'absorb' = your winner may re-mint absorbing a trait
+          gauntlet <hero>        solo PvE — run the 5-wave ghost gauntlet for capped XP + a full-clear item
           accept-death <id>      accept a death-match (stakes your challenged hero)
           settle-death <id>      fight the death-match; the loser's hero dies (replay-audited)
           fight <mine> <theirs>  friendly battle, no stakes (replay-audited)
@@ -806,6 +808,30 @@ public class GameClient : IAsyncDisposable
     }
 
     /// <summary>Open a death-match: STAKE YOUR HERO. Winner-takes-all; the loser's hero is permanently burned.</summary>
+    /// <summary>Run the solo PvE gauntlet: open (commit + fee) → pay → run the 5 ghost waves → verify.</summary>
+    private async Task GauntletAsync(string heroRef)
+    {
+        RequireSession();
+        var hero = ResolveHero(heroRef);
+
+        var open = await _api.Gauntlet.OpenAsync(hero.Id);
+        Console.WriteLine($"  ⚔ gauntlet opened for {hero.Name} (entry fee {open.FeeInvoice.AmountSats} sats)");
+        if (!await SettleInvoiceAsync(open.FeeInvoice)) { Console.WriteLine("    couldn't pay the entry fee."); return; }
+
+        var nonce = NewNonce();
+        var run = await _api.Gauntlet.RunAsync(open.GauntletId, nonce);
+        await StoreReceiptAsync(run.Receipt);
+
+        foreach (var w in run.Waves)
+            Console.WriteLine($"    wave {w.Wave} (ghost L{w.GhostLevel}): {(w.Won ? "cleared" : "DEFEATED — run over")}");
+        Console.WriteLine($"  → {run.WavesCleared}/5 waves, +{run.XpAwarded} xp (now L{run.NewLevel})" +
+                          (run.ItemAwarded is not null ? $"; full clear won a {run.ItemAwarded}!" : ""));
+
+        // Client-audited: re-derive the ghosts + fights from the revealed seed and re-check the capped XP.
+        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run);
+        Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
+    }
+
     private async Task DeathMatchAsync(string mineRef, string theirsRef, bool absorb = false)
     {
         RequireSession();
