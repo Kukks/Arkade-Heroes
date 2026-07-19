@@ -111,10 +111,11 @@ else
         _merging = true;
         _error = null;
         _fused = null;
-        _status = "Committing, then depositing base + sacrifice + fee into the covenant escrow…";
+        _status = "Preparing the covenant…";
         try
         {
-            _fused = await Session.MergeAsync(_baseId, _sacrificeId);
+            _fused = await Session.MergeAsync(_baseId, _sacrificeId,
+                s => { _status = s; StateHasChanged(); });
             _status = null;
             _baseId = "";
             _sacrificeId = "";

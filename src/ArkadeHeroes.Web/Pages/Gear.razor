@@ -17,6 +17,10 @@
     }
 </div>
 
+@if (_buyStatus is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot wait"></span> @_buyStatus</div></div>
+}
 @if (_buyError is not null)
 {
     <div class="card"><div class="status-line"><span class="dot bad"></span> @_buyError</div></div>
@@ -94,6 +98,7 @@ else
     private bool _loading = true;
     private bool _error;
     private string? _buyingId;
+    private string? _buyStatus;
     private string? _buyError;
     private string? _justBought;
     private readonly HashSet<string> _owned = new();
@@ -111,9 +116,11 @@ else
         _buyingId = it.Id;
         _buyError = null;
         _justBought = null;
+        _buyStatus = "Preparing the purchase…";
         try
         {
-            await Session.BuyItemAsync(it.Id);
+            await Session.BuyItemAsync(it.Id,
+                s => { _buyStatus = s; StateHasChanged(); });
             _owned.Add(it.Id);
             _justBought = it.Name;
         }
@@ -124,6 +131,7 @@ else
         finally
         {
             _buyingId = null;
+            _buyStatus = null;
         }
     }
 

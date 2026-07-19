@@ -21,6 +21,10 @@
     }
 </div>
 
+@if (_buyStatus is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot wait"></span> @_buyStatus</div></div>
+}
 @if (_buyError is not null)
 {
     <div class="card"><div class="status-line"><span class="dot bad"></span> @_buyError</div></div>
@@ -91,6 +95,7 @@ else
     private bool _loading = true;
     private bool _error;
     private string? _buyingId;
+    private string? _buyStatus;
     private string? _buyError;
     private HeroDto? _bought;
 
@@ -139,9 +144,11 @@ else
         _buyingId = o.OfferId;
         _buyError = null;
         _bought = null;
+        _buyStatus = "Preparing the purchase…";
         try
         {
-            _bought = await Session.BuyHeroAsync(o.OfferId);
+            _bought = await Session.BuyHeroAsync(o.OfferId,
+                s => { _buyStatus = s; StateHasChanged(); });
             await LoadAsync();  // the offer has closed; refresh active + sold
         }
         catch (Exception ex)
@@ -151,6 +158,7 @@ else
         finally
         {
             _buyingId = null;
+            _buyStatus = null;
         }
     }
 

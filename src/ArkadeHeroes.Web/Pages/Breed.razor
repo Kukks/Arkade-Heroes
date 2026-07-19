@@ -112,10 +112,11 @@ else
         _breeding = true;
         _error = null;
         _child = null;
-        _status = "Committing, then depositing both parents + fee into the covenant escrow (a few sends)…";
+        _status = "Preparing the covenant…";
         try
         {
-            _child = await Session.BreedAsync(_parentAId, _parentBId);
+            _child = await Session.BreedAsync(_parentAId, _parentBId,
+                s => { _status = s; StateHasChanged(); });
             _status = null;
             _parentAId = "";
             _parentBId = "";
