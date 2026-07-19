@@ -134,14 +134,25 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         }
 
         // 3. Reveal — retry while the deposits settle into arkd's indexer (the funding gate).
+        //    Isolated so a timed-out reveal can be retried alone (the parents are already escrowed).
         onProgress?.Invoke("Minting the child under species control…");
+        return await RevealBreedChildAsync(commit.BreedingId, onProgress);
+    }
+
+    /// <summary>
+    /// Reveal the child for an already-funded breed commit, retrying while the escrow deposits settle
+    /// into arkd's indexer. On exhaustion throws <see cref="RevealPendingException"/> carrying the
+    /// breeding id — the UI retries THIS (not the whole flow, which would re-deposit spent parents).
+    /// </summary>
+    public async Task<HeroDto> RevealBreedChildAsync(string breedingId, Action<string>? onProgress = null)
+    {
         var nonce = RandomNonce();
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             try
             {
-                return (await api.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest(nonce))).Hero;
+                return (await api.Breeding.RevealAsync(breedingId, new BreedRevealRequest(nonce))).Hero;
             }
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("breed escrow", StringComparison.OrdinalIgnoreCase))
             {
@@ -150,8 +161,8 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
                 await Task.Delay(3000);
             }
         }
-        throw new GameWalletException(
-            $"The escrow deposits haven't settled yet — try revealing again in a moment. ({last?.Message})");
+        throw new RevealPendingException(breedingId,
+            $"The escrow deposits haven't settled yet — you can retry the reveal in a moment. ({last?.Message})");
     }
 
     /// <summary>
@@ -183,13 +194,23 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         }
 
         onProgress?.Invoke("Forging the fused hero…");
+        return await RevealMergedHeroAsync(commit.MergeId, onProgress);
+    }
+
+    /// <summary>
+    /// Reveal the fused hero for an already-funded merge commit, retrying while the escrow deposits
+    /// settle. On exhaustion throws <see cref="RevealPendingException"/> carrying the merge id — the
+    /// UI retries THIS alone (the base + sacrifice are already escrowed).
+    /// </summary>
+    public async Task<HeroDto> RevealMergedHeroAsync(string mergeId, Action<string>? onProgress = null)
+    {
         var nonce = RandomNonce();
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             try
             {
-                return (await api.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest(nonce))).Hero;
+                return (await api.Merge.RevealAsync(mergeId, new MergeRevealRequest(nonce))).Hero;
             }
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("merge escrow", StringComparison.OrdinalIgnoreCase))
             {
@@ -198,8 +219,8 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
                 await Task.Delay(3000);
             }
         }
-        throw new GameWalletException(
-            $"The escrow deposits haven't settled yet — try merging again in a moment. ({last?.Message})");
+        throw new RevealPendingException(mergeId,
+            $"The escrow deposits haven't settled yet — you can retry the reveal in a moment. ({last?.Message})");
     }
 
     /// <summary>

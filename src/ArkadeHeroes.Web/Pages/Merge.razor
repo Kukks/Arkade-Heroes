@@ -64,6 +64,10 @@ else
         {
             <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
         }
+        @if (_pendingMergeId is not null && !_merging)
+        {
+            <button class="btn" style="margin-top:.7rem" @onclick="RetryReveal">Retry reveal</button>
+        }
     </div>
 
     @if (_fused is not null)
@@ -86,6 +90,7 @@ else
     private string? _status;
     private string? _error;
     private HeroDto? _fused;
+    private string? _pendingMergeId;   // set when a reveal times out — enables "Retry reveal"
 
     protected override async Task OnInitializedAsync()
     {
@@ -111,6 +116,7 @@ else
         _merging = true;
         _error = null;
         _fused = null;
+        _pendingMergeId = null;
         _status = "Preparing the covenant…";
         try
         {
@@ -120,6 +126,46 @@ else
             _baseId = "";
             _sacrificeId = "";
             await LoadAsync();
+        }
+        catch (RevealPendingException ex)
+        {
+            // Inputs are escrowed but the reveal timed out — offer a reveal-only retry (re-running
+            // the whole flow would try to re-deposit the burned base + sacrifice).
+            _pendingMergeId = ex.PendingId;
+            _error = ex.Message;
+            _status = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _merging = false;
+        }
+    }
+
+    async Task RetryReveal()
+    {
+        if (_pendingMergeId is null) return;
+        _merging = true;
+        _error = null;
+        _status = "Retrying the reveal…";
+        try
+        {
+            _fused = await Session.RevealMergedHeroAsync(_pendingMergeId,
+                s => { _status = s; StateHasChanged(); });
+            _status = null;
+            _pendingMergeId = null;
+            _baseId = "";
+            _sacrificeId = "";
+            await LoadAsync();
+        }
+        catch (RevealPendingException ex)
+        {
+            _error = ex.Message;   // still settling — keep the pending id so they can retry again
+            _status = null;
         }
         catch (Exception ex)
         {
