@@ -170,6 +170,64 @@ public class ClientGameLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Gauntlet_ThroughTheClient_RunsVerifies_AndStoresAGauntletReceipt()
+    {
+        var home = FreshHome();
+        await using var alice = NewClient(home);
+        await alice.ExecuteAsync(["register", "LoopGauntletA"]);
+        await alice.ExecuteAsync(["starter"]);
+        await alice.ExecuteAsync(["mine"]);          // populate the client's list for the '1' ref
+        // Solo PvE end-to-end over the real dispatch: open -> pay the entry fee (InMemory dev pay) ->
+        // run the 5 ghost waves -> FairnessAudit.VerifyGauntlet, then store the signed receipt.
+        await alice.ExecuteAsync(["gauntlet", "1"]);
+
+        // The client stored a signed "gauntlet"-type receipt — the run resolved and verified through
+        // the client, not just the server API (the receipt carries no leaderboard weight).
+        var receiptsPath = Path.Combine(home, "arkade-heroes-receipts.json");
+        Assert.True(File.Exists(receiptsPath), "the gauntlet receipt should be stored in the client's data dir");
+        Assert.Contains("gauntlet", await File.ReadAllTextAsync(receiptsPath));
+    }
+
+    [Fact]
+    public async Task DeathMatch_ThroughTheClient_BurnsExactlyTheLoser()
+    {
+        var aliceHome = FreshHome();
+        await using var alice = NewClient(aliceHome);
+        await alice.ExecuteAsync(["register", "LoopDeathA"]);
+        await alice.ExecuteAsync(["starter"]);
+        var aliceId = (await HeroesAsync())[0].OwnerId;
+
+        await using var bob = NewClient(FreshHome());
+        await bob.ExecuteAsync(["register", "LoopDeathB"]);
+        await bob.ExecuteAsync(["starter"]);
+
+        var all = await HeroesAsync();
+        var aliceHero = all.First(h => h.OwnerId == aliceId);
+        var bobHero = all.First(h => h.OwnerId != aliceId);
+
+        await alice.ExecuteAsync(["heroes"]);   // populate cross-player refs
+        // The challenger's `deathmatch` gates on a typed 'yes' consent (permadeath) via Console.ReadLine.
+        var savedIn = Console.In;
+        try
+        {
+            Console.SetIn(new StringReader("yes\n"));
+            await alice.ExecuteAsync(["deathmatch", aliceHero.Id, bobHero.Id]);
+        }
+        finally { Console.SetIn(savedIn); }
+
+        var dm = Assert.Single(await _observer.DeathMatch.ListAsync());
+        await bob.ExecuteAsync(["accept-death", dm.DeathMatchId]);
+        await alice.ExecuteAsync(["settle-death", dm.DeathMatchId]);   // fight + burn + FairnessAudit.VerifyMatch
+
+        // Exactly one combatant hero is burned (the loser); the other survives — a random but total outcome.
+        var afterIds = (await HeroesAsync()).Select(h => h.Id).ToHashSet();
+        Assert.True(afterIds.Contains(aliceHero.Id) ^ afterIds.Contains(bobHero.Id),
+            "exactly one of the two staked heroes should be burned");
+        // The challenger stored the signed settle receipt (verified through the client).
+        Assert.True(File.Exists(Path.Combine(aliceHome, "arkade-heroes-receipts.json")));
+    }
+
+    [Fact]
     public async Task HeroSale_ThroughTheClient_TransfersOwnershipToTheBuyer()
     {
         await using var seller = NewClient(FreshHome());
