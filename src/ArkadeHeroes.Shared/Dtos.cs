@@ -147,7 +147,7 @@ public record GauntletOpenResponse(string GauntletId, string CommitmentHex, FeeI
 public record GauntletRunRequest(string Nonce);
 
 /// <summary>One wave's result for display; the client re-derives the ghost + fight from the seed to verify.</summary>
-public record GauntletWaveDto(int Wave, int GhostLevel, bool Won);
+public record GauntletWaveDto(int Wave, int GhostLevel, bool Won, HeroDto Ghost, BattleResultDto Result);
 
 /// <summary><see cref="HeroSnapshot"/> is the PRE-run hero, so the client replays <c>Gauntlet.Resolve</c>
 /// and re-checks the awarded XP (level-10 cap) + item via <c>FairnessAudit.VerifyGauntlet</c>.</summary>

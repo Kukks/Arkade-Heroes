@@ -61,42 +61,55 @@ else
             <span class="hud">@_outcome.Run.WavesCleared / 5 waves</span>
         </div>
 
-        <div class="grid cols">
-            @foreach (var wv in _outcome.Run.Waves)
-            {
-                <div class="card" style="text-align:center">
-                    <div class="chip mono">Wave @wv.Wave</div>
-                    <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
-                    <div class="status-line" style="justify-content:center">
-                        <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
+        @if (_replaying && _waveIndex < _outcome.Run.Waves.Count)
+        {
+            var w = _outcome.Run.Waves[_waveIndex];
+            <div class="status-line" style="justify-content:center;gap:.7rem;margin-bottom:.5rem">
+                <span class="chip mono">Wave @w.Wave / 5</span>
+                <span class="muted">ghost L@w.GhostLevel</span>
+                <button class="btn ghost sm" @onclick="SkipReplay">Skip ▶▶</button>
+            </div>
+            <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
+        }
+        else
+        {
+            <div class="grid cols">
+                @foreach (var wv in _outcome.Run.Waves)
+                {
+                    <div class="card" style="text-align:center">
+                        <div class="chip mono">Wave @wv.Wave</div>
+                        <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
+                        <div class="status-line" style="justify-content:center">
+                            <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
+                        </div>
                     </div>
-                </div>
-            }
-        </div>
+                }
+            </div>
 
-        <div class="card" style="margin-top:1.2rem">
-            <div class="status-line">
-                <span class="dot ok"></span>
-                <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
-            </div>
-            @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
-            {
-                <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
-            }
-            @if (_outcome.Run.ItemAwarded is not null)
-            {
-                <div class="gear-tile" style="margin:.9rem auto 0;max-width:140px"><ItemSprite ItemId="@_outcome.Run.ItemAwarded" Size="104" /></div>
-                <div class="status-line" style="justify-content:center;margin-top:.4rem">
-                    <span class="dot ok"></span> Full clear! Won <b>@_outcome.Run.ItemAwarded</b> — equip it from a hero's page.
+            <div class="card" style="margin-top:1.2rem">
+                <div class="status-line">
+                    <span class="dot ok"></span>
+                    <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
                 </div>
-            }
-            <div class="status-line" style="margin-top:.7rem">
-                <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
-                <span class="mono" style="font-size:.78rem">
-                    @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
-                </span>
+                @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
+                {
+                    <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
+                }
+                @if (_outcome.Run.ItemAwarded is not null)
+                {
+                    <div class="gear-tile" style="margin:.9rem auto 0;max-width:140px"><ItemSprite ItemId="@_outcome.Run.ItemAwarded" Size="104" /></div>
+                    <div class="status-line" style="justify-content:center;margin-top:.4rem">
+                        <span class="dot ok"></span> Full clear! Won <b>@_outcome.Run.ItemAwarded</b> — equip it from a hero's page.
+                    </div>
+                }
+                <div class="status-line" style="margin-top:.7rem">
+                    <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
+                    <span class="mono" style="font-size:.78rem">
+                        @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
+                    </span>
+                </div>
             </div>
-        </div>
+        }
     }
 }
 
@@ -109,6 +122,8 @@ else
     private string? _status;
     private string? _error;
     private GauntletOutcome? _outcome;
+    private int _waveIndex;      // the wave currently animating in the arena
+    private bool _replaying;     // true while the run replays wave-by-wave, before the summary reveals
 
     protected override async Task OnInitializedAsync()
     {
@@ -139,6 +154,8 @@ else
         {
             _outcome = await Session.RunGauntletAsync(_heroId, s => { _status = s; StateHasChanged(); });
             _status = null;
+            _waveIndex = 0;
+            _replaying = _outcome.Run.Waves.Count > 0;   // cinematic wave-by-wave replay before the summary
             await LoadAsync();   // the hero may have leveled up — refresh the roster
         }
         catch (Exception ex)
@@ -151,6 +168,18 @@ else
             _running = false;
         }
     }
+
+    // The arena fires this when a wave's replay finishes: advance to the next wave, or — after the
+    // last one — reveal the run summary + rewards.
+    void NextWave()
+    {
+        if (_outcome is null) return;
+        if (_waveIndex + 1 < _outcome.Run.Waves.Count) _waveIndex++;
+        else _replaying = false;
+        StateHasChanged();
+    }
+
+    void SkipReplay() { _replaying = false; StateHasChanged(); }
 
     void OnState() => InvokeAsync(async () =>
     {

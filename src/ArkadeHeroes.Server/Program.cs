@@ -200,7 +200,14 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
 {
     var player = game.Authenticate(BearerToken(http));
     var (run, xp, snapshot, item, itemAssetId, seed, entropy, receipt) = await game.RunGauntletAsync(player, id, request.Nonce, ct);
-    var waves = run.Waves.Select(w => new GauntletWaveDto(w.Wave, w.GhostLevel, w.Won)).ToList();
+    // Surface each wave's ghost snapshot + fight log so the browser can replay the wave in the arena.
+    // The ghost is a pure function of the run entropy + the PRE-run hero level (snapshot.Level), so this
+    // reconstructs exactly what Gauntlet.Resolve fought — no soft-foe substitution possible.
+    var entropyBytes = Convert.FromHexString(entropy);
+    var waves = run.Waves.Select(w => new GauntletWaveDto(
+        w.Wave, w.GhostLevel, w.Won,
+        ArkadeHeroes.Core.Progression.Gauntlet.GhostFor(entropyBytes, w.Wave, snapshot.Level).ToDto(),
+        w.Result.ToDto())).ToList();
     return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt));
 });
 
