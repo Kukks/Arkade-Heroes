@@ -13,7 +13,7 @@
 
 @if (!State.IsSignedIn)
 {
-    <div class="card muted">Sign in with your wallet on the <a href="wallet">Wallet</a> page to breed your heroes.</div>
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then breed your heroes.</div>
 }
 else if (_loading)
 {
@@ -21,7 +21,7 @@ else if (_loading)
 }
 else if (_fertile.Count < 2)
 {
-    <div class="card muted">You need at least two fertile heroes — claim your starters (or breed more) first.</div>
+    <div class="card muted">You need at least two fertile heroes — claim your starters on the <a href="heroes">Heroes</a> page first.</div>
 }
 else
 {

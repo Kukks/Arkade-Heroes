@@ -213,6 +213,12 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .dot.bad { background: var(--danger); }
 .dot.wait { background: var(--gold); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
+/* Design-review polish: keyboard focus ring, CTA burst, reduced-motion coverage */
+a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-visible, .offer-card:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+}
+.btn.primary:active { box-shadow: 0 0 34px -2px rgba(53,240,208,.9); }
+@media (prefers-reduced-motion: reduce) { .dot.wait { animation: none; } .boot-bar span { animation: none; } }
 
 .muted { color: var(--muted); }
 .mono { font-family: var(--font-hud); }
@@ -446,13 +452,13 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
     background: repeating-linear-gradient(112deg,
         rgba(255,60,140,.55) 0%, rgba(255,220,60,.55) 9%, rgba(70,255,180,.55) 18%,
         rgba(60,170,255,.55) 27%, rgba(190,80,255,.55) 36%, rgba(255,60,140,.55) 45%);
-    background-size: 300% 300%; transition: opacity .25s ease;
+    background-size: 300% 300%; transition: opacity .25s ease, background-position .6s ease;
 }
 .hero-tile.tier-1 .hero-foil, .offer-tile.tier-1 .hero-foil { opacity: .06; }
 .hero-tile.tier-2 .hero-foil, .offer-tile.tier-2 .hero-foil { opacity: .13; }
 .hero-tile.tier-3 .hero-foil, .offer-tile.tier-3 .hero-foil { opacity: .20; }
 .hero-tile.tier-4 .hero-foil, .offer-tile.tier-4 .hero-foil { opacity: .30; animation: foil-drift 7s ease-in-out infinite alternate; }
-.hero-card:hover .hero-tile .hero-foil, .offer-card:hover .offer-tile .hero-foil { opacity: .34; }
+.hero-card:hover .hero-tile .hero-foil, .offer-card:hover .offer-tile .hero-foil { opacity: .34; background-position: 60% 60%; }
 @keyframes foil-drift { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
 .rar-pips { display: flex; gap: 3px; }
 .rar-pips .pip { height: 3px; flex: 1; border-radius: 2px; background: rgba(255,255,255,.09); }

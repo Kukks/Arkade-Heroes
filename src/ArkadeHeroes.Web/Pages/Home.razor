@@ -29,7 +29,7 @@
             @* Game-first onboarding: pick a name and play. The wallet is provisioned behind the scenes. *@
             <div class="play-box">
                 <input class="wallet-input" @bind="_name" @bind:event="oninput" @onkeydown="OnKey"
-                       placeholder="your arena name" maxlength="24" disabled="@_starting" />
+                       placeholder="your arena name" aria-label="Arena name" maxlength="24" disabled="@_starting" />
                 <button class="btn primary" @onclick="Play" disabled="@(_starting || string.IsNullOrWhiteSpace(_name))">
                     @(_starting ? "Summoning…" : "Play →")
                 </button>

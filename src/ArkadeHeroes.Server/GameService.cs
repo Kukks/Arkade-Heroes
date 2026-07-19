@@ -897,8 +897,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         }
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        // Friendly (unstaked) fights are practice: they carry no XP and must NOT feed the
+        // ranked leaderboard (else a lone player could farm free wins to #1). Tag them so
+        // LeaderboardBuilder — which counts only "match" receipts — ignores them.
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
-                "match", session.Id, challenger.Id, defender.Id, result.WinnerId,
+                session.WagerSats > 0 ? "match" : "friendly", session.Id, challenger.Id, defender.Id, result.WinnerId,
                 serverSeedHexOut, nonce, session.CommitmentHex,
                 challengerDelta,
                 defenderDelta,

@@ -5,7 +5,7 @@
 @inject IJSRuntime JS
 
 <img class="item-px" style="width:@(Size)px;height:@(Size)px;image-rendering:pixelated;display:block"
-     src="@_src" alt="@ItemId" draggable="false" />
+     src="@_src" alt="@(ItemId?.Replace('-', ' '))" draggable="false" />
 
 @code {
     [Parameter, EditorRequired] public string ItemId { get; set; } = default!;

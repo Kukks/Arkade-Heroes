@@ -16,7 +16,7 @@
             <a href="market" class="@(Section == "market" ? "active" : "")">Market</a>
         </nav>
         <span class="spacer"></span>
-        <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@(Wallet.Connected ? Wallet.ActiveAddress : "Create or import a wallet")">
+        <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@(Wallet.Connected ? Wallet.ActiveAddress : "Set up automatically when you press Play")">
             <span class="dot"></span>
             @if (Wallet.Connected)
             {
