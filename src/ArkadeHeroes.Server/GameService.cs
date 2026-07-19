@@ -526,7 +526,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             SpeciesId = speciesId,
         };
         store.DeathMatches[session.Id] = session;
-        var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
+        // Favorability from realized POWER (F18) — gear is staked here, so a level read would lie.
+        var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level,
+            Matchmaking.PowerFavor(PowerScore.Compute(challenger, _config), PowerScore.Compute(defender, _config)));
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(id, ct);
         return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
@@ -804,15 +806,24 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     public IReadOnlyList<Shared.OpponentSuggestionDto> SuggestOpponents(Player player, string heroId, int? take = null)
     {
         var hero = GetOwnedHero(player, heroId);
+        var heroPower = PowerScore.Compute(hero, _config);
         return store.Heroes.Values
             .Where(h => h.OwnerId != player.Id)
-            .Select(h => new Shared.OpponentSuggestionDto(
-                h.ToDto(), h.OwnerId,
-                Matchmaking.LevelGap(hero.Level, h.Level),
-                Matchmaking.XpIfWin(hero.Level, h.Level),
-                Matchmaking.XpIfLose(hero.Level, h.Level)))
-            .OrderBy(s => s.LevelGap)
-            .ThenByDescending(s => s.Hero.Level)
+            .Select(h =>
+            {
+                var oppPower = PowerScore.Compute(h, _config);
+                return new Shared.OpponentSuggestionDto(
+                    h.ToDto(), h.OwnerId,
+                    Matchmaking.LevelGap(hero.Level, h.Level),
+                    Matchmaking.XpIfWin(hero.Level, h.Level),
+                    Matchmaking.XpIfLose(hero.Level, h.Level),
+                    oppPower,
+                    Matchmaking.PowerGapPercent(heroPower, oppPower));
+            })
+            // Closest realized-power fights first (F18); level gap + a stable id keep a total order.
+            .OrderBy(s => s.PowerGapPercent)
+            .ThenBy(s => s.LevelGap)
+            .ThenBy(s => s.Hero.Id, StringComparer.Ordinal)
             .Take(take ?? _config.MatchmakingTake)
             .ToList();
     }

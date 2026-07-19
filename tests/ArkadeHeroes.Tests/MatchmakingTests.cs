@@ -72,4 +72,24 @@ public class MatchmakingTests : IDisposable
     [InlineData(13, 10, "favored")]  // 3 up
     public void Favor_LabelsByLevelGap(int mine, int theirs, string expected)
         => Assert.Equal(expected, Matchmaking.Favor(mine, theirs));
+
+    [Fact]
+    public async Task Suggestions_CarryPowerScore_OrderedByPowerGap()
+    {
+        var (alice, _) = await _factory.RegisterAsync("MM-Power-A");
+        var (bob, _) = await _factory.RegisterAsync("MM-Power-B");
+        var mine = (await alice.ClaimStartersAsync())[0];
+        await bob.ClaimStartersAsync();
+        var store = _factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[mine.Id].Level = 6;
+
+        var opps = await alice.Matches.MatchmakingAsync(mine.Id);
+
+        Assert.NotEmpty(opps);
+        Assert.All(opps, o => Assert.True(o.PowerScore > 0, "each suggestion carries a realized power score"));
+        // F18's primary key: suggestions ordered by ascending realized-power gap.
+        for (var i = 1; i < opps.Count; i++)
+            Assert.True(opps[i].PowerGapPercent >= opps[i - 1].PowerGapPercent,
+                $"ordered by power gap ({opps[i - 1].PowerGapPercent} then {opps[i].PowerGapPercent})");
+    }
 }

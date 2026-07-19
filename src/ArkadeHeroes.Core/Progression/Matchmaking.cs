@@ -24,4 +24,19 @@ public static class Matchmaking
         <= -3 => "underdog",
         _ => "even",
     };
+
+    // ── Power-score matchmaking (F18): same-level heroes vary wildly (traits, gear, rarity) ──
+
+    /// <summary>How far apart two heroes are in realized power, as a percent of the stronger — the
+    /// primary matchmaking key. A geared level-8 and a naked level-10 can be a closer fight than LevelGap shows.</summary>
+    public static int PowerGapPercent(int heroPower, int opponentPower)
+        => (int)Math.Round(Math.Abs(heroPower - opponentPower) * 100.0 / Math.Max(1, Math.Max(heroPower, opponentPower)));
+
+    /// <summary>Coarse favorability from realized POWER, not level — the honest read where gear is staked
+    /// (death-match). Favored ≥ 1.15× the opponent's power, underdog ≤ 0.87×, else even.</summary>
+    public static string PowerFavor(int heroPower, int opponentPower)
+    {
+        var ratio = heroPower / (double)Math.Max(1, opponentPower);
+        return ratio >= 1.15 ? "favored" : ratio <= 0.87 ? "underdog" : "even";
+    }
 }
