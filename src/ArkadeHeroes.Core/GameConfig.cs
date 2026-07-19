@@ -33,6 +33,8 @@ public sealed record GameConfig(
     long MergeFeeSats,          // flat merge fee
     long MatchFeeBaseSats,      // per-character staked-match fee base
     long MatchFeePerLevel,      // per-character staked-match fee per level
+    int DeathMatchFeeMultiplier, // death-match fee = this × MatchFee (classic permadeath)
+    int AbsorbFeeMultiplier,     // death-match fee = this × MatchFee (absorb mode, costs more)
     int BreedFeeDoublingCap,    // breed-fee doubling cap (2^min(breeds, cap))
     int MatchmakingTake)        // suggested-opponents page size
 {
@@ -51,6 +53,8 @@ public sealed record GameConfig(
         MergeFeeSats: 1_000,
         MatchFeeBaseSats: Leveling.MatchFeeBaseSats,
         MatchFeePerLevel: Leveling.MatchFeePerLevel,
+        DeathMatchFeeMultiplier: Leveling.DeathMatchFeeMultiplier,
+        AbsorbFeeMultiplier: Leveling.AbsorbFeeMultiplier,
         BreedFeeDoublingCap: BreedingPolicy.FeeDoublingCap,
         MatchmakingTake: 10);
 }

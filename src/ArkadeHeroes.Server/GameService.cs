@@ -476,7 +476,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
     // ── Death-match: open → both stake a hero → settle (loser's hero burns) ──
 
-    public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability, IReadOnlyList<Shared.GearStakeDto> ChallengerGear, IReadOnlyList<Shared.GearStakeDto> DefenderGear)> OpenDeathMatchAsync(
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability, IReadOnlyList<Shared.GearStakeDto> ChallengerGear, IReadOnlyList<Shared.GearStakeDto> DefenderGear, FeeInvoice ChallengerFeeInvoice)> OpenDeathMatchAsync(
         Player player, string challengerHeroId, string defenderHeroId, bool absorb, CancellationToken ct)
     {
         var challenger = GetOwnedHero(player, challengerHeroId);
@@ -505,9 +505,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             Convert.FromHexString(commitment), receipts.PublicKeyHex, refundAfter,
             challengerGearIds, defenderGearIds, absorb: absorb, speciesId: speciesId, ct: ct);
 
+        // Per-character death-match fee (level-scaled treasury sink) — both sides' fees gate settle.
+        var feeInvoice = await chain.CreateFeeInvoiceAsync(
+            $"dm-fee:challenger:{id}", Leveling.DeathMatchFee(challenger.Level, absorb, _config), ct);
+
         var session = new DeathMatchSession
         {
             Id = id,
+            ChallengerFeeInvoiceId = feeInvoice.InvoiceId,
             ChallengerPlayerId = player.Id,
             DefenderPlayerId = defender.OwnerId,
             ChallengerHeroId = challengerHeroId,
@@ -523,14 +528,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         store.DeathMatches[session.Id] = session;
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level, Matchmaking.Favor(challenger.Level, defender.Level));
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(id, ct);
-        return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear));
+        return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
 
     /// <summary>The chain-resolved gear stakes as client-facing deposit instructions (ItemId is display provenance; AssetId is what gets sent).</summary>
     private static IReadOnlyList<Shared.GearStakeDto> MapGearDtos(IReadOnlyList<Chain.Covenants.GearStake>? stakes)
         => stakes?.Select(s => new Shared.GearStakeDto(s.ItemId ?? s.AssetId, s.AssetId, s.Amount)).ToList() ?? [];
 
-    public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender, IReadOnlyList<Shared.GearStakeDto> DefenderGear)> AcceptDeathMatchAsync(
+    public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender, IReadOnlyList<Shared.GearStakeDto> DefenderGear, FeeInvoice DefenderFeeInvoice)> AcceptDeathMatchAsync(
         Player player, string deathMatchId, CancellationToken ct)
     {
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
@@ -545,8 +550,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // staking the defender's hero (+ their baked gear) into the SAME joint address
         // (consent = staking).
         session.Accepted = true;
+        // Defender's death-match fee — mirrors the wager defender fee; gated at settle.
+        var feeInvoice = await chain.CreateFeeInvoiceAsync(
+            $"dm-fee:defender:{deathMatchId}", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config), ct);
+        session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(deathMatchId, ct);
-        return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear));
+        return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
 
     public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt, bool Minted, int TraitsAbsorbed, string? NewGenomeHex, Shared.HeroDto? NewHero)> SettleDeathMatchAsync(
@@ -562,6 +571,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // Both players must have staked their hero into the one joint escrow.
         if (!await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, ct))
             throw new GameRuleException("Both players must stake their hero before the death-match settles.");
+
+        // Both per-character death-match fees must be paid (mirrors the wager fight gate; never blocks the refund path).
+        if (session.ChallengerFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.ChallengerFeeInvoiceId, ct))
+            throw new GameRuleException("The challenger's death-match fee hasn't been paid yet.");
+        if (session.DefenderFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderFeeInvoiceId, ct))
+            throw new GameRuleException("The defender's death-match fee hasn't been paid yet.");
 
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);

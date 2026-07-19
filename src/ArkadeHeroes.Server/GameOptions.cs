@@ -32,6 +32,8 @@ public class GameOptions
     //    Core consts so there is a single literal source; an operator overrides via config. ──
     public long MatchFeeBaseSats { get; set; } = Leveling.MatchFeeBaseSats;      // 500
     public long MatchFeePerLevel { get; set; } = Leveling.MatchFeePerLevel;      // 20
+    public int DeathMatchFeeMultiplier { get; set; } = Leveling.DeathMatchFeeMultiplier; // 2× MatchFee
+    public int AbsorbFeeMultiplier { get; set; } = Leveling.AbsorbFeeMultiplier;         // 3× MatchFee
     public int BreedFeeDoublingCap { get; set; } = BreedingPolicy.FeeDoublingCap; // 3
     public int MatchmakingTake { get; set; } = 10;
 
@@ -50,6 +52,8 @@ public class GameOptions
         MergeFeeSats: MergeFeeSats,
         MatchFeeBaseSats: MatchFeeBaseSats,
         MatchFeePerLevel: MatchFeePerLevel,
+        DeathMatchFeeMultiplier: DeathMatchFeeMultiplier,
+        AbsorbFeeMultiplier: AbsorbFeeMultiplier,
         BreedFeeDoublingCap: BreedFeeDoublingCap,
         MatchmakingTake: MatchmakingTake);
 }
