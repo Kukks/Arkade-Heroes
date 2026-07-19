@@ -51,10 +51,12 @@ public class MatchmakingTests : IDisposable
         var peer = suggestions.First(s => s.Hero.Id == bobHeroes[0].Id);
         var far = suggestions.First(s => s.Hero.Id == bobHeroes[1].Id);
 
-        // Closest level first: the peer (gap 0) outranks the far hero (gap 7).
+        // LevelGap annotations stay level-based (peer gap 0, far gap 7). Ordering is now by realized
+        // POWER (F18) — not a level-vs-power coincidence, so it's asserted in
+        // Suggestions_CarryPowerScore_OrderedByPowerGap, not here (random starter genomes make a
+        // level-order assertion flaky against the power ordering).
         Assert.Equal(0, peer.LevelGap);
         Assert.Equal(7, far.LevelGap);
-        Assert.True(suggestions.IndexOf(peer) < suggestions.IndexOf(far), "peer should outrank the far hero");
 
         // XP swings are the conserved transfer for Alice's level-5 hero.
         Assert.Equal(Leveling.XpTransfer(5, 5), peer.XpIfYouWin);   // peer win: the base
