@@ -37,7 +37,7 @@ else
         </p>
         <div class="breed-picks">
             <label>Red corner
-                <select @bind="_aId" @bind:after="Stage">
+                <select @bind="_aId" @bind:after="Stage" disabled="@_fighting">
                     <option value="">— pick —</option>
                     @foreach (var h in _heroes)
                     {
@@ -47,7 +47,7 @@ else
             </label>
             <span class="breed-plus vs-plus">VS</span>
             <label>Blue corner
-                <select @bind="_bId" @bind:after="Stage">
+                <select @bind="_bId" @bind:after="Stage" disabled="@_fighting">
                     <option value="">— pick —</option>
                     @foreach (var h in _heroes)
                     {

@@ -5,7 +5,7 @@
 @inject IJSRuntime JS
 
 <img class="hero-px" style="width:@(Size)px;height:@(Size)px;image-rendering:pixelated;display:block"
-     src="@_src" alt="hero" draggable="false" />
+     src="@_src" alt="@($"{Hero.Name} — pixel portrait")" draggable="false" />
 
 @code {
     [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;

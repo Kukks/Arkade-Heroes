@@ -108,12 +108,13 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// reveal. The server assembles the covenant mint (child under species to the player).
     /// Returns the child hero.
     /// </summary>
-    public async Task<HeroDto> BreedAsync(string parentAId, string parentBId)
+    public async Task<HeroDto> BreedAsync(string parentAId, string parentBId, Action<string>? onProgress = null)
     {
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
 
         // 1. Commit (covenant mode) — the server returns the escrow address + fee.
+        onProgress?.Invoke("Sealing the breeding covenant…");
         var commit = await api.Breeding.CommitAsync(new BreedCommitRequest(parentAId, parentBId, "covenant"));
         if (string.IsNullOrEmpty(commit.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
@@ -122,28 +123,46 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         //    each waiting for its spend to settle before the next so they don't contend for one coin.
         var heroA = await api.Heroes.GetAsync(parentAId);
         var heroB = await api.Heroes.GetAsync(parentBId);
+        onProgress?.Invoke("Escrowing the first parent…");
         await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 0);
+        onProgress?.Invoke("Escrowing the second parent…");
         await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 0);
         if (commit.EscrowFeeSats > 0)
+        {
+            onProgress?.Invoke("Paying the breeding fee…");
             await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.EscrowFeeSats);
+        }
 
         // 3. Reveal — retry while the deposits settle into arkd's indexer (the funding gate).
+        //    Isolated so a timed-out reveal can be retried alone (the parents are already escrowed).
+        onProgress?.Invoke("Minting the child under species control…");
+        return await RevealBreedChildAsync(commit.BreedingId, onProgress);
+    }
+
+    /// <summary>
+    /// Reveal the child for an already-funded breed commit, retrying while the escrow deposits settle
+    /// into arkd's indexer. On exhaustion throws <see cref="RevealPendingException"/> carrying the
+    /// breeding id — the UI retries THIS (not the whole flow, which would re-deposit spent parents).
+    /// </summary>
+    public async Task<HeroDto> RevealBreedChildAsync(string breedingId, Action<string>? onProgress = null)
+    {
         var nonce = RandomNonce();
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             try
             {
-                return (await api.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest(nonce))).Hero;
+                return (await api.Breeding.RevealAsync(breedingId, new BreedRevealRequest(nonce))).Hero;
             }
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("breed escrow", StringComparison.OrdinalIgnoreCase))
             {
                 last = ex;
+                onProgress?.Invoke($"Escrow still settling — retrying ({attempt + 1}/20)…");
                 await Task.Delay(3000);
             }
         }
-        throw new GameWalletException(
-            $"The escrow deposits haven't settled yet — try revealing again in a moment. ({last?.Message})");
+        throw new RevealPendingException(breedingId,
+            $"The escrow deposits haven't settled yet — you can retry the reveal in a moment. ({last?.Message})");
     }
 
     /// <summary>
@@ -152,38 +171,56 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// The server burns both inputs and mints ONE trait-concentrated fused hero to the player.
     /// Returns the fused hero.
     /// </summary>
-    public async Task<HeroDto> MergeAsync(string baseId, string sacrificeId)
+    public async Task<HeroDto> MergeAsync(string baseId, string sacrificeId, Action<string>? onProgress = null)
     {
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
 
+        onProgress?.Invoke("Sealing the fusion covenant…");
         var commit = await api.Merge.CommitAsync(new MergeCommitRequest(baseId, sacrificeId, "covenant"));
         if (string.IsNullOrEmpty(commit.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
         var heroBase = await api.Heroes.GetAsync(baseId);
         var heroSac = await api.Heroes.GetAsync(sacrificeId);
+        onProgress?.Invoke("Escrowing the base hero…");
         await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 0);
+        onProgress?.Invoke("Escrowing the sacrifice…");
         await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 0);
         if (commit.FeeSats > 0)
+        {
+            onProgress?.Invoke("Paying the fusion fee…");
             await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.FeeSats);
+        }
 
+        onProgress?.Invoke("Forging the fused hero…");
+        return await RevealMergedHeroAsync(commit.MergeId, onProgress);
+    }
+
+    /// <summary>
+    /// Reveal the fused hero for an already-funded merge commit, retrying while the escrow deposits
+    /// settle. On exhaustion throws <see cref="RevealPendingException"/> carrying the merge id — the
+    /// UI retries THIS alone (the base + sacrifice are already escrowed).
+    /// </summary>
+    public async Task<HeroDto> RevealMergedHeroAsync(string mergeId, Action<string>? onProgress = null)
+    {
         var nonce = RandomNonce();
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             try
             {
-                return (await api.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest(nonce))).Hero;
+                return (await api.Merge.RevealAsync(mergeId, new MergeRevealRequest(nonce))).Hero;
             }
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("merge escrow", StringComparison.OrdinalIgnoreCase))
             {
                 last = ex;
+                onProgress?.Invoke($"Escrow still settling — retrying ({attempt + 1}/20)…");
                 await Task.Delay(3000);
             }
         }
-        throw new GameWalletException(
-            $"The escrow deposits haven't settled yet — try merging again in a moment. ({last?.Message})");
+        throw new RevealPendingException(mergeId,
+            $"The escrow deposits haven't settled yet — you can retry the reveal in a moment. ({last?.Message})");
     }
 
     /// <summary>
@@ -192,18 +229,21 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// — a single non-custodial send. Once the deposit is observed on-chain the offer rests
     /// <c>active</c> on the market for any buyer to fulfil trustlessly. Returns the resting offer.
     /// </summary>
-    public async Task<OfferDto> ListHeroAsync(string heroId, long askSats)
+    public async Task<OfferDto> ListHeroAsync(string heroId, long askSats, Action<string>? onProgress = null)
     {
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
 
         // 1. Create the offer — the server returns the offer address + the hero's asset id.
+        onProgress?.Invoke("Drafting the sale covenant…");
         var offer = await api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, askSats));
 
         // 2. Deposit the hero (one asset unit) into the offer address, waiting for the spend to settle.
+        onProgress?.Invoke("Escrowing your hero into the offer…");
         await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
 
         // 3. Poll until the server observes the funded offer resting active on the market.
+        onProgress?.Invoke("Waiting for the offer to rest on the market…");
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(90);
         var resting = await api.Offers.GetAsync(offer.OfferId);
         while (resting.Status != "active" && DateTimeOffset.UtcNow < deadline)
@@ -221,11 +261,12 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// Then claim game-side ownership. Non-custodial: the server never touches the buyer's key.
     /// Returns the bought hero.
     /// </summary>
-    public async Task<HeroDto> BuyHeroAsync(string offerId)
+    public async Task<HeroDto> BuyHeroAsync(string offerId, Action<string>? onProgress = null)
     {
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
 
+        onProgress?.Invoke("Rebuilding the offer covenant…");
         var offer = await api.Offers.ParamsAsync(offerId);
         var info = await api.Chain.InfoAsync();
         if (string.IsNullOrEmpty(info.EmulatorUri))
@@ -239,9 +280,11 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
         // Fulfil the offer covenant from THIS wallet's NArk services (the browser's DI graph):
         // pay the ask, take the hero. Trustless — the contract is rebuilt from the public params.
+        onProgress?.Invoke("Paying the seller & taking the hero…");
         await OfferFulfillFlow.FulfillAsync(services, w.Id, address, new Uri(info.EmulatorUri), offer);
 
         // Claim game-side ownership — retry while the hero lands + the server observes it on-chain.
+        onProgress?.Invoke("Claiming ownership…");
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
@@ -252,6 +295,7 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("chain does not show", StringComparison.OrdinalIgnoreCase))
             {
                 last = ex;
+                onProgress?.Invoke($"Waiting for the hero to sync ({attempt + 1}/20)…");
                 await Task.Delay(3000);
             }
         }
@@ -265,15 +309,20 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// the server verifies payment on-chain and delivers a fungible item-asset unit to the player.
     /// Returns the delivered asset id + units now held. Retries the claim while the payment settles.
     /// </summary>
-    public async Task<ClaimItemResponse> BuyItemAsync(string itemId)
+    public async Task<ClaimItemResponse> BuyItemAsync(string itemId, Action<string>? onProgress = null)
     {
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
 
+        onProgress?.Invoke("Requesting a payment invoice…");
         var invoice = (await api.Items.BuyAsync(itemId)).Invoice;
         if (invoice.AmountSats > 0)
+        {
+            onProgress?.Invoke("Paying for the item…");
             await DepositAndSettleAsync(w.Id, invoice.PayToAddress, null, invoice.AmountSats);
+        }
 
+        onProgress?.Invoke("Delivering your item…");
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20; attempt++)
         {
@@ -284,6 +333,7 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("not been paid", StringComparison.OrdinalIgnoreCase))
             {
                 last = ex;
+                onProgress?.Invoke($"Waiting for payment to settle ({attempt + 1}/20)…");
                 await Task.Delay(3000);
             }
         }

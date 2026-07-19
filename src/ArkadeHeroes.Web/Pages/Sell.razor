@@ -13,7 +13,7 @@
 
 @if (!State.IsSignedIn)
 {
-    <div class="card muted">Sign in with your wallet on the <a href="wallet">Wallet</a> page to list a hero for sale.</div>
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then come back to list a hero for sale.</div>
 }
 else if (_loading)
 {
@@ -29,7 +29,7 @@ else
         <p class="muted" style="margin-top:0">
             List one of your heroes at a fixed ask. Your wallet deposits the hero into a covenant offer
             address; it rests on the market until a buyer pays the ask straight to you and the covenant
-            hands them the hero — no custodian, no middleman. Cancel any time to reclaim it.
+            hands them the hero — no custodian, no middleman.
         </p>
         <div class="sell-picks">
             <label>Hero
@@ -107,10 +107,11 @@ else
         _error = null;
         _listed = null;
         _listedHero = _mine.FirstOrDefault(h => h.Id == _heroId);
-        _status = "Creating the offer, then depositing the hero into the covenant offer address…";
+        _status = "Preparing the offer…";
         try
         {
-            _listed = await Session.ListHeroAsync(_heroId, _ask);
+            _listed = await Session.ListHeroAsync(_heroId, _ask,
+                s => { _status = s; StateHasChanged(); });
             _status = null;
             _heroId = "";
             await LoadAsync();  // the listed hero has left the wallet

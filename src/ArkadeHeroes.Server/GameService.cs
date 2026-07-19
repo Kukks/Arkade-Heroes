@@ -897,8 +897,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         }
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        // Friendly (unstaked) fights are practice: they carry no XP and must NOT feed the
+        // ranked leaderboard (else a lone player could farm free wins to #1). Tag them so
+        // LeaderboardBuilder — which counts only "match" receipts — ignores them.
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
-                "match", session.Id, challenger.Id, defender.Id, result.WinnerId,
+                session.WagerSats > 0 ? "match" : "friendly", session.Id, challenger.Id, defender.Id, result.WinnerId,
                 serverSeedHexOut, nonce, session.CommitmentHex,
                 challengerDelta,
                 defenderDelta,
@@ -1008,6 +1011,20 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             purchase.Status = "pending";
             throw;
         }
+    }
+
+    /// <summary>
+    /// The catalog item ids the player currently holds at least one unit of — the shop marks these
+    /// as owned. Ownership is on-chain (the same balance the equip check reads), so it survives
+    /// across sessions with no server-side inventory bookkeeping.
+    /// </summary>
+    public async Task<List<string>> OwnedItemIdsAsync(Player player, CancellationToken ct)
+    {
+        var owned = new List<string>();
+        foreach (var item in Core.Equipment.ItemCatalog.All)
+            if (await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct) > 0)
+                owned.Add(item.Id);
+        return owned;
     }
 
     public async Task<Hero> EquipAsync(Player player, string heroId, string itemId, CancellationToken ct)

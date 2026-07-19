@@ -306,6 +306,13 @@ api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest r
 
 api.MapGet("/items", () => Results.Ok(ItemCatalog.All.Select(i => i.ToDto()).ToList()));
 
+// The catalog ids the signed-in player already owns — lets the shop mark them without re-buying.
+api.MapGet("/items/mine", async (HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(await game.OwnedItemIdsAsync(player, ct));
+});
+
 api.MapPost("/items/{itemId}/buy", async (string itemId, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));

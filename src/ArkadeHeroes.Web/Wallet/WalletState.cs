@@ -1,4 +1,5 @@
 using ArkadeHeroes.Shared;
+using Microsoft.JSInterop;
 using NArk.Abstractions.Contracts;
 using NArk.Abstractions.VTXOs;
 
@@ -14,6 +15,8 @@ public class WalletState : IDisposable
 {
     private readonly IVtxoStorage _vtxoStorage;
     private readonly IContractStorage _contractStorage;
+    private readonly IJSRuntime _js;
+    private const string BackupPendingKey = "ah:backup-pending";
 
     public string? ActiveWalletId { get; private set; }
     public string? ActiveAddress { get; private set; }
@@ -36,10 +39,11 @@ public class WalletState : IDisposable
     /// <summary>Fired whenever the active wallet or its balance changes, or the SDK syncs new VTXOs/contracts.</summary>
     public event Action? OnChange;
 
-    public WalletState(IVtxoStorage vtxoStorage, IContractStorage contractStorage)
+    public WalletState(IVtxoStorage vtxoStorage, IContractStorage contractStorage, IJSRuntime js)
     {
         _vtxoStorage = vtxoStorage;
         _contractStorage = contractStorage;
+        _js = js;
 
         _vtxoStorage.VtxosChanged += OnVtxosChanged;
         _contractStorage.ContractsChanged += OnContractsChanged;
@@ -72,7 +76,34 @@ public class WalletState : IDisposable
     public void SetBackupPending(bool pending)
     {
         BackupPending = pending;
+        // Persist per-wallet so the nudge survives a refresh until the phrase is actually saved —
+        // a non-custodial wallet whose phrase is never backed up is one lost tab from gone.
+        try
+        {
+            var js = (IJSInProcessRuntime)_js;
+            if (pending && ActiveWalletId is not null)
+                js.InvokeVoid("localStorage.setItem", BackupPendingKey, ActiveWalletId);
+            else
+                js.InvokeVoid("localStorage.removeItem", BackupPendingKey);
+        }
+        catch { /* JS unavailable — degrade to session-only (the pre-persistence behaviour) */ }
         OnChange?.Invoke();
+    }
+
+    /// <summary>Re-light the backup nudge on load if this wallet was flagged un-backed-up in a prior
+    /// session. Call once the active wallet is known (the id must match what was stored).</summary>
+    public void HydrateBackupPending()
+    {
+        try
+        {
+            var stored = ((IJSInProcessRuntime)_js).Invoke<string?>("localStorage.getItem", BackupPendingKey);
+            if (stored is not null && stored == ActiveWalletId && !BackupPending)
+            {
+                BackupPending = true;
+                OnChange?.Invoke();
+            }
+        }
+        catch { /* JS unavailable — no restore */ }
     }
 
     public void NotifyChanged() => OnChange?.Invoke();

@@ -84,6 +84,9 @@ else
     private bool _claiming;
     private string? _claimError;
 
+    /// <summary>?mine=1 (e.g. right after Play claims your starters) opens the "Mine" tab first.</summary>
+    [SupplyParameterFromQuery(Name = "mine")] public string? MineParam { get; set; }
+
     private const int PageSize = 24;   // server-side page; "Load more" fetches the next
     private bool _hasMore;
     private bool _loadingMore;
@@ -91,6 +94,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnStateChanged;
+        if (!string.IsNullOrEmpty(MineParam) && State.IsSignedIn) _mine = true;
         await LoadAsync();
     }
 

@@ -323,3 +323,15 @@ public class GameWallet(
 
 /// <summary>A player-facing wallet error (e.g. an invalid recovery phrase) surfaced by the UI.</summary>
 public class GameWalletException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>
+/// A covenant action funded its escrow but the reveal hasn't settled within the wait window.
+/// Carries the pending commit id (<see cref="PendingId"/> — the breeding/merge id) so the UI can
+/// retry ONLY the reveal: the inputs are already escrowed, so re-running the whole flow would try
+/// to re-deposit spent parents. Subclasses <see cref="GameWalletException"/> so existing catch-alls
+/// still surface the message; pages that want the retry affordance catch this type specifically.
+/// </summary>
+public sealed class RevealPendingException(string pendingId, string message) : GameWalletException(message)
+{
+    public string PendingId { get; } = pendingId;
+}
