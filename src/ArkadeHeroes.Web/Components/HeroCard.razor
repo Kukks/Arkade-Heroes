@@ -1,8 +1,10 @@
-@* A single hero, its "portrait" generated deterministically from its genome bytes. *@
+@* A single hero as a holographic rarity card: pixel-creature portrait in a
+   tier-framed, foil-sheened tile, with rarity pips + expressed-trait badges. *@
 
-<a class="@CardClass" href="@($"heroes/{Hero.Id}")" style="--flare:@FlareColor">
-    <div class="hero-tile">
+<a class="@CardClass" href="@($"heroes/{Hero.Id}")" style="--tier:var(--r-@(TierKey));--flare:@FlareColor">
+    <div class="hero-tile tier-@TierIndex">
         <HeroSprite Hero="Hero" Size="118" />
+        <span class="hero-foil"></span>
         <span class="hero-gen mono">GEN·@Hero.Generation</span>
         @if (Hero.IsSterile)
         {
@@ -12,7 +14,13 @@
     <div class="hero-body">
         <div class="hero-head">
             <span class="hero-name">@Hero.Name</span>
-            <span class="tier tag-@Tier.ToLowerInvariant()">@Tier</span>
+            <span class="tier tag-@TierKey">@Tier</span>
+        </div>
+        <div class="rar-pips" title="@Tier">
+            @for (var i = 0; i < 5; i++)
+            {
+                <span class="pip @(i <= TierIndex ? "on" : "")"></span>
+            }
         </div>
         <div class="chips">
             <span class="chip">lvl <b>@Hero.Level</b></span>
@@ -22,6 +30,15 @@
                 <span class="chip">rarity <b>@Hero.Rarity.Score</b></span>
             }
         </div>
+        @if (Hero.Rarity is { Expressed.Count: > 0 })
+        {
+            <div class="trait-badges">
+                @foreach (var t in Hero.Rarity.Expressed)
+                {
+                    <span class="tbadge tag-@t.Tier.ToLowerInvariant()" title="@t.Category · @t.Tier">@Abbrev(t.Category)</span>
+                }
+            </div>
+        }
         <div class="statline mono">
             <span>HP @Hero.Stats.MaxHp</span>
             <span>ATK @Hero.Stats.Attack</span>
@@ -41,9 +58,18 @@
     [Parameter] public bool Fuse { get; set; }
 
     private string Tier => Hero.Rarity?.Tier ?? "Common";
+    private string TierKey => Tier.ToLowerInvariant();
+
+    private int TierIndex => Tier switch
+    {
+        "Legendary" => 4, "Epic" => 3, "Rare" => 2, "Uncommon" => 1, _ => 0,
+    };
 
     private string CardClass => $"hero-card{(Reveal ? " reveal" : "")}{(Fuse ? " fuse" : "")}";
 
-    // The reveal flare colour: fusion burns hot-red; a birth glows in the hero's rarity colour.
-    private string FlareColor => Fuse ? "var(--danger)" : $"var(--r-{Tier.ToLowerInvariant()})";
+    // Summon-reveal flare: fusion burns hot-red; a birth glows in the hero's rarity colour.
+    private string FlareColor => Fuse ? "var(--danger)" : $"var(--r-{TierKey})";
+
+    private static string Abbrev(string category) =>
+        category.Length <= 3 ? category.ToUpperInvariant() : category[..3].ToUpperInvariant();
 }

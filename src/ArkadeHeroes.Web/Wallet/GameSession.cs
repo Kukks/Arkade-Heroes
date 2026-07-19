@@ -259,6 +259,46 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             $"Paid on-chain, but the hero hasn't synced for the claim yet — try again in a moment. ({last?.Message})");
     }
 
+    /// <summary>
+    /// Buy a catalog item from the browser wallet: ask the server for a fee invoice, pay it with a
+    /// plain non-custodial send (the same deposit-and-settle primitive breed/merge use), then claim —
+    /// the server verifies payment on-chain and delivers a fungible item-asset unit to the player.
+    /// Returns the delivered asset id + units now held. Retries the claim while the payment settles.
+    /// </summary>
+    public async Task<ClaimItemResponse> BuyItemAsync(string itemId)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        var invoice = (await api.Items.BuyAsync(itemId)).Invoice;
+        if (invoice.AmountSats > 0)
+            await DepositAndSettleAsync(w.Id, invoice.PayToAddress, null, invoice.AmountSats);
+
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                return await api.Items.ClaimAsync(new ClaimItemRequest(invoice.InvoiceId));
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("not been paid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                await Task.Delay(3000);
+            }
+        }
+        throw new GameWalletException(
+            $"Paid on-chain, but the payment hasn't settled for the claim yet — try again in a moment. ({last?.Message})");
+    }
+
+    /// <summary>Equip an owned item onto one of the player's heroes (server enforces ownership + slot).</summary>
+    public async Task<HeroDto> EquipAsync(string heroId, string itemId) =>
+        (await api.Heroes.EquipAsync(heroId, new EquipRequest(itemId))).Hero;
+
+    /// <summary>Clear a hero's equipment slot (Weapon/Armor/Trinket), returning the item to the player.</summary>
+    public async Task<HeroDto> UnequipAsync(string heroId, string slot) =>
+        (await api.Heroes.UnequipAsync(heroId, new UnequipRequest(slot))).Hero;
+
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
     // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
     // the just-spent (arkd-locked) BTC coin or race its change syncing back in.

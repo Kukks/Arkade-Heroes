@@ -180,9 +180,8 @@ public class GameWallet(
     private async Task<ArkCoin[]> SelectSpendableCoinsAsync(string walletId, ArkTxOut[] outputs)
     {
         var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
-        var spendable = (await spendingService.GetAvailableCoins(walletId))
-            .Where(c => c.CanSpendOffchain(now))
-            .ToList();
+        var available = await spendingService.GetAvailableCoins(walletId);
+        var spendable = available.Where(c => c.CanSpendOffchain(now)).ToList();
         var selected = new HashSet<ArkCoin>();
 
         static ulong AssetHeld(ArkCoin c, string assetId) =>
@@ -215,7 +214,15 @@ public class GameWallet(
             selected.Add(btc[i++]);
         if (i < btc.Count) selected.Add(btc[i]);
         if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
-            throw new GameWalletException("Not enough spendable sats (you need funds for the amount plus the network fee).");
+        {
+            // Distinguish the settlement-lag case (funds are present but a freshly-received VTXO
+            // hasn't settled into a round yet, so CanSpendOffchain is still false) from a genuine
+            // shortfall — the old blanket "not enough sats" was misleading when the balance showed funds.
+            var availableBtc = available.Where(c => c.Assets is null or { Count: 0 }).Sum(c => c.TxOut.Value.Satoshi);
+            throw new GameWalletException(availableBtc >= required
+                ? "Your funds are still settling — try again in a moment."
+                : "Not enough spendable sats (you need funds for the amount plus the network fee).");
+        }
 
         return [.. selected];
     }

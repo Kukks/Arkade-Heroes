@@ -16,11 +16,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0   # Nerdbank.GitVersioning needs full history to compute the version height
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      # The Blazor WASM frontend (ArkadeHeroes.Web) sets WasmBuildNative, so the
+      # whole-solution build below needs the wasm-tools workload on the runner.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
 
       - name: Restore
         run: dotnet restore ArkadeHeroes.slnx
@@ -60,6 +66,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0   # Nerdbank.GitVersioning needs full history to compute the version height
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4

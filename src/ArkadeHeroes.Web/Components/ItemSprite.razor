@@ -1,0 +1,39 @@
+@* Procedural pixel icon for a gear/item id, rendered by wwwroot/js/item-render.js
+   (deterministic off the id — the same item always renders identical pixels).
+   The item-world companion to HeroSprite. *@
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+<img class="item-px" style="width:@(Size)px;height:@(Size)px;image-rendering:pixelated;display:block"
+     src="@_src" alt="@ItemId" draggable="false" />
+
+@code {
+    [Parameter, EditorRequired] public string ItemId { get; set; } = default!;
+
+    /// <summary>Rendered pixel size (square).</summary>
+    [Parameter] public int Size { get; set; } = 40;
+
+    // dataURL cache shared across every icon instance, keyed by id+size.
+    private static readonly Dictionary<string, string> _cache = new();
+    private static Task<IJSObjectReference>? _module;
+    private string? _src;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var id = ItemId ?? string.Empty;
+        var key = $"{id}:{Size}";
+        if (_cache.TryGetValue(key, out var cached)) { _src = cached; return; }
+        try
+        {
+            _module ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/item-render.js").AsTask();
+            var module = await _module;
+            var src = await module.InvokeAsync<string>("renderItemDataUrl", id, Size);
+            _cache[key] = src;
+            _src = src;
+        }
+        catch
+        {
+            // Render/module error → blank rather than a broken row.
+        }
+    }
+}

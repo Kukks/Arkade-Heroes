@@ -1,5 +1,8 @@
 @page "/heroes/{Id}"
 @inject ArkadeHeroesClient Api
+@inject WalletState State
+@inject GameSession Session
+@implements IDisposable
 
 <PageTitle>@(_hero?.Name ?? "Hero") · Arkade Heroes</PageTitle>
 
@@ -125,18 +128,39 @@ else
 
         <div class="card">
             <h3>Equipment</h3>
-            @if (h.Equipment.Count == 0)
+            <div class="equip-list">
+                @foreach (var (slot, item) in h.Equipment)
+                {
+                    <div class="equip-row">
+                        <ItemSprite ItemId="@item" Size="40" />
+                        <div class="equip-meta">
+                            <span class="equip-slot">@slot</span>
+                            <b class="equip-name">@Pretty(item)</b>
+                        </div>
+                        @if (IsMine(h))
+                        {
+                            <button class="btn ghost equip-x" title="unequip" @onclick="() => DoUnequip(slot)" disabled="@_busy">✕</button>
+                        }
+                    </div>
+                }
+                @if (h.Equipment.Count == 0)
+                {
+                    <p class="muted" style="margin:0">Nothing equipped.</p>
+                }
+            </div>
+            @if (IsMine(h) && _catalog.Count > 0)
             {
-                <p class="muted">Nothing equipped.</p>
-            }
-            else
-            {
-                <div class="kv">
-                    @foreach (var (slot, item) in h.Equipment)
+                <select class="equip-add" @bind="_equipPick" @bind:after="OnEquipPicked" disabled="@_busy">
+                    <option value="">＋ equip an item…</option>
+                    @foreach (var opt in _catalog)
                     {
-                        <div><span>@slot</span><b>@item</b></div>
+                        <option value="@opt.Id">@opt.Slot · @opt.Name</option>
                     }
-                </div>
+                </select>
+            }
+            @if (_equipError is not null)
+            {
+                <div class="status-line" style="margin-top:.5rem"><span class="dot bad"></span> @_equipError</div>
             }
             <h3 style="margin-top:1.2rem">Lineage</h3>
             <div class="kv">
@@ -240,6 +264,12 @@ else
     private int _replayedLevel;
     private bool _loading = true;
     private bool _error;
+    private List<ItemDto> _catalog = new();
+    private bool _busy;
+    private string? _equipError;
+    private string _equipPick = "";
+
+    protected override void OnInitialized() => State.OnChange += OnState;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -255,6 +285,11 @@ else
             _receipts = await receipts;
             _advertisedKey = (await info).GameSignerKey;
             _replayedLevel = ReceiptVerifier.ReplayLevel(Id, _receipts);
+            if (_catalog.Count == 0)
+            {
+                try { _catalog = await Api.Items.ShopAsync(); }
+                catch { /* the equip picker is optional chrome */ }
+            }
         }
         catch
         {
@@ -278,4 +313,39 @@ else
 
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
     static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();
+
+    // Prettify a catalog item id for display ("steel-saber" -> "Steel Saber").
+    static string Pretty(string id) => string.IsNullOrEmpty(id) ? id
+        : string.Join(' ', id.Split('-', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
+
+    // Equip controls only for the signed-in owner of this hero.
+    private bool IsMine(HeroDto h) => State.IsSignedIn && h.OwnerId == State.Player?.PlayerId;
+
+    private async Task OnEquipPicked()
+    {
+        var itemId = _equipPick;
+        _equipPick = "";                       // reset the dropdown to its placeholder
+        if (!string.IsNullOrEmpty(itemId)) await DoEquip(itemId);
+    }
+
+    private async Task DoEquip(string itemId)
+    {
+        _busy = true; _equipError = null;
+        try { _hero = await Session.EquipAsync(Id, itemId); }
+        catch (Exception ex) { _equipError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task DoUnequip(string slot)
+    {
+        _busy = true; _equipError = null;
+        try { _hero = await Session.UnequipAsync(Id, slot); }
+        catch (Exception ex) { _equipError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void OnState() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.OnChange -= OnState;
 }
