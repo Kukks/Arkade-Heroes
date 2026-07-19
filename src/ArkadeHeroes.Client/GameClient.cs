@@ -978,8 +978,12 @@ public class GameClient : IAsyncDisposable
         }
         Console.WriteLine($"  opponents for {ShortId(hero.Id)} (level {hero.Level}), closest match first:");
         foreach (var o in opponents)
-            Console.WriteLine($"    {ShortId(o.Hero.Id)}  L{o.Hero.Level}  pow {o.PowerScore} (Δ{o.PowerGapPercent}%)  " +
+        {
+            // F2: surface the conserved-XP asymmetry — an underdog with nothing to lose is a "free shot".
+            var favor = o.Favor == "underdog" && o.XpIfYouLose == 0 ? "underdog · free shot" : o.Favor;
+            Console.WriteLine($"    {ShortId(o.Hero.Id)}  L{o.Hero.Level}  [{favor}]  pow {o.PowerScore} (Δ{o.PowerGapPercent}%)  " +
                               $"win +{o.XpIfYouWin} / lose -{o.XpIfYouLose} xp  owner {ShortId(o.OwnerPlayerId)}");
+        }
     }
 
     private async Task ListMatchesAsync()
