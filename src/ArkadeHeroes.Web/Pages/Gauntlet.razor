@@ -1,0 +1,165 @@
+@page "/gauntlet"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Gauntlet · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Gauntlet</h2>
+    <span class="hud">solo PvE · 5 escalating ghost waves</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then run the gauntlet.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            Send a hero through five escalating ghost waves. A full clear wins a piece of gear, and every
+            wave banks XP — <b>capped at level 10</b>, so the gauntlet trains up a newcomer but can't be farmed.
+            A small entry fee applies (nothing to lose but the fee — the ghosts don't stake back).
+        </p>
+        <label>Champion
+            <select @bind="_heroId">
+                <option value="">— pick a hero —</option>
+                @foreach (var h in _mine)
+                {
+                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                }
+            </select>
+        </label>
+        <button class="btn primary" style="margin-top:1.1rem" @onclick="DoRun"
+                disabled="@(_running || string.IsNullOrEmpty(_heroId))">
+            @(_running ? "Running…" : "Enter the gauntlet")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    @if (_outcome is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">@(_outcome.Run.WavesCleared == 5 ? "Gauntlet cleared!" : "Run over")</h3>
+            <span class="hud">@_outcome.Run.WavesCleared / 5 waves</span>
+        </div>
+
+        <div class="grid cols">
+            @foreach (var wv in _outcome.Run.Waves)
+            {
+                <div class="card" style="text-align:center">
+                    <div class="chip mono">Wave @wv.Wave</div>
+                    <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
+                    <div class="status-line" style="justify-content:center">
+                        <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="card" style="margin-top:1.2rem">
+            <div class="status-line">
+                <span class="dot ok"></span>
+                <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
+            </div>
+            @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
+            {
+                <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
+            }
+            @if (_outcome.Run.ItemAwarded is not null)
+            {
+                <div class="gear-tile" style="margin:.9rem auto 0;max-width:140px"><ItemSprite ItemId="@_outcome.Run.ItemAwarded" Size="104" /></div>
+                <div class="status-line" style="justify-content:center;margin-top:.4rem">
+                    <span class="dot ok"></span> Full clear! Won <b>@_outcome.Run.ItemAwarded</b> — equip it from a hero's page.
+                </div>
+            }
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
+                <span class="mono" style="font-size:.78rem">
+                    @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
+                </span>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private string _heroId = "";
+    private bool _loading = true;
+    private bool _running;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private GauntletOutcome? _outcome;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoRun()
+    {
+        _running = true;
+        _error = null;
+        _outcome = null;
+        _status = "Preparing the gauntlet…";
+        try
+        {
+            _outcome = await Session.RunGauntletAsync(_heroId, s => { _status = s; StateHasChanged(); });
+            _status = null;
+            await LoadAsync();   // the hero may have leveled up — refresh the roster
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        // On a fresh page load the session resumes after this component inits; reload the
+        // roster once we're signed in (the first MineAsync may have raced the login token).
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}
