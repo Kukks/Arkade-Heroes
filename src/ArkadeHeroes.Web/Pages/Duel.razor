@@ -1,0 +1,310 @@
+@page "/duel"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Duel · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Duel</h2>
+    <span class="hud">staked PvP · covenant-escrowed · winner takes the pot</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then challenge a rival.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the arena…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+}
+else
+{
+    <div class="card">
+        <h3 style="margin-top:0">Challenge a rival</h3>
+        <p class="muted" style="margin-top:0">
+            Both of you stake the wager into your own covenant escrow and pay a small match fee. The
+            deterministic duel is resolved by the challenger; the emulator sweeps the whole pot to the
+            winner. XP is a conserved transfer — an <b>underdog risks nothing</b> but stands to win big.
+        </p>
+        <label>Your champion
+            <select @bind="_myHeroId" @bind:after="OnHeroPicked">
+                <option value="">— pick a hero —</option>
+                @foreach (var h in _mine)
+                {
+                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                }
+            </select>
+        </label>
+
+        @if (!string.IsNullOrEmpty(_myHeroId))
+        {
+            @if (_loadingOpps)
+            {
+                <div class="status-line" style="margin-top:.8rem"><span class="dot wait"></span> finding opponents…</div>
+            }
+            else if (_opponents.Count == 0)
+            {
+                <div class="status-line muted" style="margin-top:.8rem">No opponents yet — other players need heroes to challenge.</div>
+            }
+            else
+            {
+                <div class="muted" style="margin:.9rem 0 .4rem;font-size:.82rem">Pick an opponent (closest match first):</div>
+                <div class="oppgrid">
+                    @foreach (var o in _opponents)
+                    {
+                        var freeShot = o.Favor == "underdog" && o.XpIfYouLose == 0;
+                        <button class="oppcard @(o.Hero.Id == _oppId ? "sel" : "")" @onclick="() => _oppId = o.Hero.Id">
+                            <div class="oppcard-head">
+                                <b>@o.Hero.Name</b>
+                                <span class="chip @(freeShot ? "ok" : "")">@(freeShot ? "free shot" : o.Favor)</span>
+                            </div>
+                            <div class="mono oppcard-stats">
+                                L@o.Hero.Level · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)
+                            </div>
+                            <div class="mono oppcard-xp">win <b class="pos">+@o.XpIfYouWin</b> / lose <b class="neg">-@o.XpIfYouLose</b> xp</div>
+                        </button>
+                    }
+                </div>
+            }
+        }
+
+        <label style="margin-top:1rem">Wager (sats, each side stakes this)
+            <input type="number" min="1" step="100" @bind="_wager" />
+        </label>
+
+        <button class="btn primary" style="margin-top:1rem" @onclick="DoChallenge"
+                disabled="@(_busy || string.IsNullOrEmpty(_myHeroId) || string.IsNullOrEmpty(_oppId) || _wager < 1)">
+            @(_busy ? "Working…" : "Challenge")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Your matches</h3>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
+    </div>
+
+    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any())
+    {
+        <div class="card muted">No open matches. Challenge a rival above — or wait for someone to challenge you.</div>
+    }
+    else
+    {
+        @if (ToAccept.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Your turn — accept &amp; stake</div>
+                @foreach (var m in ToAccept)
+                {
+                    <div class="match-row">
+                        <span>Their <b>@Name(m.ChallengerHeroId)</b> challenges your <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <button class="btn primary sm" @onclick="() => DoAccept(m.MatchId)" disabled="@_busy">Accept</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (ToResolve.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Ready — resolve the duel</div>
+                @foreach (var m in ToResolve)
+                {
+                    <div class="match-row">
+                        <span>Your <b>@Name(m.ChallengerHeroId)</b> vs <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <button class="btn primary sm" @onclick="() => DoDuel(m.MatchId)" disabled="@_busy">Duel!</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (Waiting.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Waiting for your opponent to accept</div>
+                @foreach (var m in Waiting)
+                {
+                    <div class="match-row muted">
+                        <span>Your <b>@Name(m.ChallengerHeroId)</b> vs <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <span class="chip">open</span>
+                    </div>
+                }
+            </div>
+        }
+    }
+
+    @if (_duel is not null)
+    {
+        var f = _duel.Fight;
+        var challengerWon = f.Result.WinnerId == f.ChallengerSnapshot.Id;
+        var winner = challengerWon ? f.ChallengerSnapshot : f.DefenderSnapshot;
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Duel resolved</h3>
+            <span class="hud">the pot swept to the winner</span>
+        </div>
+        <div class="card">
+            <div class="status-line">
+                <span class="dot ok"></span>
+                <span><b>@winner.Name</b> wins — <b class="mono">@f.WinnerPayoutSats.ToString("N0")</b> sats to the winner’s wallet</span>
+            </div>
+            <div class="status-line" style="margin-top:.5rem">
+                <span class="mono" style="font-size:.82rem">
+                    @f.ChallengerSnapshot.Name <b class="@(challengerWon ? "pos" : "neg")">@Signed(f.ChallengerXpAward)</b> xp ·
+                    @f.DefenderSnapshot.Name <b class="@(challengerWon ? "neg" : "pos")">@Signed(f.DefenderXpAward)</b> xp ·
+                    @f.Result.Turns turns
+                </span>
+            </div>
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot @(_duel.FairnessOk ? "ok" : "bad")"></span>
+                <span class="mono" style="font-size:.78rem">@(_duel.FairnessOk ? $"fairness ✓ {_duel.FairnessDetail}" : $"fairness ✗ server cheated: {_duel.FairnessDetail}")</span>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private List<MatchDto> _matches = new();
+    private List<OpponentSuggestionDto> _opponents = new();
+    private readonly Dictionary<string, string> _names = new();
+    private string _myHeroId = "";
+    private string _oppId = "";
+    private long _wager = 1000;
+    private bool _loading = true;
+    private bool _loadingOpps;
+    private bool _busy;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private DuelOutcome? _duel;
+
+    // Match categorisation, by whether my roster holds the challenger/defender hero.
+    private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
+    private IEnumerable<MatchDto> ToAccept => _matches.Where(m => m.Status == "open" && MineIds.Contains(m.DefenderHeroId));
+    private IEnumerable<MatchDto> ToResolve => _matches.Where(m => m.Status == "accepted" && MineIds.Contains(m.ChallengerHeroId));
+    private IEnumerable<MatchDto> Waiting => _matches.Where(m => m.Status == "open" && MineIds.Contains(m.ChallengerHeroId));
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            foreach (var h in _mine) _names[h.Id] = h.Name;
+            await LoadMatchesAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may still be settling on a cold load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task LoadMatchesAsync()
+    {
+        _matches = await Api.Matches.ListAsync();
+        // Resolve the opponent heroes' names for display (my own are already cached from the roster).
+        var mineIds = _mine.Select(h => h.Id).ToHashSet();
+        var needed = _matches
+            .Where(m => mineIds.Contains(m.ChallengerHeroId) || mineIds.Contains(m.DefenderHeroId))
+            .SelectMany(m => new[] { m.ChallengerHeroId, m.DefenderHeroId })
+            .Where(id => !_names.ContainsKey(id))
+            .Distinct();
+        foreach (var id in needed)
+        {
+            try { _names[id] = (await Api.Heroes.GetAsync(id)).Name; } catch { /* best-effort */ }
+        }
+    }
+
+    async Task OnHeroPicked()
+    {
+        _oppId = "";
+        _opponents = new();
+        if (string.IsNullOrEmpty(_myHeroId)) return;
+        _loadingOpps = true;
+        try { _opponents = await Api.Matches.MatchmakingAsync(_myHeroId); }
+        catch { _opponents = new(); }
+        finally { _loadingOpps = false; }
+    }
+
+    async Task DoChallenge()
+    {
+        await RunAction("Preparing the challenge…", async () =>
+        {
+            await Session.ChallengeAsync(_myHeroId, _oppId, _wager, s => { _status = s; StateHasChanged(); });
+            _oppId = "";
+        });
+    }
+
+    async Task DoAccept(string matchId) =>
+        await RunAction("Accepting…", () => Session.AcceptMatchAsync(matchId, s => { _status = s; StateHasChanged(); }));
+
+    async Task DoDuel(string matchId) =>
+        await RunAction("Resolving…", async () =>
+            _duel = await Session.DuelAsync(matchId, s => { _status = s; StateHasChanged(); }));
+
+    // Shared action wrapper: busy-gate, run, reload the roster + matches, surface errors.
+    async Task RunAction(string initial, Func<Task> action)
+    {
+        _busy = true;
+        _error = null;
+        _status = initial;
+        try
+        {
+            await action();
+            _status = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task Reload()
+    {
+        _busy = true;
+        try { await LoadMatchesAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private string Name(string heroId) =>
+        _names.TryGetValue(heroId, out var n) ? n : heroId[..Math.Min(8, heroId.Length)];
+
+    private static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}

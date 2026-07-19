@@ -389,6 +389,98 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return new GauntletOutcome(run, ok, detail);
     }
 
+    /// <summary>
+    /// Open a wagered match under covenant enforcement and stake into it from the browser wallet:
+    /// open (the server returns the challenger's per-party escrow address + the per-character match fee),
+    /// then two plain non-custodial sends — the wager stake to the escrow, the fee to the treasury.
+    /// The defender accepts + stakes separately; the challenger later resolves. Returns the match id.
+    /// </summary>
+    public async Task<string> ChallengeAsync(string myHeroId, string opponentHeroId, long wagerSats, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Sealing the challenge…");
+        var open = await api.Matches.OpenAsync(new OpenMatchRequest(myHeroId, opponentHeroId, wagerSats, "covenant"));
+        if (string.IsNullOrEmpty(open.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        if (open.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
+        }
+        if (open.MatchFeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying your match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        return open.MatchId;
+    }
+
+    /// <summary>
+    /// Accept a wagered match someone challenged your hero to, staking into it from the browser wallet:
+    /// accept (the server returns the defender's escrow address + fee), then stake the wager + pay the fee
+    /// with plain sends. Once both sides are staked the challenger can resolve the duel.
+    /// </summary>
+    public async Task AcceptMatchAsync(string matchId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Accepting the challenge…");
+        var accept = await api.Matches.AcceptAsync(matchId);
+        if (string.IsNullOrEmpty(accept.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        if (accept.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
+        }
+        if (accept.MatchFeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying your match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+    }
+
+    /// <summary>
+    /// Resolve an accepted wagered match (challenger only): fight the deterministic duel, retrying while
+    /// both stakes + fees settle into arkd's indexer. The SERVER sweeps the covenant to the winner — the
+    /// browser only reads the payout back — then CLIENT-VERIFIES the fight replays from the revealed seed.
+    /// Returns the fight + the fairness verdict.
+    /// </summary>
+    public async Task<DuelOutcome> DuelAsync(string matchId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Resolving the duel…");
+        var match = await api.Matches.GetAsync(matchId);   // CommitmentHex for the fairness check
+        var nonce = RandomNonce();
+        FightResponse? fight = null;
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20 && fight is null; attempt++)
+        {
+            try
+            {
+                fight = await api.Matches.FightAsync(matchId, new FightRequest(nonce));
+            }
+            catch (ArkadeHeroesApiException ex) when (
+                ex.Message.Contains("not fully funded", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("unpaid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Stakes still settling — retrying ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        if (fight is null)
+            throw new GameWalletException(
+                $"Both sides staked, but the deposits haven't settled for the duel yet — try again in a moment. ({last?.Message})");
+
+        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
+        return new DuelOutcome(fight, ok, detail);
+    }
+
     /// <summary>Equip an owned item onto one of the player's heroes (server enforces ownership + slot).</summary>
     public async Task<HeroDto> EquipAsync(string heroId, string itemId) =>
         (await api.Heroes.EquipAsync(heroId, new EquipRequest(itemId))).Hero;
@@ -416,3 +508,6 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
 /// <summary>A completed gauntlet run bundled with its client-side fairness verdict, ready to render.</summary>
 public record GauntletOutcome(GauntletRunResponse Run, bool FairnessOk, string FairnessDetail);
+
+/// <summary>A resolved wagered duel bundled with its client-side fairness verdict, ready to render.</summary>
+public record DuelOutcome(FightResponse Fight, bool FairnessOk, string FairnessDetail);
