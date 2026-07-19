@@ -24,6 +24,31 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
     public DeathMatchFlowTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
     [Fact]
+    public async Task DeathMatch_List_SurfacesOpenAndAccepted_ForBrowserDiscovery()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DM-List-A");
+        var (bob, _) = await _factory.RegisterAsync("DM-List-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
+        var bobHero = (await bob.ClaimStartersAsync())[0].Id;
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero, bobHero, Absorb: true));
+
+        // The list is the browser's discovery path (the death-match API is otherwise all by-id). It
+        // surfaces the open death-match with its parties + absorb flag so the challenged defender finds it.
+        var listed = (await bob.DeathMatch.ListAsync()).Single(d => d.DeathMatchId == open.DeathMatchId);
+        Assert.Equal("open", listed.Status);
+        Assert.Equal(aliceHero, listed.ChallengerHeroId);
+        Assert.Equal(bobHero, listed.DefenderHeroId);
+        Assert.True(listed.Absorb);
+        Assert.Null(listed.WinnerHeroId);
+
+        // Accepting (consent) flips it to "accepted" — ready for the challenger to settle.
+        await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        var afterAccept = (await alice.DeathMatch.ListAsync()).Single(d => d.DeathMatchId == open.DeathMatchId);
+        Assert.Equal("accepted", afterAccept.Status);
+    }
+
+    [Fact]
     public async Task DeathMatch_LoserHeroBurned_WinnerSurvivesUnchanged_WinnerVerifiable()
     {
         var (alice, _) = await _factory.RegisterAsync("DM-Alice");

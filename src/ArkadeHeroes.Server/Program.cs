@@ -230,6 +230,19 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
     await chain.GetDeathMatchEscrowParamsAsync(id, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
+// Death-match discovery: the sessions a browser needs to SEE an incoming challenge — no list
+// endpoint existed (the console passes the death-match id out-of-band). Public like /matches; the
+// client filters to its own heroes. Status is derived from the session's accepted/completed flags.
+api.MapGet("/deathmatch", (GameStore store) =>
+    Results.Ok(store.DeathMatches.Values
+        .OrderByDescending(d => d.CreatedAt)
+        .Take(50)
+        .Select(d => new DeathMatchDto(
+            d.Id, d.ChallengerHeroId, d.DefenderHeroId,
+            d.Completed ? "resolved" : d.Accepted ? "accepted" : "open",
+            d.Absorb, d.WinnerHeroId))
+        .ToList()));
+
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
 api.MapPost("/matches/open", async (OpenMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
