@@ -115,7 +115,12 @@ public sealed record CombatConfig(
     // fractions, the shared stack cap, and the DrainHalf heal as a fraction of the damage dealt.
     double FocusPerStack, double DefenseBreakPerStack, int MaxEffectStacks, double DrainFraction,
     // Move selection: the policy, and (Tactical only) the HP% at/below which a hero prefers a drain skill.
-    CombatSelectionPolicy SelectionPolicy, int HealHpThresholdPercent)
+    CombatSelectionPolicy SelectionPolicy, int HealHpThresholdPercent,
+    // F5: when true, move selection weights the element multiplier (type advantage) into the
+    // expected-damage score — the true EV term the resolver already applies. DEFAULT FALSE, so
+    // Default stays byte-identical and every existing replay verifies unchanged; the flip is a
+    // separate coordinated client+server release. Optional param → no positional ctor breaks.
+    bool ElementAwareSelection = false)
 {
     public static CombatConfig Default { get; } = new(
         MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,
@@ -123,5 +128,6 @@ public sealed record CombatConfig(
         // gene-B at 6 and Elemental Burst at 9 keep progression milestones.
         GeneSkillALevel: 1, GeneSkillBLevel: 6, BurstLevel: 9,
         FocusPerStack: 0.12, DefenseBreakPerStack: 0.12, MaxEffectStacks: 3, DrainFraction: 0.5,
-        SelectionPolicy: CombatSelectionPolicy.Tactical, HealHpThresholdPercent: 45);
+        SelectionPolicy: CombatSelectionPolicy.Tactical, HealHpThresholdPercent: 45,
+        ElementAwareSelection: false);
 }
