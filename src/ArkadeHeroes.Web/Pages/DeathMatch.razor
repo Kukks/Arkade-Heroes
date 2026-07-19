@@ -1,0 +1,332 @@
+@page "/deathmatch"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Death-match · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Death-match</h2>
+    <span class="hud">winner takes all · the loser's hero BURNS forever</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then stake a hero to the death.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the arena…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+}
+else
+{
+    <div class="card">
+        <h3 style="margin-top:0">Challenge to the death</h3>
+        <p class="muted" style="margin-top:0">
+            Both fighters stake their <b>hero + equipped gear</b> into one covenant escrow. The deterministic
+            duel is resolved by the challenger; the emulator routes the winner's hero and <b>all</b> staked gear
+            to the winner and <b>burns the loser's hero on-chain — permanently</b>. No XP, no take-backs.
+        </p>
+
+        <label>Your champion
+            <select @bind="_myHeroId" @bind:after="OnHeroPicked" disabled="@_busy">
+                <option value="">— pick a hero —</option>
+                @foreach (var h in _mine)
+                {
+                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                }
+            </select>
+        </label>
+
+        @if (!string.IsNullOrEmpty(_myHeroId))
+        {
+            @if (_loadingOpps)
+            {
+                <div class="status-line" style="margin-top:.8rem"><span class="dot wait"></span> finding opponents…</div>
+            }
+            else if (_opponents.Count == 0)
+            {
+                <div class="status-line muted" style="margin-top:.8rem">No opponents yet — other players need heroes to challenge.</div>
+            }
+            else
+            {
+                <div class="muted" style="margin:.9rem 0 .4rem;font-size:.82rem">Pick your victim (or your executioner):</div>
+                <div class="oppgrid">
+                    @foreach (var o in _opponents)
+                    {
+                        <button class="oppcard @(o.Hero.Id == _oppId ? "sel" : "")" @onclick="() => Select(o.Hero.Id)" disabled="@_busy">
+                            <div class="oppcard-head">
+                                <b>@o.Hero.Name</b>
+                                <span class="chip @(o.Favor == "favored" ? "ok" : o.Favor == "underdog" ? "" : "")">@o.Favor</span>
+                            </div>
+                            <div class="mono oppcard-stats">L@o.Hero.Level · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)</div>
+                        </button>
+                    }
+                </div>
+            }
+        }
+
+        <label class="dm-absorb" style="margin-top:.9rem">
+            <input type="checkbox" @bind="_absorb" disabled="@_busy" />
+            Absorb mode — on a win, your hero may re-mint absorbing one of the loser's traits
+        </label>
+
+        @if (!_pendingConfirm)
+        {
+            <button class="btn danger" style="margin-top:1rem" @onclick="() => _pendingConfirm = true"
+                    disabled="@(_busy || string.IsNullOrEmpty(_myHeroId) || string.IsNullOrEmpty(_oppId))">
+                Open death-match…
+            </button>
+        }
+        else
+        {
+            <div class="card err" style="margin-top:1rem; display:block">
+                <div class="status-line"><span class="dot bad"></span>
+                    <span><b>PERMADEATH.</b> If <b>@MyHero?.Name</b> loses, it burns forever and you forfeit its staked gear.
+                    You are the <b>@(Opp?.Favor ?? "even")</b> here.</span>
+                </div>
+                <div style="margin-top:.8rem; display:flex; gap:.6rem">
+                    <button class="btn danger" @onclick="DoOpen" disabled="@_busy">Stake @MyHero?.Name &amp; commit</button>
+                    <button class="btn ghost" @onclick="() => _pendingConfirm = false" disabled="@_busy">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Your death-matches</h3>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
+    </div>
+
+    @if (!ToAccept.Any() && !ToSettle.Any() && !Waiting.Any())
+    {
+        <div class="card muted">No open death-matches. Challenge a rival above — or wait for one to come for you.</div>
+    }
+    else
+    {
+        @if (ToAccept.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Someone wants your hero dead — accept &amp; stake</div>
+                @foreach (var d in ToAccept)
+                {
+                    <div class="match-row">
+                        <span>Their <b>@Name(d.ChallengerHeroId)</b> vs your <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
+                        <span class="spacer"></span>
+                        <button class="btn danger sm" @onclick="() => DoAccept(d.DeathMatchId)" disabled="@_busy">Accept to the death</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (ToSettle.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Both staked — resolve it</div>
+                @foreach (var d in ToSettle)
+                {
+                    <div class="match-row">
+                        <span>Your <b>@Name(d.ChallengerHeroId)</b> vs <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
+                        <span class="spacer"></span>
+                        <button class="btn danger sm" @onclick="() => DoSettle(d.DeathMatchId)" disabled="@_busy">Settle</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (Waiting.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Waiting for your opponent to accept</div>
+                @foreach (var d in Waiting)
+                {
+                    <div class="match-row muted">
+                        <span>Your <b>@Name(d.ChallengerHeroId)</b> vs <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
+                        <span class="spacer"></span>
+                        <span class="chip">open</span>
+                    </div>
+                }
+            </div>
+        }
+    }
+
+    @if (_dm is not null)
+    {
+        var s = _dm.Settle;
+        var winnerName = s.WinnerHeroId == s.ChallengerSnapshot.Id ? s.ChallengerSnapshot.Name : s.DefenderSnapshot.Name;
+        var loserName = s.LoserHeroId == s.ChallengerSnapshot.Id ? s.ChallengerSnapshot.Name : s.DefenderSnapshot.Name;
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Death-match resolved</h3>
+            <span class="hud">winner takes the spoils</span>
+        </div>
+        <div class="card">
+            <div class="status-line"><span class="dot bad"></span> <span>☠ <b>@loserName</b> is dead — burned on-chain.</span></div>
+            <div class="status-line" style="margin-top:.4rem"><span class="dot ok"></span> <span><b>@winnerName</b> takes the win and all staked gear (@s.Result.Turns turns).</span></div>
+            @if (_dm.Settle.Minted)
+            {
+                <div class="status-line" style="margin-top:.4rem"><span class="dot ok"></span>
+                    <span>✦ <b>@winnerName</b> absorbed <b>@s.TraitsAbsorbed</b> trait(s) and re-minted as a new hero.</span>
+                </div>
+            }
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot @(_dm.FairnessOk ? "ok" : "bad")"></span>
+                <span class="mono" style="font-size:.78rem">@(_dm.FairnessOk ? $"fairness ✓ {_dm.FairnessDetail}" : $"fairness ✗ server cheated: {_dm.FairnessDetail}")</span>
+            </div>
+            @if (_dm.AbsorbOk is not null)
+            {
+                <div class="status-line" style="margin-top:.4rem">
+                    <span class="dot @(_dm.AbsorbOk == true ? "ok" : "bad")"></span>
+                    <span class="mono" style="font-size:.78rem">@(_dm.AbsorbOk == true ? $"absorb ✓ {_dm.AbsorbDetail}" : $"absorb ✗ server cheated: {_dm.AbsorbDetail}")</span>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private List<DeathMatchDto> _dms = new();
+    private List<OpponentSuggestionDto> _opponents = new();
+    private readonly Dictionary<string, string> _names = new();
+    private string _myHeroId = "";
+    private string _oppId = "";
+    private bool _absorb;
+    private bool _pendingConfirm;
+    private bool _loading = true;
+    private bool _loadingOpps;
+    private bool _busy;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private DeathMatchOutcome? _dm;
+
+    private HeroDto? MyHero => _mine.FirstOrDefault(h => h.Id == _myHeroId);
+    private OpponentSuggestionDto? Opp => _opponents.FirstOrDefault(o => o.Hero.Id == _oppId);
+
+    private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
+    private IEnumerable<DeathMatchDto> ToAccept => _dms.Where(d => d.Status == "open" && MineIds.Contains(d.DefenderHeroId));
+    private IEnumerable<DeathMatchDto> ToSettle => _dms.Where(d => d.Status == "accepted" && MineIds.Contains(d.ChallengerHeroId));
+    private IEnumerable<DeathMatchDto> Waiting => _dms.Where(d => d.Status == "open" && MineIds.Contains(d.ChallengerHeroId));
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            foreach (var h in _mine) _names[h.Id] = h.Name;
+            await LoadDeathMatchesAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may still be settling on a cold load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task LoadDeathMatchesAsync()
+    {
+        _dms = await Api.DeathMatch.ListAsync();
+        var mineIds = _mine.Select(h => h.Id).ToHashSet();
+        var needed = _dms
+            .Where(d => mineIds.Contains(d.ChallengerHeroId) || mineIds.Contains(d.DefenderHeroId))
+            .SelectMany(d => new[] { d.ChallengerHeroId, d.DefenderHeroId })
+            .Where(id => !_names.ContainsKey(id))
+            .Distinct();
+        foreach (var id in needed)
+        {
+            try { _names[id] = (await Api.Heroes.GetAsync(id)).Name; } catch { /* best-effort (a burned hero 404s) */ }
+        }
+    }
+
+    async Task OnHeroPicked()
+    {
+        _oppId = "";
+        _pendingConfirm = false;
+        _opponents = new();
+        if (string.IsNullOrEmpty(_myHeroId)) return;
+        _loadingOpps = true;
+        try { _opponents = await Api.Matches.MatchmakingAsync(_myHeroId); }
+        catch { _opponents = new(); }
+        finally { _loadingOpps = false; }
+    }
+
+    void Select(string heroId) { _oppId = heroId; _pendingConfirm = false; }
+
+    async Task DoOpen()
+    {
+        _pendingConfirm = false;
+        await RunAction("Opening the death-match…", async () =>
+        {
+            await Session.OpenDeathMatchAsync(_myHeroId, _oppId, _absorb, s => { _status = s; StateHasChanged(); });
+            _oppId = "";
+        });
+    }
+
+    async Task DoAccept(string id) =>
+        await RunAction("Accepting…", () => Session.AcceptDeathMatchAsync(id, s => { _status = s; StateHasChanged(); }));
+
+    async Task DoSettle(string id) =>
+        await RunAction("Resolving…", async () =>
+            _dm = await Session.SettleDeathMatchAsync(id, s => { _status = s; StateHasChanged(); }));
+
+    async Task RunAction(string initial, Func<Task> action)
+    {
+        _busy = true;
+        _error = null;
+        _status = initial;
+        try
+        {
+            await action();
+            _status = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task Reload()
+    {
+        _busy = true;
+        try { await LoadDeathMatchesAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private string Name(string heroId) =>
+        _names.TryGetValue(heroId, out var n) ? n : heroId[..Math.Min(8, heroId.Length)];
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}

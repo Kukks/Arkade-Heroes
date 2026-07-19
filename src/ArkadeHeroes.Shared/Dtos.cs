@@ -133,6 +133,11 @@ public record DeathMatchSettleResponse(
     // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
     bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null);
 
+/// <summary>One death-match on the discovery list, derived from its session. Status = open (awaiting the defender's stake) | accepted (ready to settle) | resolved.</summary>
+public record DeathMatchDto(
+    string DeathMatchId, string ChallengerHeroId, string DefenderHeroId,
+    string Status, bool Absorb, string? WinnerHeroId);
+
 // ── PvE gauntlet (F1): open (commit + fee) → pay → run (5 ghost waves) ──────
 
 public record GauntletOpenRequest(string HeroId);

@@ -481,6 +481,119 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return new DuelOutcome(fight, ok, detail);
     }
 
+    /// <summary>
+    /// Open a WINNER-TAKES-ALL death-match and stake into it from the browser wallet — PERMADEATH: if your
+    /// hero loses it BURNS and you forfeit your staked gear. Opens (the server returns the ONE joint escrow
+    /// + your gear-at-open + the fee), then stakes your hero + each gear unit + the fee with plain asset/sats
+    /// sends. The UI MUST gate this behind explicit consent. Returns the death-match id.
+    /// </summary>
+    public async Task<string> OpenDeathMatchAsync(string myHeroId, string opponentHeroId, bool absorb, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Opening the death-match…");
+        var open = await api.DeathMatch.OpenAsync(new DeathMatchOpenRequest(myHeroId, opponentHeroId, absorb));
+        if (string.IsNullOrEmpty(open.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        var myHero = await api.Heroes.GetAsync(myHeroId);
+        onProgress?.Invoke("Staking your hero into the death-match…");
+        await DepositAndSettleAsync(w.Id, open.EscrowAddress, myHero.AssetId ?? myHero.Id, 0);
+        foreach (var g in open.ChallengerGear)
+        {
+            onProgress?.Invoke($"Staking your {g.ItemId}…");
+            await DepositAndSettleAsync(w.Id, open.EscrowAddress, g.AssetId, 0, (ulong)g.Amount);
+        }
+        if (open.FeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying the death-match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        return open.DeathMatchId;
+    }
+
+    /// <summary>
+    /// Accept a death-match your hero was challenged to, staking into it — PERMADEATH: your hero burns if it
+    /// loses. Accept (returns the joint escrow + your gear-at-open + the fee), then stake your hero + gear +
+    /// fee. Once both sides are staked the challenger can resolve it.
+    /// </summary>
+    public async Task AcceptDeathMatchAsync(string deathMatchId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Accepting the death-match…");
+        var accept = await api.DeathMatch.AcceptAsync(deathMatchId);
+        if (string.IsNullOrEmpty(accept.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+
+        onProgress?.Invoke("Staking your hero into the death-match…");
+        await DepositAndSettleAsync(w.Id, accept.EscrowAddress, accept.DefenderHero.AssetId ?? accept.DefenderHero.Id, 0);
+        foreach (var g in accept.DefenderGear)
+        {
+            onProgress?.Invoke($"Staking your {g.ItemId}…");
+            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, g.AssetId, 0, (ulong)g.Amount);
+        }
+        if (accept.FeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying the death-match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+    }
+
+    /// <summary>
+    /// Resolve an accepted death-match (challenger only): the SERVER sweeps the joint escrow — routing the
+    /// winner's hero + all staked gear to the winner and BURNING the loser's hero — then, in absorb mode, may
+    /// re-mint the winner absorbing the loser's traits. Retries while stakes/fees settle, then CLIENT-VERIFIES
+    /// the fight (and any absorb) from the revealed seed. Returns the outcome.
+    /// </summary>
+    public async Task<DeathMatchOutcome> SettleDeathMatchAsync(string deathMatchId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Resolving the death-match…");
+        var nonce = RandomNonce();
+        DeathMatchSettleResponse? settle = null;
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20 && settle is null; attempt++)
+        {
+            try
+            {
+                settle = await api.DeathMatch.SettleAsync(deathMatchId, new DeathMatchSettleRequest(nonce));
+            }
+            catch (ArkadeHeroesApiException ex) when (
+                ex.Message.Contains("must stake", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("hasn't been paid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Stakes still settling — retrying ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        if (settle is null)
+            throw new GameWalletException(
+                $"Both heroes staked, but the deposits haven't settled for the resolution yet — try again in a moment. ({last?.Message})");
+
+        // Verify the deterministic fight replays from the revealed seed (VerifyMatch reads only
+        // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
+        var fr = new FightResponse(settle.Result, settle.ServerSeedHex, settle.EntropyHex, 0, 0,
+            settle.ChallengerSnapshot, settle.DefenderSnapshot, settle.ChallengerSnapshot, settle.DefenderSnapshot);
+        var (ok, detail) = FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr);
+
+        // Absorb mode: if the winner re-minted, verify the absorbed genome against the seed + published odds.
+        if (settle.Minted)
+        {
+            var info = await api.Chain.InfoAsync();
+            var challengerWon = settle.WinnerHeroId == settle.ChallengerSnapshot.Id;
+            var (aok, adetail) = FairnessAudit.VerifyAbsorb(
+                deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
+                nonce, settle.Receipt!.CommitmentHex,
+                new ArkadeHeroes.Core.Genetics.AbsorbOdds(info.AbsorbChance, info.AbsorbContinueChance),
+                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+            return new DeathMatchOutcome(settle, ok, detail, aok, adetail);
+        }
+        return new DeathMatchOutcome(settle, ok, detail);
+    }
+
     /// <summary>Equip an owned item onto one of the player's heroes (server enforces ownership + slot).</summary>
     public async Task<HeroDto> EquipAsync(string heroId, string itemId) =>
         (await api.Heroes.EquipAsync(heroId, new EquipRequest(itemId))).Hero;
@@ -492,11 +605,11 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
     // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
     // the just-spent (arkd-locked) BTC coin or race its change syncing back in.
-    private async Task DepositAndSettleAsync(string walletId, string escrow, string? assetId, long sats)
+    private async Task DepositAndSettleAsync(string walletId, string escrow, string? assetId, long sats, ulong assetAmount = 1)
     {
         var before = await wallet.SpendableBtcOutpointsAsync(walletId);
         if (assetId is not null)
-            await wallet.SendAssetAsync(walletId, escrow, assetId, 1);
+            await wallet.SendAssetAsync(walletId, escrow, assetId, assetAmount);
         else
             await wallet.SendSatsAsync(walletId, escrow, sats);
         await wallet.WaitForSpendToSettleAsync(walletId, before, TimeSpan.FromSeconds(60));
@@ -511,3 +624,8 @@ public record GauntletOutcome(GauntletRunResponse Run, bool FairnessOk, string F
 
 /// <summary>A resolved wagered duel bundled with its client-side fairness verdict, ready to render.</summary>
 public record DuelOutcome(FightResponse Fight, bool FairnessOk, string FairnessDetail);
+
+/// <summary>A resolved death-match: the settle result + the fight fairness verdict, plus (absorb mode) the absorbed-genome verdict.</summary>
+public record DeathMatchOutcome(
+    DeathMatchSettleResponse Settle, bool FairnessOk, string FairnessDetail,
+    bool? AbsorbOk = null, string? AbsorbDetail = null);
