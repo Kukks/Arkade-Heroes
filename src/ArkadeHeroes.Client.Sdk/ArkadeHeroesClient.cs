@@ -26,6 +26,7 @@ public sealed class ArkadeHeroesClient
         Breeding = new BreedingApi(this);
         Merge = new MergeApi(this);
         DeathMatch = new DeathMatchApi(this);
+        Gauntlet = new GauntletApi(this);
         Matches = new MatchesApi(this);
         Offers = new OffersApi(this);
         Items = new ItemsApi(this);
@@ -40,6 +41,7 @@ public sealed class ArkadeHeroesClient
     public BreedingApi Breeding { get; }
     public MergeApi Merge { get; }
     public DeathMatchApi DeathMatch { get; }
+    public GauntletApi Gauntlet { get; }
     public MatchesApi Matches { get; }
     public OffersApi Offers { get; }
     public ItemsApi Items { get; }

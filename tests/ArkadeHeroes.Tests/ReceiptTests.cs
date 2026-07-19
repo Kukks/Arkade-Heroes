@@ -98,6 +98,22 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public void ReplayLevel_FoldsGauntletXp_ButNotFriendly()
+    {
+        // F1: a "gauntlet" (PvE) receipt awards XP toward the hero's level — folded exactly like a
+        // "match". A "friendly" (unstaked spar) awards none and must NOT move the level. Same XP on
+        // both, so the ONLY thing under test is which receipt types ReplayLevel folds.
+        var bigXp = Leveling.XpToNext(1) + 25;   // enough to reach level 2 on its own
+        ProgressionReceiptDto One(string type) => new(
+            type, "g1", "hero-x", "", null,
+            "seed", "n", "commit",
+            bigXp, 0, 2, 1, 1000, "key", "sig");
+
+        Assert.Equal(2, ReceiptVerifier.ReplayLevel("hero-x", [One("gauntlet")]));
+        Assert.Equal(1, ReceiptVerifier.ReplayLevel("hero-x", [One("friendly")]));
+    }
+
+    [Fact]
     public async Task FightIssuesAVerifiableReceipt_AndLevelsReplayFromTheChain()
     {
         var (alice, _) = await _factory.RegisterAsync("R-Alice");

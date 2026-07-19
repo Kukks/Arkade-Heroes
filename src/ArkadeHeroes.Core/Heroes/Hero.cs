@@ -31,6 +31,9 @@ public class Hero
     public int BreedCount { get; set; }
     public DateTimeOffset? BreedCooldownUntil { get; set; }
 
+    /// <summary>When this hero can next enter the PvE gauntlet (F1) — rate-limits the XP faucet.</summary>
+    public DateTimeOffset? GauntletCooldownUntil { get; set; }
+
     public EquipmentLoadout Equipment { get; } = new();
 
     /// <summary>Commit–reveal audit trail for this hero's genome derivation (breeding) or genesis entropy.</summary>

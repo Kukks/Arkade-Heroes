@@ -133,6 +133,24 @@ public record DeathMatchSettleResponse(
     // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
     bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null);
 
+// ── PvE gauntlet (F1): open (commit + fee) → pay → run (5 ghost waves) ──────
+
+public record GauntletOpenRequest(string HeroId);
+
+public record GauntletOpenResponse(string GauntletId, string CommitmentHex, FeeInvoiceDto FeeInvoice);
+
+public record GauntletRunRequest(string Nonce);
+
+/// <summary>One wave's result for display; the client re-derives the ghost + fight from the seed to verify.</summary>
+public record GauntletWaveDto(int Wave, int GhostLevel, bool Won);
+
+/// <summary><see cref="HeroSnapshot"/> is the PRE-run hero, so the client replays <c>Gauntlet.Resolve</c>
+/// and re-checks the awarded XP (level-10 cap) + item via <c>FairnessAudit.VerifyGauntlet</c>.</summary>
+public record GauntletRunResponse(
+    int WavesCleared, IReadOnlyList<GauntletWaveDto> Waves, long XpAwarded, int NewLevel,
+    string? ItemAwarded, string? ItemAssetId, HeroDto HeroSnapshot,
+    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
+
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
 /// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>

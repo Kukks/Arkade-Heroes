@@ -383,6 +383,80 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (child, serverSeedHex, entropyHex, receipt);
     }
 
+    // ── PvE gauntlet (F1): open (commit + fee invoice) → client pays → run ──
+
+    public async Task<(GauntletSession Session, FeeInvoice Invoice)> OpenGauntletAsync(
+        Player player, string heroId, CancellationToken ct)
+    {
+        var hero = GetOwnedHero(player, heroId);
+        var now = DateTimeOffset.UtcNow;
+        if (hero.GauntletCooldownUntil is { } until && until > now)
+            throw new GameRuleException($"{hero.Name} is resting after its last gauntlet — try again shortly.");
+
+        var seed = CommitReveal.NewSeed();
+        var id = NewId("gauntlet");
+        var fee = Gauntlet.Fee(hero.Level, _config);
+        var invoice = await chain.CreateFeeInvoiceAsync($"gauntlet:{heroId}", fee, ct);
+        var session = new GauntletSession
+        {
+            Id = id, PlayerId = player.Id, HeroId = heroId,
+            ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+            FeeInvoiceId = invoice.InvoiceId, FeeSats = fee,
+        };
+        store.Gauntlets[id] = session;
+        return (session, invoice);
+    }
+
+    public async Task<(GauntletRun Run, long XpAwarded, Shared.HeroDto HeroSnapshot, string? ItemAwarded, string? ItemAssetId, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> RunGauntletAsync(
+        Player player, string gauntletId, string nonce, CancellationToken ct)
+    {
+        if (!store.Gauntlets.TryGetValue(gauntletId, out var session) || session.PlayerId != player.Id)
+            throw new GameRuleException($"Unknown gauntlet '{gauntletId}'.");
+        if (session.Completed) throw new GameRuleException("This gauntlet has already been run.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+        if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
+            throw new GameRuleException("The gauntlet fee invoice has not been paid yet — pay it from your wallet, then run.");
+
+        var hero = GetOwnedHero(player, session.HeroId);
+        var heroSnapshot = hero.ToDto();          // pre-run, so the client can replay the ghosts + fights
+        var preRunLevel = hero.Level;
+        session.Completed = true;
+
+        var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.HeroId, nonce);
+        var run = Gauntlet.Resolve(hero, entropy, _config);
+
+        // Capped, priced XP faucet (anti-farming): the award is computed from the PRE-run level, so a run
+        // that crosses the cap keeps its award, but future runs (already past the cap) award nothing.
+        var xpAward = Gauntlet.XpForRun(preRunLevel, run.WavesCleared);
+        ApplyXp(hero, xpAward);
+
+        // A full clear delivers one entropy-picked 500-sat-tier item to the player's wallet.
+        var itemAwarded = Gauntlet.RewardItem(entropy, run.WavesCleared);
+        string? itemAssetId = null;
+        if (itemAwarded is not null)
+        {
+            var item = Core.Equipment.ItemCatalog.Find(itemAwarded)!;
+            var delivery = await chain.DeliverItemAssetAsync(player.Id, item.Id, item.Name, ct);
+            itemAssetId = delivery.ItemAssetId;
+        }
+
+        hero.GauntletCooldownUntil = DateTimeOffset.UtcNow + _options.GauntletCooldown;
+
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+        // Gauntlet receipt (NOT a "match" receipt → carries no leaderboard weight). HeroBId is empty;
+        // ResultHeroId = the hero on a full clear; XpAwardA = the award; LevelA = post-run level;
+        // LevelB = PRE-run level (so a verifier can recompute the level-10 cap independently).
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "gauntlet", session.Id, session.HeroId, "", run.WavesCleared >= Gauntlet.WaveCount ? session.HeroId : null,
+                serverSeedHex, nonce, session.CommitmentHex,
+                xpAward, 0, hero.Level, preRunLevel,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            session.HeroId);
+
+        return (run, xpAward, heroSnapshot, itemAwarded, itemAssetId, serverSeedHex, entropyHex, receipt);
+    }
+
     // ── Merge / fusion: commit (escrow deposit) → reveal ───────────────
 
     public async Task<(MergeSession Session, string EscrowAddress)> CommitMergeAsync(

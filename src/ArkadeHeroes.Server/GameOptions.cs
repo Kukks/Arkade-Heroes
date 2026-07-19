@@ -16,6 +16,10 @@ public class GameOptions
     /// <summary>Base unit for breeding cooldowns. Short by default so regtest play loops stay fast.</summary>
     public TimeSpan BreedingCooldownBaseUnit { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>Per-hero cooldown between PvE gauntlet runs (F1) — rate-limits the capped XP faucet.
+    /// Short by default so regtest/play loops stay fast; a real deployment raises it (~10 min).</summary>
+    public TimeSpan GauntletCooldown { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Fixed 32-byte hex key for signing progression receipts; ephemeral per process when unset.</summary>
     public string? ReceiptKeyHex { get; set; }
 
