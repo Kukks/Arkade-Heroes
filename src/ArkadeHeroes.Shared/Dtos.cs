@@ -295,7 +295,10 @@ public record CreateHeroOfferRequest(string HeroId, long AskSats);
 /// </summary>
 public record CreateOfferResponse(
     string OfferId, string OfferAddress, string ItemAssetId,
-    long AskSats, long OfferValueSats, long RefundAfterUnixSeconds);
+    long AskSats, long OfferValueSats, long RefundAfterUnixSeconds,
+    // Marketplace listing fee (0 = disabled). When set, the seller pays this treasury
+    // fee-invoice; the offer stays pending (not buyable) until it clears.
+    long ListingFeeSats = 0, FeeInvoiceDto? ListingFee = null);
 
 /// <summary>
 /// A resting offer in the discovery index (an item unit or a hero). Status:

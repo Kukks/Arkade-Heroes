@@ -1537,7 +1537,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// covenant pins the seller as payee and enforces the ask, so fulfilment is
     /// trustless — the server is only the discovery index.
     /// </summary>
-    public async Task<(OfferListing Listing, OfferInfo Info)> CreateOfferAsync(
+    public async Task<(OfferListing Listing, OfferInfo Info, FeeInvoice? ListingFee)> CreateOfferAsync(
         Player player, string itemId, long askSats, CancellationToken ct)
     {
         var item = Core.Equipment.ItemCatalog.Find(itemId)
@@ -1566,15 +1566,24 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var offerId = NewId("offer");
         var info = await chain.CreateOfferAsync(offerId, player.Id, item.Id, askSats,
             DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+        var fee = await CreateListingFeeAsync(offerId, ct);
         var listing = new OfferListing
         {
             Id = offerId, SellerId = player.Id, ItemId = item.Id, AskSats = askSats,
             OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
             OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+            ListingFeeInvoiceId = fee?.InvoiceId, ListingFeeSats = fee?.AmountSats ?? 0, ListingFeePaid = fee is null,
         };
         store.Offers[offerId] = listing;
-        return (listing, info);
+        return (listing, info, fee);
     }
+
+    /// <summary>Bills the seller a flat treasury listing fee when one is configured; returns the invoice
+    /// to pay, or null when the fee is disabled (in which case the offer is immediately fee-clear).</summary>
+    private async Task<FeeInvoice?> CreateListingFeeAsync(string offerId, CancellationToken ct)
+        => _options.OfferListingFeeSats > 0
+            ? await chain.CreateFeeInvoiceAsync($"offer-list:{offerId}", _options.OfferListingFeeSats, ct)
+            : null;
 
     /// <summary>Active (funded, buyable) offers, each reconciled against on-chain truth first.</summary>
     public async Task<IReadOnlyList<OfferListing>> ListOffersAsync(CancellationToken ct)
@@ -1612,7 +1621,10 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     private async Task ReconcileOfferAsync(OfferListing offer, CancellationToken ct)
     {
         if (offer.Status == "closed") return;
-        if (await chain.IsOfferFundedAsync(offer.Id, ct))
+        // A listing goes live only once its fee clears; latch the check so a paid fee is queried once.
+        if (!offer.ListingFeePaid && offer.ListingFeeInvoiceId is not null)
+            offer.ListingFeePaid = await chain.IsInvoicePaidAsync(offer.ListingFeeInvoiceId, ct);
+        if (offer.ListingFeePaid && await chain.IsOfferFundedAsync(offer.Id, ct))
             offer.Status = "active";
         else if (offer.Status == "active")
             offer.Status = "closed";
@@ -1626,7 +1638,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// hero asset into the offer address, any buyer pays the ask to take it. The
     /// buyer then claims game-side ownership via <see cref="ClaimPurchasedHeroAsync"/>.
     /// </summary>
-    public async Task<(OfferListing Listing, OfferInfo Info)> CreateHeroOfferAsync(
+    public async Task<(OfferListing Listing, OfferInfo Info, FeeInvoice? ListingFee)> CreateHeroOfferAsync(
         Player player, string heroId, long askSats, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId); // verifies the seller owns it
@@ -1639,14 +1651,16 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var offerId = NewId("offer");
         var info = await chain.CreateHeroOfferAsync(offerId, player.Id, hero.AssetId!, askSats,
             DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+        var fee = await CreateListingFeeAsync(offerId, ct);
         var listing = new OfferListing
         {
             Id = offerId, SellerId = player.Id, Kind = "hero", ItemId = "", HeroId = heroId,
             AskSats = askSats, OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
             OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+            ListingFeeInvoiceId = fee?.InvoiceId, ListingFeeSats = fee?.AmountSats ?? 0, ListingFeePaid = fee is null,
         };
         store.Offers[offerId] = listing;
-        return (listing, info);
+        return (listing, info, fee);
     }
 
     /// <summary>

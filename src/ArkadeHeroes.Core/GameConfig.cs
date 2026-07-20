@@ -46,7 +46,9 @@ public sealed record GameConfig(
     int DailyStreakCapPct = 100,      // multiplier cap (day 11+ = ×2)
     // ── Season prize pool (house-funded pot: base + a slice of staked-match fees, split 60/30/10) ──
     long SeasonPotBaseSats = 25_000,  // guaranteed base pot each season (treasury-funded)
-    int SeasonFeeAccrualPct = 20)     // % of each staked match's fees added to the season pot
+    int SeasonFeeAccrualPct = 20,     // % of each staked match's fees added to the season pot
+    // ── Marketplace listing fee (treasury capture on secondary trades) ──
+    long OfferListingFeeSats = 0)     // flat sats the seller pays the treasury to list an offer; 0 = disabled
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(
