@@ -912,6 +912,29 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             .ToList();
     }
 
+    /// <summary>The current season's ranked ladder: staked-match wins tallied over the receipts that fall
+    /// within the season window (reusing <see cref="Shared.LeaderboardBuilder"/>), plus when the season ends.
+    /// Trustless + auto-resetting — computed from the signed receipts, and the window rolls with the clock.</summary>
+    public Shared.SeasonLeaderboardDto SeasonLeaderboard()
+    {
+        var season = Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays);
+        var startUnix = season.Start.ToUnixTimeSeconds();
+        var endUnix = season.End.ToUnixTimeSeconds();
+        var heroes = store.Heroes.Values.ToDictionary(
+            h => h.Id, h => (h.Name, h.Level, h.OwnerId));
+        var receipts = store.ReceiptsByHero.Values
+            .SelectMany(list => list)
+            .DistinctBy(r => r.Id)
+            .Where(r => r.UnixSeconds >= startUnix && r.UnixSeconds < endUnix);
+        // The ladder is only the heroes that actually contested a ranked (staked) match this season —
+        // LeaderboardBuilder lists every hero, so drop the idle ones and re-rank the survivors 1..N.
+        var standings = Shared.LeaderboardBuilder.Build(heroes, receipts)
+            .Where(e => e.Matches > 0)
+            .Select((e, i) => e with { Rank = i + 1 })
+            .ToList();
+        return new Shared.SeasonLeaderboardDto(season.Number, endUnix, standings);
+    }
+
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
         long ChallengerXp, long DefenderXp,
         Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout,

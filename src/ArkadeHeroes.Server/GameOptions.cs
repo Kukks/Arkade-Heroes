@@ -41,6 +41,9 @@ public class GameOptions
     public int BreedFeeDoublingCap { get; set; } = BreedingPolicy.FeeDoublingCap; // 3
     public int MatchmakingTake { get; set; } = 10;
 
+    /// <summary>Ranked-ladder season length in days — the current season is derived from Season.Epoch + this.</summary>
+    public int SeasonLengthDays { get; set; } = 14;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -59,5 +62,6 @@ public class GameOptions
         DeathMatchFeeMultiplier: DeathMatchFeeMultiplier,
         AbsorbFeeMultiplier: AbsorbFeeMultiplier,
         BreedFeeDoublingCap: BreedFeeDoublingCap,
-        MatchmakingTake: MatchmakingTake);
+        MatchmakingTake: MatchmakingTake,
+        SeasonLengthDays: SeasonLengthDays);
 }
