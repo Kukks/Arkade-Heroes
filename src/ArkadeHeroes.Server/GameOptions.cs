@@ -13,6 +13,10 @@ public class GameOptions
     /// <summary>Flat sats fee to merge two heroes into one — a sats sink on top of the hero burn.</summary>
     public long MergeFeeSats { get; set; } = 1_000;
 
+    /// <summary>Flat sats fee to claim a custom, globally-unique hero name — an evergreen identity sink to
+    /// the treasury (no power creep, whale-friendly ceiling). 0 = renaming is free.</summary>
+    public long HeroRenameFeeSats { get; set; } = 500;
+
     /// <summary>Base unit for breeding cooldowns. Short by default so regtest play loops stay fast.</summary>
     public TimeSpan BreedingCooldownBaseUnit { get; set; } = TimeSpan.FromSeconds(30);
 
