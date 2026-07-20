@@ -132,7 +132,13 @@ public sealed record CombatConfig(
     // expected-damage score — the true EV term the resolver already applies. DEFAULT FALSE, so
     // Default stays byte-identical and every existing replay verifies unchanged; the flip is a
     // separate coordinated client+server release. Optional param → no positional ctor breaks.
-    bool ElementAwareSelection = false)
+    bool ElementAwareSelection = false,
+    // Genome-derived innate abilities: when true, a hero's EXPRESSED COSMETIC traits (the six
+    // non-affinity categories, otherwise combat-inert) grant a small capped damage nudge via
+    // Traits.InnateModifier — so rarity/breeding start to matter in the fight, not just on the card.
+    // DEFAULT FALSE (same discipline as ElementAwareSelection): Default stays byte-identical and every
+    // existing replay verifies unchanged; flipping it on is a coordinated client+server release.
+    bool InnateAbilities = false)
 {
     public static CombatConfig Default { get; } = new(
         MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,
@@ -141,5 +147,6 @@ public sealed record CombatConfig(
         GeneSkillALevel: 1, GeneSkillBLevel: 6, BurstLevel: 9,
         FocusPerStack: 0.12, DefenseBreakPerStack: 0.12, MaxEffectStacks: 3, DrainFraction: 0.5,
         SelectionPolicy: CombatSelectionPolicy.Tactical, HealHpThresholdPercent: 45,
-        ElementAwareSelection: false);
+        ElementAwareSelection: false,
+        InnateAbilities: false);
 }
