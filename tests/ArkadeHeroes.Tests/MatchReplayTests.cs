@@ -42,6 +42,34 @@ public class MatchReplayTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task ResolvedDeathMatch_ServesAVerifiableReplay()
+    {
+        var (alice, _) = await _factory.RegisterAsync("DMReplay-A");
+        var (bob, _) = await _factory.RegisterAsync("DMReplay-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0];
+        var bobHero = (await bob.ClaimStartersAsync())[0];
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+        var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("dm-replay-nonce"));
+
+        // A death-match is a watchable, verifiable artifact too — an unauthenticated spectator replays the permakill.
+        using var spectatorHttp = _factory.CreateClient();
+        var spectator = new ArkadeHeroesClient(spectatorHttp);
+        var replay = await spectator.DeathMatch.ReplayAsync(open.DeathMatchId);
+
+        Assert.Equal(settle.WinnerHeroId, replay.WinnerHeroId);
+        var fr = new FightResponse(replay.Result, replay.ServerSeedHex, replay.EntropyHex, 0, 0,
+            replay.ChallengerSnapshot, replay.DefenderSnapshot, replay.ChallengerSnapshot, replay.DefenderSnapshot);
+        var (ok, detail) = FairnessAudit.VerifyMatch(open.DeathMatchId, "dm-replay-nonce", replay.CommitmentHex, fr);
+        Assert.True(ok, detail);
+    }
+
+    [Fact]
     public async Task UnknownMatch_HasNoReplay()
     {
         var (alice, _) = await _factory.RegisterAsync("Replay-None");

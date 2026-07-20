@@ -186,6 +186,13 @@ else
                 <span class="dot @(_dm.FairnessOk ? "ok" : "bad")"></span>
                 <span class="mono" style="font-size:.78rem">@(_dm.FairnessOk ? $"fairness ✓ {_dm.FairnessDetail}" : $"fairness ✗ server cheated: {_dm.FairnessDetail}")</span>
             </div>
+            @if (_resolvedId is not null)
+            {
+                <div class="status-line" style="margin-top:.8rem">
+                    <a class="btn ghost sm" href="watch/@_resolvedId">Share replay ↗</a>
+                    <span class="muted" style="font-size:.78rem">anyone can watch this permakill — no login</span>
+                </div>
+            }
             @if (_dm.AbsorbOk is not null)
             {
                 <div class="status-line" style="margin-top:.4rem">
@@ -213,6 +220,7 @@ else
     private string? _status;
     private string? _error;
     private DeathMatchOutcome? _dm;
+    private string? _resolvedId;   // the just-settled death-match, for the shareable replay link
 
     private HeroDto? MyHero => _mine.FirstOrDefault(h => h.Id == _myHeroId);
     private OpponentSuggestionDto? Opp => _opponents.FirstOrDefault(o => o.Hero.Id == _oppId);
@@ -287,7 +295,10 @@ else
 
     async Task DoSettle(string id) =>
         await RunAction("Resolving…", async () =>
-            _dm = await Session.SettleDeathMatchAsync(id, s => { _status = s; StateHasChanged(); }));
+        {
+            _resolvedId = id;
+            _dm = await Session.SettleDeathMatchAsync(id, s => { _status = s; StateHasChanged(); });
+        });
 
     async Task RunAction(string initial, Func<Task> action)
     {

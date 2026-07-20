@@ -237,6 +237,17 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
     await chain.GetDeathMatchEscrowParamsAsync(id, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 
+// Public spectator replay of a SETTLED death-match (mirrors /matches/{id}/replay) — watch + verify a
+// permakill trustlessly from the revealed seed. 404 until settled. No auth — a shareable link.
+api.MapGet("/deathmatch/{id}/replay", (string id, GameStore store) =>
+    store.DeathMatches.TryGetValue(id, out var s)
+        && s.Result is not null && s.ChallengerSnapshot is not null && s.DefenderSnapshot is not null
+        ? Results.Ok(new MatchReplayDto(
+            s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
+            s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
+            s.EntropyHex ?? "", s.Nonce ?? ""))
+        : Results.NotFound());
+
 // Death-match discovery: the sessions a browser needs to SEE an incoming challenge — no list
 // endpoint existed (the console passes the death-match id out-of-band). Public like /matches; the
 // client filters to its own heroes. Status is derived from the session's accepted/completed flags.

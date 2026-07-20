@@ -96,6 +96,14 @@ public class DeathMatchSession
     public bool Absorb { get; init; }
     /// <summary>The species control asset the absorbed hero mints under (absorb mode only).</summary>
     public string SpeciesId { get; init; } = "";
+
+    /// <summary>Fight-time replay data (persisted at settle) so ANY spectator can watch + verify the
+    /// death-match later — mirrors MatchSession. Null until settled.</summary>
+    public BattleResult? Result { get; set; }
+    public string? Nonce { get; set; }
+    public string? EntropyHex { get; set; }
+    public Shared.HeroDto? ChallengerSnapshot { get; set; }
+    public Shared.HeroDto? DefenderSnapshot { get; set; }
 }
 
 /// <summary>An item purchase awaiting its invoice payment. Status: pending → delivering → claimed (delivery failures return to pending so a paid purchase is always claimable).</summary>
