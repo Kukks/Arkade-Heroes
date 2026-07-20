@@ -1,0 +1,116 @@
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+@* The daily engagement loop, shared by the Home banner and the /daily page: today's quests,
+   the streak, and a once-a-day sats claim. Signed-out shows the Play nudge. *@
+<div class="card">
+    <div class="page-head" style="margin:0 0 .5rem">
+        <h3 style="margin:0">Daily rewards</h3>
+        @if (_status is { Streak: > 0 })
+        {
+            <span class="hud">🔥 @(_status.Streak)-day streak</span>
+        }
+    </div>
+
+    @if (!State.IsSignedIn)
+    {
+        <p class="muted" style="margin:0">Press <a href="/">Play</a> to set up your wallet, then claim daily sats for playing.</p>
+    }
+    else if (_status is null)
+    {
+        <div class="status-line"><span class="dot wait"></span> loading today's quests…</div>
+    }
+    else
+    {
+        <p class="muted" style="margin:-.2rem 0 .7rem">Finish a quest, claim sats. Resets in @ResetsIn(_status.DayEndsUnix).</p>
+        @foreach (var q in _status.Quests)
+        {
+            <div class="match-row">
+                <span class="@(q.Done ? "" : "muted")">@(q.Done ? "✓" : "▢") @q.Title</span>
+                <span class="spacer"></span>
+                <span class="chip">+@q.BonusSats sat</span>
+            </div>
+        }
+        <div class="btn-row" style="margin-top:.8rem;align-items:center;gap:.8rem">
+            @if (_status.ClaimedToday)
+            {
+                <span class="status-line"><span class="dot ok"></span> Claimed today — come back tomorrow.</span>
+            }
+            else
+            {
+                <button class="btn primary" @onclick="Claim" disabled="@_claiming">
+                    @(_claiming ? "Claiming…" : $"Claim {_status.ClaimableNowSats:N0} sat")
+                </button>
+            }
+            @if (_flash is not null)
+            {
+                <span class="status-line"><span class="dot ok"></span> @_flash</span>
+            }
+        </div>
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.5rem"><span class="dot bad"></span> @_error</div>
+        }
+    }
+</div>
+
+@code {
+    private DailyStatusDto? _status;
+    private bool _claiming;
+    private bool _wasSignedIn;
+    private string? _flash;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        _wasSignedIn = State.IsSignedIn;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _status = null; StateHasChanged(); return; }
+        try { _status = await Session.DailyStatusAsync(); }
+        catch { _status = null; }
+        StateHasChanged();
+    }
+
+    private async Task Claim()
+    {
+        if (_claiming) return;
+        _claiming = true; _error = null; _flash = null;
+        try
+        {
+            var result = await Session.ClaimDailyAsync();
+            _flash = $"+{result.AwardedSats:N0} sat! Streak {result.Streak}.";
+            await LoadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _claiming = false; }
+    }
+
+    // Reload when the sign-in token settles (same login-race the other pages handle), else just repaint.
+    private void OnState()
+    {
+        if (State.IsSignedIn != _wasSignedIn)
+        {
+            _wasSignedIn = State.IsSignedIn;
+            InvokeAsync(LoadAsync);
+        }
+        else
+        {
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    static string ResetsIn(long endsAtUnix)
+    {
+        var left = DateTimeOffset.FromUnixTimeSeconds(endsAtUnix) - DateTimeOffset.UtcNow;
+        if (left <= TimeSpan.Zero) return "moments";
+        return left.TotalHours >= 1 ? $"{(int)left.TotalHours}h" : $"{(int)left.TotalMinutes}m";
+    }
+
+    public void Dispose() => State.OnChange -= OnState;
+}

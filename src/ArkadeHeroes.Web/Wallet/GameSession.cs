@@ -389,6 +389,18 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return new GauntletOutcome(run, ok, detail);
     }
 
+    // ── Daily engagement loop ──
+    public Task<DailyStatusDto> DailyStatusAsync() => api.Daily.StatusAsync();
+
+    /// <summary>Claim the daily reward; the sats land in the player's wallet, so refresh the balance pill.</summary>
+    public async Task<DailyClaimResultDto> ClaimDailyAsync()
+    {
+        var result = await api.Daily.ClaimAsync();
+        var w = await wallet.GetActiveWalletAsync();
+        if (w is not null) state.UpdateBalance(await wallet.GetBalanceAsync(w.Id));
+        return result;
+    }
+
     /// <summary>
     /// Open a wagered match under covenant enforcement and stake into it from the browser wallet:
     /// open (the server returns the challenger's per-party escrow address + the per-character match fee),

@@ -46,6 +46,11 @@
     <div class="hero-art">GEN·0<br />STARTER</div>
 </section>
 
+@if (State.IsSignedIn)
+{
+    <DailyCard />
+}
+
 <div class="card @(_state == Conn.Ok ? "glow" : "")">
     <div class="status-line">
         <span class="dot @(_state switch { Conn.Ok => "ok", Conn.Fail => "bad", _ => "wait" })"></span>
