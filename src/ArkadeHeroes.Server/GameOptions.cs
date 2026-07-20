@@ -51,6 +51,10 @@ public class GameOptions
     public int DailyStreakStepPct { get; set; } = 10;
     public int DailyStreakCapPct { get; set; } = 100;
 
+    /// <summary>Season prize pool: a house-funded base + a slice of each staked match's fees, split 60/30/10.</summary>
+    public long SeasonPotBaseSats { get; set; } = 25_000;
+    public int SeasonFeeAccrualPct { get; set; } = 20;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -75,5 +79,7 @@ public class GameOptions
         DailyQuestBonusSats: DailyQuestBonusSats,
         DailyQuestsPerDay: DailyQuestsPerDay,
         DailyStreakStepPct: DailyStreakStepPct,
-        DailyStreakCapPct: DailyStreakCapPct);
+        DailyStreakCapPct: DailyStreakCapPct,
+        SeasonPotBaseSats: SeasonPotBaseSats,
+        SeasonFeeAccrualPct: SeasonFeeAccrualPct);
 }

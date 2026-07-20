@@ -461,6 +461,17 @@ public class NArkChainService(
         return txId.ToString();
     }
 
+    /// <summary>The treasury wallet's spendable plain-BTC balance (sats) — the season-pot coverage check.
+    /// Sums the same non-asset offchain coins the payout/consolidation paths select from.</summary>
+    public async Task<long> TreasuryBalanceAsync(CancellationToken ct = default)
+    {
+        await EnsureTreasuryAsync(ct);
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var btc = (await spendingService.GetAvailableCoins(_treasuryWalletId!, ct))
+            .Where(c => c.CanSpendOffchain(now) && c.Assets is null or { Count: 0 });
+        return btc.Sum(c => c.TxOut.Value.Satoshi);
+    }
+
     // ── Covenant wager escrows ─────────────────────────────────────────
 
     private async Task<string> RequireEmulatorSignerAsync(CancellationToken ct)

@@ -25,4 +25,14 @@ public static class Season
         var start = Epoch.AddDays(index * (double)len);
         return new SeasonInfo(index + 1, start, start.AddDays(len));
     }
+
+    /// <summary>The window for a specific 1-based season <paramref name="number"/>, independent of the
+    /// clock — so a past season can be settled. Mirrors <see cref="Current"/>'s arithmetic.</summary>
+    public static SeasonInfo ForNumber(int number, int lengthDays)
+    {
+        var len = Math.Max(1, lengthDays);
+        var n = Math.Max(1, number);
+        var start = Epoch.AddDays((n - 1) * (double)len);
+        return new SeasonInfo(n, start, start.AddDays(len));
+    }
 }

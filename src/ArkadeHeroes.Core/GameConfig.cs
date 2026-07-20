@@ -43,7 +43,10 @@ public sealed record GameConfig(
     long DailyQuestBonusSats = 150,   // per completed daily quest
     int DailyQuestsPerDay = 3,        // quests offered per day (rotated from the catalog)
     int DailyStreakStepPct = 10,      // multiplier added per consecutive day
-    int DailyStreakCapPct = 100)      // multiplier cap (day 11+ = ×2)
+    int DailyStreakCapPct = 100,      // multiplier cap (day 11+ = ×2)
+    // ── Season prize pool (house-funded pot: base + a slice of staked-match fees, split 60/30/10) ──
+    long SeasonPotBaseSats = 25_000,  // guaranteed base pot each season (treasury-funded)
+    int SeasonFeeAccrualPct = 20)     // % of each staked match's fees added to the season pot
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(

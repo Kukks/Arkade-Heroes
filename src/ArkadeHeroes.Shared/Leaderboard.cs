@@ -6,7 +6,13 @@ public record LeaderboardEntryDto(
 
 /// <summary>The current season's ranked ladder — its number, when it ends (so the client can show a
 /// "resets in X" countdown), and the standings (staked-match wins within the season window).</summary>
-public record SeasonLeaderboardDto(int SeasonNumber, long EndsAtUnix, IReadOnlyList<LeaderboardEntryDto> Standings);
+public record SeasonLeaderboardDto(
+    int SeasonNumber, long EndsAtUnix, long PotSats,
+    IReadOnlyList<LeaderboardEntryDto> Standings, SeasonSettlementDto? LastSettlement);
+
+/// <summary>A settled season's payout snapshot — for the "last season's champions" surface.</summary>
+public record SeasonSettlementDto(int SeasonNumber, long PotSats, IReadOnlyList<SeasonWinnerDto> Winners);
+public record SeasonWinnerDto(int Rank, string Name, long AwardSats);
 
 /// <summary>
 /// The leaderboard is computed entirely from signed progression receipts —

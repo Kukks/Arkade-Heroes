@@ -102,6 +102,9 @@ public class InMemoryChainService : IChainService
     /// and a fresh treasury has no fee income yet). InMemory only — NArk funds a real treasury address.</summary>
     public void FundTreasury(long sats) => Interlocked.Add(ref _treasuryBalance, sats);
 
+    public Task<long> TreasuryBalanceAsync(CancellationToken ct = default) =>
+        Task.FromResult(Interlocked.Read(ref _treasuryBalance));
+
     // ── Treasury-signed actions ────────────────────────────────────────
 
     public async Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)

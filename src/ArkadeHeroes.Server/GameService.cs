@@ -915,24 +915,66 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     /// <summary>The current season's ranked ladder: staked-match wins tallied over the receipts that fall
     /// within the season window (reusing <see cref="Shared.LeaderboardBuilder"/>), plus when the season ends.
     /// Trustless + auto-resetting — computed from the signed receipts, and the window rolls with the clock.</summary>
-    public Shared.SeasonLeaderboardDto SeasonLeaderboard()
+    public Task<Shared.SeasonLeaderboardDto> SeasonLeaderboard(CancellationToken ct = default) =>
+        SeasonLeaderboardAt(DateTimeOffset.UtcNow, ct);
+
+    /// <summary>The season board at an explicit <paramref name="now"/> (the test seam — no injectable clock):
+    /// settle anything that ended, then project the current window's standings + live pot + last settlement.</summary>
+    public async Task<Shared.SeasonLeaderboardDto> SeasonLeaderboardAt(DateTimeOffset now, CancellationToken ct)
     {
-        var season = Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays);
+        await SettleDueSeasonsAsync(now, ct);
+        var season = Season.Current(now, _config.SeasonLengthDays);
+        var standings = SeasonStandings(season);
+        var pot = _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(season.Number);
+        return new Shared.SeasonLeaderboardDto(
+            season.Number, season.End.ToUnixTimeSeconds(), pot, standings, store.LastSettlement);
+    }
+
+    /// <summary>The ranked standings within a season window — staked-match wins tallied from receipts,
+    /// idle heroes dropped, re-ranked 1..N. Reused by the current board and by settlement.</summary>
+    private List<Shared.LeaderboardEntryDto> SeasonStandings(SeasonInfo season)
+    {
         var startUnix = season.Start.ToUnixTimeSeconds();
         var endUnix = season.End.ToUnixTimeSeconds();
-        var heroes = store.Heroes.Values.ToDictionary(
-            h => h.Id, h => (h.Name, h.Level, h.OwnerId));
-        var receipts = store.ReceiptsByHero.Values
-            .SelectMany(list => list)
-            .DistinctBy(r => r.Id)
+        var heroes = store.Heroes.Values.ToDictionary(h => h.Id, h => (h.Name, h.Level, h.OwnerId));
+        var receipts = store.ReceiptsByHero.Values.SelectMany(list => list).DistinctBy(r => r.Id)
             .Where(r => r.UnixSeconds >= startUnix && r.UnixSeconds < endUnix);
-        // The ladder is only the heroes that actually contested a ranked (staked) match this season —
-        // LeaderboardBuilder lists every hero, so drop the idle ones and re-rank the survivors 1..N.
-        var standings = Shared.LeaderboardBuilder.Build(heroes, receipts)
+        return Shared.LeaderboardBuilder.Build(heroes, receipts)
             .Where(e => e.Matches > 0)
             .Select((e, i) => e with { Rank = i + 1 })
             .ToList();
-        return new Shared.SeasonLeaderboardDto(season.Number, endUnix, standings);
+    }
+
+    /// <summary>Pay out any ended-but-unsettled seasons (lazy, on board read). Under a lock; the settled
+    /// marker is advanced BEFORE paying, so a crash/concurrent read can't re-settle → no double-pay (the
+    /// marker + the winner-defining receipts drop together on restart).</summary>
+    private async Task SettleDueSeasonsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var current = Season.Current(now, _config.SeasonLengthDays).Number;
+        if (!SeasonPrize.DueSeasons(store.LastSettledSeason, current).Any()) return;
+
+        await store.SettleLock.WaitAsync(ct);
+        try
+        {
+            foreach (var s in SeasonPrize.DueSeasons(store.LastSettledSeason, current))
+            {
+                var standings = SeasonStandings(Season.ForNumber(s, _config.SeasonLengthDays)).Take(3).ToList();
+                var pot = _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(s);
+                if (standings.Count == 0) { store.LastSettledSeason = s; continue; }   // no competitors / receipts gone
+                if (await chain.TreasuryBalanceAsync(ct) < pot) break;                 // underfunded → retry on a later read
+
+                var shares = SeasonPrize.Split(pot, standings.Count, SeasonPrize.Weights);
+                store.LastSettledSeason = s;   // commit BEFORE paying → no double-pay
+                store.LastSettlement = new Shared.SeasonSettlementDto(s, pot,
+                    standings.Select((e, i) => new Shared.SeasonWinnerDto(e.Rank, e.Name, shares[i])).ToList());
+                for (var i = 0; i < standings.Count; i++)
+                {
+                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); }
+                    catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
+                }
+            }
+        }
+        finally { store.SettleLock.Release(); }
     }
 
     // ── Daily engagement loop ──────────────────────────────────────────────────────────────────
@@ -1104,6 +1146,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
             }
+
+            // Season prize pool: a slice of this staked match's fees accrues to the current season's pot.
+            var seasonFee = Leveling.MatchFee(challenger.Level, _config) + Leveling.MatchFee(defender.Level, _config);
+            var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;
+            if (seasonAccrue > 0)
+                store.SeasonFeeAccrual.AddOrUpdate(
+                    Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays).Number,
+                    seasonAccrue, (_, cur) => cur + seasonAccrue);
         }
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
