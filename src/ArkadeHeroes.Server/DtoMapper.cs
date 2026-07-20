@@ -67,6 +67,12 @@ public static class DtoMapper
         result.WinnerRemainingHp,
         result.WinnerMaxHp);
 
+    public static Shared.SquadResultDto ToDto(
+        this SquadResult result, IReadOnlyList<Shared.HeroDto> challengers, IReadOnlyList<Shared.HeroDto> defenders) => new(
+        result.ChallengerWon, result.ChallengerWins, result.DefenderWins,
+        result.Duels.Select(d => new Shared.SquadDuelDto(
+            d.Slot, challengers[d.Slot], defenders[d.Slot], d.Result.ToDto())).ToList());
+
     public static ItemDto ToDto(this Core.Equipment.Item item) => new(
         item.Id, item.Name, item.Slot.ToString(),
         item.Mods.MaxHp, item.Mods.Attack, item.Mods.Magic,

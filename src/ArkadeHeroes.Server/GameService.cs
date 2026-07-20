@@ -216,6 +216,17 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         }
     }
 
+    /// <summary>Dev/test lever: mint one extra gen-0 hero to a player (InMemory only) — for tests that need a
+    /// full 3-hero squad lineup beyond the two starters. NOT part of the game economy.</summary>
+    public async Task<Hero> DevMintHeroAsync(Player player, CancellationToken ct)
+    {
+        var entropy = RandomNumberGenerator.GetBytes(32);
+        return await MintHeroAsync(player, Genome.NewGen0(entropy), generation: 0,
+            parentA: null, parentB: null,
+            serverSeedHex: Convert.ToHexString(entropy).ToLowerInvariant(),
+            playerNonce: null, entropyHex: null, ct);
+    }
+
     private async Task<Hero> MintHeroAsync(
         Player player, Genome genome, int generation,
         string? parentA, string? parentB,
@@ -1175,6 +1186,202 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             challengerDelta,
             defenderDelta,
             challengerSnapshot, defenderSnapshot, winnerPayout, receipt);
+    }
+
+    // ── Team 3v3 squad matches: a positional best-of-3 relay, reusing the wager escrow + BattleEngine ──
+
+    private IReadOnlyList<Hero> ValidateLineup(Player player, IReadOnlyList<string> lineup, bool owned)
+    {
+        if (lineup.Count != SquadBattle.LineupSize)
+            throw new GameRuleException($"A squad lineup must be exactly {SquadBattle.LineupSize} heroes.");
+        if (lineup.Distinct().Count() != lineup.Count)
+            throw new GameRuleException("A squad lineup must be three distinct heroes.");
+        return lineup.Select(id => owned ? GetOwnedHero(player, id) : GetHero(id)).ToList();
+    }
+
+    public async Task<(SquadMatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> OpenSquadMatchAsync(
+        Player player, Shared.OpenSquadMatchRequest req, CancellationToken ct)
+    {
+        var challengerLineup = ValidateLineup(player, req.ChallengerLineup, owned: true);
+        var defenderLineup = ValidateLineup(player, req.DefenderLineup, owned: false);
+        if (req.ChallengerLineup.Intersect(req.DefenderLineup).Any())
+            throw new GameRuleException("The two lineups must not share a hero.");
+        if (req.WagerSats < 0) throw new GameRuleException("Wager cannot be negative.");
+        if (req.Mode is not ("invoice" or "covenant")) throw new GameRuleException("Match mode must be 'invoice' or 'covenant'.");
+        if (req.Mode == "covenant" && req.WagerSats <= 0) throw new GameRuleException("Covenant matches are for wagers — set WagerSats.");
+
+        var defenderOwner = defenderLineup[0].OwnerId;
+        if (req.WagerSats > 0 && (defenderOwner == player.Id || defenderLineup.Any(h => h.OwnerId != defenderOwner)))
+            throw new GameRuleException("A wagered squad match needs one opponent who owns all three defender heroes.");
+
+        var seed = CommitReveal.NewSeed();
+        var commitmentHex = CommitReveal.Commit(seed);
+        var matchId = NewId("squad");
+
+        FeeInvoice? invoice = null, feeInvoice = null;
+        string? escrowChallenger = null, escrowDefender = null;
+        long? refundAfterUnix = null;
+        if (req.WagerSats > 0)
+        {
+            if (req.Mode == "covenant")
+            {
+                var escrow = await chain.CreateWagerEscrowAsync(matchId, player.Id, defenderOwner, req.WagerSats,
+                    Convert.FromHexString(commitmentHex), receipts.PublicKeyHex,
+                    DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
+                escrowChallenger = escrow.ChallengerEscrowAddress;
+                escrowDefender = escrow.DefenderEscrowAddress;
+                refundAfterUnix = escrow.RefundAfterUnixSeconds;
+            }
+            else
+            {
+                invoice = await chain.CreateFeeInvoiceAsync("squad-stake:challenger", req.WagerSats, ct);
+            }
+            // One match fee per side, based on the lineup's TOP level (not 3×).
+            feeInvoice = await chain.CreateFeeInvoiceAsync($"squad-fee:challenger:{matchId}",
+                Leveling.MatchFee(challengerLineup.Max(h => h.Level), _config), ct);
+        }
+
+        var session = new SquadMatchSession
+        {
+            Id = matchId,
+            ChallengerPlayerId = player.Id,
+            ChallengerLineup = req.ChallengerLineup.ToList(),
+            DefenderLineup = req.DefenderLineup.ToList(),
+            ServerSeed = seed,
+            CommitmentHex = commitmentHex,
+            WagerSats = req.WagerSats,
+            Mode = req.Mode,
+            EscrowChallengerAddress = escrowChallenger,
+            EscrowDefenderAddress = escrowDefender,
+            ChallengerInvoiceId = invoice?.InvoiceId,
+            ChallengerFeeInvoiceId = feeInvoice?.InvoiceId,
+            RefundAfterUnixSeconds = refundAfterUnix,
+            DefenderPlayerId = req.WagerSats > 0 ? defenderOwner : null,
+        };
+        store.SquadMatches[session.Id] = session;
+        return (session, invoice, feeInvoice);
+    }
+
+    public async Task<(SquadMatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> AcceptSquadMatchAsync(
+        Player player, string matchId, CancellationToken ct)
+    {
+        if (!store.SquadMatches.TryGetValue(matchId, out var session))
+            throw new GameRuleException($"Unknown squad match '{matchId}'.");
+        if (session.WagerSats == 0) throw new GameRuleException("Friendly squad matches don't need acceptance.");
+        if (session.Status != "open") throw new GameRuleException($"Squad match is {session.Status}, not open.");
+        var defenders = session.DefenderLineup.Select(GetHero).ToList();
+        if (defenders.Any(h => h.OwnerId != player.Id))
+            throw new GameRuleException("Only the defender lineup's owner can accept this squad match.");
+
+        FeeInvoice? invoice = null;
+        if (session.Mode == "invoice")
+        {
+            invoice = await chain.CreateFeeInvoiceAsync($"squad-stake:defender:{matchId}", session.WagerSats, ct);
+            session.DefenderInvoiceId = invoice.InvoiceId;
+        }
+        var feeInvoice = await chain.CreateFeeInvoiceAsync($"squad-fee:defender:{matchId}",
+            Leveling.MatchFee(defenders.Max(h => h.Level), _config), ct);
+        session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
+        session.DefenderPlayerId = player.Id;
+        session.Status = "accepted";
+        return (session, invoice, feeInvoice);
+    }
+
+    public async Task<(SquadMatchSession Session, SquadResult Result, string ServerSeedHex, string EntropyHex,
+        IReadOnlyList<Shared.HeroDto> ChallengerSnapshots, IReadOnlyList<Shared.HeroDto> DefenderSnapshots,
+        long WinnerPayout, IReadOnlyList<Shared.ProgressionReceiptDto> Receipts)>
+        ResolveSquadMatchAsync(Player player, string matchId, string nonce, CancellationToken ct)
+    {
+        if (!store.SquadMatches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
+            throw new GameRuleException($"Unknown squad match '{matchId}'.");
+        var fightable = session.Status == "accepted" || (session.Status == "open" && session.WagerSats == 0);
+        if (!fightable)
+            throw new GameRuleException(session.Status == "open"
+                ? "This wagered squad match is waiting for the defender's owner to accept."
+                : "Squad match already resolved.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        if (session.WagerSats > 0)
+        {
+            if (session.Mode == "covenant")
+            {
+                if (!await chain.IsEscrowFundedAsync(session.Id, ct))
+                    throw new GameRuleException($"The escrow is not fully funded — each player must stake {session.WagerSats} sats to their own escrow address.");
+            }
+            else
+            {
+                if (!await chain.IsInvoicePaidAsync(session.ChallengerInvoiceId!, ct))
+                    throw new GameRuleException("Your stake invoice is unpaid — pay it from your wallet first.");
+                if (session.DefenderInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderInvoiceId, ct))
+                    throw new GameRuleException("The defender's stake invoice is unpaid.");
+            }
+            if (session.ChallengerFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.ChallengerFeeInvoiceId, ct))
+                throw new GameRuleException("Your match fee is unpaid.");
+            if (session.DefenderFeeInvoiceId is null || !await chain.IsInvoicePaidAsync(session.DefenderFeeInvoiceId, ct))
+                throw new GameRuleException("The defender's match fee is unpaid.");
+        }
+
+        var challengers = session.ChallengerLineup.Select(GetHero).ToList();
+        var defenders = session.DefenderLineup.Select(GetHero).ToList();
+        var challengerSnapshots = challengers.Select(h => h.ToDto()).ToList();
+        var defenderSnapshots = defenders.Select(h => h.ToDto()).ToList();
+
+        var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, "squad", session.Id, nonce);
+        var result = SquadBattle.Resolve(challengers, defenders, entropy, _config);
+        var challengerWon = result.ChallengerWon;
+
+        // Per-duel conserved XP transfer + one "match" receipt per duel (feeds the season ladder + prize pool).
+        var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var duelReceipts = new List<Shared.ProgressionReceiptDto>();
+        foreach (var duel in result.Duels)
+        {
+            var c = challengers[duel.Slot];
+            var d = defenders[duel.Slot];
+            var cWon = duel.Result.WinnerId == c.Id;
+            var (w, l) = cWon ? (c, d) : (d, c);
+            var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(w.Level, l.Level) : 0;
+            ApplyXp(w, transfer);
+            ApplyXp(l, -transfer);
+            var cDelta = cWon ? transfer : -transfer;
+            duelReceipts.Add(IssueReceipt(new Shared.ProgressionReceiptDto(
+                    session.WagerSats > 0 ? "match" : "friendly", $"{session.Id}:{duel.Slot}", c.Id, d.Id, duel.Result.WinnerId,
+                    serverSeedHexOut, nonce, session.CommitmentHex, cDelta, -cDelta, c.Level, d.Level,
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+                c.Id, d.Id));
+        }
+
+        session.Status = "resolved";
+        session.Result = result;
+        session.ChallengerSnapshots = challengerSnapshots;
+        session.DefenderSnapshots = defenderSnapshots;
+        session.Nonce = nonce;
+        session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+
+        // Settle the pot ONCE, to the best-of-3 winner (reuses the wager escrow / treasury payout).
+        long winnerPayout = 0;
+        if (session.WagerSats > 0)
+        {
+            winnerPayout = session.WagerSats * 2;
+            if (session.Mode == "covenant")
+            {
+                var settleMessage = Chain.Covenants.ArkadeCovenants.SettleMessage(session.Id, challengerWon);
+                var oracleSignature = receipts.SignDigest(settleMessage);
+                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, oracleSignature, ct);
+            }
+            else
+            {
+                var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
+                await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
+            }
+            var seasonFee = Leveling.MatchFee(challengers.Max(h => h.Level), _config) + Leveling.MatchFee(defenders.Max(h => h.Level), _config);
+            var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;
+            if (seasonAccrue > 0)
+                store.SeasonFeeAccrual.AddOrUpdate(
+                    Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays).Number,
+                    seasonAccrue, (_, cur) => cur + seasonAccrue);
+        }
+
+        return (session, result, serverSeedHexOut, session.EntropyHex, challengerSnapshots, defenderSnapshots, winnerPayout, duelReceipts);
     }
 
     private void ApplyXp(Hero hero, long award)

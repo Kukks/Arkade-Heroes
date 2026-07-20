@@ -28,6 +28,7 @@ public sealed class ArkadeHeroesClient
         DeathMatch = new DeathMatchApi(this);
         Gauntlet = new GauntletApi(this);
         Matches = new MatchesApi(this);
+        Squad = new SquadApi(this);
         Offers = new OffersApi(this);
         Items = new ItemsApi(this);
         Chain = new ChainApi(this);
@@ -44,6 +45,7 @@ public sealed class ArkadeHeroesClient
     public DeathMatchApi DeathMatch { get; }
     public GauntletApi Gauntlet { get; }
     public MatchesApi Matches { get; }
+    public SquadApi Squad { get; }
     public OffersApi Offers { get; }
     public ItemsApi Items { get; }
     public ChainApi Chain { get; }

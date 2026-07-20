@@ -238,6 +238,13 @@ public record SquadReplayDto(
     IReadOnlyList<HeroDto> ChallengerLineup, IReadOnlyList<HeroDto> DefenderLineup,
     SquadResultDto Result, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
 
+public record SquadOpenResponse(string MatchId, string CommitmentHex, long WagerSats, string Status,
+    FeeInvoiceDto? StakeInvoice, string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
+public record SquadAcceptResponse(SquadMatchDto Match, FeeInvoiceDto? StakeInvoice,
+    string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
+public record SquadResolveResponse(SquadResultDto Result, string ServerSeedHex, string EntropyHex,
+    long WinnerPayoutSats, IReadOnlyList<ProgressionReceiptDto> Receipts);
+
 // ── XP-weighted matchmaking: suggested opponents ranked by level proximity ──────
 public record OpponentSuggestionDto(
     HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose,

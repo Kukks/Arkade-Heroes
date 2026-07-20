@@ -1,3 +1,5 @@
+using ArkadeHeroes.Shared;
+
 namespace ArkadeHeroes.Client.Sdk;
 
 /// <summary>
@@ -10,6 +12,7 @@ public sealed class DevApi(ArkadeHeroesClient client)
 {
     public Task<object> PayInvoiceAsync(object body) => client.PostAsync<object>("/api/dev/pay-invoice", body);
     public Task<object> FundTreasuryAsync(object body) => client.PostAsync<object>("/api/dev/fund-treasury", body);
+    public Task<HeroDto> MintHeroAsync() => client.PostAsync<HeroDto>("/api/dev/mint-hero");
     public Task<object> TransferAssetAsync(object body) => client.PostAsync<object>("/api/dev/transfer-asset", body);
     public Task<object> StakeEscrowAsync(object body) => client.PostAsync<object>("/api/dev/stake-escrow", body);
     public Task<object> RefundEscrowAsync(object body) => client.PostAsync<object>("/api/dev/refund-escrow", body);
