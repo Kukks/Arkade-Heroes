@@ -135,12 +135,31 @@ else
             }
         </div>
     }
+
+    <div class="page-head">
+        <h3 style="margin:0">Fancy heroes</h3>
+        <span class="hud">named genome sets — a breeding target</span>
+    </div>
+    @if (_fancies.Count == 0)
+    {
+        <div class="card muted">No fancy heroes yet — breed toward a named set.</div>
+    }
+    else
+    {
+        <div class="grid cols">
+            @foreach (var h in _fancies)
+            {
+                <HeroCard Hero="h" />
+            }
+        </div>
+    }
 }
 
 @code {
     private SeasonLeaderboardDto? _season;
     private List<LeaderboardEntryDto> _top = new();
     private List<HeroDto> _rarest = new();
+    private List<HeroDto> _fancies = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
@@ -153,12 +172,14 @@ else
             var top = Api.Leaderboard.TopAsync();
             var season = Api.Leaderboard.SeasonAsync();
             var rarest = Api.Leaderboard.RarestAsync();
+            var fancies = Api.Leaderboard.FanciesAsync();
             var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
             var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
-            await Task.WhenAll(top, season, rarest, recent, all);
+            await Task.WhenAll(top, season, rarest, fancies, recent, all);
             _top = await top;
             _season = await season;
             _rarest = await rarest;
+            _fancies = await fancies;
             _recent = (await recent).Where(m => m.Result is not null).ToList();
             foreach (var h in await all) _names[h.Id] = h.Name;
         }
