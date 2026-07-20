@@ -242,6 +242,13 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         onProgress?.Invoke("Escrowing your hero into the offer…");
         await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
 
+        // 2b. Pay the listing fee (if one is charged) — the server holds the offer pending until it clears.
+        if (offer.ListingFee is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke($"Paying the {fee.AmountSats}-sat listing fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+
         // 3. Poll until the server observes the funded offer resting active on the market.
         onProgress?.Invoke("Waiting for the offer to rest on the market…");
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(90);

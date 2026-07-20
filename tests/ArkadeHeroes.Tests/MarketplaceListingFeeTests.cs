@@ -64,4 +64,14 @@ public class MarketplaceListingFeeTests
         await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
         Assert.Contains(await seller.Offers.ListAsync(), o => o.OfferId == offer.OfferId && o.Status == "active");
     }
+
+    [Fact]
+    public async Task Config_PublishesListingFee_ForPreListingDisplay()
+    {
+        // The sell page previews the fee from GET /api/chain/info before the seller lists.
+        using var factory = FeeFactory();
+        var client = new ArkadeHeroesClient(factory.CreateClient());
+        var info = await client.Chain.InfoAsync();
+        Assert.Equal(Fee, info.Config?.OfferListingFeeSats);
+    }
 }
