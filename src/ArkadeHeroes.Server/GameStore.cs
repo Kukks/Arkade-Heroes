@@ -230,6 +230,16 @@ public class SquadMatchSession
     public string? EntropyHex { get; set; }
 }
 
+/// <summary>A pending hero rename in the unique-name registry: the player pays the treasury fee, then
+/// confirms to apply the claimed name. In-memory like the rest; a restart drops it with the fee marker.</summary>
+public class RenameSession
+{
+    public required string HeroId { get; init; }
+    public required string NewName { get; init; }
+    /// <summary>The fee-invoice to pay; null when no rename fee is charged (then confirm applies immediately).</summary>
+    public string? FeeInvoiceId { get; init; }
+}
+
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
 public class GameStore
 {
@@ -246,6 +256,7 @@ public class GameStore
     public ConcurrentDictionary<string, SquadMatchSession> SquadMatches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
+    public ConcurrentDictionary<string, RenameSession> Renames { get; } = new();
 
     /// <summary>Outstanding single-use login nonces (hex) → issued time, for wallet-signature login.</summary>
     public ConcurrentDictionary<string, DateTimeOffset> LoginNonces { get; } = new();

@@ -412,6 +412,21 @@ api.MapPost("/heroes/{heroId}/transfer", async (string heroId, TransferRequest r
     return Results.Ok(new TransferResponse(hero.ToDto()));
 });
 
+// Unique-name registry: request a custom name (returns the treasury fee-invoice to pay), then confirm.
+api.MapPost("/heroes/{heroId}/rename", async (string heroId, RenameHeroRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var fee = await game.RequestRenameAsync(player, heroId, request.Name, ct);
+    return Results.Ok(new RenameHeroResponse(fee?.AmountSats ?? 0, fee?.ToDto()));
+});
+
+api.MapPost("/heroes/{heroId}/rename/confirm", async (string heroId, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var hero = await game.ConfirmRenameAsync(player, heroId, ct);
+    return Results.Ok(hero.ToDto());
+});
+
 // ── Items ──────────────────────────────────────────────────────────────────
 
 api.MapGet("/items", () => Results.Ok(ItemCatalog.All.Select(i => i.ToDto()).ToList()));

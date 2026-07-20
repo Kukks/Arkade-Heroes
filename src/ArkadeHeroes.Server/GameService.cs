@@ -181,6 +181,49 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return hero;
     }
 
+    // ── Unique-name registry: claim a custom, globally-unique hero name (a treasury sats sink) ──
+
+    /// <summary>
+    /// Requests a custom, globally-unique name for one of the player's heroes. Validates the format +
+    /// uniqueness, then (if a fee is set) bills a treasury fee-invoice the player pays from their wallet;
+    /// the claim is applied by <see cref="ConfirmRenameAsync"/> once it clears. Returns null when free.
+    /// </summary>
+    public async Task<FeeInvoice?> RequestRenameAsync(Player player, string heroId, string name, CancellationToken ct)
+    {
+        GetOwnedHero(player, heroId); // ownership check
+        if (Core.Progression.NameRegistry.Validate(name, out var normalized) is { } error)
+            throw new GameRuleException(error);
+        if (NameTaken(normalized, heroId))
+            throw new GameRuleException($"The name '{normalized}' is already taken by another hero.");
+
+        var fee = _options.HeroRenameFeeSats > 0
+            ? await chain.CreateFeeInvoiceAsync($"rename:{heroId}", _options.HeroRenameFeeSats, ct)
+            : null;
+        store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        return fee;
+    }
+
+    /// <summary>Applies a pending rename once its treasury fee has cleared (or immediately when free).</summary>
+    public async Task<Hero> ConfirmRenameAsync(Player player, string heroId, CancellationToken ct)
+    {
+        var hero = GetOwnedHero(player, heroId);
+        if (!store.Renames.TryGetValue(heroId, out var pending))
+            throw new GameRuleException("No pending rename — request one first.");
+        if (pending.FeeInvoiceId is not null && !await chain.IsInvoicePaidAsync(pending.FeeInvoiceId, ct))
+            throw new GameRuleException("The rename fee invoice has not been paid yet — pay it from your wallet, then confirm.");
+        // Re-check uniqueness at apply time — another hero may have claimed the name since the request.
+        if (NameTaken(pending.NewName, heroId))
+            throw new GameRuleException($"The name '{pending.NewName}' was claimed before you confirmed — pick another.");
+
+        hero.Name = pending.NewName;
+        store.Renames.TryRemove(heroId, out _);
+        return hero;
+    }
+
+    /// <summary>True if any OTHER hero already holds this name (case-insensitive) — the global registry.</summary>
+    private bool NameTaken(string name, string exceptHeroId) =>
+        store.Heroes.Values.Any(h => h.Id != exceptHeroId && string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {

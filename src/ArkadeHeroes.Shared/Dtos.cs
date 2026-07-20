@@ -288,6 +288,12 @@ public record CreateOfferRequest(string ItemId, long AskSats);
 /// <summary>List one of your heroes for sale at a fixed ask (sats).</summary>
 public record CreateHeroOfferRequest(string HeroId, long AskSats);
 
+/// <summary>Claim a custom, globally-unique name for a hero (a treasury sats sink).</summary>
+public record RenameHeroRequest(string Name);
+
+/// <summary>The treasury fee to pay before confirming the rename (0 + null when renaming is free).</summary>
+public record RenameHeroResponse(long FeeSats, FeeInvoiceDto? Fee);
+
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
 /// from their own wallet, plus the ask and refund window. Once deposited the

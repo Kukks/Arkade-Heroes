@@ -26,4 +26,9 @@ public sealed class HeroesApi(ArkadeHeroesClient client)
     public Task<EquipResponse> EquipAsync(string heroId, EquipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/equip", req);
     public Task<EquipResponse> UnequipAsync(string heroId, UnequipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/unequip", req);
     public Task<TransferResponse> TransferAsync(string heroId, TransferRequest req) => client.PostAsync<TransferResponse>($"/api/heroes/{heroId}/transfer", req);
+
+    /// <summary>Request a custom, globally-unique name — returns the treasury fee-invoice to pay before confirming.</summary>
+    public Task<RenameHeroResponse> RequestRenameAsync(string heroId, RenameHeroRequest req) => client.PostAsync<RenameHeroResponse>($"/api/heroes/{heroId}/rename", req);
+    /// <summary>Apply a pending rename once its fee has cleared (or immediately when free).</summary>
+    public Task<HeroDto> ConfirmRenameAsync(string heroId) => client.PostAsync<HeroDto>($"/api/heroes/{heroId}/rename/confirm");
 }
