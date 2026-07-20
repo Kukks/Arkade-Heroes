@@ -51,6 +51,30 @@ else
     </div>
 
     <div class="page-head">
+        <h3 style="margin:0">Recent bouts</h3>
+        <span class="hud">watch + verify any fight — no login</span>
+    </div>
+    @if (_recent.Count == 0)
+    {
+        <div class="card muted" style="margin-bottom:1.6rem">No bouts yet — <a href="spar">spar</a> or <a href="duel">duel</a> to fill the feed.</div>
+    }
+    else
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            @foreach (var m in _recent.Take(8))
+            {
+                var winner = m.Result!.WinnerId;
+                var loser = winner == m.ChallengerHeroId ? m.DefenderHeroId : m.ChallengerHeroId;
+                <div class="match-row">
+                    <span><b>@Name(winner)</b> defeated <b>@Name(loser)</b>@(m.WagerSats > 0 ? $" · {m.WagerSats:N0} sats" : "")</span>
+                    <span class="spacer"></span>
+                    <a class="btn ghost sm" href="watch/@m.MatchId">Watch ↗</a>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="page-head">
         <h3 style="margin:0">Rarest heroes</h3>
         <span class="hud">genome-derived, trustless</span>
     </div>
@@ -72,6 +96,8 @@ else
 @code {
     private List<LeaderboardEntryDto> _top = new();
     private List<HeroDto> _rarest = new();
+    private List<MatchDto> _recent = new();
+    private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
     private bool _error;
 
@@ -81,9 +107,13 @@ else
         {
             var top = Api.Leaderboard.TopAsync();
             var rarest = Api.Leaderboard.RarestAsync();
-            await Task.WhenAll(top, rarest);
+            var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
+            var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
+            await Task.WhenAll(top, rarest, recent, all);
             _top = await top;
             _rarest = await rarest;
+            _recent = (await recent).Where(m => m.Result is not null).ToList();
+            foreach (var h in await all) _names[h.Id] = h.Name;
         }
         catch
         {
@@ -94,4 +124,7 @@ else
             _loading = false;
         }
     }
+
+    private string Name(string? heroId) =>
+        heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "a hero";
 }
