@@ -125,6 +125,9 @@ public interface IChainService
     /// <summary>Pays out from the treasury to the player's registered address (wager winnings). Returns a payment reference.</summary>
     Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default);
 
+    /// <summary>The treasury's currently-spendable balance in sats — a pre-pay coverage check for the season pot.</summary>
+    Task<long> TreasuryBalanceAsync(CancellationToken ct = default);
+
     // ── Covenant wager escrows (emulator-enforced settlement) ──────────
 
     /// <summary>

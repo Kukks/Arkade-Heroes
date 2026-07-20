@@ -486,7 +486,7 @@ api.MapGet("/leaderboard", (GameStore store) =>
 
 // The current SEASON's ranked ladder — staked-match wins within a time-boxed window that auto-resets each
 // season (a renewable competitive goal). Same trustless receipt tally as /leaderboard, windowed by the clock.
-api.MapGet("/leaderboard/season", (GameService game) => Results.Ok(game.SeasonLeaderboard()));
+api.MapGet("/leaderboard/season", async (GameService game, CancellationToken ct) => Results.Ok(await game.SeasonLeaderboard(ct)));
 
 // Daily engagement loop: the signed-in player's quests + streak (GET), and the once-per-UTC-day claim
 // that pays base + per-quest bonus (streak-scaled) from the treasury (POST).

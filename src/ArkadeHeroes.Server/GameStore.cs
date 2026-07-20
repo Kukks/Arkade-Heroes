@@ -216,4 +216,11 @@ public class GameStore
 
     /// <summary>Server-side receipt cache, keyed by hero id (receipts are signed public facts; players hold their own copies).</summary>
     public ConcurrentDictionary<string, List<Shared.ProgressionReceiptDto>> ReceiptsByHero { get; } = new();
+
+    // ── Season prize pool (in-memory, like the rest; a restart drops the marker + the winner-defining
+    //    receipts together, which is what makes an in-memory settled-marker safe against double-pay) ──
+    public int LastSettledSeason { get; set; }                                   // 0 = none settled yet
+    public Shared.SeasonSettlementDto? LastSettlement { get; set; }              // snapshot of the most recent settled season
+    public ConcurrentDictionary<int, long> SeasonFeeAccrual { get; } = new();    // seasonNumber → accrued sats
+    public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
 }
