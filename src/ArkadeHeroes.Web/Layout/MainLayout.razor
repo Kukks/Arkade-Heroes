@@ -67,7 +67,7 @@
         "market" or "sell" => "market",
         "wallet" => "wallet",
         var p when p == "heroes" || p.StartsWith("heroes/")
-                   || p is "spar" or "gauntlet" or "duel" or "deathmatch" or "breed" or "merge" or "gear" or "leaderboard" => "heroes",
+                   || p is "spar" or "gauntlet" or "duel" or "deathmatch" or "breed" or "merge" or "gear" or "leaderboard" or "daily" => "heroes",
         _ => "",
     };
 
@@ -102,6 +102,7 @@
             "heroes" =>
             [
                 ("Roster", "heroes", NavLinkMatch.All),
+                ("Daily", "daily", NavLinkMatch.Prefix),
                 ("Spar", "spar", NavLinkMatch.Prefix),
                 ("Gauntlet", "gauntlet", NavLinkMatch.Prefix),
                 ("Duel", "duel", NavLinkMatch.Prefix),

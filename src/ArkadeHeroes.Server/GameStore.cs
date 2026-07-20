@@ -12,6 +12,11 @@ public class Player
     public bool StarterClaimed { get; set; }
     /// <summary>The wallet's stable x-only login pubkey (hex), when registered — enables "sign in with your wallet" resume.</summary>
     public string? LoginPubKeyHex { get; set; }
+
+    /// <summary>Daily-loop streak: consecutive UTC days claimed (0 = never). In-memory, like all player state.</summary>
+    public int StreakCount { get; set; }
+    /// <summary>The last day-index the player claimed the daily reward (null = never) — enforces once/day.</summary>
+    public int? LastClaimDay { get; set; }
 }
 
 /// <summary>A pending PvE gauntlet run (F1): the seed is committed at open; the run resolves once the

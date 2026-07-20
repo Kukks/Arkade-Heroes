@@ -37,7 +37,13 @@ public sealed record GameConfig(
     int AbsorbFeeMultiplier,     // death-match fee = this × MatchFee (absorb mode, costs more)
     int BreedFeeDoublingCap,    // breed-fee doubling cap (2^min(breeds, cap))
     int MatchmakingTake,        // suggested-opponents page size
-    int SeasonLengthDays = 14)  // ranked-ladder season length (days); the current season is time-derived
+    int SeasonLengthDays = 14,  // ranked-ladder season length (days); the current season is time-derived
+    // ── Daily engagement loop (sats faucet: base + per-quest bonus, streak-scaled) ──
+    long DailyBaseSats = 50,          // paid just for claiming (login hook / sybil floor)
+    long DailyQuestBonusSats = 150,   // per completed daily quest
+    int DailyQuestsPerDay = 3,        // quests offered per day (rotated from the catalog)
+    int DailyStreakStepPct = 10,      // multiplier added per consecutive day
+    int DailyStreakCapPct = 100)      // multiplier cap (day 11+ = ×2)
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(

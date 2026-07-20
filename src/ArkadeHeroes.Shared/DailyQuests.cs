@@ -1,0 +1,59 @@
+namespace ArkadeHeroes.Shared;
+
+/// <summary>A daily quest definition. Completion is DERIVED from the signed-receipt log
+/// (no counters, no action hooks): a matching in-window receipt for one of the player's heroes.
+/// <paramref name="WinnersOnly"/> quests also require the player's hero to be the ResultHeroId.</summary>
+public readonly record struct DailyQuestDef(string Id, string Title, string ReceiptType, bool WinnersOnly);
+
+/// <summary>One quest as shown to the client, with its sats bonus and whether it's done today.</summary>
+public record DailyQuestDto(string Id, string Title, long BonusSats, bool Done);
+
+/// <summary>Today's daily-loop state for the signed-in player.</summary>
+public record DailyStatusDto(
+    int DayIndex, long DayEndsUnix, bool ClaimedToday, int Streak,
+    long BaseSats, IReadOnlyList<DailyQuestDto> Quests, long ClaimableNowSats, long ProjectedSats);
+
+/// <summary>The result of a claim: what was paid and the breakdown.</summary>
+public record DailyClaimResultDto(
+    long AwardedSats, int Streak, long BaseSats, long QuestBonusSats, int StreakBonusPct,
+    IReadOnlyList<string> CompletedQuestIds);
+
+/// <summary>The daily quest catalog + deterministic per-day selection + receipts-derived completion —
+/// the daily analogue of <see cref="LeaderboardBuilder"/> (pure, receipt-driven, no server trust).</summary>
+public static class DailyQuests
+{
+    public static readonly IReadOnlyList<DailyQuestDef> Catalog = new[]
+    {
+        new DailyQuestDef("duel-win",   "Win a duel",        "match",      true),
+        new DailyQuestDef("gauntlet",   "Clear a gauntlet",  "gauntlet",   true),
+        new DailyQuestDef("breed",      "Breed a hero",      "breeding",   false),
+        new DailyQuestDef("merge",      "Merge two heroes",  "merge",      false),
+        new DailyQuestDef("deathmatch", "Win a death-match", "deathmatch", true),
+    };
+
+    /// <summary>The day's quests — a stable rotation of <paramref name="count"/> from the catalog,
+    /// keyed by <paramref name="dayIndex"/> so the set is fixed within a day but varies across days.</summary>
+    public static IReadOnlyList<DailyQuestDef> ForDay(int dayIndex, int count)
+    {
+        count = Math.Clamp(count, 1, Catalog.Count);
+        var start = ((dayIndex % Catalog.Count) + Catalog.Count) % Catalog.Count;
+        return Enumerable.Range(0, count).Select(k => Catalog[(start + k) % Catalog.Count]).ToList();
+    }
+
+    /// <summary>Complete iff a matching in-window receipt exists for one of the player's heroes.
+    /// WinnersOnly quests additionally require the player's hero to be the ResultHeroId. A death-match
+    /// won with a trait absorb issues an "absorb" receipt (not "deathmatch"), so that counts too.</summary>
+    public static bool IsComplete(
+        DailyQuestDef quest, IEnumerable<ProgressionReceiptDto> receiptsInWindow, ISet<string> playerHeroIds)
+    {
+        bool TypeMatches(string t) =>
+            t == quest.ReceiptType ||
+            (quest.ReceiptType == "deathmatch" && t == "absorb");
+
+        return receiptsInWindow.Any(r =>
+            TypeMatches(r.Type) &&
+            (quest.WinnersOnly
+                ? r.ResultHeroId is { } w && playerHeroIds.Contains(w)
+                : playerHeroIds.Contains(r.HeroAId) || playerHeroIds.Contains(r.HeroBId)));
+    }
+}

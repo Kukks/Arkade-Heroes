@@ -34,6 +34,7 @@ public sealed class ArkadeHeroesClient
         Leaderboard = new LeaderboardApi(this);
         Receipts = new ReceiptsApi(this);
         Dev = new DevApi(this);
+        Daily = new DailyApi(this);
     }
 
     public PlayersApi Players { get; }
@@ -49,6 +50,7 @@ public sealed class ArkadeHeroesClient
     public LeaderboardApi Leaderboard { get; }
     public ReceiptsApi Receipts { get; }
     public DevApi Dev { get; }
+    public DailyApi Daily { get; }
 
     /// <summary>Sets the bearer token used for all subsequent requests (Register/Login call this on success).</summary>
     public void SetAuthToken(string token) =>

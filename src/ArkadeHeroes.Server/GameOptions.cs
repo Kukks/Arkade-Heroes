@@ -44,6 +44,13 @@ public class GameOptions
     /// <summary>Ranked-ladder season length in days — the current season is derived from Season.Epoch + this.</summary>
     public int SeasonLengthDays { get; set; } = 14;
 
+    // ── Daily engagement loop tunables (sats faucet: base + per-quest bonus, streak-scaled) ──
+    public long DailyBaseSats { get; set; } = 50;
+    public long DailyQuestBonusSats { get; set; } = 150;
+    public int DailyQuestsPerDay { get; set; } = 3;
+    public int DailyStreakStepPct { get; set; } = 10;
+    public int DailyStreakCapPct { get; set; } = 100;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -63,5 +70,10 @@ public class GameOptions
         AbsorbFeeMultiplier: AbsorbFeeMultiplier,
         BreedFeeDoublingCap: BreedFeeDoublingCap,
         MatchmakingTake: MatchmakingTake,
-        SeasonLengthDays: SeasonLengthDays);
+        SeasonLengthDays: SeasonLengthDays,
+        DailyBaseSats: DailyBaseSats,
+        DailyQuestBonusSats: DailyQuestBonusSats,
+        DailyQuestsPerDay: DailyQuestsPerDay,
+        DailyStreakStepPct: DailyStreakStepPct,
+        DailyStreakCapPct: DailyStreakCapPct);
 }
