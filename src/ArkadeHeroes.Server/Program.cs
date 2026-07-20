@@ -304,6 +304,17 @@ api.MapGet("/matches/{matchId}", (string matchId, GameStore store) =>
         ? Results.Ok(ToMatchDto(session))
         : Results.NotFound());
 
+// Public spectator replay: everything to replay a RESOLVED match in the arena + verify it was fair
+// (VerifyMatch re-derives the fight from the revealed seed). 404 until resolved. No auth — a shareable link.
+api.MapGet("/matches/{matchId}/replay", (string matchId, GameStore store) =>
+    store.Matches.TryGetValue(matchId, out var s)
+        && s.Result is not null && s.ChallengerSnapshot is not null && s.DefenderSnapshot is not null
+        ? Results.Ok(new MatchReplayDto(
+            s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
+            s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
+            s.EntropyHex ?? "", s.Nonce ?? ""))
+        : Results.NotFound());
+
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
 // given hero, each annotated with the conserved XP a staked win/loss would move.
 api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameService game) =>
