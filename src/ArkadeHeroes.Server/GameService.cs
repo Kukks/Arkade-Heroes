@@ -973,6 +973,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         session.Status = "resolved";
         session.Result = result;
+        session.ChallengerSnapshot = challengerSnapshot;   // persist the fight-time snapshots for spectator replay
+        session.DefenderSnapshot = defenderSnapshot;
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 

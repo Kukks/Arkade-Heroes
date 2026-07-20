@@ -1,0 +1,72 @@
+@page "/watch/{MatchId}"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>Match replay · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Match replay</h2>
+    <span class="hud">spectate + verify · trustless, from the revealed seed</span>
+</div>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the replay…</div>
+}
+else if (_replay is null)
+{
+    <div class="card muted">No replay here — the match doesn't exist yet, or it hasn't been fought.</div>
+}
+else
+{
+    var challengerWon = _replay.WinnerHeroId == _replay.ChallengerSnapshot.Id;
+    var winner = challengerWon ? _replay.ChallengerSnapshot : _replay.DefenderSnapshot;
+
+    <BattleArena A="_replay.ChallengerSnapshot" B="_replay.DefenderSnapshot" Fight="_replay.Result" />
+
+    <div class="card" style="margin-top:1.2rem">
+        <div class="status-line"><span class="dot ok"></span> <span><b>@winner.Name</b> won this match.</span></div>
+        <div class="status-line" style="margin-top:.7rem">
+            <span class="dot @(_verifyOk ? "ok" : "bad")"></span>
+            <span class="mono" style="font-size:.78rem">
+                @(_verifyOk ? $"fairness ✓ {_verifyDetail}" : $"fairness ✗ {_verifyDetail}")
+            </span>
+        </div>
+        <p class="muted" style="margin:.6rem 0 0;font-size:.8rem">
+            Anyone can replay this fight — the server revealed its commit-reveal seed, and your browser
+            re-ran the exact battle engine to confirm the outcome. No trust required.
+        </p>
+    </div>
+}
+
+@code {
+    [Parameter] public string MatchId { get; set; } = "";
+
+    private MatchReplayDto? _replay;
+    private bool _loading = true;
+    private bool _verifyOk;
+    private string _verifyDetail = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _replay = null;
+        try
+        {
+            _replay = await Api.Matches.ReplayAsync(MatchId);
+
+            // Independently verify the replay reproduces the fight from the revealed seed (VerifyMatch reads
+            // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
+            var fr = new FightResponse(_replay.Result, _replay.ServerSeedHex, _replay.EntropyHex, 0, 0,
+                _replay.ChallengerSnapshot, _replay.DefenderSnapshot, _replay.ChallengerSnapshot, _replay.DefenderSnapshot);
+            (_verifyOk, _verifyDetail) = FairnessAudit.VerifyMatch(MatchId, _replay.Nonce, _replay.CommitmentHex, fr);
+        }
+        catch
+        {
+            _replay = null;   // unknown / unresolved match → the "no replay" card
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

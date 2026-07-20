@@ -174,6 +174,13 @@ else
                 <span class="dot @(_duel.FairnessOk ? "ok" : "bad")"></span>
                 <span class="mono" style="font-size:.78rem">@(_duel.FairnessOk ? $"fairness ✓ {_duel.FairnessDetail}" : $"fairness ✗ server cheated: {_duel.FairnessDetail}")</span>
             </div>
+            @if (_resolvedMatchId is not null)
+            {
+                <div class="status-line" style="margin-top:.8rem">
+                    <a class="btn ghost sm" href="watch/@_resolvedMatchId">Share replay ↗</a>
+                    <span class="muted" style="font-size:.78rem">anyone can watch + verify this fight — no login</span>
+                </div>
+            }
         </div>
     }
 }
@@ -193,6 +200,7 @@ else
     private string? _status;
     private string? _error;
     private DuelOutcome? _duel;
+    private string? _resolvedMatchId;   // the just-resolved match, for the shareable replay link
 
     // Match categorisation, by whether my roster holds the challenger/defender hero.
     private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
@@ -262,7 +270,10 @@ else
 
     async Task DoDuel(string matchId) =>
         await RunAction("Resolving…", async () =>
-            _duel = await Session.DuelAsync(matchId, s => { _status = s; StateHasChanged(); }));
+        {
+            _resolvedMatchId = matchId;
+            _duel = await Session.DuelAsync(matchId, s => { _status = s; StateHasChanged(); });
+        });
 
     // Shared action wrapper: busy-gate, run, reload the roster + matches, surface errors.
     async Task RunAction(string initial, Func<Task> action)

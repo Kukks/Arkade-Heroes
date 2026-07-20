@@ -215,6 +215,13 @@ public record MatchDto(
     long WagerSats = 0,
     string? DefenderPlayerId = null);
 
+/// <summary>Everything a spectator needs to REPLAY a resolved match in the arena AND verify it was fair —
+/// re-derive the fight from the revealed seed via <c>FairnessAudit.VerifyMatch</c>. Served publicly (no auth),
+/// so a match is a shareable, trustlessly-watchable artifact.</summary>
+public record MatchReplayDto(
+    HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot, BattleResultDto Result,
+    string WinnerHeroId, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
+
 // ── XP-weighted matchmaking: suggested opponents ranked by level proximity ──────
 public record OpponentSuggestionDto(
     HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose,

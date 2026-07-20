@@ -14,4 +14,6 @@ public sealed class MatchesApi(ArkadeHeroesClient client)
     public Task<MatchDto> GetAsync(string matchId) => client.GetAsync<MatchDto>($"/api/matches/{matchId}");
     public Task<WagerEscrowParams> EscrowAsync(string matchId) => client.GetAsync<WagerEscrowParams>($"/api/matches/{matchId}/escrow");
     public Task<List<OpponentSuggestionDto>> MatchmakingAsync(string heroId) => client.GetAsync<List<OpponentSuggestionDto>>($"/api/matchmaking/{heroId}");
+    /// <summary>Public spectator replay of a RESOLVED match — snapshots + fight + the seed to verify it.</summary>
+    public Task<MatchReplayDto> ReplayAsync(string matchId) => client.GetAsync<MatchReplayDto>($"/api/matches/{matchId}/replay");
 }

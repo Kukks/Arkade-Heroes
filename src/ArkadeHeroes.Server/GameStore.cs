@@ -148,6 +148,11 @@ public class MatchSession
     public BattleResult? Result { get; set; }
     public string? EntropyHex { get; set; }
     public string? Nonce { get; set; }
+
+    /// <summary>Fight-time hero snapshots (level + equipment as actually fought) — persisted so ANY
+    /// spectator can replay + verify the resolved match later, even after the heroes change. Null until resolved.</summary>
+    public Shared.HeroDto? ChallengerSnapshot { get; set; }
+    public Shared.HeroDto? DefenderSnapshot { get; set; }
 }
 
 /// <summary>
