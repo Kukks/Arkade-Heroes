@@ -493,6 +493,76 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return new DuelOutcome(fight, ok, detail);
     }
 
+    // ── Team 3v3 squad matches (wagered): mirror the duel flow with 3-hero lineups ──
+
+    public async Task<string> OpenSquadAsync(IReadOnlyList<string> myLineup, IReadOnlyList<string> opponentLineup,
+        long wagerSats, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync() ?? throw new GameWalletException("Create a wallet first.");
+        onProgress?.Invoke("Sealing the squad match…");
+        var open = await api.Squad.OpenAsync(new OpenSquadMatchRequest(myLineup, opponentLineup, wagerSats, "covenant"));
+        if (string.IsNullOrEmpty(open.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+        if (open.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
+        }
+        if (open.MatchFeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying your match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        return open.MatchId;
+    }
+
+    public async Task AcceptSquadAsync(string matchId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync() ?? throw new GameWalletException("Create a wallet first.");
+        onProgress?.Invoke("Accepting the squad match…");
+        var accept = await api.Squad.AcceptAsync(matchId);
+        if (string.IsNullOrEmpty(accept.EscrowAddress))
+            throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
+        if (accept.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
+        }
+        if (accept.MatchFeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying your match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+    }
+
+    public async Task<SquadOutcome> ResolveSquadAsync(string matchId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Resolving the best-of-3…");
+        var nonce = RandomNonce();
+        SquadResolveResponse? res = null;
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20 && res is null; attempt++)
+        {
+            try { res = await api.Squad.ResolveAsync(matchId, new FightRequest(nonce)); }
+            catch (ArkadeHeroesApiException ex) when (
+                ex.Message.Contains("not fully funded", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("unpaid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Stakes still settling — retrying ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        if (res is null)
+            throw new GameWalletException($"Both sides staked, but the deposits haven't settled yet — try again in a moment. ({last?.Message})");
+
+        var replay = await api.Squad.ReplayAsync(matchId);
+        var (ok, detail) = FairnessAudit.VerifySquad(matchId, nonce, replay.CommitmentHex, replay);
+        var w = await wallet.GetActiveWalletAsync();
+        if (w is not null) state.UpdateBalance(await wallet.GetBalanceAsync(w.Id));
+        return new SquadOutcome(res, replay, ok, detail);
+    }
+
     /// <summary>
     /// Open a WINNER-TAKES-ALL death-match and stake into it from the browser wallet — PERMADEATH: if your
     /// hero loses it BURNS and you forfeit your staked gear. Opens (the server returns the ONE joint escrow
@@ -636,6 +706,7 @@ public record GauntletOutcome(GauntletRunResponse Run, bool FairnessOk, string F
 
 /// <summary>A resolved wagered duel bundled with its client-side fairness verdict, ready to render.</summary>
 public record DuelOutcome(FightResponse Fight, bool FairnessOk, string FairnessDetail);
+public record SquadOutcome(SquadResolveResponse Result, SquadReplayDto Replay, bool FairnessOk, string FairnessDetail);
 
 /// <summary>A resolved death-match: the settle result + the fight fairness verdict, plus (absorb mode) the absorbed-genome verdict.</summary>
 public record DeathMatchOutcome(
