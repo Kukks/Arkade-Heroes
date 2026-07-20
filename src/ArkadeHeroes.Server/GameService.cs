@@ -935,6 +935,81 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return new Shared.SeasonLeaderboardDto(season.Number, endUnix, standings);
     }
 
+    // ── Daily engagement loop ──────────────────────────────────────────────────────────────────
+    // A once-per-UTC-day claim: a small base + a bonus per completed daily quest (server-verified,
+    // derived from the receipt log), scaled by a login streak, paid from the treasury. Day/streak/
+    // reward math is pure Core (Daily/DailyStreak/DailyReward); quests are Shared (DailyQuests).
+
+    /// <summary>Today's daily-loop state for a player: the day's quests + which are done (from the
+    /// player's in-window receipts), the projected streak, and what a claim right now would pay.</summary>
+    public Shared.DailyStatusDto DailyStatus(Player player)
+    {
+        var window = Daily.ForDay(DateTimeOffset.UtcNow);
+        var (heroIds, receipts) = DailyReceiptsInWindow(player, window);
+        var quests = Shared.DailyQuests.ForDay(window.DayIndex, _config.DailyQuestsPerDay);
+
+        var questDtos = quests.Select(q => new Shared.DailyQuestDto(
+            q.Id, q.Title, _config.DailyQuestBonusSats,
+            Shared.DailyQuests.IsComplete(q, receipts, heroIds))).ToList();
+
+        var claimedToday = player.LastClaimDay == window.DayIndex;
+        // The reward previews at the streak the claim will RESULT in (post-increment), so ClaimableNow
+        // matches the payout; the displayed Streak is the player's CURRENT standing (0 when fresh, and
+        // already-incremented once claimed today) — standard streak-counter semantics.
+        var rewardStreak = claimedToday
+            ? player.StreakCount
+            : DailyStreak.Next(player.LastClaimDay, window.DayIndex, player.StreakCount);
+        var reward = DailyReward.Compute(_config, questDtos.Count(q => q.Done), rewardStreak);
+
+        return new Shared.DailyStatusDto(
+            window.DayIndex, window.End.ToUnixTimeSeconds(), claimedToday, player.StreakCount,
+            _config.DailyBaseSats, questDtos,
+            ClaimableNowSats: claimedToday ? 0 : reward.Total,
+            ProjectedSats: reward.Total);
+    }
+
+    /// <summary>Claim the daily reward: base + bonus per completed quest, streak-scaled, paid from the
+    /// treasury. Once per UTC day; state is written only after the payout succeeds so a failed payout
+    /// doesn't consume the day.</summary>
+    public async Task<Shared.DailyClaimResultDto> ClaimDailyAsync(Player player, CancellationToken ct)
+    {
+        var window = Daily.ForDay(DateTimeOffset.UtcNow);
+        if (player.LastClaimDay == window.DayIndex)
+            throw new GameRuleException("Daily reward already claimed today.");
+
+        var (heroIds, receipts) = DailyReceiptsInWindow(player, window);
+        var quests = Shared.DailyQuests.ForDay(window.DayIndex, _config.DailyQuestsPerDay);
+        var completed = quests.Where(q => Shared.DailyQuests.IsComplete(q, receipts, heroIds)).ToList();
+
+        var newStreak = DailyStreak.Next(player.LastClaimDay, window.DayIndex, player.StreakCount);
+        var reward = DailyReward.Compute(_config, completed.Count, newStreak);
+
+        await chain.PayoutAsync(player.Id, reward.Total, $"daily:{window.DayIndex}", ct);
+
+        player.LastClaimDay = window.DayIndex;   // consume the day only after the payout succeeds
+        player.StreakCount = newStreak;
+
+        return new Shared.DailyClaimResultDto(
+            reward.Total, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,
+            completed.Select(q => q.Id).ToList());
+    }
+
+    /// <summary>The player's heroes' receipts falling inside a day window, plus the hero-id set.</summary>
+    private (HashSet<string> HeroIds, List<Shared.ProgressionReceiptDto> Receipts) DailyReceiptsInWindow(
+        Player player, DailyWindow window)
+    {
+        var heroIds = store.Heroes.Values.Where(h => h.OwnerId == player.Id).Select(h => h.Id).ToHashSet();
+        var startUnix = window.Start.ToUnixTimeSeconds();
+        var endUnix = window.End.ToUnixTimeSeconds();
+        var receipts = store.ReceiptsByHero
+            .Where(kv => heroIds.Contains(kv.Key))
+            .SelectMany(kv => kv.Value)
+            .Where(r => r.UnixSeconds >= startUnix && r.UnixSeconds < endUnix)
+            .DistinctBy(r => r.Id)
+            .ToList();
+        return (heroIds, receipts);
+    }
+
     public async Task<(MatchSession Session, BattleResult Result, string ServerSeedHex, string EntropyHex,
         long ChallengerXp, long DefenderXp,
         Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, long WinnerPayout,

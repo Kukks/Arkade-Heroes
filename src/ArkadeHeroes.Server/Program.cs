@@ -488,6 +488,13 @@ api.MapGet("/leaderboard", (GameStore store) =>
 // season (a renewable competitive goal). Same trustless receipt tally as /leaderboard, windowed by the clock.
 api.MapGet("/leaderboard/season", (GameService game) => Results.Ok(game.SeasonLeaderboard()));
 
+// Daily engagement loop: the signed-in player's quests + streak (GET), and the once-per-UTC-day claim
+// that pays base + per-quest bonus (streak-scaled) from the treasury (POST).
+api.MapGet("/daily", (HttpContext http, GameService game) =>
+    Results.Ok(game.DailyStatus(game.Authenticate(BearerToken(http)))));
+api.MapPost("/daily/claim", async (HttpContext http, GameService game, CancellationToken ct) =>
+    Results.Ok(await game.ClaimDailyAsync(game.Authenticate(BearerToken(http)), ct)));
+
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
 // ── Dev-only simulation of the CLIENT wallet (InMemory chain mode only) ────
@@ -503,6 +510,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         var player = game.Authenticate(BearerToken(http));
         ((InMemoryChainService)chain).PayInvoiceFromPlayer(player.Id, request.InvoiceId);
         return Results.Ok(new { paid = true });
+    });
+
+    // Credit the simulated treasury so the daily faucet has reserves to pay out (a fresh treasury
+    // has no fee income yet). In NArk the treasury is a real funded address, so this doesn't exist.
+    dev.MapPost("/fund-treasury", (FundTreasuryDevRequest request, IChainService chain) =>
+    {
+        ((InMemoryChainService)chain).FundTreasury(request.Sats);
+        return Results.Ok(new { funded = true });
     });
 
     dev.MapPost("/transfer-asset", (TransferAssetDevRequest request, HttpContext http, GameService game, IChainService chain) =>
@@ -638,6 +653,7 @@ static OfferDto ToOfferDto(OfferListing o, GameStore store)
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet invoice payment.</summary>
 public record PayInvoiceDevRequest(string InvoiceId);
+public record FundTreasuryDevRequest(long Sats);
 
 /// <summary>Dev-only (InMemory mode): simulated client-wallet asset transfer.</summary>
 public record TransferAssetDevRequest(string AssetId, string ToPlayerId);

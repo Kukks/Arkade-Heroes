@@ -98,6 +98,10 @@ public class InMemoryChainService : IChainService
         Interlocked.Add(ref _treasuryBalance, invoice.AmountSats);
     }
 
+    /// <summary>Dev/test lever: credit the simulated treasury directly (the daily faucet draws on it,
+    /// and a fresh treasury has no fee income yet). InMemory only — NArk funds a real treasury address.</summary>
+    public void FundTreasury(long sats) => Interlocked.Add(ref _treasuryBalance, sats);
+
     // ── Treasury-signed actions ────────────────────────────────────────
 
     public async Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)
