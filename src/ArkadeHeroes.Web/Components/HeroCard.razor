@@ -23,6 +23,11 @@
             }
         </div>
         <div class="chips">
+            @if (Hero.FancyTitle is not null)
+            {
+                <span class="chip" title="Fancy — a rare genome trait combination"
+                      style="background:linear-gradient(90deg,#ffd76a,#ff7ac0);color:#1a1030;font-weight:700">✦ @Hero.FancyTitle</span>
+            }
             <span class="chip">lvl <b>@Hero.Level</b></span>
             <span class="chip">@Hero.Element</span>
             @if (Hero.Rarity is not null)

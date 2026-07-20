@@ -41,7 +41,8 @@ public static class DtoMapper
                 ? null
                 : new ProvenanceDto(commitmentHex, hero.ServerSeedHex, hero.PlayerNonce, hero.EntropyHex),
             ToRarityDto(hero.Genome),
-            Core.Progression.Sterility.IsSterile(hero.Genome));
+            Core.Progression.Sterility.IsSterile(hero.Genome),
+            Core.Progression.FancySets.TitleFor(hero.Genome));
     }
 
     public static RarityDto ToRarityDto(Core.Genetics.Genome genome)
