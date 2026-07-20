@@ -27,6 +27,7 @@ else
             <div class="page-head" style="margin:0 0 .3rem">
                 <h3 style="margin:0">Season @_season.SeasonNumber</h3>
                 <span class="hud">@ResetsIn(_season.EndsAtUnix)</span>
+                <span class="hud">🏆 pot @_season.PotSats.ToString("N0") sat</span>
             </div>
             @if (_season.Standings.Count == 0)
             {
@@ -44,6 +45,22 @@ else
                         }
                     </tbody>
                 </table>
+            }
+        </div>
+    }
+
+    @if (_season?.LastSettlement is { } settled)
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <h3 style="margin:0 0 .5rem">Season @settled.SeasonNumber champions</h3>
+            <p class="muted" style="margin:-.2rem 0 .7rem">@settled.PotSats.ToString("N0") sat pot, paid out</p>
+            @foreach (var w in settled.Winners)
+            {
+                <div class="match-row">
+                    <span><b>#@w.Rank</b> @w.Name</span>
+                    <span class="spacer"></span>
+                    <span class="chip">@w.AwardSats.ToString("N0") sat</span>
+                </div>
             }
         </div>
     }
