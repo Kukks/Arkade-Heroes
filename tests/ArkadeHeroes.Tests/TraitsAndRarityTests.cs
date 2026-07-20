@@ -192,6 +192,29 @@ public class TraitsAndRarityTests
     }
 
     [Fact]
+    public async Task FanciesEndpoint_SurfacesOnlyHeroesWithANamedSet()
+    {
+        using var factory = new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>();
+        var client = new ArkadeHeroesClient(factory.CreateClient());
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        // A plain hero (hits no set) and a three-Legendary-cosmetic "Sovereign".
+        store.Heroes["plain"] = new Hero
+            { Id = "plain", OwnerId = "p", Name = "Plain", Genome = new Genome(new byte[32]), Generation = 1 };
+        var g = new byte[32];
+        g[16 + (int)TraitCategory.Aura * 2] = 255;
+        g[16 + (int)TraitCategory.Eyes * 2] = 255;
+        g[16 + (int)TraitCategory.Crest * 2] = 255; // three Legendary cosmetics → Sovereign
+        store.Heroes["fancy"] = new Hero
+            { Id = "fancy", OwnerId = "p", Name = "Fancy", Genome = new Genome(g), Generation = 1 };
+
+        var board = await client.Leaderboard.FanciesAsync();
+        Assert.Contains(board, h => h.Id == "fancy" && h.FancyTitle == "Sovereign"); // fancy is surfaced with its title
+        Assert.DoesNotContain(board, h => h.Id == "plain");                          // the plain hero is filtered out
+        Assert.All(board, h => Assert.NotNull(h.FancyTitle));                        // the board is fancies-only
+    }
+
+    [Fact]
     public void Sterility_CommonAndGen0_AreNeverSterile()
     {
         Assert.False(ArkadeHeroes.Core.Progression.Sterility.IsSterile(Blank())); // gen-0 / Common

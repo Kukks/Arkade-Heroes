@@ -383,6 +383,17 @@ api.MapGet("/rarest", (GameStore store) =>
         .Select(h => h.ToDto())
         .ToList()));
 
+// The Fancy board: heroes whose genome hits a named cosmetic set (Sovereign/Emberlord/...), a concrete
+// breeding target beyond a rarity number. Pure genome derivation — same trustless basis as /rarest.
+api.MapGet("/fancies", (GameStore store) =>
+    Results.Ok(store.Heroes.Values
+        .Where(h => ArkadeHeroes.Core.Progression.FancySets.TitleFor(h.Genome) is not null)
+        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
+        .ThenByDescending(h => h.Generation)
+        .Take(30)
+        .Select(h => h.ToDto())
+        .ToList()));
+
 // Public escrow parameters of a covenant match: everything a player needs to
 // rebuild the per-party contracts locally (WagerEscrowContracts.Build) and
 // reclaim a timelocked refund WITHOUT trusting this server. 404 for
