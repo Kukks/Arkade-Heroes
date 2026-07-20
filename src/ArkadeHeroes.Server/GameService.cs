@@ -1037,13 +1037,18 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var newStreak = DailyStreak.Next(player.LastClaimDay, window.DayIndex, player.StreakCount);
         var reward = DailyReward.Compute(_config, completed.Count, newStreak);
 
-        await chain.PayoutAsync(player.Id, reward.Total, $"daily:{window.DayIndex}", ct);
+        // Faucet governor: sats are real BTC — the treasury is a finite, fee-funded pot it can't inflate.
+        // Never overdraw it: pay only what it can afford (down to zero) rather than throwing "Treasury cannot
+        // cover". The streak still advances (the player showed up), and emission auto-tracks treasury health.
+        var affordable = Math.Clamp(await chain.TreasuryBalanceAsync(ct), 0, reward.Total);
+        if (affordable > 0)
+            await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
 
-        player.LastClaimDay = window.DayIndex;   // consume the day only after the payout succeeds
+        player.LastClaimDay = window.DayIndex;   // consume the day even at a partial/zero payout
         player.StreakCount = newStreak;
 
         return new Shared.DailyClaimResultDto(
-            reward.Total, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,
+            affordable, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,
             completed.Select(q => q.Id).ToList());
     }
 
