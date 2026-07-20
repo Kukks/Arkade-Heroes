@@ -91,5 +91,6 @@ public class GameOptions
         DailyStreakCapPct: DailyStreakCapPct,
         SeasonPotBaseSats: SeasonPotBaseSats,
         SeasonFeeAccrualPct: SeasonFeeAccrualPct,
-        OfferListingFeeSats: OfferListingFeeSats);
+        OfferListingFeeSats: OfferListingFeeSats,
+        HeroRenameFeeSats: HeroRenameFeeSats);
 }
