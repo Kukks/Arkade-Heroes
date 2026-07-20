@@ -197,4 +197,52 @@ public static class FairnessAudit
 
         return (true, $"gauntlet verifies: {resolved.WavesCleared}/{Gauntlet.WaveCount} waves, {expectedXp} xp");
     }
+
+    /// <summary>
+    /// Verifies a 3v3 squad match: seed matches the commitment, entropy is the documented derivation, and
+    /// re-running <c>SquadBattle.Resolve</c> over the pre-match lineup snapshots reproduces the best-of-3
+    /// winner AND every duel's event log — so a server can't misreport a duel or the aggregate outcome.
+    /// (Copies the VerifyGauntlet pattern; the engine + replay guarantee are untouched.)
+    /// </summary>
+    public static (bool Ok, string Detail) VerifySquad(
+        string matchId, string nonce, string commitmentHex, SquadReplayDto replay)
+    {
+        var seed = Convert.FromHexString(replay.ServerSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        var entropy = CommitReveal.DeriveEntropy(seed, "squad", matchId, nonce);
+        if (!Convert.ToHexString(entropy).Equals(replay.EntropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, squad, matchId, nonce)");
+
+        var challengers = replay.ChallengerLineup.Select(RebuildHero).ToList();
+        var defenders = replay.DefenderLineup.Select(RebuildHero).ToList();
+        var resolved = SquadBattle.Resolve(challengers, defenders, entropy);
+
+        if (resolved.ChallengerWon != replay.Result.ChallengerWon)
+            return (false, "replayed match winner differs from the reported winner");
+        if (resolved.Duels.Count != replay.Result.Duels.Count)
+            return (false, "replayed duel count differs");
+
+        for (var d = 0; d < resolved.Duels.Count; d++)
+        {
+            var mine = resolved.Duels[d].Result;
+            var theirs = replay.Result.Duels[d].Result;
+            if (mine.WinnerId != theirs.WinnerId)
+                return (false, $"replayed duel {d} winner differs from the reported winner");
+            if (mine.Turns != theirs.Turns || mine.Events.Count != theirs.Events.Count)
+                return (false, $"replayed duel {d} battle log differs in length");
+            for (var i = 0; i < mine.Events.Count; i++)
+            {
+                var me = mine.Events[i];
+                var th = theirs.Events[i];
+                if (me.Turn != th.Turn || me.ActorId != th.ActorId || me.Kind.ToString() != th.Kind ||
+                    me.SkillId != th.SkillId || me.Damage != th.Damage || me.Crit != th.Crit ||
+                    me.Healed != th.Healed || me.TargetHpAfter != th.TargetHpAfter)
+                    return (false, $"replayed duel {d} battle log diverges at event {i}");
+            }
+        }
+
+        return (true, $"squad match verifies: {resolved.ChallengerWins}-{resolved.DefenderWins} over {resolved.Duels.Count} duels");
+    }
 }

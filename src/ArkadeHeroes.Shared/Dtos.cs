@@ -222,6 +222,29 @@ public record MatchReplayDto(
     HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot, BattleResultDto Result,
     string WinnerHeroId, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
 
+// ── Team 3v3 squad matches: a positional best-of-3 relay of 1v1 duels ──
+public record SquadDuelDto(int Slot, HeroDto Challenger, HeroDto Defender, BattleResultDto Result);
+public record SquadResultDto(bool ChallengerWon, int ChallengerWins, int DefenderWins, IReadOnlyList<SquadDuelDto> Duels);
+
+public record OpenSquadMatchRequest(
+    IReadOnlyList<string> ChallengerLineup, IReadOnlyList<string> DefenderLineup, long WagerSats = 0, string Mode = "covenant");
+
+public record SquadMatchDto(
+    string MatchId, IReadOnlyList<string> ChallengerLineup, IReadOnlyList<string> DefenderLineup,
+    long WagerSats, string Status, SquadResultDto? Result);
+
+/// <summary>Everything a spectator needs to REPLAY + verify a resolved squad match (FairnessAudit.VerifySquad).</summary>
+public record SquadReplayDto(
+    IReadOnlyList<HeroDto> ChallengerLineup, IReadOnlyList<HeroDto> DefenderLineup,
+    SquadResultDto Result, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
+
+public record SquadOpenResponse(string MatchId, string CommitmentHex, long WagerSats, string Status,
+    FeeInvoiceDto? StakeInvoice, string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
+public record SquadAcceptResponse(SquadMatchDto Match, FeeInvoiceDto? StakeInvoice,
+    string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
+public record SquadResolveResponse(SquadResultDto Result, string ServerSeedHex, string EntropyHex,
+    long WinnerPayoutSats, IReadOnlyList<ProgressionReceiptDto> Receipts);
+
 // ── XP-weighted matchmaking: suggested opponents ranked by level proximity ──────
 public record OpponentSuggestionDto(
     HeroDto Hero, string OwnerPlayerId, int LevelGap, long XpIfYouWin, long XpIfYouLose,

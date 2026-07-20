@@ -326,6 +326,46 @@ api.MapGet("/matches/{matchId}/replay", (string matchId, GameStore store) =>
             s.EntropyHex ?? "", s.Nonce ?? ""))
         : Results.NotFound());
 
+// ── Team 3v3 squad matches (open → accept → resolve), reusing the wager escrow ─────────────────
+api.MapPost("/squad/open", async (OpenSquadMatchRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, invoice, feeInvoice) = await game.OpenSquadMatchAsync(player, request, ct);
+    return Results.Ok(new SquadOpenResponse(session.Id, session.CommitmentHex, session.WagerSats, session.Status,
+        invoice?.ToDto(), session.EscrowChallengerAddress, session.EscrowChallengerAddress is null ? 0 : session.WagerSats,
+        feeInvoice?.ToDto()));
+});
+
+api.MapPost("/squad/{matchId}/accept", async (string matchId, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, invoice, feeInvoice) = await game.AcceptSquadMatchAsync(player, matchId, ct);
+    return Results.Ok(new SquadAcceptResponse(ToSquadMatchDto(session), invoice?.ToDto(),
+        session.EscrowDefenderAddress, session.EscrowDefenderAddress is null ? 0 : session.WagerSats, feeInvoice?.ToDto()));
+});
+
+api.MapPost("/squad/{matchId}/resolve", async (string matchId, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (_, result, serverSeedHex, entropyHex, challSnaps, defSnaps, winnerPayout, receipts) =
+        await game.ResolveSquadMatchAsync(player, matchId, request.Nonce, ct);
+    return Results.Ok(new SquadResolveResponse(result.ToDto(challSnaps, defSnaps), serverSeedHex, entropyHex, winnerPayout, receipts));
+});
+
+api.MapGet("/squad", (string? status, GameStore store) =>
+    Results.Ok(store.SquadMatches.Values
+        .Where(m => status is null || m.Status == status)
+        .Select(ToSquadMatchDto).Take(50).ToList()));
+
+// Public spectator replay of a resolved squad match (VerifySquad re-runs the best-of-3 from the revealed seed).
+api.MapGet("/squad/{matchId}/replay", (string matchId, GameStore store) =>
+    store.SquadMatches.TryGetValue(matchId, out var s)
+        && s.Result is { } r && s.ChallengerSnapshots is not null && s.DefenderSnapshots is not null
+        ? Results.Ok(new SquadReplayDto(
+            s.ChallengerSnapshots, s.DefenderSnapshots, r.ToDto(s.ChallengerSnapshots, s.DefenderSnapshots),
+            s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(), s.EntropyHex ?? "", s.Nonce ?? ""))
+        : Results.NotFound());
+
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
 // given hero, each annotated with the conserved XP a staked win/loss would move.
 api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameService game) =>
@@ -520,6 +560,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         return Results.Ok(new { funded = true });
     });
 
+    // Mint one extra gen-0 hero (InMemory only) — lets tests build a full 3-hero squad lineup.
+    dev.MapPost("/mint-hero", async (HttpContext http, GameService game, CancellationToken ct) =>
+    {
+        var player = game.Authenticate(BearerToken(http));
+        var hero = await game.DevMintHeroAsync(player, ct);
+        return Results.Ok(hero.ToDto());
+    });
+
     dev.MapPost("/transfer-asset", (TransferAssetDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
@@ -632,6 +680,11 @@ static string? BearerToken(HttpContext http)
     var header = http.Request.Headers.Authorization.ToString();
     return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..] : null;
 }
+
+static SquadMatchDto ToSquadMatchDto(SquadMatchSession s) => new(
+    s.Id, s.ChallengerLineup, s.DefenderLineup, s.WagerSats, s.Status,
+    s.Result is { } r && s.ChallengerSnapshots is not null && s.DefenderSnapshots is not null
+        ? r.ToDto(s.ChallengerSnapshots, s.DefenderSnapshots) : null);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,

@@ -195,6 +195,34 @@ public class OfferListing
     public string Status { get; set; } = "pending";
 }
 
+/// <summary>A pending/resolved 3v3 squad match: two 3-hero lineups sharing one wager escrow (reused from the
+/// duel flow), resolved by a positional best-of-3 relay. Mirrors <see cref="MatchSession"/> with lineups.</summary>
+public class SquadMatchSession
+{
+    public required string Id { get; init; }
+    public required string ChallengerPlayerId { get; init; }
+    public required IReadOnlyList<string> ChallengerLineup { get; init; }
+    public required IReadOnlyList<string> DefenderLineup { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    public long WagerSats { get; init; }
+    public string Mode { get; init; } = "covenant";
+    public string? EscrowChallengerAddress { get; set; }
+    public string? EscrowDefenderAddress { get; set; }
+    public string? ChallengerInvoiceId { get; set; }
+    public string? ChallengerFeeInvoiceId { get; set; }
+    public string? DefenderInvoiceId { get; set; }
+    public string? DefenderFeeInvoiceId { get; set; }
+    public long? RefundAfterUnixSeconds { get; set; }
+    public string? DefenderPlayerId { get; set; }
+    public string Status { get; set; } = "open";
+    public SquadResult? Result { get; set; }
+    public IReadOnlyList<Shared.HeroDto>? ChallengerSnapshots { get; set; }
+    public IReadOnlyList<Shared.HeroDto>? DefenderSnapshots { get; set; }
+    public string? Nonce { get; set; }
+    public string? EntropyHex { get; set; }
+}
+
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
 public class GameStore
 {
@@ -208,6 +236,7 @@ public class GameStore
 
     public ConcurrentDictionary<string, DeathMatchSession> DeathMatches { get; } = new();
     public ConcurrentDictionary<string, MatchSession> Matches { get; } = new();
+    public ConcurrentDictionary<string, SquadMatchSession> SquadMatches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
 
