@@ -36,7 +36,8 @@ public sealed record GameConfig(
     int DeathMatchFeeMultiplier, // death-match fee = this × MatchFee (classic permadeath)
     int AbsorbFeeMultiplier,     // death-match fee = this × MatchFee (absorb mode, costs more)
     int BreedFeeDoublingCap,    // breed-fee doubling cap (2^min(breeds, cap))
-    int MatchmakingTake)        // suggested-opponents page size
+    int MatchmakingTake,        // suggested-opponents page size
+    int SeasonLengthDays = 14)  // ranked-ladder season length (days); the current season is time-derived
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(

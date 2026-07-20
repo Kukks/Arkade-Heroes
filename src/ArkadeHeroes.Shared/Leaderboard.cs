@@ -4,6 +4,10 @@ namespace ArkadeHeroes.Shared;
 public record LeaderboardEntryDto(
     int Rank, string HeroId, string Name, int Level, int Wins, int Matches, string OwnerId);
 
+/// <summary>The current season's ranked ladder — its number, when it ends (so the client can show a
+/// "resets in X" countdown), and the standings (staked-match wins within the season window).</summary>
+public record SeasonLeaderboardDto(int SeasonNumber, long EndsAtUnix, IReadOnlyList<LeaderboardEntryDto> Standings);
+
 /// <summary>
 /// The leaderboard is computed entirely from signed progression receipts —
 /// anyone holding the receipt chain can recompute it, so the server's ranking

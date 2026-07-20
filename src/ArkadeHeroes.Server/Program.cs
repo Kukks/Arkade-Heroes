@@ -484,6 +484,10 @@ api.MapGet("/leaderboard", (GameStore store) =>
     return Results.Ok(LeaderboardBuilder.Build(heroes, receipts));
 });
 
+// The current SEASON's ranked ladder — staked-match wins within a time-boxed window that auto-resets each
+// season (a renewable competitive goal). Same trustless receipt tally as /leaderboard, windowed by the clock.
+api.MapGet("/leaderboard/season", (GameService game) => Results.Ok(game.SeasonLeaderboard()));
+
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
 // ── Dev-only simulation of the CLIENT wallet (InMemory chain mode only) ────
