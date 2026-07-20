@@ -193,6 +193,13 @@ public class OfferListing
     public required long RefundAfterUnixSeconds { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string Status { get; set; } = "pending";
+    /// <summary>The treasury fee-invoice the seller pays to list; null when no listing fee is charged.</summary>
+    public string? ListingFeeInvoiceId { get; init; }
+    /// <summary>Flat listing fee charged to the treasury at open (0 when disabled).</summary>
+    public long ListingFeeSats { get; init; }
+    /// <summary>Latched once the listing fee is observed paid — an offer stays <c>pending</c> until then
+    /// (true immediately when no fee is due, so a disabled fee is a no-op).</summary>
+    public bool ListingFeePaid { get; set; }
 }
 
 /// <summary>A pending/resolved 3v3 squad match: two 3-hero lineups sharing one wager escrow (reused from the

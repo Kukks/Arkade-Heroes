@@ -55,6 +55,11 @@ public class GameOptions
     public long SeasonPotBaseSats { get; set; } = 25_000;
     public int SeasonFeeAccrualPct { get; set; } = 20;
 
+    /// <summary>Marketplace listing fee: flat sats the seller pays the treasury to list an offer (item or
+    /// hero) — treasury capture on secondary trades, the counterweight to the daily + season faucets.
+    /// DEFAULT 0 (disabled) until the sell-flow UI prompts payment; flip on in a coordinated release.</summary>
+    public long OfferListingFeeSats { get; set; } = 0;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -81,5 +86,6 @@ public class GameOptions
         DailyStreakStepPct: DailyStreakStepPct,
         DailyStreakCapPct: DailyStreakCapPct,
         SeasonPotBaseSats: SeasonPotBaseSats,
-        SeasonFeeAccrualPct: SeasonFeeAccrualPct);
+        SeasonFeeAccrualPct: SeasonFeeAccrualPct,
+        OfferListingFeeSats: OfferListingFeeSats);
 }
