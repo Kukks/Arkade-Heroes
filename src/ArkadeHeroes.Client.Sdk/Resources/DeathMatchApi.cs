@@ -7,6 +7,8 @@ namespace ArkadeHeroes.Client.Sdk;
 public sealed class DeathMatchApi(ArkadeHeroesClient client)
 {
     public Task<List<DeathMatchDto>> ListAsync() => client.GetAsync<List<DeathMatchDto>>("/api/deathmatch");
+    /// <summary>Public spectator replay of a SETTLED death-match — snapshots + fight + the seed to verify it.</summary>
+    public Task<MatchReplayDto> ReplayAsync(string deathMatchId) => client.GetAsync<MatchReplayDto>($"/api/deathmatch/{deathMatchId}/replay");
     public Task<DeathMatchOpenResponse> OpenAsync(DeathMatchOpenRequest req) => client.PostAsync<DeathMatchOpenResponse>("/api/deathmatch/open", req);
     public Task<DeathMatchAcceptResponse> AcceptAsync(string deathMatchId) => client.PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept");
     public Task<DeathMatchSettleResponse> SettleAsync(string deathMatchId, DeathMatchSettleRequest req) => client.PostAsync<DeathMatchSettleResponse>($"/api/deathmatch/{deathMatchId}/settle", req);

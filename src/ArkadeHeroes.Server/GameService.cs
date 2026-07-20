@@ -667,6 +667,14 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
+        // Persist the fight-time replay data before the branches (both burn a hero) so ANY spectator can
+        // watch + verify this death-match later — the same trustless replay as a wager match.
+        session.Result = result;
+        session.ChallengerSnapshot = challengerSnapshot;
+        session.DefenderSnapshot = defenderSnapshot;
+        session.EntropyHex = entropyHex;
+        session.Nonce = nonce;
+
         // ── ABSORB MODE: a seed-driven roll may RE-MINT the winner absorbing the loser's better
         // traits — BOTH heroes burn and a new hero mints under species to the winner. A failed roll
         // (or a classic match) falls through to the keep path (the winner keeps its exact hero).

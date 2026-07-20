@@ -52,7 +52,9 @@ else
         _replay = null;
         try
         {
-            _replay = await Api.Matches.ReplayAsync(MatchId);
+            // A shareable id is either a wager/friendly match or a death-match — try both.
+            try { _replay = await Api.Matches.ReplayAsync(MatchId); }
+            catch { _replay = await Api.DeathMatch.ReplayAsync(MatchId); }
 
             // Independently verify the replay reproduces the fight from the revealed seed (VerifyMatch reads
             // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
