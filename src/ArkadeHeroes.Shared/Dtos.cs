@@ -335,7 +335,8 @@ public record GameConfigDto(
     long MatchFeePerLevel,
     int BreedFeeDoublingCap,
     int MatchmakingTake,
-    long OfferListingFeeSats)
+    long OfferListingFeeSats,
+    long HeroRenameFeeSats)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -347,7 +348,8 @@ public record GameConfigDto(
         c.MatchFeePerLevel,
         c.BreedFeeDoublingCap,
         c.MatchmakingTake,
-        c.OfferListingFeeSats);
+        c.OfferListingFeeSats,
+        c.HeroRenameFeeSats);
 }
 
 public record ChainInfoDto(

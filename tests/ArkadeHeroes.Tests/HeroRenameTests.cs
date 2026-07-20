@@ -76,4 +76,14 @@ public class HeroRenameTests
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(
             () => player.Heroes.RequestRenameAsync(heroes[1].Id, new RenameHeroRequest("Highlander")));
     }
+
+    [Fact]
+    public async Task Config_PublishesRenameFee_ForPreDisplay()
+    {
+        // The hero page previews the rename fee from GET /api/chain/info before the owner claims a name.
+        using var factory = new WebApplicationFactory<Program>();
+        var client = new ArkadeHeroesClient(factory.CreateClient());
+        var info = await client.Chain.InfoAsync();
+        Assert.Equal(Fee, info.Config?.HeroRenameFeeSats);
+    }
 }

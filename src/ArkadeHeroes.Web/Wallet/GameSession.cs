@@ -261,6 +261,25 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return resting;
     }
 
+    /// <summary>Claims a custom, globally-unique name for a hero: requests the rename (the server bills a
+    /// treasury fee-invoice), pays it from the wallet, then confirms — returning the renamed hero.</summary>
+    public async Task<HeroDto> RenameHeroAsync(string heroId, string name, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Reserving the name…");
+        var resp = await api.Heroes.RequestRenameAsync(heroId, new RenameHeroRequest(name));
+
+        if (resp.Fee is { AmountSats: > 0 } fee)
+        {
+            var w = await wallet.GetActiveWalletAsync()
+                ?? throw new GameWalletException("Create a wallet first.");
+            onProgress?.Invoke($"Paying the {fee.AmountSats}-sat name fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+
+        onProgress?.Invoke("Engraving the name…");
+        return await api.Heroes.ConfirmRenameAsync(heroId);
+    }
+
     /// <summary>
     /// Buy a resting hero offer, entirely from the browser wallet: rebuild the offer covenant
     /// locally and fulfil it — the buyer pays the ask straight to the seller and the covenant
