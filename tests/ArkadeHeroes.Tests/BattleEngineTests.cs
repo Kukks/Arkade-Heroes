@@ -137,6 +137,56 @@ public class BattleEngineTests
         Assert.Equal("frost-bite", FirstCast(BattleEngine.Fight(actor, defender, seed, aware)));
     }
 
+    [Fact]
+    public void InnateModifier_NudgesFromCosmeticTraitsOnly()
+    {
+        static Genome G(params (TraitCategory Cat, byte Val)[] traits)
+        {
+            var b = new byte[32];
+            foreach (var (cat, val) in traits) b[16 + (int)cat * 2] = val;
+            return new Genome(b);
+        }
+
+        Assert.Equal(1.0, Traits.InnateModifier(G()));                                        // blank → neutral
+        Assert.True(Traits.InnateModifier(G((TraitCategory.Aura, 255))) > 1.0);               // a cosmetic trait nudges up
+        Assert.True(Traits.InnateModifier(G((TraitCategory.Aura, 255))) <= 1.0 + Traits.AffinityCap); // capped
+        Assert.Equal(1.0, Traits.InnateModifier(G((TraitCategory.ElementAffinity, 255))));    // affinity ≠ cosmetic
+    }
+
+    [Fact]
+    public void InnateAbilities_FlagGatesCosmeticDamage()
+    {
+        // Identical high-power attackers except one expresses three Legendary COSMETIC traits (→ hits the cap);
+        // same modest defender + seed, so the RNG stream is identical and only the innate multiplier can differ.
+        static Hero Atk(bool fancy)
+        {
+            var bytes = new byte[32];
+            for (var i = 0; i < 5; i++) bytes[i] = 255;   // max stats → big hits, so a 5% nudge clears int truncation
+            if (fancy)
+            {
+                bytes[16 + (int)TraitCategory.Aura * 2] = 255;
+                bytes[16 + (int)TraitCategory.Eyes * 2] = 255;
+                bytes[16 + (int)TraitCategory.Crest * 2] = 255;
+            }
+            var g = new Genome(bytes);
+            return new Hero { Id = "atk", OwnerId = "t", Name = HeroNamer.DeriveName(g), Genome = g, Level = 20 };
+        }
+        var defender = Fighter("def", 128, 0, 0, 5);
+        var seed = new byte[32];
+        for (var i = 0; i < 32; i++) seed[i] = (byte)(i * 7 + 3);
+
+        static int FirstHit(BattleResult r) => r.Events.First(e => e.ActorId == "atk" && e.Damage > 0).Damage;
+
+        // Flag OFF (Default): cosmetic traits are inert — the fancy attacker hits exactly like the plain one.
+        Assert.Equal(FirstHit(BattleEngine.Fight(Atk(false), defender, seed)),
+                     FirstHit(BattleEngine.Fight(Atk(true), defender, seed)));
+
+        // Flag ON: the fancy attacker's innate nudge raises its first hit above the plain attacker's.
+        var innate = GameConfig.Default with { Combat = GameConfig.Default.Combat with { InnateAbilities = true } };
+        Assert.True(FirstHit(BattleEngine.Fight(Atk(true), defender, seed, innate)) >
+                    FirstHit(BattleEngine.Fight(Atk(false), defender, seed, innate)));
+    }
+
     // A hero whose gene-A skill is a specific catalog entry (SkillGeneA = Bytes[6] → GeneSkills[byte % 16]).
     private static Hero HeroWithGeneSkill(string id, byte geneAByte, int level = 5, byte statGenes = 128)
     {
