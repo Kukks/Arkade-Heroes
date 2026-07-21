@@ -157,6 +157,25 @@ public record GauntletRunResponse(
     string? ItemAwarded, string? ItemAssetId, HeroDto HeroSnapshot,
     string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
 
+// ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
+
+public record TrialsOpenRequest(string HeroId);
+
+/// <summary>No fee — Trials is free to enter (it awards no XP/item/sats, so there's nothing to farm).</summary>
+public record TrialsOpenResponse(string TrialsId, string CommitmentHex);
+
+public record TrialsRunRequest(string Nonce);
+
+/// <summary>One trials wave for display; the client re-derives the ghost + fight from the seed to verify.</summary>
+public record TrialsWaveDto(int Wave, int GhostLevel, bool Won, HeroDto Ghost, BattleResultDto Result);
+
+/// <summary><see cref="HeroSnapshot"/> is the PRE-run hero, so the client replays <c>Trials.Resolve</c> and
+/// re-checks the score + <see cref="Title"/> off the deterministic ladder. <see cref="BestScore"/> is the
+/// hero's personal best waves-cleared to date (this run included) — the leaderboard basis.</summary>
+public record TrialsRunResponse(
+    int WavesCleared, IReadOnlyList<TrialsWaveDto> Waves, string? Title, int BestScore,
+    HeroDto HeroSnapshot, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
+
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
 /// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>

@@ -34,6 +34,19 @@ public class GauntletSession
     public bool Completed { get; set; }
 }
 
+/// <summary>A pending endless-Trials run: the seed is committed at open; the run resolves on reveal (no fee,
+/// no reward beyond a score + title), tracking the hero's personal best.</summary>
+public class TrialsSession
+{
+    public required string Id { get; init; }
+    public required string PlayerId { get; init; }
+    public required string HeroId { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public bool Completed { get; set; }
+}
+
 public class BreedingSession
 {
     public required string Id { get; init; }
@@ -275,6 +288,9 @@ public class GameStore
     public ConcurrentDictionary<string, Hero> Heroes { get; } = new();
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
     public ConcurrentDictionary<string, GauntletSession> Gauntlets { get; } = new();
+    public ConcurrentDictionary<string, TrialsSession> Trials { get; } = new();
+    /// <summary>Each hero's best endless-Trials waves-cleared to date — the personal-best leaderboard basis.</summary>
+    public ConcurrentDictionary<string, int> TrialsBestByHero { get; } = new();
 
     public ConcurrentDictionary<string, MergeSession> Merges { get; } = new();
 
