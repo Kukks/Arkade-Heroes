@@ -1,3 +1,4 @@
+@using ArkadeHeroes.Core.Progression
 @* A single hero as a holographic rarity card: pixel-creature portrait in a
    tier-framed, foil-sheened tile, with rarity pips + expressed-trait badges. *@
 
@@ -32,6 +33,10 @@
             {
                 <span class="chip" title="Founder — a generation-0 original mint (the scarcest lineage)"
                       style="background:linear-gradient(90deg,#8fe3ff,#b98cff);color:#101030;font-weight:700">⚑ Founder</span>
+            }
+            else if (Provenance.Pedigree(Hero.Generation) is { } pedigree)
+            {
+                <span class="chip muted" title="Pedigree — this hero's breeding depth (generation @Hero.Generation)">⚜ @pedigree</span>
             }
             <span class="chip">lvl <b>@Hero.Level</b></span>
             <span class="chip">@Hero.Element</span>
