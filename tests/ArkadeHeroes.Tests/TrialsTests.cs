@@ -61,7 +61,9 @@ public class TrialsTests
     [Fact]
     public void GhostLevelIsTheWaveNumber_AbsoluteLadder()
     {
-        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, Enumerable.Range(1, 5).Select(Trials.GhostLevel).ToArray());
+        // An explicit lambda, not a method group: GhostLevel now takes an optional affix, and optional
+        // parameters don't participate in method-group conversion.
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, Enumerable.Range(1, 5).Select(w => Trials.GhostLevel(w)).ToArray());
         Assert.True(Trials.GhostLevel(30) > Trials.GhostLevel(1));   // strictly climbs with depth
     }
 
@@ -94,6 +96,51 @@ public class TrialsTests
         Assert.Equal("Trialblazer", Trials.TitleFor(12));
         Assert.Equal("Trial Legend", Trials.TitleFor(20));
         Assert.Equal("Trial Legend", Trials.TitleFor(Trials.MaxWaves));   // the top band holds at the cap
+    }
+
+    [Fact]
+    public void AffixRotatesWeekly_FromTheSeasonEpoch_AndIsDeterministic()
+    {
+        // Weeks ride the same fixed anchor the seasons use, so the clock alone fixes the affix.
+        Assert.Equal(0, Trials.WeekNumber(Season.Epoch));
+        Assert.Equal(1, Trials.WeekNumber(Season.Epoch.AddDays(7)));
+        Assert.Equal(0, Trials.WeekNumber(Season.Epoch.AddDays(-30)));   // before the epoch → week 0
+
+        // A fixed four-affix rotation: predictable, and independently derivable (no server discretion
+        // over which week is the easy one).
+        Assert.Equal(Trials.AffixForWeek(0), Trials.AffixForWeek(4));    // wraps after four weeks
+        Assert.NotEqual(Trials.AffixForWeek(0), Trials.AffixForWeek(1));
+        Assert.All(Enumerable.Range(0, 8).Select(w => Trials.AffixForWeek((long)w)),
+            a => Assert.NotEqual(TrialsAffix.None, a));                  // None is the baseline, never rotates in
+        Assert.Equal(Trials.AffixForWeek(3), Trials.AffixFor(Season.Epoch.AddDays(21)));
+    }
+
+    [Fact]
+    public void AffixesReshapeTheLadder()
+    {
+        Assert.Equal(10, Trials.GhostLevel(10));                              // plain: wave N → level N
+        Assert.Equal(20, Trials.GhostLevel(10, TrialsAffix.Relentless));      // two levels a wave
+        Assert.Equal(15, Trials.GhostLevel(10, TrialsAffix.Veteran));         // the ladder starts five in
+        Assert.Empty(Trials.GhostGear(20, TrialsAffix.Featherweight));        // bare-handed at any depth
+        Assert.NotEmpty(Trials.GhostGear(1, TrialsAffix.Ironclad));           // armed from wave 1
+        Assert.Contains("arkforged-edge", Trials.GhostGear(4, TrialsAffix.Ironclad));
+    }
+
+    [Fact]
+    public void AffixChangesTheRun_AndReplaysUnderTheSameAffix()
+    {
+        var hero = Runner(20);
+        var entropy = CommitReveal.DeriveEntropy(SHA256.HashData([9]), "trial", "1");
+
+        var plain = Trials.Resolve(hero, entropy);
+        var brutal = Trials.Resolve(hero, entropy, affix: TrialsAffix.Relentless);
+
+        // Relentless doubles the ghost's level each wave, so the same hero can't reach as deep.
+        Assert.True(brutal.WavesCleared < plain.WavesCleared,
+            $"Relentless should shorten the ladder (plain={plain.WavesCleared}, relentless={brutal.WavesCleared})");
+
+        // Replaying under the SAME affix reproduces the run exactly — the property verification relies on.
+        Assert.Equal(brutal.WavesCleared, Trials.Resolve(hero, entropy, affix: TrialsAffix.Relentless).WavesCleared);
     }
 
     [Fact]

@@ -216,7 +216,12 @@ public static class FairnessAudit
         if (!Convert.ToHexString(entropy).Equals(run.EntropyHex, StringComparison.OrdinalIgnoreCase))
             return (false, "entropy does not match DeriveEntropy(seed, trialsId, hero, nonce)");
 
-        var resolved = Trials.Resolve(RebuildHero(run.HeroSnapshot), entropy);
+        // Replay under the run's PINNED weekly affix, not whatever affix is in force now — otherwise a run
+        // resolved near a week boundary would fail its own verification minutes later.
+        if (!Enum.TryParse<TrialsAffix>(run.Affix, out var affix))
+            return (false, $"unknown weekly affix '{run.Affix}' — cannot replay the ladder faithfully");
+
+        var resolved = Trials.Resolve(RebuildHero(run.HeroSnapshot), entropy, affix: affix);
         if (resolved.WavesCleared != run.WavesCleared)
             return (false, $"replayed waves survived ({resolved.WavesCleared}) differs from reported ({run.WavesCleared})");
 

@@ -1,4 +1,7 @@
 @page "/trials"
+@using ArkadeHeroes.Core.Progression
+@* This page's component class is itself named `Trials`, which shadows the domain class — alias past it. *@
+@using TrialsRules = ArkadeHeroes.Core.Progression.Trials
 @inject ArkadeHeroesClient Api
 @inject GameSession Session
 @inject WalletState State
@@ -32,6 +35,10 @@ else
             how strong your hero really is. <b>Free to enter, run it as often as you like</b>: the Trials
             award no XP, gear, or sats, only a score and a title.
         </p>
+        <div class="status-line" style="margin:-.3rem 0 .9rem">
+            <span class="dot ok"></span>
+            <span><b>This week:</b> @TrialsRules.AffixDescription(_weekAffix)</span>
+        </div>
         <label>Champion
             <select @bind="_heroId">
                 <option value="">— pick a hero —</option>
@@ -60,6 +67,7 @@ else
         <div class="page-head" style="margin-top:1.8rem">
             <h3 style="margin:0">@(_outcome.Run.Title ?? "Run over")</h3>
             <span class="hud">@_outcome.Run.WavesCleared wave@(_outcome.Run.WavesCleared == 1 ? "" : "s") survived</span>
+            <span class="hud">under @_outcome.Run.Affix</span>
             <span class="spacer"></span>
             <span class="chip mono">best @_outcome.Run.BestScore</span>
         </div>
@@ -127,6 +135,9 @@ else
     private string? _error;
     private TrialsOutcome? _outcome;
     private TrialsWaveDto? _watching;   // the wave currently replaying in the arena (null = none)
+    // The affix is a pure function of the clock, so the browser derives this week's rule itself — no extra
+    // call. The run's OWN pinned affix (_outcome.Run.Affix) stays authoritative once a run resolves.
+    private readonly TrialsAffix _weekAffix = TrialsRules.AffixFor(DateTimeOffset.UtcNow);
 
     protected override async Task OnInitializedAsync()
     {
