@@ -1,0 +1,186 @@
+@page "/tournaments"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Tournaments · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Tournaments</h2>
+    <span class="hud">buy-in bracket · single elimination · champion + runner-up split the pot</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then enter a bracket.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading brackets…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You need a hero to enter — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+}
+else
+{
+    <div class="card">
+        <h3 style="margin-top:0">Host a tournament</h3>
+        <p class="muted" style="margin-top:0">
+            Pick a hero, a buy-in, and a bracket size. Every buy-in funds the pot; once full, any entrant runs the
+            bracket and the champion + runner-up split it 70/30 (the house keeps a @_rakePct% rake).
+        </p>
+        <div class="sell-picks">
+            <label>Hero
+                <select @bind="_heroId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _mine) { <option value="@h.Id">@h.Name — lvl @h.Level</option> }
+                </select>
+            </label>
+            <label>Buy-in <span class="mini">sats</span>
+                <input type="number" min="1" step="500" class="ask-input" @bind="_buyIn" />
+            </label>
+            <label>Size
+                <select @bind="_size">
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="8">8</option>
+                </select>
+            </label>
+        </div>
+        <button class="btn primary" style="margin-top:1rem" @onclick="DoOpen"
+                disabled="@(_busy || string.IsNullOrEmpty(_heroId) || _buyIn < 1)">
+            @(_busy ? "Working…" : "Host bracket")
+        </button>
+        @if (_status is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div> }
+        @if (_error is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div> }
+    </div>
+
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Open brackets</h3>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
+    </div>
+    @if (!Joinable.Any() && !Resolvable.Any())
+    {
+        <div class="card muted">No open brackets — host one above.</div>
+    }
+    else
+    {
+        @foreach (var t in Joinable)
+        {
+            <div class="card"><div class="match-row">
+                <span>Bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Joined / @t.Size joined</span>
+                <span class="spacer"></span>
+                <button class="btn primary sm" @onclick="() => DoJoin(t.Id)" disabled="@(_busy || string.IsNullOrEmpty(_heroId))">Join</button>
+            </div></div>
+        }
+        @foreach (var t in Resolvable)
+        {
+            <div class="card"><div class="match-row">
+                <span>Your bracket is full · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Size entrants</span>
+                <span class="spacer"></span>
+                <button class="btn primary sm" @onclick="() => DoResolve(t.Id)" disabled="@_busy">Run bracket!</button>
+            </div></div>
+        }
+    }
+
+    @if (_result is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Bracket results</h3>
+            <span class="hud">champion @Name(_result.Tournament.ChampionHeroId)</span>
+        </div>
+        <div class="card">
+            @foreach (var round in _result.Bracket.GroupBy(m => m.Round).OrderBy(g => g.Key))
+            {
+                <div class="hud" style="margin:.5rem 0">Round @(round.Key + 1)</div>
+                @foreach (var m in round.OrderBy(m => m.Index))
+                {
+                    <div class="match-row mono" style="font-size:.82rem">
+                        <span>@Name(m.AId) vs @Name(m.BId)</span>
+                        <span class="spacer"></span>
+                        <span class="chip">@Name(m.WinnerId) ✓</span>
+                    </div>
+                }
+            }
+            <div class="status-line" style="margin-top:.8rem"><span class="dot ok"></span>
+                <span>Prizes: @string.Join(" · ", _result.Prizes.Select((p, i) => $"#{i + 1} {p:N0} sat"))</span>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private readonly Dictionary<string, string> _names = new();
+    private List<TournamentDto> _tournaments = new();
+    private string _heroId = "";
+    private long _buyIn = 1000;
+    private int _size = 4;
+    private int _rakePct;
+    private bool _loading = true, _busy, _heroesLoaded;
+    private string? _status, _error;
+    private TournamentResolveResponse? _result;
+
+    private string? MyId => _mine.FirstOrDefault()?.OwnerId;
+    private IEnumerable<TournamentDto> Joinable => _tournaments.Where(t => t.Status == "open" && !t.Entrants.Any(e => e.PlayerId == MyId));
+    private IEnumerable<TournamentDto> Resolvable => _tournaments.Where(t => t.Status == "full" && t.Entrants.Any(e => e.PlayerId == MyId));
+    private string Name(string? heroId) => heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "—";
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _tournaments = await Api.Tournament.ListAsync();
+            foreach (var h in await Api.Heroes.AllAsync()) _names[h.Id] = h.Name;
+            _rakePct = (await Api.Chain.InfoAsync()).Config?.TournamentRakePct ?? 0;
+            _heroesLoaded = true;
+        }
+        catch { /* token may still be settling; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoOpen() => await RunAction(async () =>
+        await Session.OpenTournamentAsync(_heroId, _buyIn, _size, s => { _status = s; StateHasChanged(); }));
+
+    async Task DoJoin(string id) => await RunAction(async () =>
+        await Session.JoinTournamentAsync(id, _heroId, s => { _status = s; StateHasChanged(); }));
+
+    async Task DoResolve(string id) => await RunAction(async () =>
+        _result = await Session.ResolveTournamentAsync(id, s => { _status = s; StateHasChanged(); }));
+
+    async Task RunAction(Func<Task> action)
+    {
+        _busy = true; _error = null;
+        try { await action(); _status = null; await LoadAsync(); }
+        catch (Exception ex) { _error = ex.Message; _status = null; }
+        finally { _busy = false; }
+    }
+
+    async Task Reload()
+    {
+        _busy = true;
+        try { _tournaments = await Api.Tournament.ListAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_heroesLoaded && !_loading) await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}
