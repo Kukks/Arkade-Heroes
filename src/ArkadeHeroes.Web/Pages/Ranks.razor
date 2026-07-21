@@ -151,6 +151,26 @@ else
         }
     </div>
 
+    @if (_recent.Any(m => m.WagerSats > 0))
+    {
+        <div class="page-head">
+            <h3 style="margin:0">Biggest bouts</h3>
+            <span class="hud">the highest-stakes fights — spectate + verify</span>
+        </div>
+        <div class="card" style="margin-bottom:1.6rem">
+            @foreach (var m in _recent.Where(x => x.WagerSats > 0).OrderByDescending(x => x.WagerSats).Take(5))
+            {
+                var winner = m.Result!.WinnerId;
+                var loser = winner == m.ChallengerHeroId ? m.DefenderHeroId : m.ChallengerHeroId;
+                <div class="match-row">
+                    <span>💰 <b>@m.WagerSats.ToString("N0")</b> sat · <b>@Name(winner)</b> beat <b>@Name(loser)</b></span>
+                    <span class="spacer"></span>
+                    <a class="btn ghost sm" href="watch/@m.MatchId">Watch ↗</a>
+                </div>
+            }
+        </div>
+    }
+
     <div class="page-head">
         <h3 style="margin:0">Recent bouts</h3>
         <span class="hud">watch + verify any fight — no login</span>
