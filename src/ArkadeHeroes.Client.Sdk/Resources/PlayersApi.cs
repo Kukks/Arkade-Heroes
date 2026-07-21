@@ -24,5 +24,8 @@ public sealed class PlayersApi(ArkadeHeroesClient client)
 
     public Task<PlayerDto> MeAsync() => client.GetAsync<PlayerDto>("/api/players/me");
 
+    /// <summary>The signed-in player's derived accomplishments + unlocked badges.</summary>
+    public Task<PlayerAchievementsDto> AchievementsAsync() => client.GetAsync<PlayerAchievementsDto>("/api/players/me/achievements");
+
     public Task<PlayerDto> GetAsync(string playerId) => client.GetAsync<PlayerDto>($"/api/players/{playerId}");
 }
