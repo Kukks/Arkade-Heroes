@@ -319,6 +319,9 @@ public class GameService(
         var buyIn = await chain.CreateFeeInvoiceAsync($"tournament-buyin:{player.Id}:{session.Id}", session.BuyInSats, ct);
         session.Entrants.Add(new TournamentEntrant { PlayerId = player.Id, HeroId = heroId, BuyInInvoiceId = buyIn.InvoiceId });
         if (session.Entrants.Count >= session.Size) session.Status = "full";
+        // Durable BEFORE the buy-in invoice reaches the player: once they can pay it, the bracket holding
+        // their sats has to survive a restart. (No-op unless persistence is configured.)
+        await persistence.SaveTournamentAsync(session, ct);
         return buyIn;
     }
 
@@ -349,6 +352,9 @@ public class GameService(
             var result = Tournament.Resolve(entrants, entropy, _config);
 
             session.Status = "resolved";   // commit BEFORE paying → no double-pay (mirrors the season settle marker)
+            // Make that commit DURABLE before a single sat moves: a crash mid-payout must not let a restart
+            // rehydrate this bracket as unresolved and pay the podium twice.
+            await persistence.SaveTournamentAsync(session, ct);
             session.Result = result;
             session.Nonce = nonce;
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
