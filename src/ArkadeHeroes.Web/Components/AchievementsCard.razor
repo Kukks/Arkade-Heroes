@@ -57,6 +57,23 @@
             }
         </div>
 
+        @if (_ach.FancyEditions.Count > 0)
+        {
+            <div class="page-head" style="margin:.9rem 0 .3rem">
+                <h4 style="margin:0;font-size:.92rem">Editions</h4>
+                <span class="spacer"></span>
+                <span class="hud">the Nth of its set ever found</span>
+            </div>
+            @foreach (var e in _ach.FancyEditions)
+            {
+                <div class="match-row">
+                    <span>@(e.Edition == 1 ? "🥇" : "✦") <b>@e.Title</b> #@e.Edition</span>
+                    <span class="spacer"></span>
+                    <span class="muted">@e.HeroName</span>
+                </div>
+            }
+        }
+
         <div class="page-head" style="margin:.9rem 0 .3rem">
             <h4 style="margin:0;font-size:.92rem">Trait album</h4>
             <span class="spacer"></span>

@@ -28,6 +28,39 @@ public class FancyDiscoveryTests
     }
 
     [Fact]
+    public void EditionsAreStampedInDiscoveryOrder_AndNeverRenumbered()
+    {
+        var store = new GameStore();
+
+        store.RecordFancyFind("Sovereign", "hero-1", "Alpha", "player-1", 100);
+        store.RecordFancyFind("Sovereign", "hero-2", "Beta", "player-2", 200);
+        store.RecordFancyFind("Sovereign", "hero-3", "Gamma", "player-3", 300);
+
+        Assert.Equal(1, store.FancyEditionByHero["hero-1"].Edition);   // the discoverer is #1
+        Assert.Equal(2, store.FancyEditionByHero["hero-2"].Edition);
+        Assert.Equal(3, store.FancyEditionByHero["hero-3"].Edition);
+        Assert.Equal("Sovereign", store.FancyEditionByHero["hero-2"].Title);
+
+        // A repeat find for a hero already stamped must not mint it a second edition — nor inflate the
+        // tally, or later heroes would be numbered past the number of heroes that actually exist.
+        store.RecordFancyFind("Sovereign", "hero-2", "Beta", "player-2", 400);
+        Assert.Equal(2, store.FancyEditionByHero["hero-2"].Edition);
+        Assert.Equal(3, store.FancyFindCount["Sovereign"]);
+    }
+
+    [Fact]
+    public void EditionsAreIndependentPerSet()
+    {
+        var store = new GameStore();
+        store.RecordFancyFind("Oracle", "hero-o1", "O1", "p", 10);
+        store.RecordFancyFind("Duelist", "hero-d1", "D1", "p", 20);
+
+        // Each set has its own #1 — a Duelist isn't numbered behind the Oracles.
+        Assert.Equal(1, store.FancyEditionByHero["hero-o1"].Edition);
+        Assert.Equal(1, store.FancyEditionByHero["hero-d1"].Edition);
+    }
+
+    [Fact]
     public void SetsAreClaimedIndependently()
     {
         var store = new GameStore();

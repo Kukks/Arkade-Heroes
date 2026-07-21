@@ -245,14 +245,26 @@ public class GameService(
         var myHeroIds = mine.Select(h => h.Id).ToHashSet();
         var tournamentsWon = store.Tournaments.Values.Count(t => t.Result?.ChampionId is { } champ && myHeroIds.Contains(champ));
 
+        // The player's Fancy heroes with their edition numbers, rarest (lowest edition) first.
+        var fancyEditions = mine
+            .Select(h => store.FancyEditionByHero.TryGetValue(h.Id, out var e)
+                ? new Shared.FancyEditionDto(h.Id, h.Name, e.Title, e.Edition)
+                : null)
+            .Where(e => e is not null).Select(e => e!)
+            .OrderBy(e => e.Edition).ThenBy(e => e.Title, StringComparer.Ordinal)
+            .ToList();
+
         var badges = new List<string>();
         if (owned >= 5) badges.Add("Collector");
         if (bred >= 3) badges.Add("Breeder");
         if (legendaries >= 1) badges.Add("Legend-keeper");
         if (fancies >= 1) badges.Add("Fancier");
         if (tournamentsWon >= 1) badges.Add("Champion");
+        // Owning an edition #1 means you discovered that set — the scarcest thing a breeder can hold.
+        if (fancyEditions.Any(e => e.Edition == 1)) badges.Add("Trailblazer");
 
-        return new Shared.PlayerAchievementsDto(owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned, traitAlbum);
+        return new Shared.PlayerAchievementsDto(
+            owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned, traitAlbum, fancyEditions);
     }
 
     /// <summary>Treasury-health telemetry (economy control plane): current spendable balance, treasury outflow tallied
