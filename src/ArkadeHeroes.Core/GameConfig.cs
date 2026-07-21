@@ -52,7 +52,9 @@ public sealed record GameConfig(
     // ── Unique-name registry (treasury sats sink: claim a custom hero name) ──
     long HeroRenameFeeSats = 0,       // flat sats to claim a unique hero name; 0 = free
     // ── Tournaments (house rake on the buy-in pot → treasury) ──
-    int TournamentRakePct = 10)       // % of the pot the house keeps; the rest splits to the podium
+    int TournamentRakePct = 10,       // % of the pot the house keeps; the rest splits to the podium
+    // ── Faucet governor reserve floor (a permanent treasury reserve the daily faucet must never drain below) ──
+    long TreasuryReserveFloorSats = 0) // 0 = no floor (daily clamps to the full balance, as before)
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(

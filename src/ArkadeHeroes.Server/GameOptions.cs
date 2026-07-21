@@ -68,6 +68,11 @@ public class GameOptions
     /// DEFAULT 0 (disabled) until the sell-flow UI prompts payment; flip on in a coordinated release.</summary>
     public long OfferListingFeeSats { get; set; } = 0;
 
+    /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),
+    /// so it can never drain the treasury below this permanent reserve. 0 = no floor (clamp to full balance).
+    /// An operator raises it to protect scheduled obligations (e.g. the season pot) from the daily emission drain.</summary>
+    public long TreasuryReserveFloorSats { get; set; } = 0;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -97,5 +102,6 @@ public class GameOptions
         SeasonFeeAccrualPct: SeasonFeeAccrualPct,
         OfferListingFeeSats: OfferListingFeeSats,
         HeroRenameFeeSats: HeroRenameFeeSats,
-        TournamentRakePct: TournamentRakePct);
+        TournamentRakePct: TournamentRakePct,
+        TreasuryReserveFloorSats: TreasuryReserveFloorSats);
 }
