@@ -462,6 +462,10 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return result;
     }
 
+    // ── Achievements ──
+    /// <summary>The signed-in player's derived milestones + unlocked badges. A pure server read (roster + resolved tournaments); no wallet touch.</summary>
+    public Task<PlayerAchievementsDto> AchievementsAsync() => api.Players.AchievementsAsync();
+
     /// <summary>
     /// Open a wagered match under covenant enforcement and stake into it from the browser wallet:
     /// open (the server returns the challenger's per-party escrow address + the per-character match fee),
