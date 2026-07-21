@@ -50,7 +50,9 @@ public sealed record GameConfig(
     // ── Marketplace listing fee (treasury capture on secondary trades) ──
     long OfferListingFeeSats = 0,     // flat sats the seller pays the treasury to list an offer; 0 = disabled
     // ── Unique-name registry (treasury sats sink: claim a custom hero name) ──
-    long HeroRenameFeeSats = 0)       // flat sats to claim a unique hero name; 0 = free
+    long HeroRenameFeeSats = 0,       // flat sats to claim a unique hero name; 0 = free
+    // ── Tournaments (house rake on the buy-in pot → treasury) ──
+    int TournamentRakePct = 10)       // % of the pot the house keeps; the rest splits to the podium
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(

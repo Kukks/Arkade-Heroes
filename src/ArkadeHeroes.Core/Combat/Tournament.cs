@@ -55,4 +55,20 @@ public static class Tournament
         }
         return new TournamentResult(alive[0], matches, round);
     }
+
+    /// <summary>Prize split (%) for the podium: champion, then runner-up. A Core constant (like SeasonPrize.Weights).</summary>
+    public static readonly IReadOnlyList<int> PrizeWeights = [70, 30];
+
+    /// <summary>The podium — champion first, then the runner-up (the loser of the final match); the basis for
+    /// the prize split. A degenerate all-bye bracket returns just the champion.</summary>
+    public static IReadOnlyList<string> Podium(TournamentResult result)
+    {
+        var final = result.Matches
+            .Where(m => m.Result is not null)
+            .OrderByDescending(m => m.Round).ThenByDescending(m => m.Index)
+            .FirstOrDefault();
+        if (final.Result is null) return [result.ChampionId];
+        var runnerUp = final.AId == final.WinnerId ? final.BId : final.AId;
+        return [result.ChampionId, runnerUp];
+    }
 }

@@ -224,6 +224,109 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     private bool NameTaken(string name, string exceptHeroId) =>
         store.Heroes.Values.Any(h => h.Id != exceptHeroId && string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase));
 
+    // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
+
+    private const int MaxTournamentSize = 16;
+
+    /// <summary>Opens a tournament and joins the opener as entrant #1: creates the committed bracket seed and
+    /// bills the opener's buy-in fee-invoice. Others join with <see cref="JoinTournamentAsync"/>.</summary>
+    public async Task<(TournamentSession Session, FeeInvoice BuyIn)> OpenTournamentAsync(
+        Player player, string heroId, long buyInSats, int size, CancellationToken ct)
+    {
+        GetOwnedHero(player, heroId);
+        if (buyInSats <= 0) throw new GameRuleException("The buy-in must be a positive number of sats.");
+        if (size < Tournament.MinEntrants || size > MaxTournamentSize)
+            throw new GameRuleException($"A tournament needs {Tournament.MinEntrants}–{MaxTournamentSize} entrants.");
+        if (size % 2 != 0) throw new GameRuleException("The bracket size must be even.");
+
+        var seed = CommitReveal.NewSeed();
+        var session = new TournamentSession
+        {
+            Id = NewId("tourney"), OpenerPlayerId = player.Id, BuyInSats = buyInSats, Size = size,
+            ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+        };
+        var buyIn = await AddEntrantAsync(session, player, heroId, ct);   // the opener is entrant #1
+        store.Tournaments[session.Id] = session;
+        return (session, buyIn);
+    }
+
+    /// <summary>Joins a hero to an open tournament, billing the entrant's buy-in fee-invoice; once the bracket
+    /// fills to <see cref="TournamentSession.Size"/> it is <c>full</c> and any entrant may resolve it.</summary>
+    public async Task<(TournamentSession Session, FeeInvoice BuyIn)> JoinTournamentAsync(
+        Player player, string tournamentId, string heroId, CancellationToken ct)
+    {
+        if (!store.Tournaments.TryGetValue(tournamentId, out var session))
+            throw new GameRuleException($"Unknown tournament '{tournamentId}'.");
+        GetOwnedHero(player, heroId);
+
+        await store.TournamentLock.WaitAsync(ct);
+        try
+        {
+            if (session.Status != "open") throw new GameRuleException("This tournament is no longer open to join.");
+            if (session.Entrants.Any(e => e.PlayerId == player.Id))
+                throw new GameRuleException("You have already joined this tournament.");
+            var buyIn = await AddEntrantAsync(session, player, heroId, ct);
+            return (session, buyIn);
+        }
+        finally { store.TournamentLock.Release(); }
+    }
+
+    /// <summary>Bills a buy-in fee-invoice and adds the entrant; the last entrant flips the bracket to <c>full</c>.</summary>
+    private async Task<FeeInvoice> AddEntrantAsync(TournamentSession session, Player player, string heroId, CancellationToken ct)
+    {
+        var buyIn = await chain.CreateFeeInvoiceAsync($"tournament-buyin:{player.Id}:{session.Id}", session.BuyInSats, ct);
+        session.Entrants.Add(new TournamentEntrant { PlayerId = player.Id, HeroId = heroId, BuyInInvoiceId = buyIn.InvoiceId });
+        if (session.Entrants.Count >= session.Size) session.Status = "full";
+        return buyIn;
+    }
+
+    /// <summary>Resolves a full bracket (once every buy-in has cleared): runs the pure resolver over the revealed
+    /// entropy and pays the podium out of the pot minus the house rake. Single-shot + double-pay-safe.</summary>
+    public async Task<(TournamentSession Session, TournamentResult Result, string ServerSeedHex, string EntropyHex, IReadOnlyList<long> Prizes)>
+        ResolveTournamentAsync(Player player, string tournamentId, string nonce, CancellationToken ct)
+    {
+        if (!store.Tournaments.TryGetValue(tournamentId, out var session))
+            throw new GameRuleException($"Unknown tournament '{tournamentId}'.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+        if (session.Entrants.All(e => e.PlayerId != player.Id))
+            throw new GameRuleException("Only an entrant can resolve the tournament.");
+
+        await store.TournamentLock.WaitAsync(ct);
+        try
+        {
+            if (session.Status == "resolved") throw new GameRuleException("This tournament is already resolved.");
+            if (session.Status != "full") throw new GameRuleException("The bracket is not full yet.");
+
+            // Every buy-in must have cleared before the bracket runs — an unpaid entry would leak the treasury.
+            foreach (var e in session.Entrants)
+                if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct))
+                    throw new GameRuleException("All buy-ins must be paid before the tournament can run.");
+
+            var entrants = session.Entrants.Select(e => GetHero(e.HeroId)).ToList();
+            var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, "tournament", session.Id, nonce);
+            var result = Tournament.Resolve(entrants, entropy, _config);
+
+            session.Status = "resolved";   // commit BEFORE paying → no double-pay (mirrors the season settle marker)
+            session.Result = result;
+            session.Nonce = nonce;
+            session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+
+            // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
+            var pot = session.BuyInSats * session.Entrants.Count;
+            var prizePool = pot - pot * _config.TournamentRakePct / 100;
+            var podium = Tournament.Podium(result);
+            var prizes = SeasonPrize.Split(prizePool, podium.Count, Tournament.PrizeWeights);
+            for (var i = 0; i < podium.Count && i < prizes.Count; i++)
+            {
+                var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
+                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); }
+                catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
+            }
+            return (session, result, Convert.ToHexString(session.ServerSeed).ToLowerInvariant(), session.EntropyHex, prizes);
+        }
+        finally { store.TournamentLock.Release(); }
+    }
+
     /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {

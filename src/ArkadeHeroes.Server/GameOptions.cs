@@ -17,6 +17,10 @@ public class GameOptions
     /// the treasury (no power creep, whale-friendly ceiling). 0 = renaming is free.</summary>
     public long HeroRenameFeeSats { get; set; } = 500;
 
+    /// <summary>Tournament house rake: % of the buy-in pot the treasury keeps; the rest splits to the podium
+    /// (champion + runner-up). A treasury sink that scales with competitive play.</summary>
+    public int TournamentRakePct { get; set; } = 10;
+
     /// <summary>Base unit for breeding cooldowns. Short by default so regtest play loops stay fast.</summary>
     public TimeSpan BreedingCooldownBaseUnit { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -92,5 +96,6 @@ public class GameOptions
         SeasonPotBaseSats: SeasonPotBaseSats,
         SeasonFeeAccrualPct: SeasonFeeAccrualPct,
         OfferListingFeeSats: OfferListingFeeSats,
-        HeroRenameFeeSats: HeroRenameFeeSats);
+        HeroRenameFeeSats: HeroRenameFeeSats,
+        TournamentRakePct: TournamentRakePct);
 }

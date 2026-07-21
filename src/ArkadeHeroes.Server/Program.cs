@@ -366,6 +366,37 @@ api.MapGet("/squad/{matchId}/replay", (string matchId, GameStore store) =>
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(), s.EntropyHex ?? "", s.Nonce ?? ""))
         : Results.NotFound());
 
+// ── Tournaments (open → join → resolve): a buy-in bracket, prizes to the podium minus the house rake ──
+api.MapPost("/tournament/open", async (OpenTournamentRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, buyIn) = await game.OpenTournamentAsync(player, request.HeroId, request.BuyInSats, request.Size, ct);
+    return Results.Ok(new TournamentEntryResponse(ToTournamentDto(session), buyIn.ToDto()));
+});
+
+api.MapPost("/tournament/{id}/join", async (string id, JoinTournamentRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, buyIn) = await game.JoinTournamentAsync(player, id, request.HeroId, ct);
+    return Results.Ok(new TournamentEntryResponse(ToTournamentDto(session), buyIn.ToDto()));
+});
+
+api.MapPost("/tournament/{id}/resolve", async (string id, FightRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (session, result, seedHex, entropyHex, prizes) = await game.ResolveTournamentAsync(player, id, request.Nonce, ct);
+    return Results.Ok(new TournamentResolveResponse(ToTournamentDto(session),
+        result.Matches.Where(m => m.Result is not null)
+            .Select(m => new TournamentMatchDto(m.Round, m.Index, m.AId, m.BId, m.WinnerId)).ToList(),
+        seedHex, entropyHex, prizes));
+});
+
+api.MapGet("/tournament", (GameStore store) =>
+    Results.Ok(store.Tournaments.Values.OrderByDescending(t => t.Id).Select(ToTournamentDto).Take(50).ToList()));
+
+api.MapGet("/tournament/{id}", (string id, GameStore store) =>
+    store.Tournaments.TryGetValue(id, out var t) ? Results.Ok(ToTournamentDto(t)) : Results.NotFound());
+
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
 // given hero, each annotated with the conserved XP a staked win/loss would move.
 api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameService game) =>
@@ -711,6 +742,11 @@ static SquadMatchDto ToSquadMatchDto(SquadMatchSession s) => new(
     s.Id, s.ChallengerLineup, s.DefenderLineup, s.WagerSats, s.Status,
     s.Result is { } r && s.ChallengerSnapshots is not null && s.DefenderSnapshots is not null
         ? r.ToDto(s.ChallengerSnapshots, s.DefenderSnapshots) : null);
+
+static TournamentDto ToTournamentDto(TournamentSession t) => new(
+    t.Id, t.OpenerPlayerId, t.BuyInSats, t.Size, t.Entrants.Count, t.Status,
+    t.Entrants.Select(e => new TournamentEntrantDto(e.PlayerId, e.HeroId)).ToList(),
+    t.Result?.ChampionId);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,
