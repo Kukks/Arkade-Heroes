@@ -2,7 +2,9 @@ using ArkadeHeroes.Chain;
 using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Server;
+using ArkadeHeroes.Server.Persistence;
 using ArkadeHeroes.Shared;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,7 +36,30 @@ else
     builder.Services.AddSingleton<IChainService, InMemoryChainService>();
 }
 
+// Durability seam (OPT-IN). With no Game:StateDbPath configured the null implementation is registered and
+// the server behaves exactly as it always has — all state in memory, gone on restart. With a path set, the
+// money-bearing state (a paid-but-unclaimed item purchase) survives a bounce.
+var stateDbPath = builder.Configuration["Game:StateDbPath"];
+if (!string.IsNullOrWhiteSpace(stateDbPath))
+{
+    builder.Services.AddDbContextFactory<GameStateDbContext>(o => o.UseSqlite($"Data Source={stateDbPath}"));
+    builder.Services.AddSingleton<IGameStatePersistence, SqliteGameStatePersistence>();
+}
+else
+{
+    builder.Services.AddSingleton<IGameStatePersistence, NullGameStatePersistence>();
+}
+
 var app = builder.Build();
+
+// Rehydrate before serving: a purchase paid before the restart must be claimable after it.
+if (!string.IsNullOrWhiteSpace(stateDbPath))
+{
+    await app.Services.GetRequiredService<IDbContextFactory<GameStateDbContext>>()
+        .CreateDbContext().Database.EnsureCreatedAsync();
+    await app.Services.GetRequiredService<IGameStatePersistence>()
+        .LoadIntoAsync(app.Services.GetRequiredService<GameStore>());
+}
 
 app.UseCors();
 
