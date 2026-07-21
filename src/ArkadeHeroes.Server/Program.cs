@@ -97,6 +97,10 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
 api.MapGet("/players/me/achievements", (HttpContext http, GameService game) =>
     Results.Ok(game.PlayerAchievements(game.Authenticate(BearerToken(http)))));
 
+// Economy control plane: treasury-health telemetry (public, read-only) — balance, outflow by category, season accrual.
+api.MapGet("/economy/health", async (GameService game, CancellationToken ct) =>
+    Results.Ok(await game.EconomyHealthAsync(ct)));
+
 api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChainService chain, CancellationToken ct) =>
 {
     if (!store.Players.TryGetValue(playerId, out var player)) return Results.NotFound();

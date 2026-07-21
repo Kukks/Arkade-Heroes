@@ -246,6 +246,18 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return new Shared.PlayerAchievementsDto(owned, bred, legendaries, fancies, tournamentsWon, badges);
     }
 
+    /// <summary>Treasury-health telemetry (economy control plane): current spendable balance, treasury outflow tallied
+    /// by category, and fees accrued to season pots. A pure read over live state — never mutates. Outflow is the
+    /// insolvency-risk side; per-source inflow + net-issuance is a deliberate follow-up.</summary>
+    public async Task<Shared.EconomyHealthDto> EconomyHealthAsync(CancellationToken ct = default)
+    {
+        var balance = await chain.TreasuryBalanceAsync(ct);
+        var outflow = store.TreasuryOutflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var totalOut = outflow.Values.Sum();
+        var seasonAccrual = store.SeasonFeeAccrual.Values.Sum();
+        return new Shared.EconomyHealthDto(balance, totalOut, outflow, seasonAccrual);
+    }
+
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
 
     private const int MaxTournamentSize = 16;
@@ -342,7 +354,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             for (var i = 0; i < podium.Count && i < prizes.Count; i++)
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
-                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); }
+                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); store.RecordOutflow("tournament", prizes[i]); }
                 catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
             }
             return (session, result, Convert.ToHexString(session.ServerSeed).ToLowerInvariant(), session.EntropyHex, prizes);
@@ -1149,7 +1161,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                     standings.Select((e, i) => new Shared.SeasonWinnerDto(e.Rank, e.Name, shares[i])).ToList());
                 for (var i = 0; i < standings.Count; i++)
                 {
-                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); }
+                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); store.RecordOutflow("season", shares[i]); }
                     catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
                 }
             }
@@ -1211,7 +1223,10 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // cover". The streak still advances (the player showed up), and emission auto-tracks treasury health.
         var affordable = Math.Clamp(await chain.TreasuryBalanceAsync(ct), 0, reward.Total);
         if (affordable > 0)
+        {
             await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
+            store.RecordOutflow("daily", affordable);
+        }
 
         player.LastClaimDay = window.DayIndex;   // consume the day even at a partial/zero payout
         player.StreakCount = newStreak;
@@ -1330,6 +1345,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             {
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
+                store.RecordOutflow("wager", winnerPayout);
             }
 
             // Season prize pool: a slice of this staked match's fees accrues to the current season's pot.
@@ -1546,6 +1562,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             {
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
+                store.RecordOutflow("squad", winnerPayout);
             }
             var seasonFee = Leveling.MatchFee(challengers.Max(h => h.Level), _config) + Leveling.MatchFee(defenders.Max(h => h.Level), _config);
             var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;

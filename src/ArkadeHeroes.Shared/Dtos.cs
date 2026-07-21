@@ -311,6 +311,12 @@ public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
     IReadOnlyList<string> Badges);
 
+/// <summary>Treasury-health telemetry (economy control plane): the finite, fee-funded pot's current balance, what it
+/// has paid out by category ("daily"/"season"/"tournament"/"wager"/"squad"), and fees accrued to season pots. Outflow
+/// is the insolvency-risk side; per-source inflow + net-issuance is a follow-up. Read-only observability.</summary>
+public record EconomyHealthDto(long TreasuryBalanceSats, long TotalOutflowSats,
+    IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats);
+
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
 /// from their own wallet, plus the ask and refund window. Once deposited the
