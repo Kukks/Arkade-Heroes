@@ -14,6 +14,41 @@ public record SeasonLeaderboardDto(
 public record SeasonSettlementDto(int SeasonNumber, long PotSats, IReadOnlyList<SeasonWinnerDto> Winners);
 public record SeasonWinnerDto(int Rank, string Name, long AwardSats);
 
+/// <summary>One ranked hero on the endless-Trials ladder, computed purely from signed trials receipts.</summary>
+public record TrialsBoardEntryDto(int Rank, string HeroId, string Name, int Level, int BestScore, string? Title);
+
+/// <summary>
+/// The endless-Trials ladder, computed entirely from signed "trials" receipts — each one attests its own
+/// run's waves-survived (in <c>XpAwardB</c>), so anyone holding the receipt chain recomputes the same
+/// ranking and the server's board carries no trust of its own (same doctrine as the match leaderboard).
+/// A hero ranks by its BEST run, so a later weak run can never cost it standing.
+/// </summary>
+public static class TrialsBoardBuilder
+{
+    public static IReadOnlyList<TrialsBoardEntryDto> Build(
+        IReadOnlyDictionary<string, (string Name, int Level)> heroes,
+        IEnumerable<ProgressionReceiptDto> receipts)
+    {
+        var best = new Dictionary<string, int>();
+        foreach (var r in receipts.Where(r => r.Type == "trials"))
+        {
+            var score = (int)r.XpAwardB;   // the run's waves survived, as attested by the signed receipt
+            if (score > best.GetValueOrDefault(r.HeroAId, -1)) best[r.HeroAId] = score;
+        }
+
+        return best
+            .Where(kv => heroes.ContainsKey(kv.Key))   // a hero that has since been burned/merged drops off
+            .Select(kv => (HeroId: kv.Key, heroes[kv.Key].Name, heroes[kv.Key].Level, Best: kv.Value))
+            .OrderByDescending(h => h.Best)
+            .ThenByDescending(h => h.Level)
+            .ThenBy(h => h.Name, StringComparer.Ordinal)
+            .Select((h, i) => new TrialsBoardEntryDto(
+                i + 1, h.HeroId, h.Name, h.Level, h.Best,
+                ArkadeHeroes.Core.Progression.Trials.TitleFor(h.Best)))
+            .ToList();
+    }
+}
+
 /// <summary>
 /// The leaderboard is computed entirely from signed progression receipts —
 /// anyone holding the receipt chain can recompute it, so the server's ranking
