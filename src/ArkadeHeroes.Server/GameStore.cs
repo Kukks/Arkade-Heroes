@@ -23,6 +23,10 @@ public class Player
 /// in the discovery race. Immutable once claimed.</summary>
 public sealed record FancyDiscovery(string Title, string HeroId, string HeroName, string OwnerId, long UnixSeconds);
 
+/// <summary>A hero's Fancy set and its edition number — "Sovereign #1" is the discoverer, "#7" the seventh
+/// ever found. Assigned once, at the moment the hero enters the game, and never renumbered.</summary>
+public sealed record FancyEdition(string Title, int Edition);
+
 /// <summary>A pending PvE gauntlet run (F1): the seed is committed at open; the run resolves once the
 /// fee invoice is paid, awarding capped XP + a full-clear item, then rate-limits the hero.</summary>
 public class GauntletSession
@@ -298,13 +302,20 @@ public class GameStore
     // ever been found. Pure bookkeeping — it never gates or changes an outcome, it just records the race.
     public ConcurrentDictionary<string, FancyDiscovery> FancyDiscoveries { get; } = new();
     public ConcurrentDictionary<string, int> FancyFindCount { get; } = new();
+    /// <summary>heroId → the Fancy set it expresses and its EDITION: the Nth hero ever to express that set.
+    /// Edition #1 is the discoverer; a low edition stays scarce however many turn up later.</summary>
+    public ConcurrentDictionary<string, FancyEdition> FancyEditionByHero { get; } = new();
 
-    /// <summary>Claim a Fancy set for its FIRST finder. TryAdd, so the first write wins and a later find can
-    /// never displace the discoverer — it only bumps the tally (so a hero can still be "the 7th Sovereign").</summary>
+    /// <summary>Claim a Fancy set for its FIRST finder and stamp this hero's edition number. Called exactly
+    /// once per hero (from the single point where a hero enters the store), and guarded so a repeat can't
+    /// mint a second edition. TryAdd on the discovery means the first finder can never be displaced — later
+    /// finds only take the next edition.</summary>
     public void RecordFancyFind(string title, string heroId, string heroName, string ownerId, long unixSeconds)
     {
+        if (FancyEditionByHero.ContainsKey(heroId)) return;   // already stamped — never re-number a hero
+        var edition = FancyFindCount.AddOrUpdate(title, 1, (_, n) => n + 1);
+        FancyEditionByHero[heroId] = new FancyEdition(title, edition);
         FancyDiscoveries.TryAdd(title, new FancyDiscovery(title, heroId, heroName, ownerId, unixSeconds));
-        FancyFindCount.AddOrUpdate(title, 1, (_, n) => n + 1);
     }
 
     public ConcurrentDictionary<string, GauntletSession> Gauntlets { get; } = new();

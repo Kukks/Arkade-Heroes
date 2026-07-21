@@ -336,7 +336,12 @@ public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<
 
 /// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
-    IReadOnlyList<string> Badges, IReadOnlyList<string> FancySetsOwned, IReadOnlyDictionary<string, int> TraitAlbum);
+    IReadOnlyList<string> Badges, IReadOnlyList<string> FancySetsOwned, IReadOnlyDictionary<string, int> TraitAlbum,
+    IReadOnlyList<FancyEditionDto> FancyEditions);
+
+/// <summary>One Fancy-set hero the player owns, with its edition — the Nth ever found. Edition 1 is the
+/// discoverer, and a low number stays scarce no matter how many turn up later.</summary>
+public record FancyEditionDto(string HeroId, string HeroName, string Title, int Edition);
 
 /// <summary>Treasury-health telemetry (economy control plane): the finite, fee-funded pot's current balance, what it
 /// has paid out by category ("daily"/"season"/"tournament"/"wager"/"squad"), and fees accrued to season pots. Outflow
