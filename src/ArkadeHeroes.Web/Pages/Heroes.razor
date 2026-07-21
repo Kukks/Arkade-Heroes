@@ -23,6 +23,11 @@
     }
 </div>
 
+@if (State.IsSignedIn)
+{
+    <AchievementsCard />
+}
+
 @if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading the roster…</div>

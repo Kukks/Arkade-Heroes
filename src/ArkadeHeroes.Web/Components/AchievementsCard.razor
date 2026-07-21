@@ -1,0 +1,95 @@
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+@* The signed-in player's milestone badges, shown on their roster. Read-only: every value is
+   derived server-side from the roster + resolved tournaments (no per-event tracking). Earned state
+   is authoritative from the server's Badges list; the counts only drive the "progress to goal" hint. *@
+<div class="card">
+    <div class="page-head" style="margin:0 0 .5rem">
+        <h3 style="margin:0">Achievements</h3>
+        @if (_ach is not null)
+        {
+            <span class="hud">@_ach.Badges.Count / @Defs.Length badges</span>
+        }
+    </div>
+
+    @if (!State.IsSignedIn)
+    {
+        <p class="muted" style="margin:0">Press <a href="/">Play</a> to summon a roster and start earning badges.</p>
+    }
+    else if (_ach is null)
+    {
+        <div class="status-line"><span class="dot wait"></span> tallying your accomplishments…</div>
+    }
+    else
+    {
+        <p class="muted" style="margin:-.2rem 0 .7rem">Milestones you've unlocked across breeding, collecting, and the arena.</p>
+        @foreach (var d in Defs)
+        {
+            var have = d.Have(_ach);
+            var earned = _ach.Badges.Contains(d.Key);
+            <div class="match-row">
+                <span class="@(earned ? "" : "muted")">@d.Icon @d.Label</span>
+                <span class="spacer"></span>
+                @if (earned)
+                {
+                    <span class="chip on">✓ earned</span>
+                }
+                else
+                {
+                    <span class="chip">@Math.Min(have, d.Target)/@d.Target · @d.Goal</span>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private PlayerAchievementsDto? _ach;
+    private bool _wasSignedIn;
+
+    // Icon + goal copy per badge. Keys + targets mirror GameService.PlayerAchievements (server is
+    // authoritative for the earned/unearned state via Badges; the target is a display hint only).
+    private sealed record BadgeDef(string Key, string Icon, string Label, string Goal, int Target, Func<PlayerAchievementsDto, int> Have);
+
+    private static readonly BadgeDef[] Defs =
+    {
+        new("Collector",     "📦", "Collector",     "own 5 heroes",       5, a => a.HeroesOwned),
+        new("Breeder",       "🧬", "Breeder",       "breed 3 heroes",     3, a => a.HeroesBred),
+        new("Legend-keeper", "💎", "Legend-keeper", "hold a Legendary",   1, a => a.Legendaries),
+        new("Fancier",       "🎀", "Fancier",       "own a Fancy",        1, a => a.Fancies),
+        new("Champion",      "🏆", "Champion",      "win a tournament",   1, a => a.TournamentsWon),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        _wasSignedIn = State.IsSignedIn;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _ach = null; StateHasChanged(); return; }
+        try { _ach = await Session.AchievementsAsync(); }
+        catch { _ach = null; }
+        StateHasChanged();
+    }
+
+    // Reload when the sign-in token settles (same login-race the other cards handle), else just repaint.
+    private void OnState()
+    {
+        if (State.IsSignedIn != _wasSignedIn)
+        {
+            _wasSignedIn = State.IsSignedIn;
+            InvokeAsync(LoadAsync);
+        }
+        else
+        {
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose() => State.OnChange -= OnState;
+}
