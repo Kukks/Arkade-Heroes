@@ -161,8 +161,10 @@ public record GauntletRunResponse(
 
 public record TrialsOpenRequest(string HeroId);
 
-/// <summary>No fee — Trials is free to enter (it awards no XP/item/sats, so there's nothing to farm).</summary>
-public record TrialsOpenResponse(string TrialsId, string CommitmentHex);
+/// <summary>No fee — Trials is free to enter (it awards no XP/item/sats, so there's nothing to farm).
+/// <see cref="Affix"/> is this week's rotating ladder rule, PINNED to the run when it opens so the score
+/// and its later replay agree even if the week rolls over in between.</summary>
+public record TrialsOpenResponse(string TrialsId, string CommitmentHex, string Affix, string AffixDescription);
 
 public record TrialsRunRequest(string Nonce);
 
@@ -173,7 +175,7 @@ public record TrialsWaveDto(int Wave, int GhostLevel, bool Won, HeroDto Ghost, B
 /// re-checks the score + <see cref="Title"/> off the deterministic ladder. <see cref="BestScore"/> is the
 /// hero's personal best waves-cleared to date (this run included) — the leaderboard basis.</summary>
 public record TrialsRunResponse(
-    int WavesCleared, IReadOnlyList<TrialsWaveDto> Waves, string? Title, int BestScore,
+    int WavesCleared, IReadOnlyList<TrialsWaveDto> Waves, string? Title, int BestScore, string Affix,
     HeroDto HeroSnapshot, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────

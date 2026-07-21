@@ -675,12 +675,13 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         {
             Id = id, PlayerId = player.Id, HeroId = heroId,
             ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+            Affix = Trials.AffixFor(DateTimeOffset.UtcNow),   // pinned at open, not recomputed at run/verify
         };
         store.Trials[id] = session;
         return session;
     }
 
-    public (TrialsRun Run, Shared.HeroDto HeroSnapshot, string? Title, int BestScore, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt) RunTrials(
+    public (TrialsRun Run, Shared.HeroDto HeroSnapshot, string? Title, int BestScore, TrialsAffix Affix, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt) RunTrials(
         Player player, string trialsId, string nonce)
     {
         if (!store.Trials.TryGetValue(trialsId, out var session) || session.PlayerId != player.Id)
@@ -693,7 +694,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         session.Completed = true;
 
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.HeroId, nonce);
-        var run = Trials.Resolve(hero, entropy, _config);
+        var run = Trials.Resolve(hero, entropy, _config, session.Affix);
         var title = Trials.TitleFor(run.WavesCleared);
 
         // Track the hero's personal best (the leaderboard basis) — only ever climbs.
@@ -711,7 +712,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.HeroId);
 
-        return (run, heroSnapshot, title, best, serverSeedHex, entropyHex, receipt);
+        return (run, heroSnapshot, title, best, session.Affix, serverSeedHex, entropyHex, receipt);
     }
 
     // ── Merge / fusion: commit (escrow deposit) → reveal ───────────────

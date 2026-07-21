@@ -234,22 +234,24 @@ api.MapPost("/trials/open", (TrialsOpenRequest request, HttpContext http, GameSe
 {
     var player = game.Authenticate(BearerToken(http));
     var session = game.OpenTrials(player, request.HeroId);
-    return Results.Ok(new TrialsOpenResponse(session.Id, session.CommitmentHex));
+    return Results.Ok(new TrialsOpenResponse(session.Id, session.CommitmentHex, session.Affix.ToString(),
+        ArkadeHeroes.Core.Progression.Trials.AffixDescription(session.Affix)));
 });
 
 api.MapPost("/trials/{id}/run", (string id, TrialsRunRequest request, HttpContext http, GameService game) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (run, snapshot, title, best, seed, entropy, receipt) = game.RunTrials(player, id, request.Nonce);
+    var (run, snapshot, title, best, affix, seed, entropy, receipt) = game.RunTrials(player, id, request.Nonce);
     // Surface each wave's ghost snapshot + fight log so the browser can replay the wave in the arena. The
-    // ghost is a pure function of the run entropy (absolute ladder), so this reconstructs exactly what
-    // Trials.Resolve fought — no soft-foe substitution possible.
+    // ghost is a pure function of the run entropy + the run's pinned affix, so this reconstructs exactly
+    // what Trials.Resolve fought — no soft-foe substitution possible.
     var entropyBytes = Convert.FromHexString(entropy);
     var waves = run.Waves.Select(w => new TrialsWaveDto(
         w.Wave, w.GhostLevel, w.Won,
-        ArkadeHeroes.Core.Progression.Trials.GhostFor(entropyBytes, w.Wave).ToDto(),
+        ArkadeHeroes.Core.Progression.Trials.GhostFor(entropyBytes, w.Wave, affix).ToDto(),
         w.Result.ToDto())).ToList();
-    return Results.Ok(new TrialsRunResponse(run.WavesCleared, waves, title, best, snapshot, seed, entropy, receipt));
+    return Results.Ok(new TrialsRunResponse(
+        run.WavesCleared, waves, title, best, affix.ToString(), snapshot, seed, entropy, receipt));
 });
 
 // ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────

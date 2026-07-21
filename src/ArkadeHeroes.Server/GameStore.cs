@@ -43,6 +43,9 @@ public class TrialsSession
     public required string HeroId { get; init; }
     public required byte[] ServerSeed { get; init; }
     public required string CommitmentHex { get; init; }
+    /// <summary>This week's ladder rule, PINNED when the run opens so the score and its replay agree even
+    /// if the week rolls over before the run resolves (or before a client verifies it).</summary>
+    public ArkadeHeroes.Core.Progression.TrialsAffix Affix { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Completed { get; set; }
 }

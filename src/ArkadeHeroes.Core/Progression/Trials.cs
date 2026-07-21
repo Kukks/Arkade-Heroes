@@ -14,6 +14,21 @@ public sealed record TrialsWave(int Wave, int GhostLevel, bool Won, BattleResult
 public sealed record TrialsRun(int WavesCleared, IReadOnlyList<TrialsWave> Waves);
 
 /// <summary>
+/// The rotating weekly rule that reshapes the Trials ladder — the renewable goal that makes the score
+/// chase worth coming back to. Pure per week, and PINNED onto each run when it opens, so a replay verifies
+/// against the same affix even after the week rolls over (recomputing it from "now" at verify time would
+/// fail runs resolved near a boundary).
+/// </summary>
+public enum TrialsAffix
+{
+    None = 0,        // the plain ladder — the un-affixed baseline
+    Ironclad,        // ghosts come armed from wave 1, top-geared early
+    Relentless,      // levels climb two a wave — a short, brutal ladder
+    Featherweight,   // ghosts fight bare-handed at every depth
+    Veteran,         // the ladder starts five levels in
+}
+
+/// <summary>
 /// The endless solo Trials — a leaderboard-focused PvE ladder that needs no live opponent (cold-start
 /// insurance for a young game). A hero fights an endless run of commit-reveal-seeded GHOST opponents on
 /// an ABSOLUTE difficulty ladder (wave N's ghost is level N), one full-HP fight per wave, ending at the
@@ -33,23 +48,60 @@ public static class Trials
     /// run before the ghost outclasses the hero.</summary>
     public const int MaxWaves = 60;
 
+    private static readonly string[] MidGear = ["steel-saber", "chain-hauberk"];
+    private static readonly string[] TopGear = ["arkforged-edge", "covenant-plate", "vtxo-charm"];
+
+    /// <summary>The affixes in rotation order. <see cref="TrialsAffix.None"/> is the un-affixed baseline and
+    /// never rotates in.</summary>
+    private static readonly TrialsAffix[] Rotation =
+        [TrialsAffix.Ironclad, TrialsAffix.Relentless, TrialsAffix.Featherweight, TrialsAffix.Veteran];
+
+    /// <summary>Whole weeks since <see cref="Season.Epoch"/> (0-based; anything before the epoch is week 0) —
+    /// the same fixed anchor the seasons use, so week numbering is stable across the deployment.</summary>
+    public static long WeekNumber(DateTimeOffset now)
+        => Math.Max(0, (long)Math.Floor((now - Season.Epoch).TotalDays / 7));
+
+    /// <summary>The affix for a given week — a fixed rotation, so it's predictable AND independently
+    /// verifiable (no server discretion over which week is easy).</summary>
+    public static TrialsAffix AffixForWeek(long week) => Rotation[(int)(Math.Max(0, week) % Rotation.Length)];
+
+    /// <summary>The affix in force at <paramref name="now"/>.</summary>
+    public static TrialsAffix AffixFor(DateTimeOffset now) => AffixForWeek(WeekNumber(now));
+
+    /// <summary>A one-line player-facing description — client and server render the same text.</summary>
+    public static string AffixDescription(TrialsAffix affix) => affix switch
+    {
+        TrialsAffix.Ironclad => "Ironclad — the ghosts come armed, and top-geared from wave 4.",
+        TrialsAffix.Relentless => "Relentless — the ladder climbs two levels a wave.",
+        TrialsAffix.Featherweight => "Featherweight — the ghosts fight bare-handed, however deep you go.",
+        TrialsAffix.Veteran => "Veteran — the ladder starts five levels in.",
+        _ => "No affix — the plain ladder.",
+    };
+
     /// <summary>The ghost's level for a wave on the ABSOLUTE ladder: wave N's ghost is level N. So a hero
     /// clears the early waves easily and the run gets competitive around its own level, then inevitably
-    /// overwhelming — the score tracks the hero's realized power rather than being normalized away.</summary>
-    public static int GhostLevel(int wave) => wave;
+    /// overwhelming — the score tracks the hero's realized power rather than being normalized away. The
+    /// weekly affix can steepen the climb (Relentless) or start it higher up (Veteran).</summary>
+    public static int GhostLevel(int wave, TrialsAffix affix = TrialsAffix.None) => affix switch
+    {
+        TrialsAffix.Relentless => wave * 2,
+        TrialsAffix.Veteran => wave + 5,
+        _ => wave,
+    };
 
     /// <summary>The ghost's gear for a wave — bands ramp with depth: naked early, mid gear from wave 8, top
-    /// gear from wave 15. Stacked on the climbing level so deep waves punish even a maxed hero.</summary>
-    public static IReadOnlyList<string> GhostGear(int wave) => wave switch
+    /// gear from wave 15. Stacked on the climbing level so deep waves punish even a maxed hero. The weekly
+    /// affix can arm them from the start (Ironclad) or strip them entirely (Featherweight).</summary>
+    public static IReadOnlyList<string> GhostGear(int wave, TrialsAffix affix = TrialsAffix.None) => affix switch
     {
-        >= 15 => ["arkforged-edge", "covenant-plate", "vtxo-charm"],
-        >= 8 => ["steel-saber", "chain-hauberk"],
-        _ => [],
+        TrialsAffix.Featherweight => [],
+        TrialsAffix.Ironclad => wave >= 4 ? TopGear : MidGear,
+        _ => wave >= 15 ? TopGear : wave >= 8 ? MidGear : [],
     };
 
     /// <summary>The deterministic ghost for a wave — a gen-0 hero derived entirely from the run entropy, so
     /// the client re-derives the same ladder and the server cannot substitute a softer foe.</summary>
-    public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave)
+    public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave, TrialsAffix affix = TrialsAffix.None)
     {
         var genome = Genome.NewGen0(CommitReveal.DeriveEntropy(entropy, "trials-wave", wave.ToString()));
         var ghost = new Hero
@@ -58,17 +110,19 @@ public static class Trials
             OwnerId = "trials",
             Name = $"Trial Wave {wave}",
             Genome = genome,
-            Level = GhostLevel(wave),
+            Level = GhostLevel(wave, affix),
         };
-        foreach (var itemId in GhostGear(wave))
+        foreach (var itemId in GhostGear(wave, affix))
             ghost.Equipment.Equip(ItemCatalog.Find(itemId)!);
         return ghost;
     }
 
     /// <summary>Resolve an endless run: sequential full-HP fights up the climbing ghost ladder, ending at
-    /// the first loss or <see cref="MaxWaves"/>. Pure + deterministic in (hero, entropy, config) — the
-    /// server scores with it and the client replays it identically.</summary>
-    public static TrialsRun Resolve(Hero hero, ReadOnlySpan<byte> entropy, GameConfig? config = null)
+    /// the first loss or <see cref="MaxWaves"/>. Pure + deterministic in (hero, entropy, config, affix) —
+    /// the server scores with it and the client replays it identically. <paramref name="affix"/> comes last
+    /// so existing positional calls that pass a config keep binding correctly.</summary>
+    public static TrialsRun Resolve(
+        Hero hero, ReadOnlySpan<byte> entropy, GameConfig? config = null, TrialsAffix affix = TrialsAffix.None)
     {
         var cfg = config ?? GameConfig.Default;
         var waves = new List<TrialsWave>();
@@ -76,7 +130,7 @@ public static class Trials
         var cleared = 0;
         for (var wave = 1; wave <= MaxWaves; wave++)
         {
-            var ghost = GhostFor(entropyArr, wave);
+            var ghost = GhostFor(entropyArr, wave, affix);
             var fightSeed = CommitReveal.DeriveEntropy(entropyArr, "trials-fight", wave.ToString());
             var result = BattleEngine.Fight(hero, ghost, fightSeed, cfg);
             var won = result.WinnerId == hero.Id;

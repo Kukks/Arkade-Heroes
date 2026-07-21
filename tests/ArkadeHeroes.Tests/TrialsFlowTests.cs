@@ -35,9 +35,12 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(run.WavesCleared, (int)run.Receipt.XpAwardB);     // the score is attested in the receipt
 
         // Client-replayable: re-resolving from the revealed seed + PRE-run snapshot reproduces the score.
+        // Replay under the run's PINNED weekly affix (exactly what VerifyTrials does) — the plain ladder is
+        // a DIFFERENT ladder and would score differently.
         var entropy = CommitReveal.DeriveEntropy(
             Convert.FromHexString(run.ServerSeedHex), open.TrialsId, hero.Id, "trial-nonce");
-        var replay = Trials.Resolve(FairnessAudit.RebuildHero(run.HeroSnapshot), entropy);
+        var replay = Trials.Resolve(FairnessAudit.RebuildHero(run.HeroSnapshot), entropy,
+            affix: Enum.Parse<TrialsAffix>(run.Affix));
         Assert.Equal(run.WavesCleared, replay.WavesCleared);
     }
 
@@ -87,6 +90,13 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var inflated = run with { WavesCleared = run.WavesCleared + 5 };
         var (tamperOk, _) = FairnessAudit.VerifyTrials(open.TrialsId, "verify-nonce", run.Receipt.CommitmentHex, inflated);
         Assert.False(tamperOk, "an inflated waves-survived count must fail the client replay");
+
+        // The run is pinned to a weekly affix; an unreplayable one fails LOUDLY rather than silently
+        // falling back to the plain ladder (which would mis-verify).
+        var garbled = run with { Affix = "NotAnAffix" };
+        var (affixOk, affixDetail) = FairnessAudit.VerifyTrials(open.TrialsId, "verify-nonce", run.Receipt.CommitmentHex, garbled);
+        Assert.False(affixOk);
+        Assert.Contains("unknown weekly affix", affixDetail);
     }
 
     [Fact]
