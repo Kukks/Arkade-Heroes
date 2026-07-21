@@ -316,6 +316,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             var prizePool = pot - pot * _config.TournamentRakePct / 100;
             var podium = Tournament.Podium(result);
             var prizes = SeasonPrize.Split(prizePool, podium.Count, Tournament.PrizeWeights);
+            session.Prizes = prizes;
             for (var i = 0; i < podium.Count && i < prizes.Count; i++)
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;

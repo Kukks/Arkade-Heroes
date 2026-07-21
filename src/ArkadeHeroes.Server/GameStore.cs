@@ -261,6 +261,8 @@ public sealed class TournamentSession
     public List<TournamentEntrant> Entrants { get; } = new();
     public string Status { get; set; } = "open";   // open → full → resolved
     public ArkadeHeroes.Core.Combat.TournamentResult? Result { get; set; }
+    /// <summary>Podium prizes paid at resolve (champion first) — surfaced for the Hall of Champions.</summary>
+    public IReadOnlyList<long> Prizes { get; set; } = [];
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
 }

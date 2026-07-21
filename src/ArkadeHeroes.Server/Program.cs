@@ -746,7 +746,7 @@ static SquadMatchDto ToSquadMatchDto(SquadMatchSession s) => new(
 static TournamentDto ToTournamentDto(TournamentSession t) => new(
     t.Id, t.OpenerPlayerId, t.BuyInSats, t.Size, t.Entrants.Count, t.Status,
     t.Entrants.Select(e => new TournamentEntrantDto(e.PlayerId, e.HeroId)).ToList(),
-    t.Result?.ChampionId);
+    t.Result?.ChampionId, t.Prizes.Count > 0 ? t.Prizes[0] : 0);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,
