@@ -51,6 +51,14 @@ public static class Trials
     private static readonly string[] MidGear = ["steel-saber", "chain-hauberk"];
     private static readonly string[] TopGear = ["arkforged-edge", "covenant-plate", "vtxo-charm"];
 
+    /// <summary>
+    /// Affixes only bite from this wave on, so every hero gets the SAME fair opening whatever the week.
+    /// Measured: without this, Veteran's +5 offset made wave 1 a level-6 ghost and zeroed ~80% of level-5
+    /// heroes — one week in four would be dead for everyone below the training band, which is the opposite
+    /// of what a cold-start solo ladder is for. The affix still defines the climb, just not the doorstep.
+    /// </summary>
+    private const int AffixFromWave = 3;
+
     /// <summary>The affixes in rotation order. <see cref="TrialsAffix.None"/> is the un-affixed baseline and
     /// never rotates in.</summary>
     private static readonly TrialsAffix[] Rotation =
@@ -82,22 +90,24 @@ public static class Trials
     /// clears the early waves easily and the run gets competitive around its own level, then inevitably
     /// overwhelming — the score tracks the hero's realized power rather than being normalized away. The
     /// weekly affix can steepen the climb (Relentless) or start it higher up (Veteran).</summary>
-    public static int GhostLevel(int wave, TrialsAffix affix = TrialsAffix.None) => affix switch
-    {
-        TrialsAffix.Relentless => wave * 2,
-        TrialsAffix.Veteran => wave + 5,
-        _ => wave,
-    };
+    public static int GhostLevel(int wave, TrialsAffix affix = TrialsAffix.None) =>
+        wave < AffixFromWave ? wave : affix switch
+        {
+            TrialsAffix.Relentless => wave * 2,
+            TrialsAffix.Veteran => wave + 5,
+            _ => wave,
+        };
 
     /// <summary>The ghost's gear for a wave — bands ramp with depth: naked early, mid gear from wave 8, top
     /// gear from wave 15. Stacked on the climbing level so deep waves punish even a maxed hero. The weekly
     /// affix can arm them from the start (Ironclad) or strip them entirely (Featherweight).</summary>
-    public static IReadOnlyList<string> GhostGear(int wave, TrialsAffix affix = TrialsAffix.None) => affix switch
-    {
-        TrialsAffix.Featherweight => [],
-        TrialsAffix.Ironclad => wave >= 4 ? TopGear : MidGear,
-        _ => wave >= 15 ? TopGear : wave >= 8 ? MidGear : [],
-    };
+    public static IReadOnlyList<string> GhostGear(int wave, TrialsAffix affix = TrialsAffix.None) =>
+        wave < AffixFromWave ? [] : affix switch
+        {
+            TrialsAffix.Featherweight => [],
+            TrialsAffix.Ironclad => wave >= 4 ? TopGear : MidGear,
+            _ => wave >= 15 ? TopGear : wave >= 8 ? MidGear : [],
+        };
 
     /// <summary>The deterministic ghost for a wave — a gen-0 hero derived entirely from the run entropy, so
     /// the client re-derives the same ladder and the server cannot substitute a softer foe.</summary>

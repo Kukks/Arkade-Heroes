@@ -116,13 +116,25 @@ public class TrialsTests
     }
 
     [Fact]
-    public void AffixesReshapeTheLadder()
+    public void AffixesReshapeTheLadder_ButNeverTheOpening()
     {
+        // Waves 1-2 are IDENTICAL under every affix — the shared fair opening. Measured before this rule:
+        // Veteran's +5 offset made wave 1 a level-6 ghost and zeroed ~80% of level-5 heroes, so one week in
+        // four was dead for everyone below the training band — the opposite of a cold-start ladder's point.
+        foreach (var affix in Enum.GetValues<TrialsAffix>())
+        {
+            Assert.Equal(1, Trials.GhostLevel(1, affix));
+            Assert.Equal(2, Trials.GhostLevel(2, affix));
+            Assert.Empty(Trials.GhostGear(1, affix));
+            Assert.Empty(Trials.GhostGear(2, affix));
+        }
+
+        // From wave 3 on, each affix defines its own climb.
         Assert.Equal(10, Trials.GhostLevel(10));                              // plain: wave N → level N
         Assert.Equal(20, Trials.GhostLevel(10, TrialsAffix.Relentless));      // two levels a wave
         Assert.Equal(15, Trials.GhostLevel(10, TrialsAffix.Veteran));         // the ladder starts five in
         Assert.Empty(Trials.GhostGear(20, TrialsAffix.Featherweight));        // bare-handed at any depth
-        Assert.NotEmpty(Trials.GhostGear(1, TrialsAffix.Ironclad));           // armed from wave 1
+        Assert.NotEmpty(Trials.GhostGear(3, TrialsAffix.Ironclad));           // armed as soon as the affix bites
         Assert.Contains("arkforged-edge", Trials.GhostGear(4, TrialsAffix.Ironclad));
     }
 
