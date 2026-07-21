@@ -56,6 +56,20 @@
                 <span class="chip @(owned ? "on" : "muted")" title="@(owned ? "collected" : "breed a genome that hits this set")">@(owned ? "✦" : "○") @title</span>
             }
         </div>
+
+        <div class="page-head" style="margin:.9rem 0 .3rem">
+            <h4 style="margin:0;font-size:.92rem">Trait album</h4>
+            <span class="spacer"></span>
+            <span class="hud">@_ach.TraitAlbum.Values.Sum() / @(_ach.TraitAlbum.Count * 5) cells</span>
+        </div>
+        @foreach (var kv in _ach.TraitAlbum)
+        {
+            <div class="match-row">
+                <span class="@(kv.Value > 0 ? "" : "muted")">@kv.Key</span>
+                <span class="spacer"></span>
+                <span class="chip @(kv.Value == 5 ? "on" : "")">@kv.Value/5 tiers</span>
+            </div>
+        }
     }
 </div>
 

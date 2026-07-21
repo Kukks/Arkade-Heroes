@@ -237,6 +237,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         var fancies = mine.Count(h => Core.Progression.FancySets.TitleFor(h.Genome) is not null);
         var fancySetsOwned = mine.Select(h => Core.Progression.FancySets.TitleFor(h.Genome))
             .Where(t => t is not null).Select(t => t!).Distinct().ToList();
+        var traitAlbum = Core.Progression.TraitAlbum.CoverageByCategory(mine.Select(h => h.Genome))
+            .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
         var myHeroIds = mine.Select(h => h.Id).ToHashSet();
         var tournamentsWon = store.Tournaments.Values.Count(t => t.Result?.ChampionId is { } champ && myHeroIds.Contains(champ));
 
@@ -247,7 +249,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (fancies >= 1) badges.Add("Fancier");
         if (tournamentsWon >= 1) badges.Add("Champion");
 
-        return new Shared.PlayerAchievementsDto(owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned);
+        return new Shared.PlayerAchievementsDto(owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned, traitAlbum);
     }
 
     /// <summary>Treasury-health telemetry (economy control plane): current spendable balance, treasury outflow tallied
