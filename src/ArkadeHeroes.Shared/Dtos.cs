@@ -307,6 +307,10 @@ public record TournamentMatchDto(int Round, int Index, string AId, string BId, s
 public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<TournamentMatchDto> Bracket,
     string ServerSeedHex, string EntropyHex, IReadOnlyList<long> Prizes);
 
+/// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
+public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
+    IReadOnlyList<string> Badges);
+
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
 /// from their own wallet, plus the ask and refund window. Once deposited the

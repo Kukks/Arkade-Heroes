@@ -224,6 +224,28 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     private bool NameTaken(string name, string exceptHeroId) =>
         store.Heroes.Values.Any(h => h.Id != exceptHeroId && string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>A player's derived accomplishments — computed from their current roster + resolved tournaments,
+    /// with a badge unlocked at each milestone. A pure read over in-memory state; no per-event tracking needed.</summary>
+    public Shared.PlayerAchievementsDto PlayerAchievements(Player player)
+    {
+        var mine = store.Heroes.Values.Where(h => h.OwnerId == player.Id).ToList();
+        var owned = mine.Count;
+        var bred = mine.Count(h => h.Generation > 0);
+        var legendaries = mine.Count(h => Core.Progression.Rarity.Of(h.Genome).Tier.ToString() == "Legendary");
+        var fancies = mine.Count(h => Core.Progression.FancySets.TitleFor(h.Genome) is not null);
+        var myHeroIds = mine.Select(h => h.Id).ToHashSet();
+        var tournamentsWon = store.Tournaments.Values.Count(t => t.Result?.ChampionId is { } champ && myHeroIds.Contains(champ));
+
+        var badges = new List<string>();
+        if (owned >= 5) badges.Add("Collector");
+        if (bred >= 3) badges.Add("Breeder");
+        if (legendaries >= 1) badges.Add("Legend-keeper");
+        if (fancies >= 1) badges.Add("Fancier");
+        if (tournamentsWon >= 1) badges.Add("Champion");
+
+        return new Shared.PlayerAchievementsDto(owned, bred, legendaries, fancies, tournamentsWon, badges);
+    }
+
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
 
     private const int MaxTournamentSize = 16;

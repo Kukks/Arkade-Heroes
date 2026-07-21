@@ -93,6 +93,10 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
 
 // Public profile: players are addresses, and addresses are public — this is
 // what a sender needs to transfer a hero to another player wallet-to-wallet.
+// A player's derived accomplishments + unlocked badges (from their roster + tournament wins).
+api.MapGet("/players/me/achievements", (HttpContext http, GameService game) =>
+    Results.Ok(game.PlayerAchievements(game.Authenticate(BearerToken(http)))));
+
 api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChainService chain, CancellationToken ct) =>
 {
     if (!store.Players.TryGetValue(playerId, out var player)) return Results.NotFound();
