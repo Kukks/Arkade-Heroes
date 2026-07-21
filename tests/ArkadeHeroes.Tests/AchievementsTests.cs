@@ -52,4 +52,26 @@ public class AchievementsTests
         Assert.Contains("Legend-keeper", a.Badges);   // a Legendary in the roster
         Assert.DoesNotContain("Champion", a.Badges);  // no tournament win
     }
+
+    [Fact]
+    public async Task Achievements_FancyCollection_ListsTheOwnedSets()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, playerDto) = await factory.RegisterAsync("Ach-Fancy");
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        // "Emberlord" = Aura AND Sigil at Epic+ (byte 255 → Legendary tier); only two Legendaries, so not "Sovereign".
+        var g = new byte[32];
+        g[16 + (int)TraitCategory.Aura * 2] = 255;
+        g[16 + (int)TraitCategory.Sigil * 2] = 255;
+        store.Heroes["ember"] = new Hero
+        {
+            Id = "ember", OwnerId = playerDto.PlayerId, Name = "Ember", Level = 1,
+            Genome = new Genome(g), Generation = 1,
+        };
+
+        var a = await player.Players.AchievementsAsync();
+        Assert.Contains("Emberlord", a.FancySetsOwned);
+        Assert.DoesNotContain("Sovereign", a.FancySetsOwned);   // two Legendaries isn't the ultra-grail
+    }
 }

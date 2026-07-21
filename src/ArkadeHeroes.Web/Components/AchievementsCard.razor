@@ -1,6 +1,7 @@
 @inject GameSession Session
 @inject WalletState State
 @implements IDisposable
+@using ArkadeHeroes.Core.Progression
 
 @* The signed-in player's milestone badges, shown on their roster. Read-only: every value is
    derived server-side from the roster + resolved tournaments (no per-event tracking). Earned state
@@ -42,6 +43,19 @@
                 }
             </div>
         }
+
+        <div class="page-head" style="margin:.9rem 0 .3rem">
+            <h4 style="margin:0;font-size:.92rem">Fancy collection</h4>
+            <span class="spacer"></span>
+            <span class="hud">@_ach.FancySetsOwned.Count / @FancySets.AllTitles.Count sets</span>
+        </div>
+        <div class="chips">
+            @foreach (var title in FancySets.AllTitles)
+            {
+                var owned = _ach.FancySetsOwned.Contains(title);
+                <span class="chip @(owned ? "on" : "muted")" title="@(owned ? "collected" : "breed a genome that hits this set")">@(owned ? "✦" : "○") @title</span>
+            }
+        </div>
     }
 </div>
 
