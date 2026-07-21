@@ -1224,7 +1224,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         // Faucet governor: sats are real BTC — the treasury is a finite, fee-funded pot it can't inflate.
         // Never overdraw it: pay only what it can afford (down to zero) rather than throwing "Treasury cannot
         // cover". The streak still advances (the player showed up), and emission auto-tracks treasury health.
-        var affordable = Math.Clamp(await chain.TreasuryBalanceAsync(ct), 0, reward.Total);
+        // ...and never below TreasuryReserveFloorSats (a permanent reserve; 0 = clamp to the full balance).
+        var affordable = Math.Clamp(await chain.TreasuryBalanceAsync(ct) - _config.TreasuryReserveFloorSats, 0, reward.Total);
         if (affordable > 0)
         {
             await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
