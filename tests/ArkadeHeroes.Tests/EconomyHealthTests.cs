@@ -34,4 +34,20 @@ public class EconomyHealthTests
         Assert.Equal(claim.AwardedSats, after.TotalOutflowSats);                          // no other outflow
         Assert.Equal(50_000 - claim.AwardedSats, after.TreasuryBalanceSats);              // balance dropped by exactly the payout
     }
+
+    [Fact]
+    public async Task Health_TalliesItemPurchaseInflow_Once()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, _) = await factory.RegisterAsync("Econ-Inflow");
+        await player.BuyItemAsync("rusty-blade");   // buy → pay → claim; the item fee is captured on claim
+
+        var h1 = await player.Economy.HealthAsync();
+        Assert.True(h1.InflowByTag.GetValueOrDefault("item") > 0, "the item fee should be tallied as inflow");
+        Assert.Equal(h1.InflowByTag.Values.Sum(), h1.TotalInflowSats);
+
+        // Deduped by invoice id: re-reading (which reconciles offers etc.) never re-counts the same fee.
+        var h2 = await player.Economy.HealthAsync();
+        Assert.Equal(h1.InflowByTag["item"], h2.InflowByTag["item"]);
+    }
 }
