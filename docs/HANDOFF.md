@@ -69,7 +69,7 @@ Research clones (read-only reference, shallow) at `C:/Git/Arkade-Heroes-research
 | `ArkadeHeroes.Core` | Pure domain (no I/O): genome, breeding, combat, progression, fairness | `GeneMixer`, `BattleEngine`, `CommitReveal`, `FairnessAudit`, `ReceiptVerifier` |
 | `ArkadeHeroes.Shared` | DTOs for server⇄client | `Dtos.cs` (incl. `ChainInfoDto`, match DTOs) |
 | `ArkadeHeroes.Chain` | Chain abstraction | `IChainService` (the seam), `InMemoryChainService` (simulation with the SAME semantics — real BIP340 checks etc.), `NArk/NArkChainService` (real backend), `NArk/SelfCustodyWallet` (player wallet: isolated ServiceProvider, EF sqlite, mnemonic in wallet DB), `Covenants/*` |
-| `ArkadeHeroes.Server` | Minimal API game service | `Program.cs` (endpoints incl. InMemory-only `/api/dev/*`), `GameService`, `GameStore` (JSON persistence), `ReceiptSigner`, `GameOptions` |
+| `ArkadeHeroes.Server` | Minimal API game service | `Program.cs` (endpoints incl. InMemory-only `/api/dev/*`), `GameService`, `GameStore` (in-memory, ephemeral — all state resets on restart), `ReceiptSigner`, `GameOptions` |
 | `ArkadeHeroes.Client` | Console REPL | `GameClient.cs` (embedded `SelfCustodyWallet` per player via `ARKADE_HEROES_HOME`) |
 
 Covenant layer (`src/ArkadeHeroes.Chain/Covenants/`):
