@@ -73,6 +73,10 @@ public class GameOptions
     /// An operator raises it to protect scheduled obligations (e.g. the season pot) from the daily emission drain.</summary>
     public long TreasuryReserveFloorSats { get; set; } = 0;
 
+    /// <summary>Opt-in obligation reservation: when true, the daily faucet also holds back the current season pot
+    /// (base + accrued) so emission can't drain the sats the upcoming season settlement owes. Default off.</summary>
+    public bool ReserveSeasonPot { get; set; } = false;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),
@@ -103,5 +107,6 @@ public class GameOptions
         OfferListingFeeSats: OfferListingFeeSats,
         HeroRenameFeeSats: HeroRenameFeeSats,
         TournamentRakePct: TournamentRakePct,
-        TreasuryReserveFloorSats: TreasuryReserveFloorSats);
+        TreasuryReserveFloorSats: TreasuryReserveFloorSats,
+        ReserveSeasonPot: ReserveSeasonPot);
 }
