@@ -18,6 +18,25 @@ public class PersistedItemPurchase
 }
 
 /// <summary>
+/// A durable player identity. The bearer <c>Token</c> is deliberately NOT stored: it's a session
+/// credential, not identity. A restart invalidates sessions and the wallet re-authenticates by signing a
+/// login challenge (<c>LoginPubKeyHex</c> is the stable handle), which is both safer than keeping
+/// credentials at rest and the behaviour players already expect from "sign in with your wallet".
+///
+/// <c>StarterClaimed</c> and <c>LastClaimDay</c> are the load-bearing fields: losing them would let a
+/// returning player re-claim free starter heroes and re-claim the same day's faucet reward.
+/// </summary>
+public class PersistedPlayer
+{
+    public required string Id { get; set; }
+    public required string Name { get; set; }
+    public required bool StarterClaimed { get; set; }
+    public string? LoginPubKeyHex { get; set; }
+    public required int StreakCount { get; set; }
+    public int? LastClaimDay { get; set; }
+}
+
+/// <summary>
 /// A durable tournament. <c>Result</c> and <c>Prizes</c> are deliberately NOT stored: a resolved bracket has
 /// already paid out, so the only thing worth surviving a restart is an UNRESOLVED bracket whose entrants
 /// have paid buy-ins. The resolved rows are kept purely as an audit marker (see the loader).
@@ -47,11 +66,13 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
 {
     public DbSet<PersistedItemPurchase> ItemPurchases => Set<PersistedItemPurchase>();
     public DbSet<PersistedTournament> Tournaments => Set<PersistedTournament>();
+    public DbSet<PersistedPlayer> Players => Set<PersistedPlayer>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.Entity<PersistedItemPurchase>().HasKey(x => x.InvoiceId);
         modelBuilder.Entity<PersistedTournament>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedPlayer>().HasKey(x => x.Id);
     }
 }

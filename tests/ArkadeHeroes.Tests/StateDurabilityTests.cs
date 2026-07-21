@@ -92,6 +92,45 @@ public class StateDurabilityTests
     }
 
     [Fact]
+    public async Task PlayerIdentity_AndItsOnceOnlyFlags_SurviveARestart()
+    {
+        // Identity is the anchor: a surviving purchase or bracket names a PlayerId, so without the player
+        // it's a dangling record nobody can claim. And StarterClaimed / LastClaimDay are once-only flags —
+        // losing them would let the same player re-mint free starters and re-claim today's faucet reward.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            string playerId;
+            using (var first = HostOn(dbPath))
+            {
+                var chain = (ArkadeHeroes.Chain.InMemoryChainService)
+                    first.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
+                chain.FundTreasury(50_000);
+
+                var (alice, player) = await first.RegisterAsync("Durable-Identity");
+                playerId = player.PlayerId;
+                await alice.ClaimStartersAsync();      // consumes the once-only starter grant
+                await alice.Daily.ClaimAsync();        // consumes today's faucet claim
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var store = restarted.Services.GetRequiredService<GameStore>();
+
+            Assert.True(store.Players.ContainsKey(playerId), "identity must survive — everything else references it");
+            var recovered = store.Players[playerId];
+            Assert.True(recovered.StarterClaimed, "a restart must not hand out a second set of free starters");
+            Assert.NotNull(recovered.LastClaimDay);   // today stays consumed — no double faucet payout
+            Assert.Equal(1, recovered.StreakCount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task WithNoStatePathConfigured_NothingIsPersisted()
     {
         // The default: no database, no file, historical behaviour. Guards against persistence silently
