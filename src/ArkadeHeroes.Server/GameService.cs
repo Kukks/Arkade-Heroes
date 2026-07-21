@@ -526,6 +526,12 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         {
             throw new GameRuleException("The breeding fee invoice has not been paid yet — pay it from your wallet, then reveal.");
         }
+        else
+        {
+            // Invoice mode: the fee is now in the treasury (a paid Receive invoice). Tally it as "breed"
+            // inflow, deduped by invoice id (covenant mode captures structurally → recorded at execution).
+            store.RecordInflow(session.FeeInvoiceId!, "breed", session.FeeSats);
+        }
 
         var parentA = GetOwnedHero(player, session.ParentAId);
         var parentB = GetOwnedHero(player, session.ParentBId);
@@ -563,6 +569,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             var mint = await chain.ExecuteBreedCovenantAsync(session.Id, childData, oracleSig, ct);
             child = BuildAndStoreHero(player, mint, outcome.ChildGenome, outcome.ChildGeneration,
                 session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex);
+            // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
+            store.RecordInflow(session.Id, "breed", session.FeeSats);
         }
         else
         {
@@ -727,6 +735,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var fused = BuildAndStoreHero(player, mint, fusedGenome, fusedGeneration,
             session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex);
+        // The merge spend retired both inputs and delivered FeeSats to the treasury — tally it (dedup by session id).
+        store.RecordInflow(session.Id, "merge", session.FeeSats);
         // The fused hero inherits the base's level (you keep your progression); its genesis
         // level is attested by the merge receipt below so ReplayLevel stays consistent.
         fused.Level = baseHero.Level;

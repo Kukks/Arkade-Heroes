@@ -131,6 +131,54 @@ public class EconomyHealthTests
         Assert.True(health.InflowByTag.GetValueOrDefault("squad-fee") > 0, "both squad match fees are tallied at settle");
     }
 
+    [Fact]
+    public async Task Health_TalliesBreedFeeInflow_InvoiceMode()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-Breed-Inv");
+        var heroes = await alice.ClaimStartersAsync();
+
+        // Invoice mode (no mode arg): pay the fee invoice, then reveal.
+        var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id));
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = commit.Invoice!.InvoiceId });
+        await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("breed-inv-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.Equal(commit.Invoice!.AmountSats, health.InflowByTag.GetValueOrDefault("breed"));
+    }
+
+    [Fact]
+    public async Task Health_TalliesBreedFeeInflow_CovenantMode()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-Breed-Cov");
+        var heroes = await alice.ClaimStartersAsync();
+
+        // Covenant mode: the fee rides in the breed escrow and is captured structurally at execution.
+        var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
+        await alice.Dev.FundBreedEscrowAsync(new { BreedingId = commit.BreedingId });
+        await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("breed-cov-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.Equal(commit.EscrowFeeSats, health.InflowByTag.GetValueOrDefault("breed"));
+    }
+
+    [Fact]
+    public async Task Health_TalliesMergeFeeInflow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-Merge");
+        var heroes = await alice.ClaimStartersAsync();
+
+        // Merge is covenant-only: the fee rides in the escrow, retired to the treasury at reveal.
+        var commit = await alice.Merge.CommitAsync(new MergeCommitRequest(heroes[0].Id, heroes[1].Id));
+        await alice.Dev.FundMergeEscrowAsync(new { MergeId = commit.MergeId });
+        await alice.Merge.RevealAsync(commit.MergeId, new MergeRevealRequest("merge-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.GetValueOrDefault("merge") > 0, "the merge fee is tallied as inflow at reveal");
+    }
+
     static async Task<List<string>> SquadLineup(ArkadeHeroesClient c)
     {
         var ids = (await c.ClaimStartersAsync()).Select(h => h.Id).ToList();
