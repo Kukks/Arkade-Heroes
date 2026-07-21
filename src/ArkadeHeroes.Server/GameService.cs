@@ -92,6 +92,7 @@ public class GameService(
 
         store.Players[player.Id] = player;
         store.PlayersByToken[player.Token] = player;
+        await persistence.SavePlayerAsync(player, ct);   // identity is the anchor everything else references
         var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
         return (player, arkadeAddress.Trim(), balance);
     }
@@ -381,6 +382,8 @@ public class GameService(
     {
         if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
         player.StarterClaimed = true; // reserve first so concurrent claims can't double-mint
+        // Durably too — otherwise a restart lets the same player claim free starter heroes all over again.
+        await persistence.SavePlayerAsync(player, ct);
 
         // Idempotent under retry: mint only the shortfall to reach two gen-0
         // starters. If a prior attempt minted one hero then failed (e.g. the
@@ -1321,6 +1324,8 @@ public class GameService(
 
         player.LastClaimDay = window.DayIndex;   // consume the day even at a partial/zero payout
         player.StreakCount = newStreak;
+        // The day must stay consumed across a restart, or the faucet pays the same player twice today.
+        await persistence.SavePlayerAsync(player, ct);
 
         return new Shared.DailyClaimResultDto(
             affordable, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,

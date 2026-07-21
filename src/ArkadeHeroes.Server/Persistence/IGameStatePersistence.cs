@@ -18,6 +18,10 @@ public interface IGameStatePersistence
     /// <summary>Durably record a tournament — called whenever an entrant (and so a buy-in invoice) is added,
     /// and again the moment it is marked resolved.</summary>
     Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default);
+
+    /// <summary>Durably record a player's identity and the once-only flags attached to it (starter claimed,
+    /// day already claimed) — called at registration and whenever one of those flags moves.</summary>
+    Task SavePlayerAsync(Player player, CancellationToken ct = default);
 }
 
 /// <summary>No durability — the historical behaviour, where all state lives and dies with the process.</summary>
@@ -26,6 +30,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task LoadIntoAsync(GameStore store, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SavePlayerAsync(Player player, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -45,6 +50,26 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
     public async Task LoadIntoAsync(GameStore store, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
+
+        // Identity first — the purchases and brackets below reference these player ids, and without them
+        // a returning player couldn't claim what they'd already paid for.
+        foreach (var row in await db.Players.AsNoTracking().ToListAsync(ct))
+        {
+            var player = new Player
+            {
+                Id = row.Id,
+                Name = row.Name,
+                // A FRESH session token: the old one died with the process, and the wallet re-authenticates
+                // by signing a login challenge. Never store bearer credentials at rest.
+                Token = Guid.NewGuid().ToString("N"),
+                StarterClaimed = row.StarterClaimed,
+                LoginPubKeyHex = row.LoginPubKeyHex,
+                StreakCount = row.StreakCount,
+                LastClaimDay = row.LastClaimDay,
+            };
+            store.Players[player.Id] = player;
+            store.PlayersByToken[player.Token] = player;
+        }
 
         // Resolved brackets are NEVER rehydrated. Their row survives as an audit marker, but putting one
         // back into the live store would let it be resolved a SECOND time — paying the podium twice out of
@@ -133,6 +158,33 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         {
             row.Status = session.Status;
             row.EntrantsJson = entrantsJson;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SavePlayerAsync(Player player, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.Players.FindAsync([player.Id], ct);
+        if (row is null)
+        {
+            db.Players.Add(new PersistedPlayer
+            {
+                Id = player.Id,
+                Name = player.Name,
+                StarterClaimed = player.StarterClaimed,
+                LoginPubKeyHex = player.LoginPubKeyHex,
+                StreakCount = player.StreakCount,
+                LastClaimDay = player.LastClaimDay,
+            });
+        }
+        else
+        {
+            row.Name = player.Name;
+            row.StarterClaimed = player.StarterClaimed;
+            row.LoginPubKeyHex = player.LoginPubKeyHex;
+            row.StreakCount = player.StreakCount;
+            row.LastClaimDay = player.LastClaimDay;
         }
         await db.SaveChangesAsync(ct);
     }
