@@ -21,6 +21,35 @@ else if (_error)
 }
 else
 {
+    @if (_economy is not null)
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <div class="page-head" style="margin:0 0 .3rem">
+                <h3 style="margin:0">Treasury</h3>
+                <span class="hud">the finite, fee-funded pot — sats are real BTC</span>
+                <span class="spacer"></span>
+                <span class="chip mono">@_economy.TreasuryBalanceSats.ToString("N0") sat</span>
+            </div>
+            <p class="muted" style="margin:-.1rem 0 .7rem">spendable balance · @_economy.SeasonAccrualSats.ToString("N0") sat accrued to season pots</p>
+            @if (_economy.TotalOutflowSats > 0)
+            {
+                <p class="muted" style="margin:0 0 .3rem">paid out to date — @_economy.TotalOutflowSats.ToString("N0") sat total</p>
+                @foreach (var kv in _economy.OutflowByTag.OrderByDescending(k => k.Value))
+                {
+                    <div class="match-row">
+                        <span>@OutflowLabel(kv.Key)</span>
+                        <span class="spacer"></span>
+                        <span class="chip">@kv.Value.ToString("N0") sat</span>
+                    </div>
+                }
+            }
+            else
+            {
+                <p class="muted" style="margin:0">No treasury payouts yet.</p>
+            }
+        </div>
+    }
+
     @if (_season is not null)
     {
         <div class="card" style="margin-bottom:1.6rem">
@@ -173,6 +202,7 @@ else
 
 @code {
     private SeasonLeaderboardDto? _season;
+    private EconomyHealthDto? _economy;
     private List<LeaderboardEntryDto> _top = new();
     private List<HeroDto> _rarest = new();
     private List<HeroDto> _fancies = new();
@@ -196,13 +226,15 @@ else
             var tournaments = Api.Tournament.ListAsync();
             var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
             var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all);
+            var economy = Api.Economy.HealthAsync();           // treasury-health telemetry (public)
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy);
             _top = await top;
             _season = await season;
             _rarest = await rarest;
             _fancies = await fancies;
             _tournaments = await tournaments;
             _recent = (await recent).Where(m => m.Result is not null).ToList();
+            _economy = await economy;
             foreach (var h in await all) _names[h.Id] = h.Name;
         }
         catch
@@ -227,4 +259,15 @@ else
 
     private string Name(string? heroId) =>
         heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "a hero";
+
+    // Friendly label for a treasury outflow category tag (matches GameStore.RecordOutflow tags).
+    private static string OutflowLabel(string tag) => tag switch
+    {
+        "daily" => "Daily rewards",
+        "season" => "Season prizes",
+        "tournament" => "Tournament prizes",
+        "wager" => "Wager payouts",
+        "squad" => "Squad payouts",
+        _ => tag,
+    };
 }
