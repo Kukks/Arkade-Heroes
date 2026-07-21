@@ -199,6 +199,37 @@ public static class FairnessAudit
     }
 
     /// <summary>
+    /// Verifies an endless Trials run: seed matches the commitment, entropy is the documented derivation,
+    /// and re-running <c>Trials.Resolve</c> over the PRE-run hero snapshot reproduces the waves survived —
+    /// the ghost ladder and fights are pure in the entropy, so the server can't have picked soft foes. The
+    /// title is recomputed from the score, and the score is checked against the SIGNED receipt (it rides in
+    /// XpAwardB), so a server can't fabricate a leaderboard result.
+    /// </summary>
+    public static (bool Ok, string Detail) VerifyTrials(
+        string trialsId, string nonce, string commitmentHex, TrialsRunResponse run)
+    {
+        var seed = Convert.FromHexString(run.ServerSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        var entropy = CommitReveal.DeriveEntropy(seed, trialsId, run.HeroSnapshot.Id, nonce);
+        if (!Convert.ToHexString(entropy).Equals(run.EntropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, trialsId, hero, nonce)");
+
+        var resolved = Trials.Resolve(RebuildHero(run.HeroSnapshot), entropy);
+        if (resolved.WavesCleared != run.WavesCleared)
+            return (false, $"replayed waves survived ({resolved.WavesCleared}) differs from reported ({run.WavesCleared})");
+
+        var expectedTitle = Trials.TitleFor(resolved.WavesCleared);
+        if (!string.Equals(expectedTitle, run.Title, StringComparison.Ordinal))
+            return (false, $"title mismatch: recomputed {expectedTitle ?? "none"}, server reported {run.Title ?? "none"}");
+        if (resolved.WavesCleared != run.Receipt.XpAwardB)
+            return (false, $"score mismatch: replayed {resolved.WavesCleared}, receipt attests {run.Receipt.XpAwardB}");
+
+        return (true, $"trials verifies: {resolved.WavesCleared} waves survived{(expectedTitle is null ? "" : $", {expectedTitle}")}");
+    }
+
+    /// <summary>
     /// Verifies a 3v3 squad match: seed matches the commitment, entropy is the documented derivation, and
     /// re-running <c>SquadBattle.Resolve</c> over the pre-match lineup snapshots reproduces the best-of-3
     /// winner AND every duel's event log — so a server can't misreport a duel or the aggregate outcome.

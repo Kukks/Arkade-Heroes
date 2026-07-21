@@ -71,6 +71,25 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Trials_ClientVerifiesTheRun_AndCatchesAnInflatedScore()
+    {
+        var (alice, _) = await _factory.RegisterAsync("Trials-Verify");
+        var hero = (await alice.ClaimStartersAsync())[0];
+
+        var open = await alice.Trials.OpenAsync(hero.Id);
+        var run = await alice.Trials.RunAsync(open.TrialsId, "verify-nonce");
+
+        // The honest run verifies: the ladder replays to the same score + title off the revealed seed.
+        var (ok, detail) = FairnessAudit.VerifyTrials(open.TrialsId, "verify-nonce", run.Receipt.CommitmentHex, run);
+        Assert.True(ok, detail);
+
+        // A server that inflates the score is caught by the replay — the ghost ladder is pure in the entropy.
+        var inflated = run with { WavesCleared = run.WavesCleared + 5 };
+        var (tamperOk, _) = FairnessAudit.VerifyTrials(open.TrialsId, "verify-nonce", run.Receipt.CommitmentHex, inflated);
+        Assert.False(tamperOk, "an inflated waves-survived count must fail the client replay");
+    }
+
+    [Fact]
     public async Task Trials_RejectsUnownedHero()
     {
         var (alice, _) = await _factory.RegisterAsync("Trials-Own-A");

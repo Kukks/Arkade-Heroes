@@ -1,0 +1,189 @@
+@page "/trials"
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Trials · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Trials</h2>
+    <span class="hud">endless solo ladder · how deep can you go?</span>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then take on the Trials.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
+}
+else if (_mine.Count == 0)
+{
+    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+}
+else
+{
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            An endless ladder of ghost challengers: <b>wave N is a level-N ghost</b>, climbing until one of
+            them finally puts your hero down. Your score is how many waves you survive — a straight read of
+            how strong your hero really is. <b>Free to enter, run it as often as you like</b>: the Trials
+            award no XP, gear, or sats, only a score and a title.
+        </p>
+        <label>Champion
+            <select @bind="_heroId">
+                <option value="">— pick a hero —</option>
+                @foreach (var h in _mine)
+                {
+                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                }
+            </select>
+        </label>
+        <button class="btn primary" style="margin-top:1.1rem" @onclick="DoRun"
+                disabled="@(_running || string.IsNullOrEmpty(_heroId))">
+            @(_running ? "Descending…" : "Enter the Trials")
+        </button>
+        @if (_status is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+        }
+    </div>
+
+    @if (_outcome is not null)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">@(_outcome.Run.Title ?? "Run over")</h3>
+            <span class="hud">@_outcome.Run.WavesCleared wave@(_outcome.Run.WavesCleared == 1 ? "" : "s") survived</span>
+            <span class="spacer"></span>
+            <span class="chip mono">best @_outcome.Run.BestScore</span>
+        </div>
+
+        <div class="card">
+            <div class="status-line">
+                <span class="dot @(_outcome.Run.WavesCleared >= _outcome.Run.BestScore ? "ok" : "wait")"></span>
+                <span>
+                    <b>@_outcome.Run.WavesCleared</b> survived
+                    @if (_outcome.Run.Title is not null)
+                    {
+                        <span>· earned <b>@_outcome.Run.Title</b></span>
+                    }
+                    @if (_outcome.Run.WavesCleared >= _outcome.Run.BestScore && _outcome.Run.WavesCleared > 0)
+                    {
+                        <span> · <b>new personal best!</b></span>
+                    }
+                </span>
+            </div>
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
+                <span class="mono" style="font-size:.78rem">
+                    @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
+                </span>
+            </div>
+        </div>
+
+        @if (_watching is not null)
+        {
+            <div class="status-line" style="justify-content:center;gap:.7rem;margin:1.2rem 0 .5rem">
+                <span class="chip mono">Wave @_watching.Wave</span>
+                <span class="muted">ghost L@_watching.GhostLevel</span>
+                <button class="btn ghost sm" @onclick="StopWatching">Close ✕</button>
+            </div>
+            <BattleArena A="_outcome.Run.HeroSnapshot" B="_watching.Ghost" Fight="_watching.Result" />
+        }
+
+        <div class="page-head" style="margin-top:1.4rem">
+            <h3 style="margin:0">The ladder</h3>
+            <span class="hud">click any wave to watch it</span>
+        </div>
+        <div class="grid cols">
+            @foreach (var wv in _outcome.Run.Waves)
+            {
+                <div class="card" style="text-align:center">
+                    <div class="chip mono">Wave @wv.Wave</div>
+                    <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
+                    <div class="status-line" style="justify-content:center">
+                        <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "survived" : "fell here")
+                    </div>
+                    <button class="btn ghost sm" style="margin-top:.5rem" @onclick="() => Watch(wv)">Watch ▶</button>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _mine = new();
+    private string _heroId = "";
+    private bool _loading = true;
+    private bool _running;
+    private bool _heroesLoaded;
+    private string? _status;
+    private string? _error;
+    private TrialsOutcome? _outcome;
+    private TrialsWaveDto? _watching;   // the wave currently replaying in the arena (null = none)
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _mine = await Api.Heroes.MineAsync();
+            _heroesLoaded = true;
+        }
+        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        finally { _loading = false; }
+    }
+
+    async Task DoRun()
+    {
+        _running = true;
+        _error = null;
+        _outcome = null;
+        _watching = null;
+        _status = "Preparing the ladder…";
+        try
+        {
+            _outcome = await Session.RunTrialsAsync(_heroId, s => { _status = s; StateHasChanged(); });
+            _status = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _status = null;
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    // An endless run can be dozens of waves, so the summary reveals immediately and the player picks
+    // which wave to watch rather than sitting through a forced wave-by-wave cinematic.
+    void Watch(TrialsWaveDto wave) { _watching = wave; StateHasChanged(); }
+
+    void StopWatching() { _watching = null; StateHasChanged(); }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        // On a fresh page load the session resumes after this component inits; reload the
+        // roster once we're signed in (the first MineAsync may have raced the login token).
+        if (State.IsSignedIn && !_heroesLoaded && !_loading)
+            await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}
