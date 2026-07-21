@@ -35,9 +35,12 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(run.WavesCleared, (int)run.Receipt.XpAwardB);     // the score is attested in the receipt
 
         // Client-replayable: re-resolving from the revealed seed + PRE-run snapshot reproduces the score.
+        // Replay under the run's PINNED weekly affix (exactly what VerifyTrials does) — the plain ladder is
+        // a DIFFERENT ladder and would score differently.
         var entropy = CommitReveal.DeriveEntropy(
             Convert.FromHexString(run.ServerSeedHex), open.TrialsId, hero.Id, "trial-nonce");
-        var replay = Trials.Resolve(FairnessAudit.RebuildHero(run.HeroSnapshot), entropy);
+        var replay = Trials.Resolve(FairnessAudit.RebuildHero(run.HeroSnapshot), entropy,
+            affix: Enum.Parse<TrialsAffix>(run.Affix));
         Assert.Equal(run.WavesCleared, replay.WavesCleared);
     }
 
