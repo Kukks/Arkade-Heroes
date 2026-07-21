@@ -306,7 +306,8 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
             await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
             var settle = await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("absorb-nonce"));
-            if (!settle.Minted) continue;   // rare keep roll — try again with fresh heroes
+            if (settle.WinnerHeroId != aliceHeroId) continue;   // rare seeded-fight upset — retry with fresh heroes
+            if (!settle.Minted) continue;                        // rare keep roll — try again with fresh heroes
 
             Assert.Equal(aliceHeroId, settle.WinnerHeroId);
             Assert.NotNull(settle.NewHero);
@@ -357,10 +358,13 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
         Assert.False(settle.Minted);
         Assert.Null(settle.NewHero);
-        // Classic keep: Alice keeps her EXACT hero; Bob's is burned.
-        var aliceMine = await alice.Heroes.MineAsync();
-        Assert.Contains(aliceMine, h => h.Id == a[0].Id);
-        Assert.DoesNotContain(aliceMine, h => h.Id == settle.LoserHeroId);
+        // Classic keep (AbsorbChance=0 → the roll never fires): the WINNER keeps their EXACT hero and the
+        // loser's is burned. A level edge favours Alice, but the death-match fight is SEEDED — Bob wins the
+        // occasional upset — so assert on the actual winner rather than assuming Alice took it.
+        var winnerClient = settle.WinnerHeroId == a[0].Id ? alice : bob;
+        var winnerMine = await winnerClient.Heroes.MineAsync();
+        Assert.Contains(winnerMine, h => h.Id == settle.WinnerHeroId);
+        Assert.DoesNotContain(winnerMine, h => h.Id == settle.LoserHeroId);
         Assert.Equal("deathmatch", settle.Receipt!.Type);
     }
 
