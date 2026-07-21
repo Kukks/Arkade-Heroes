@@ -73,6 +73,11 @@ public class GameOptions
     /// An operator raises it to protect scheduled obligations (e.g. the season pot) from the daily emission drain.</summary>
     public long TreasuryReserveFloorSats { get; set; } = 0;
 
+    /// <summary>Path to the SQLite file holding state a restart must not lose (currently paid item purchases).
+    /// UNSET = no persistence at all: everything stays in memory and is lost on restart, exactly as before.
+    /// Set it in a deployment so a player who paid for an item can still claim it after a bounce.</summary>
+    public string? StateDbPath { get; set; }
+
     /// <summary>Opt-in obligation reservation: when true, the daily faucet also holds back the current season pot
     /// (base + accrued) so emission can't drain the sats the upcoming season settlement owes. Default off.</summary>
     public bool ReserveSeasonPot { get; set; } = false;

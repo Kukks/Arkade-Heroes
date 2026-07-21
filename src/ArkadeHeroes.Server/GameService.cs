@@ -20,7 +20,9 @@ public class GameRuleException(string message) : Exception(message);
 /// only its own outputs (mints, item deliveries, payouts); asset ownership is
 /// checked against the chain, never against server records alone.
 /// </summary>
-public class GameService(GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options)
+public class GameService(
+    GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options,
+    Persistence.IGameStatePersistence persistence)
 {
     private readonly GameOptions _options = options.Value;
 
@@ -1717,6 +1719,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             ItemId = item.Id,
         };
         store.ItemPurchases[invoice.InvoiceId] = purchase;
+        // Durable BEFORE the player is handed an address to pay: if they pay and the server bounces before
+        // they claim, the purchase must still be there. (No-op unless persistence is configured.)
+        await persistence.SaveItemPurchaseAsync(purchase, ct);
         return (purchase, invoice);
     }
 
@@ -1754,6 +1759,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             purchase.ItemAssetId = delivery.ItemAssetId;
             purchase.DeliveryTxId = delivery.ArkTxId;
             purchase.Status = "claimed";
+            await persistence.SaveItemPurchaseAsync(purchase, ct);   // delivered — record it so it can't be re-delivered
             store.RecordInflow(invoiceId, "item", item.PriceSats);
             var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
             return (delivery.ItemAssetId, delivery.ArkTxId, held);

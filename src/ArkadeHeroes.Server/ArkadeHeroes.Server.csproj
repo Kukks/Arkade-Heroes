@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Core\ArkadeHeroes.Core.csproj" />
     <ProjectReference Include="..\ArkadeHeroes.Shared\ArkadeHeroes.Shared.csproj" />
     <ProjectReference Include="..\ArkadeHeroes.Chain\ArkadeHeroes.Chain.csproj" />
