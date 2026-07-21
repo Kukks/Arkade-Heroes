@@ -69,8 +69,37 @@ Research clones (read-only reference, shallow) at `C:/Git/Arkade-Heroes-research
 | `ArkadeHeroes.Core` | Pure domain (no I/O): genome, breeding, combat, progression, fairness | `GeneMixer`, `BattleEngine`, `CommitReveal`, `FairnessAudit`, `ReceiptVerifier` |
 | `ArkadeHeroes.Shared` | DTOs for server⇄client | `Dtos.cs` (incl. `ChainInfoDto`, match DTOs) |
 | `ArkadeHeroes.Chain` | Chain abstraction | `IChainService` (the seam), `InMemoryChainService` (simulation with the SAME semantics — real BIP340 checks etc.), `NArk/NArkChainService` (real backend), `NArk/SelfCustodyWallet` (player wallet: isolated ServiceProvider, EF sqlite, mnemonic in wallet DB), `Covenants/*` |
-| `ArkadeHeroes.Server` | Minimal API game service | `Program.cs` (endpoints incl. InMemory-only `/api/dev/*`), `GameService`, `GameStore` (in-memory, ephemeral — all state resets on restart), `ReceiptSigner`, `GameOptions` |
+| `ArkadeHeroes.Server` | Minimal API game service | `Program.cs` (endpoints incl. InMemory-only `/api/dev/*`), `GameService`, `GameStore` (in-memory; the money-bearing slice is optionally durable — see Durability), `Persistence/*`, `ReceiptSigner`, `GameOptions` |
 | `ArkadeHeroes.Client` | Console REPL | `GameClient.cs` (embedded `SelfCustodyWallet` per player via `ARKADE_HEROES_HOME`) |
+
+### Durability (`src/ArkadeHeroes.Server/Persistence/`)
+
+`GameStore` is still dictionaries, but the state where losing a row costs a player **real sats** can be
+persisted to SQLite (EF Core, mirroring `Chain/NArk/GameArkDbContext`). It is **strictly opt-in**: with no
+`Game:StateDbPath` configured, `NullGameStatePersistence` is registered and the server behaves exactly as it
+always has — everything in memory, gone on restart. Set the path in a deployment.
+
+| Durable today | Volatile today |
+|---|---|
+| Item purchases (paid → claimed) | Heroes, offers, matches, receipts |
+| Tournaments (unresolved; resolved rows kept as an audit marker but never rehydrated) | Paid custom hero **names** + pending renames (rename fee is default-ON) |
+| Player identity + `StarterClaimed` / `LastClaimDay` (the once-only flags — losing them re-grants free starters and re-pays the daily faucet) | Fancy discoveries, Trials personal-bests |
+
+Two rules the money-handling rows follow, both learned the hard way:
+- **A transient state is never persisted.** An item mid-`delivering` durably reads `pending`, so a crash
+  during delivery reloads it as *claimable* rather than permanently stuck.
+- **Every persisted row needs a rule for how it LEAVES the durable set.** A tournament marked `resolved`
+  is never rehydrated (deleting it instead would erase the record if the process died before the payout),
+  and that marker is written *before* any sat moves — otherwise a restart could re-resolve a paid-out
+  bracket and pay the podium twice.
+
+**Known limit — heroes are not yet reconcilable.** A rehydrated tournament comes back with the right entrant
+and hero ids, but `store.Heroes` is empty, so it **cannot be auto-resolved**; the durable record is an audit
+and refund basis, not a resume. Heroes are on-chain assets whose mint metadata carries genome/generation/
+parents, so the intended fix is chain reconciliation at boot — which needs new `IChainService` surface
+(enumerate a player's hero assets; read a mint's metadata back). Today the interface only offers
+`VerifyHeroOwnershipAsync(playerId, assetId)`, which requires already knowing the asset id. That work needs
+the live regtest stack to verify.
 
 Covenant layer (`src/ArkadeHeroes.Chain/Covenants/`):
 - `ArkadeCovenants` — covenant bytecode builders (byte-for-byte coinflip ports): `PayTo`, `AtomicSweep`, `Sha256Gate`, `CheckSigFromStackGate`, `SettleAuthorized`, `RefundTo`, `SettleMessage`, `EncodeIndex`.
