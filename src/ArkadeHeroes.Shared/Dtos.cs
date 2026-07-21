@@ -294,6 +294,19 @@ public record RenameHeroRequest(string Name);
 /// <summary>The treasury fee to pay before confirming the rename (0 + null when renaming is free).</summary>
 public record RenameHeroResponse(long FeeSats, FeeInvoiceDto? Fee);
 
+// ── Tournaments (a buy-in bracket; buy-ins → treasury, prizes → podium minus the house rake) ──
+public record OpenTournamentRequest(string HeroId, long BuyInSats, int Size);
+public record JoinTournamentRequest(string HeroId);
+public record TournamentEntrantDto(string PlayerId, string HeroId);
+public record TournamentDto(string Id, string OpenerPlayerId, long BuyInSats, int Size, int Joined, string Status,
+    IReadOnlyList<TournamentEntrantDto> Entrants, string? ChampionHeroId);
+/// <summary>A tournament + the buy-in fee-invoice the entrant pays into the treasury (open or join).</summary>
+public record TournamentEntryResponse(TournamentDto Tournament, FeeInvoiceDto BuyIn);
+public record TournamentMatchDto(int Round, int Index, string AId, string BId, string WinnerId);
+/// <summary>A resolved tournament: the final bracket, the revealed seed/entropy (for replay), and the podium prizes.</summary>
+public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<TournamentMatchDto> Bracket,
+    string ServerSeedHex, string EntropyHex, IReadOnlyList<long> Prizes);
+
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
 /// from their own wallet, plus the ask and refund window. Once deposited the

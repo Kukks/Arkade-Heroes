@@ -57,4 +57,16 @@ public class TournamentTests
     [Fact]
     public void Resolve_RejectsTooFewEntrants() =>
         Assert.Throws<ArgumentException>(() => Tournament.Resolve(new[] { H("solo", 100) }, Seed(1)));
+
+    [Fact]
+    public void Podium_IsChampionThenRunnerUp()
+    {
+        var field = new[] { H("a", 200), H("b", 150), H("c", 180), H("d", 120) };
+        var r = Tournament.Resolve(field, Seed(3));
+        var podium = Tournament.Podium(r);
+        Assert.Equal(2, podium.Count);
+        Assert.Equal(r.ChampionId, podium[0]);             // champion first
+        Assert.NotEqual(podium[0], podium[1]);             // runner-up ≠ champion
+        Assert.All(podium, id => Assert.Contains(id, field.Select(h => h.Id)));
+    }
 }

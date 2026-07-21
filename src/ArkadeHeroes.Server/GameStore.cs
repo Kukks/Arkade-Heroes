@@ -240,6 +240,31 @@ public class RenameSession
     public string? FeeInvoiceId { get; init; }
 }
 
+/// <summary>One entrant in a tournament bracket: the player, their hero, and the buy-in invoice they must pay.</summary>
+public sealed class TournamentEntrant
+{
+    public required string PlayerId { get; init; }
+    public required string HeroId { get; init; }
+    public required string BuyInInvoiceId { get; init; }
+}
+
+/// <summary>A buy-in tournament bracket: entrants pay a buy-in into the treasury; once full it runs the pure
+/// single-elimination resolver and pays the podium out of the pot minus the house rake. In-memory like the rest.</summary>
+public sealed class TournamentSession
+{
+    public required string Id { get; init; }
+    public required string OpenerPlayerId { get; init; }
+    public required long BuyInSats { get; init; }
+    public required int Size { get; init; }
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    public List<TournamentEntrant> Entrants { get; } = new();
+    public string Status { get; set; } = "open";   // open → full → resolved
+    public ArkadeHeroes.Core.Combat.TournamentResult? Result { get; set; }
+    public string? Nonce { get; set; }
+    public string? EntropyHex { get; set; }
+}
+
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
 public class GameStore
 {
@@ -257,6 +282,9 @@ public class GameStore
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
     public ConcurrentDictionary<string, RenameSession> Renames { get; } = new();
+    public ConcurrentDictionary<string, TournamentSession> Tournaments { get; } = new();
+    /// <summary>Serializes tournament join + resolve so a bracket can't be double-filled or double-paid.</summary>
+    public SemaphoreSlim TournamentLock { get; } = new(1, 1);
 
     /// <summary>Outstanding single-use login nonces (hex) → issued time, for wallet-signature login.</summary>
     public ConcurrentDictionary<string, DateTimeOffset> LoginNonces { get; } = new();
