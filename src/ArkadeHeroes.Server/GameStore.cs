@@ -19,6 +19,10 @@ public class Player
     public int? LastClaimDay { get; set; }
 }
 
+/// <summary>The first hero ever to express a named Fancy set, and who owned it at that moment — the prize
+/// in the discovery race. Immutable once claimed.</summary>
+public sealed record FancyDiscovery(string Title, string HeroId, string HeroName, string OwnerId, long UnixSeconds);
+
 /// <summary>A pending PvE gauntlet run (F1): the seed is committed at open; the run resolves once the
 /// fee invoice is paid, awarding capped XP + a full-clear item, then rate-limits the hero.</summary>
 public class GauntletSession
@@ -290,6 +294,19 @@ public class GameStore
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
     public ConcurrentDictionary<string, Hero> Heroes { get; } = new();
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
+    // The Fancy discovery race: who FIRST bred a hero expressing each named Fancy set, plus how many have
+    // ever been found. Pure bookkeeping — it never gates or changes an outcome, it just records the race.
+    public ConcurrentDictionary<string, FancyDiscovery> FancyDiscoveries { get; } = new();
+    public ConcurrentDictionary<string, int> FancyFindCount { get; } = new();
+
+    /// <summary>Claim a Fancy set for its FIRST finder. TryAdd, so the first write wins and a later find can
+    /// never displace the discoverer — it only bumps the tally (so a hero can still be "the 7th Sovereign").</summary>
+    public void RecordFancyFind(string title, string heroId, string heroName, string ownerId, long unixSeconds)
+    {
+        FancyDiscoveries.TryAdd(title, new FancyDiscovery(title, heroId, heroName, ownerId, unixSeconds));
+        FancyFindCount.AddOrUpdate(title, 1, (_, n) => n + 1);
+    }
+
     public ConcurrentDictionary<string, GauntletSession> Gauntlets { get; } = new();
     public ConcurrentDictionary<string, TrialsSession> Trials { get; } = new();
     /// <summary>Each hero's best endless-Trials waves-cleared to date — the personal-best leaderboard basis.</summary>

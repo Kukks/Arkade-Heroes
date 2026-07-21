@@ -151,6 +151,34 @@ else
         }
     </div>
 
+    @if (_discoveries.Count > 0)
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <div class="page-head" style="margin:0 0 .3rem">
+                <h3 style="margin:0">Discovery race</h3>
+                <span class="hud">first to breed each Fancy set — claimed once, forever</span>
+            </div>
+            <p class="muted" style="margin:-.1rem 0 .8rem">an unclaimed set is still anyone's to find</p>
+            @foreach (var d in _discoveries)
+            {
+                <div class="match-row">
+                    <span>
+                        @if (d.HeroId is null)
+                        {
+                            <span class="muted">🔒 <b>@d.Title</b> — undiscovered</span>
+                        }
+                        else
+                        {
+                            <span>🏅 <b>@d.Title</b> — first found by <b>@d.HeroName</b></span>
+                        }
+                    </span>
+                    <span class="spacer"></span>
+                    <span class="chip">@d.FoundCount found</span>
+                </div>
+            }
+        </div>
+    }
+
     @if (_trialsBoard.Count > 0)
     {
         <div class="card" style="margin-bottom:1.6rem">
@@ -285,6 +313,7 @@ else
     private List<HeroDto> _founders = new();
     private List<TournamentDto> _tournaments = new();
     private List<TrialsBoardEntryDto> _trialsBoard = new();
+    private List<FancyDiscoveryDto> _discoveries = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
@@ -307,8 +336,10 @@ else
             var economy = Api.Economy.HealthAsync();           // treasury-health telemetry (public)
             var founders = Api.Leaderboard.FoundersAsync();    // generation-0 originals
             var trialsBoard = Api.Trials.BoardAsync();          // endless-Trials ladder (public, receipt-derived)
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard);
+            var discoveries = Api.Leaderboard.FancyDiscoveriesAsync();   // the Fancy discovery race
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard, discoveries);
             _trialsBoard = await trialsBoard;
+            _discoveries = await discoveries;
             _top = await top;
             _season = await season;
             _rarest = await rarest;

@@ -445,6 +445,10 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             MintArkTxId = mint.ArkTxId,
         };
         store.Heroes[hero.Id] = hero;
+        // Every hero in the game passes through here — starters, bred, fused, absorbed — so this is the one
+        // place the discovery race needs to watch.
+        if (FancySets.TitleFor(hero.Genome, _config) is { } fancy)
+            store.RecordFancyFind(fancy, hero.Id, hero.Name, player.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         return hero;
     }
 
