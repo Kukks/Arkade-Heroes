@@ -219,6 +219,30 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
     return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt));
 });
 
+// ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
+
+api.MapPost("/trials/open", (TrialsOpenRequest request, HttpContext http, GameService game) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var session = game.OpenTrials(player, request.HeroId);
+    return Results.Ok(new TrialsOpenResponse(session.Id, session.CommitmentHex));
+});
+
+api.MapPost("/trials/{id}/run", (string id, TrialsRunRequest request, HttpContext http, GameService game) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (run, snapshot, title, best, seed, entropy, receipt) = game.RunTrials(player, id, request.Nonce);
+    // Surface each wave's ghost snapshot + fight log so the browser can replay the wave in the arena. The
+    // ghost is a pure function of the run entropy (absolute ladder), so this reconstructs exactly what
+    // Trials.Resolve fought — no soft-foe substitution possible.
+    var entropyBytes = Convert.FromHexString(entropy);
+    var waves = run.Waves.Select(w => new TrialsWaveDto(
+        w.Wave, w.GhostLevel, w.Won,
+        ArkadeHeroes.Core.Progression.Trials.GhostFor(entropyBytes, w.Wave).ToDto(),
+        w.Result.ToDto())).ToList();
+    return Results.Ok(new TrialsRunResponse(run.WavesCleared, waves, title, best, snapshot, seed, entropy, receipt));
+});
+
 // ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────
 
 api.MapPost("/deathmatch/open", async (DeathMatchOpenRequest request, HttpContext http, GameService game, CancellationToken ct) =>

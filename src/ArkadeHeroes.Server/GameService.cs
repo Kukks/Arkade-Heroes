@@ -664,6 +664,56 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         return (run, xpAward, heroSnapshot, itemAwarded, itemAssetId, serverSeedHex, entropyHex, receipt);
     }
 
+    // ── Endless PvE Trials: open (commit, FREE) → run (endless ghost ladder, score-only) ──
+
+    public TrialsSession OpenTrials(Player player, string heroId)
+    {
+        GetOwnedHero(player, heroId);   // ownership check (throws if not the player's hero)
+        var seed = CommitReveal.NewSeed();
+        var id = NewId("trials");
+        var session = new TrialsSession
+        {
+            Id = id, PlayerId = player.Id, HeroId = heroId,
+            ServerSeed = seed, CommitmentHex = CommitReveal.Commit(seed),
+        };
+        store.Trials[id] = session;
+        return session;
+    }
+
+    public (TrialsRun Run, Shared.HeroDto HeroSnapshot, string? Title, int BestScore, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt) RunTrials(
+        Player player, string trialsId, string nonce)
+    {
+        if (!store.Trials.TryGetValue(trialsId, out var session) || session.PlayerId != player.Id)
+            throw new GameRuleException($"Unknown trials run '{trialsId}'.");
+        if (session.Completed) throw new GameRuleException("This trials run has already been run.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        var hero = GetOwnedHero(player, session.HeroId);
+        var heroSnapshot = hero.ToDto();   // pre-run, so the client replays the ghosts + fights
+        session.Completed = true;
+
+        var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.HeroId, nonce);
+        var run = Trials.Resolve(hero, entropy, _config);
+        var title = Trials.TitleFor(run.WavesCleared);
+
+        // Track the hero's personal best (the leaderboard basis) — only ever climbs.
+        var best = store.TrialsBestByHero.AddOrUpdate(session.HeroId, run.WavesCleared,
+            (_, prev) => Math.Max(prev, run.WavesCleared));
+
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+        // Trials receipt (NOT a "match" receipt → no ranked-ladder weight). No XP/level change; the SCORE
+        // rides in XpAwardB so the signed receipt itself attests the run's waves-cleared (tamper-evident).
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "trials", session.Id, session.HeroId, "", session.HeroId,
+                serverSeedHex, nonce, session.CommitmentHex,
+                0, run.WavesCleared, hero.Level, hero.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            session.HeroId);
+
+        return (run, heroSnapshot, title, best, serverSeedHex, entropyHex, receipt);
+    }
+
     // ── Merge / fusion: commit (escrow deposit) → reveal ───────────────
 
     public async Task<(MergeSession Session, string EscrowAddress)> CommitMergeAsync(

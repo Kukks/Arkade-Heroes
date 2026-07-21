@@ -27,6 +27,7 @@ public sealed class ArkadeHeroesClient
         Merge = new MergeApi(this);
         DeathMatch = new DeathMatchApi(this);
         Gauntlet = new GauntletApi(this);
+        Trials = new TrialsApi(this);
         Matches = new MatchesApi(this);
         Squad = new SquadApi(this);
         Offers = new OffersApi(this);
@@ -46,6 +47,7 @@ public sealed class ArkadeHeroesClient
     public MergeApi Merge { get; }
     public DeathMatchApi DeathMatch { get; }
     public GauntletApi Gauntlet { get; }
+    public TrialsApi Trials { get; }
     public MatchesApi Matches { get; }
     public SquadApi Squad { get; }
     public OffersApi Offers { get; }
