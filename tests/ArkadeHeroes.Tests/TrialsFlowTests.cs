@@ -90,6 +90,32 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task TrialsBoard_RanksByBestRun_FromReceipts_AndNeverRegresses()
+    {
+        // A GLOBAL scan over every hero's receipts, so use a FRESH store — the shared class fixture would
+        // let sibling tests' heroes pollute the ranking.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Board-Alice");
+        var hero = (await alice.ClaimStartersAsync())[0];
+
+        var o1 = await alice.Trials.OpenAsync(hero.Id);
+        var r1 = await alice.Trials.RunAsync(o1.TrialsId, "board-1");
+
+        var entry = (await alice.Trials.BoardAsync()).Single(e => e.HeroId == hero.Id);
+        Assert.Equal(1, entry.Rank);                                   // the only entrant
+        Assert.Equal(r1.WavesCleared, entry.BestScore);                // score derived from the signed receipt
+        Assert.Equal(Trials.TitleFor(r1.WavesCleared), entry.Title);
+        Assert.Equal(hero.Name, entry.Name);
+
+        // Ranked by BEST run: a later run can never cost the hero standing.
+        var o2 = await alice.Trials.OpenAsync(hero.Id);
+        var r2 = await alice.Trials.RunAsync(o2.TrialsId, "board-2");
+        var after = (await alice.Trials.BoardAsync()).Single(e => e.HeroId == hero.Id);
+        Assert.Equal(Math.Max(r1.WavesCleared, r2.WavesCleared), after.BestScore);
+        Assert.True(after.BestScore >= entry.BestScore, "the board takes the best run — it can only climb");
+    }
+
+    [Fact]
     public async Task Trials_RejectsUnownedHero()
     {
         var (alice, _) = await _factory.RegisterAsync("Trials-Own-A");

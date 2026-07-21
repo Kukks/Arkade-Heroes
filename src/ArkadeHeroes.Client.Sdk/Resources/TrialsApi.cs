@@ -11,4 +11,8 @@ public sealed class TrialsApi(ArkadeHeroesClient client)
 
     public Task<TrialsRunResponse> RunAsync(string trialsId, string nonce) =>
         client.PostAsync<TrialsRunResponse>($"/api/trials/{trialsId}/run", new TrialsRunRequest(nonce));
+
+    /// <summary>The public ladder — every hero's BEST run, recomputed from the signed trials receipts.</summary>
+    public Task<List<TrialsBoardEntryDto>> BoardAsync() =>
+        client.GetAsync<List<TrialsBoardEntryDto>>("/api/trials/board");
 }

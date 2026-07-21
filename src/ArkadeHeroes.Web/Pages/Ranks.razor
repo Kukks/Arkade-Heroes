@@ -151,6 +151,32 @@ else
         }
     </div>
 
+    @if (_trialsBoard.Count > 0)
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <div class="page-head" style="margin:0 0 .3rem">
+                <h3 style="margin:0">Trials ladder</h3>
+                <span class="hud">deepest endless run — no opponent needed</span>
+            </div>
+            <p class="muted" style="margin:-.1rem 0 .8rem">each hero's best run, recomputed from signed receipts</p>
+            <table class="board">
+                <thead><tr><th>#</th><th>Hero</th><th class="num">Waves</th><th class="num">Lvl</th><th>Title</th></tr></thead>
+                <tbody>
+                    @foreach (var e in _trialsBoard.Take(10))
+                    {
+                        <tr>
+                            <td class="rank">@e.Rank</td>
+                            <td>@e.Name</td>
+                            <td class="num">@e.BestScore</td>
+                            <td class="num">@e.Level</td>
+                            <td>@(e.Title ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
     @if (_recent.Any(m => m.WagerSats > 0))
     {
         <div class="page-head">
@@ -258,6 +284,7 @@ else
     private List<HeroDto> _fancies = new();
     private List<HeroDto> _founders = new();
     private List<TournamentDto> _tournaments = new();
+    private List<TrialsBoardEntryDto> _trialsBoard = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
@@ -279,7 +306,9 @@ else
             var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
             var economy = Api.Economy.HealthAsync();           // treasury-health telemetry (public)
             var founders = Api.Leaderboard.FoundersAsync();    // generation-0 originals
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders);
+            var trialsBoard = Api.Trials.BoardAsync();          // endless-Trials ladder (public, receipt-derived)
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard);
+            _trialsBoard = await trialsBoard;
             _top = await top;
             _season = await season;
             _rarest = await rarest;

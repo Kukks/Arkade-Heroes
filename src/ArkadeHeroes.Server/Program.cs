@@ -221,6 +221,15 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
 
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
 
+// The endless-Trials ladder — every hero's BEST run, recomputed from the signed "trials" receipts (each
+// attests its own waves-survived), so the board carries no trust of its own. Same doctrine as /leaderboard.
+api.MapGet("/trials/board", (GameStore store) =>
+{
+    var heroes = store.Heroes.Values.ToDictionary(h => h.Id, h => (h.Name, h.Level));
+    var receipts = store.ReceiptsByHero.Values.SelectMany(list => list).DistinctBy(r => r.Id);
+    return Results.Ok(TrialsBoardBuilder.Build(heroes, receipts));
+});
+
 api.MapPost("/trials/open", (TrialsOpenRequest request, HttpContext http, GameService game) =>
 {
     var player = game.Authenticate(BearerToken(http));
