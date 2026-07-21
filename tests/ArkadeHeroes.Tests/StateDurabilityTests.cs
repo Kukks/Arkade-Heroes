@@ -1,4 +1,5 @@
 using ArkadeHeroes.Server;
+using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,6 +50,42 @@ public class StateDurabilityTests
         {
             // SQLite pools connections, so the file stays handled until the pool is cleared. A leftover temp
             // file is harmless either way — never fail a durability test on its own housekeeping.
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task OpenTournamentWithPaidBuyIns_SurvivesARestart()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            string tournamentId;
+            using (var first = HostOn(dbPath))
+            {
+                var (alice, _) = await first.RegisterAsync("Durable-Opener");
+                var hero = (await alice.ClaimStartersAsync())[0];
+                // A 4-hero bracket stays OPEN with one entrant — a buy-in invoice exists and may be paid.
+                var open = await alice.Tournament.OpenAsync(new OpenTournamentRequest(hero.Id, 1000, 4));
+                tournamentId = open.Tournament.Id;
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var store = restarted.Services.GetRequiredService<GameStore>();
+
+            Assert.True(store.Tournaments.ContainsKey(tournamentId),
+                "an unresolved bracket holding paid buy-ins must survive a restart — the pot is real sats");
+            var recovered = store.Tournaments[tournamentId];
+            Assert.Single(recovered.Entrants);                 // the opener, with their buy-in invoice id
+            Assert.Equal(4, recovered.Size);
+            Assert.Equal(1000, recovered.BuyInSats);
+            Assert.NotEqual("resolved", recovered.Status);
+            Assert.False(string.IsNullOrEmpty(recovered.Entrants[0].BuyInInvoiceId));
+        }
+        finally
+        {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
