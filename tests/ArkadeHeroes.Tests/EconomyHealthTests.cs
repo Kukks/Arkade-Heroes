@@ -1,5 +1,6 @@
 using ArkadeHeroes.Chain;
 using ArkadeHeroes.Server;
+using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -64,5 +65,26 @@ public class EconomyHealthTests
 
         var health = await client.Economy.HealthAsync();
         Assert.Equal(open.FeeInvoice.AmountSats, health.InflowByTag.GetValueOrDefault("gauntlet"));
+    }
+
+    [Fact]
+    public async Task Health_TalliesDeathMatchFeeInflow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-DM-A");
+        var (bob, _) = await factory.RegisterAsync("Econ-DM-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
+        var bobHero = (await bob.ClaimStartersAsync())[0].Id;
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero, bobHero, Absorb: false));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+        await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("dm-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.GetValueOrDefault("deathmatch") > 0, "both death-match fees are tallied at settle");
     }
 }

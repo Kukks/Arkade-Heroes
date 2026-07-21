@@ -851,6 +851,9 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);
+        // Death-match fees (both confirmed paid above) — treasury captures, tallied once per invoice.
+        store.RecordInflow(session.ChallengerFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(challenger.Level, session.Absorb, _config));
+        store.RecordInflow(session.DefenderFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config));
         // Pre-fight snapshots — what the engine fights with — so the client can replay + verify the winner.
         var challengerSnapshot = challenger.ToDto();
         var defenderSnapshot = defender.ToDto();
