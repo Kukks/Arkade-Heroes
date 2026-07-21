@@ -1,6 +1,7 @@
 using ArkadeHeroes.Chain.NArk;
 using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
+using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
@@ -55,18 +56,8 @@ public static class OfferFulfillFlow
         // The buyer's funding coins cover the ask (the offer's own carrier dust
         // covers the item output). Select from the buyer's spendable wallet.
         var spending = services.GetRequiredService<ISpendingService>();
-        var available = (await spending.GetAvailableCoins(walletId, ct))
-            .Where(c => c.Assets is null or { Count: 0 })
-            .OrderByDescending(c => c.Amount)
-            .ToList();
-        var funding = new List<ArkCoin>();
-        long fundedSats = 0;
-        foreach (var coin in available)
-        {
-            funding.Add(coin);
-            fundedSats += coin.Amount.Satoshi;
-            if (fundedSats >= offer.AskSats) break;
-        }
+        var (funding, fundedSats) = SelectBuyerFunding(
+            await spending.GetAvailableCoins(walletId, ct), offer.AskSats);
         if (fundedSats < offer.AskSats)
             throw new InvalidOperationException(
                 $"Insufficient funds to fulfil offer {offer.OfferId}: need {offer.AskSats} sats, have {fundedSats}.");
@@ -99,5 +90,33 @@ public static class OfferFulfillFlow
             extraPackets: [packet],
             fundingCoins: funding,
             ct: ct);
+    }
+
+    /// <summary>
+    /// Selects the buyer's pure-BTC funding coins (no asset carriers), largest first
+    /// until the ask is covered. Returns the selection and its total sats; the caller
+    /// rejects a shortfall. Recoverable coins (swept or past expiry) are EXCLUDED —
+    /// arkd rejects a spend that includes one with <c>VTXO_RECOVERABLE</c> — using the
+    /// SDK's fallback chain time (now, height 0), which catches both swept and
+    /// time-expired coins; the same guard as <see cref="SelfCustodyWallet"/>'s selection.
+    /// </summary>
+    public static (List<ArkCoin> Funding, long FundedSats) SelectBuyerFunding(
+        IEnumerable<ArkCoin> coins, long askSats)
+    {
+        var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
+        var available = coins
+            .Where(c => c.CanSpendOffchain(now))
+            .Where(c => c.Assets is null or { Count: 0 })
+            .OrderByDescending(c => c.Amount)
+            .ToList();
+        var funding = new List<ArkCoin>();
+        long fundedSats = 0;
+        foreach (var coin in available)
+        {
+            funding.Add(coin);
+            fundedSats += coin.Amount.Satoshi;
+            if (fundedSats >= askSats) break;
+        }
+        return (funding, fundedSats);
     }
 }
