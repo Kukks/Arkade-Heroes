@@ -610,6 +610,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
         if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
             throw new GameRuleException("The gauntlet fee invoice has not been paid yet — pay it from your wallet, then run.");
+        store.RecordInflow(session.FeeInvoiceId, "gauntlet", session.FeeSats);
 
         var hero = GetOwnedHero(player, session.HeroId);
         var heroSnapshot = hero.ToDto();          // pre-run, so the client can replay the ghosts + fights

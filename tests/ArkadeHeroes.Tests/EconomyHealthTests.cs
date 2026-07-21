@@ -50,4 +50,19 @@ public class EconomyHealthTests
         var h2 = await player.Economy.HealthAsync();
         Assert.Equal(h1.InflowByTag["item"], h2.InflowByTag["item"]);
     }
+
+    [Fact]
+    public async Task Health_TalliesGauntletFeeInflow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (client, _) = await factory.RegisterAsync("Econ-Gauntlet");
+        var hero = (await client.ClaimStartersAsync())[0];
+
+        var open = await client.Gauntlet.OpenAsync(hero.Id);
+        await client.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice.InvoiceId });
+        await client.Gauntlet.RunAsync(open.GauntletId, "econ-nonce");
+
+        var health = await client.Economy.HealthAsync();
+        Assert.Equal(open.FeeInvoice.AmountSats, health.InflowByTag.GetValueOrDefault("gauntlet"));
+    }
 }
