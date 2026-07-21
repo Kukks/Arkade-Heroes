@@ -86,4 +86,14 @@ public class TournamentServerTests
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(
             () => players[0].Client.Tournament.ResolveAsync(tid, new FightRequest("n")));
     }
+
+    [Fact]
+    public async Task Config_PublishesRakePct_ForDisplay()
+    {
+        // The tournaments page previews the house rake from GET /api/chain/info.
+        using var factory = new WebApplicationFactory<Program>();
+        var client = new ArkadeHeroesClient(factory.CreateClient());
+        var info = await client.Chain.InfoAsync();
+        Assert.Equal(10, info.Config?.TournamentRakePct);   // GameOptions.TournamentRakePct default
+    }
 }

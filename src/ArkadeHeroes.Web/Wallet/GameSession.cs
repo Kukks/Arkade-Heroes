@@ -280,6 +280,41 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return await api.Heroes.ConfirmRenameAsync(heroId);
     }
 
+    // ── Tournaments: open/join pay a buy-in into the treasury; resolve runs the bracket ──
+
+    /// <summary>Opens a buy-in tournament (joining as entrant #1) and pays the opener's buy-in from the wallet.</summary>
+    public async Task<TournamentDto> OpenTournamentAsync(string heroId, long buyInSats, int size, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Opening the tournament…");
+        var resp = await api.Tournament.OpenAsync(new OpenTournamentRequest(heroId, buyInSats, size));
+        await PayTournamentBuyInAsync(resp.BuyIn, onProgress);
+        return resp.Tournament;
+    }
+
+    /// <summary>Joins a hero to an open tournament and pays the entrant's buy-in from the wallet.</summary>
+    public async Task<TournamentDto> JoinTournamentAsync(string tournamentId, string heroId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Joining the tournament…");
+        var resp = await api.Tournament.JoinAsync(tournamentId, new JoinTournamentRequest(heroId));
+        await PayTournamentBuyInAsync(resp.BuyIn, onProgress);
+        return resp.Tournament;
+    }
+
+    /// <summary>Resolves a full bracket (revealing a fresh nonce); the server pays the podium from the pot.</summary>
+    public Task<TournamentResolveResponse> ResolveTournamentAsync(string tournamentId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Running the bracket…");
+        return api.Tournament.ResolveAsync(tournamentId, new FightRequest(Guid.NewGuid().ToString("N")));
+    }
+
+    private async Task PayTournamentBuyInAsync(FeeInvoiceDto buyIn, Action<string>? onProgress)
+    {
+        if (buyIn is not { AmountSats: > 0 }) return;
+        var w = await wallet.GetActiveWalletAsync() ?? throw new GameWalletException("Create a wallet first.");
+        onProgress?.Invoke($"Paying the {buyIn.AmountSats}-sat buy-in…");
+        await DepositAndSettleAsync(w.Id, buyIn.PayToAddress, null, buyIn.AmountSats);
+    }
+
     /// <summary>
     /// Buy a resting hero offer, entirely from the browser wallet: rebuild the offer covenant
     /// locally and fulfil it — the buyer pays the ask straight to the seller and the covenant
