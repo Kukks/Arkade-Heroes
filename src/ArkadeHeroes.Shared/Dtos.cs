@@ -157,6 +157,12 @@ public record GauntletRunResponse(
     string? ItemAwarded, string? ItemAssetId, HeroDto HeroSnapshot,
     string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
 
+/// <summary>One line of the Fancy discovery race. Every catalog title is listed, claimed or not, so players
+/// can see what's still up for grabs — <see cref="HeroId"/> is null while a set is undiscovered.
+/// <see cref="FoundCount"/> is how many heroes have ever expressed it.</summary>
+public record FancyDiscoveryDto(
+    string Title, string? HeroId, string? HeroName, string? OwnerId, long? UnixSeconds, int FoundCount);
+
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
 
 public record TrialsOpenRequest(string HeroId);

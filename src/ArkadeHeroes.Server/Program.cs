@@ -221,6 +221,20 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
 
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
 
+// The Fancy discovery race — who FIRST bred a hero expressing each named set. Every catalog title is
+// returned, claimed or not, so the board doubles as "what's still undiscovered".
+api.MapGet("/fancies/discoveries", (GameStore store) =>
+{
+    var board = ArkadeHeroes.Core.Progression.FancySets.AllTitles.Select(title =>
+    {
+        store.FancyDiscoveries.TryGetValue(title, out var d);
+        return new FancyDiscoveryDto(
+            title, d?.HeroId, d?.HeroName, d?.OwnerId, d?.UnixSeconds,
+            store.FancyFindCount.GetValueOrDefault(title));
+    }).ToList();
+    return Results.Ok(board);
+});
+
 // The endless-Trials ladder — every hero's BEST run, recomputed from the signed "trials" receipts (each
 // attests its own waves-survived), so the board carries no trust of its own. Same doctrine as /leaderboard.
 api.MapGet("/trials/board", (GameStore store) =>
