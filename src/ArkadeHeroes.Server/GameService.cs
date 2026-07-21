@@ -1302,6 +1302,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);
+        // Match fees (staked fights; both confirmed above) — treasury captures, tallied once per invoice.
+        if (session.ChallengerFeeInvoiceId is not null)
+            store.RecordInflow(session.ChallengerFeeInvoiceId, "match", Leveling.MatchFee(challenger.Level, _config));
+        if (session.DefenderFeeInvoiceId is not null)
+            store.RecordInflow(session.DefenderFeeInvoiceId, "match", Leveling.MatchFee(defender.Level, _config));
 
         // Snapshot pre-fight state (level, equipment) — what the engine actually
         // fights with — so clients can replay and verify.
@@ -1520,6 +1525,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
 
         var challengers = session.ChallengerLineup.Select(GetHero).ToList();
         var defenders = session.DefenderLineup.Select(GetHero).ToList();
+        // Squad match fees (both confirmed above) — treasury captures, tallied once per invoice.
+        if (session.ChallengerFeeInvoiceId is not null)
+            store.RecordInflow(session.ChallengerFeeInvoiceId, "squad-fee", Leveling.MatchFee(challengers.Max(h => h.Level), _config));
+        if (session.DefenderFeeInvoiceId is not null)
+            store.RecordInflow(session.DefenderFeeInvoiceId, "squad-fee", Leveling.MatchFee(defenders.Max(h => h.Level), _config));
         var challengerSnapshots = challengers.Select(h => h.ToDto()).ToList();
         var defenderSnapshots = defenders.Select(h => h.ToDto()).ToList();
 
