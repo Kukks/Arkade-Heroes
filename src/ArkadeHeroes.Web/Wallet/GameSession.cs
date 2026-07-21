@@ -450,6 +450,27 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return new GauntletOutcome(run, ok, detail);
     }
 
+    /// <summary>
+    /// Run the endless solo Trials: open (commit the seed) → run (reveal a nonce). FREE — no entry fee, so
+    /// unlike the gauntlet there is no wallet spend and no settle-race to retry around; it's two plain API
+    /// calls. Then CLIENT-VERIFIES the outcome (re-derives the whole ghost ladder from the revealed seed and
+    /// re-checks the score + title against the signed receipt) so a server can't pick soft foes or inflate a
+    /// leaderboard score. Returns the verified outcome.
+    /// </summary>
+    public async Task<TrialsOutcome> RunTrialsAsync(string heroId, Action<string>? onProgress = null)
+    {
+        onProgress?.Invoke("Sealing the run…");
+        var open = await api.Trials.OpenAsync(heroId);
+
+        onProgress?.Invoke("Descending the ladder…");
+        var nonce = RandomNonce();
+        var run = await api.Trials.RunAsync(open.TrialsId, nonce);
+
+        // Client-side fairness recompute — the same gate every other resolved outcome gets.
+        var (ok, detail) = FairnessAudit.VerifyTrials(open.TrialsId, nonce, run.Receipt.CommitmentHex, run);
+        return new TrialsOutcome(run, ok, detail);
+    }
+
     // ── Daily engagement loop ──
     public Task<DailyStatusDto> DailyStatusAsync() => api.Daily.StatusAsync();
 
@@ -768,6 +789,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
 /// <summary>A completed gauntlet run bundled with its client-side fairness verdict, ready to render.</summary>
 public record GauntletOutcome(GauntletRunResponse Run, bool FairnessOk, string FairnessDetail);
+
+/// <summary>A completed endless-Trials run bundled with its client-side fairness verdict, ready to render.</summary>
+public record TrialsOutcome(TrialsRunResponse Run, bool FairnessOk, string FairnessDetail);
 
 /// <summary>A resolved wagered duel bundled with its client-side fairness verdict, ready to render.</summary>
 public record DuelOutcome(FightResponse Fight, bool FairnessOk, string FairnessDetail);
