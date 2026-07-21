@@ -305,5 +305,15 @@ public class GameStore
     public ConcurrentDictionary<string, long> TreasuryOutflowByTag { get; } = new();
     public void RecordOutflow(string tag, long sats) => TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
 
+    // Treasury INFLOW (fee captures) tallied by category. Deduped by invoice id, so a record call inside a
+    // reconcile loop (e.g. the offer listing-fee latch) can never double-count. Pure observability.
+    public ConcurrentDictionary<string, long> TreasuryInflowByTag { get; } = new();
+    private readonly ConcurrentDictionary<string, byte> _talliedInflowInvoices = new();
+    public void RecordInflow(string invoiceId, string tag, long sats)
+    {
+        if (_talliedInflowInvoices.TryAdd(invoiceId, 0))
+            TreasuryInflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+    }
+
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
 }

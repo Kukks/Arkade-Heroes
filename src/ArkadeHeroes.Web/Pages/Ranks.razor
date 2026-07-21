@@ -31,15 +31,27 @@ else
                 <span class="chip mono">@_economy.TreasuryBalanceSats.ToString("N0") sat</span>
             </div>
             <p class="muted" style="margin:-.1rem 0 .7rem">spendable balance · @_economy.SeasonAccrualSats.ToString("N0") sat accrued to season pots</p>
+            @if (_economy.TotalInflowSats > 0)
+            {
+                <p class="muted" style="margin:0 0 .3rem">fees captured — @_economy.TotalInflowSats.ToString("N0") sat</p>
+                @foreach (var kv in _economy.InflowByTag.OrderByDescending(k => k.Value))
+                {
+                    <div class="match-row">
+                        <span>@FlowLabel(kv.Key)</span>
+                        <span class="spacer"></span>
+                        <span class="chip">+@kv.Value.ToString("N0") sat</span>
+                    </div>
+                }
+            }
             @if (_economy.TotalOutflowSats > 0)
             {
                 <p class="muted" style="margin:0 0 .3rem">paid out to date — @_economy.TotalOutflowSats.ToString("N0") sat total</p>
                 @foreach (var kv in _economy.OutflowByTag.OrderByDescending(k => k.Value))
                 {
                     <div class="match-row">
-                        <span>@OutflowLabel(kv.Key)</span>
+                        <span>@FlowLabel(kv.Key)</span>
                         <span class="spacer"></span>
-                        <span class="chip">@kv.Value.ToString("N0") sat</span>
+                        <span class="chip">−@kv.Value.ToString("N0") sat</span>
                     </div>
                 }
             }
@@ -260,14 +272,17 @@ else
     private string Name(string? heroId) =>
         heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "a hero";
 
-    // Friendly label for a treasury outflow category tag (matches GameStore.RecordOutflow tags).
-    private static string OutflowLabel(string tag) => tag switch
+    // Friendly label for a treasury flow category tag (matches the GameStore inflow/outflow tags).
+    private static string FlowLabel(string tag) => tag switch
     {
         "daily" => "Daily rewards",
         "season" => "Season prizes",
         "tournament" => "Tournament prizes",
         "wager" => "Wager payouts",
         "squad" => "Squad payouts",
+        "item" => "Item sales",
+        "rename" => "Hero renames",
+        "listing" => "Listing fees",
         _ => tag,
     };
 }

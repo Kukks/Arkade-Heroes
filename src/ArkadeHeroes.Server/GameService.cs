@@ -211,6 +211,8 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             throw new GameRuleException("No pending rename — request one first.");
         if (pending.FeeInvoiceId is not null && !await chain.IsInvoicePaidAsync(pending.FeeInvoiceId, ct))
             throw new GameRuleException("The rename fee invoice has not been paid yet — pay it from your wallet, then confirm.");
+        if (pending.FeeInvoiceId is not null)
+            store.RecordInflow(pending.FeeInvoiceId, "rename", _options.HeroRenameFeeSats);
         // Re-check uniqueness at apply time — another hero may have claimed the name since the request.
         if (NameTaken(pending.NewName, heroId))
             throw new GameRuleException($"The name '{pending.NewName}' was claimed before you confirmed — pick another.");
@@ -252,10 +254,10 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
     public async Task<Shared.EconomyHealthDto> EconomyHealthAsync(CancellationToken ct = default)
     {
         var balance = await chain.TreasuryBalanceAsync(ct);
+        var inflow = store.TreasuryInflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
         var outflow = store.TreasuryOutflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
-        var totalOut = outflow.Values.Sum();
         var seasonAccrual = store.SeasonFeeAccrual.Values.Sum();
-        return new Shared.EconomyHealthDto(balance, totalOut, outflow, seasonAccrual);
+        return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow, seasonAccrual);
     }
 
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
@@ -1661,6 +1663,7 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
             purchase.ItemAssetId = delivery.ItemAssetId;
             purchase.DeliveryTxId = delivery.ArkTxId;
             purchase.Status = "claimed";
+            store.RecordInflow(invoiceId, "item", item.PriceSats);
             var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
             return (delivery.ItemAssetId, delivery.ArkTxId, held);
         }
@@ -1809,7 +1812,11 @@ public class GameService(GameStore store, IChainService chain, ReceiptSigner rec
         if (offer.Status == "closed") return;
         // A listing goes live only once its fee clears; latch the check so a paid fee is queried once.
         if (!offer.ListingFeePaid && offer.ListingFeeInvoiceId is not null)
+        {
             offer.ListingFeePaid = await chain.IsInvoicePaidAsync(offer.ListingFeeInvoiceId, ct);
+            if (offer.ListingFeePaid)
+                store.RecordInflow(offer.ListingFeeInvoiceId, "listing", offer.ListingFeeSats);
+        }
         if (offer.ListingFeePaid && await chain.IsOfferFundedAsync(offer.Id, ct))
             offer.Status = "active";
         else if (offer.Status == "active")
