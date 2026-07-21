@@ -68,8 +68,10 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
         };
 
         var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHeroId, bobHeroId));
-        Assert.Equal("favored", open.Favorability.Label);          // Alice is 19 levels up
-        Assert.Equal(levelBefore[bobHeroId] - 20, open.Favorability.LevelGap); // signed: theirs − mine
+        // Favorability.Label reads realized POWER (F18), not level — a fresh starter's random genome can
+        // out-stat a level lead and tip the ratio under PowerFavor's 1.15× "favored" cutoff, so the label
+        // isn't deterministic. Assert the LevelGap instead — the honest, level-based signal (theirs − mine).
+        Assert.Equal(levelBefore[bobHeroId] - 20, open.Favorability.LevelGap);
 
         // Capture pre-settle snapshots — settle deletes the loser's record.
         var aliceBefore = await alice.Heroes.GetAsync(aliceHeroId);
