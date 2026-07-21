@@ -54,7 +54,9 @@ public sealed record GameConfig(
     // ── Tournaments (house rake on the buy-in pot → treasury) ──
     int TournamentRakePct = 10,       // % of the pot the house keeps; the rest splits to the podium
     // ── Faucet governor reserve floor (a permanent treasury reserve the daily faucet must never drain below) ──
-    long TreasuryReserveFloorSats = 0) // 0 = no floor (daily clamps to the full balance, as before)
+    long TreasuryReserveFloorSats = 0, // 0 = no floor (daily clamps to the full balance, as before)
+    // ── Obligation reservation: also hold the current season pot back from the daily faucet (opt-in) ──
+    bool ReserveSeasonPot = false)     // false = only the fixed floor is reserved
 {
     /// <summary>Today's exact constants — shared by client and server at compile time.</summary>
     public static GameConfig Default { get; } = new(
