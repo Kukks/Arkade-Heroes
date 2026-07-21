@@ -11,6 +11,9 @@ namespace ArkadeHeroes.Core.Progression;
 /// </summary>
 public static class FancySets
 {
+    /// <summary>Every Fancy set title, in prestige order — the full collection catalog (fixed, not data-driven).</summary>
+    public static readonly IReadOnlyList<string> AllTitles = new[] { "Sovereign", "Emberlord", "Duelist", "Oracle", "Prismatic" };
+
     /// <summary>The hero's Fancy title, or null if its genome hits no set. The highest-prestige match wins.</summary>
     public static string? TitleFor(Genome genome, GameConfig? config = null)
     {

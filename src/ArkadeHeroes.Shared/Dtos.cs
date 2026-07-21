@@ -309,7 +309,7 @@ public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<
 
 /// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
-    IReadOnlyList<string> Badges);
+    IReadOnlyList<string> Badges, IReadOnlyList<string> FancySetsOwned);
 
 /// <summary>Treasury-health telemetry (economy control plane): the finite, fee-funded pot's current balance, what it
 /// has paid out by category ("daily"/"season"/"tournament"/"wager"/"squad"), and fees accrued to season pots. Outflow
