@@ -11,4 +11,6 @@ public sealed class LeaderboardApi(ArkadeHeroesClient client)
     public Task<List<HeroDto>> RarestAsync() => client.GetAsync<List<HeroDto>>("/api/rarest");
     /// <summary>Heroes whose genome hits a named Fancy set (a concrete breeding target beyond rarity score).</summary>
     public Task<List<HeroDto>> FanciesAsync() => client.GetAsync<List<HeroDto>>("/api/fancies");
+    /// <summary>Generation-0 heroes — the original mints, the scarcest lineage (gen-0 supply never grows).</summary>
+    public Task<List<HeroDto>> FoundersAsync() => client.GetAsync<List<HeroDto>>("/api/founders");
 }

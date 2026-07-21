@@ -210,6 +210,24 @@ else
             }
         </div>
     }
+
+    <div class="page-head">
+        <h3 style="margin:0">Founder heroes</h3>
+        <span class="hud">generation-0 originals — the scarcest lineage</span>
+    </div>
+    @if (_founders.Count == 0)
+    {
+        <div class="card muted">No founders yet — the first minted heroes appear here.</div>
+    }
+    else
+    {
+        <div class="grid cols">
+            @foreach (var h in _founders)
+            {
+                <HeroCard Hero="h" />
+            }
+        </div>
+    }
 }
 
 @code {
@@ -218,6 +236,7 @@ else
     private List<LeaderboardEntryDto> _top = new();
     private List<HeroDto> _rarest = new();
     private List<HeroDto> _fancies = new();
+    private List<HeroDto> _founders = new();
     private List<TournamentDto> _tournaments = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
@@ -239,7 +258,8 @@ else
             var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
             var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
             var economy = Api.Economy.HealthAsync();           // treasury-health telemetry (public)
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy);
+            var founders = Api.Leaderboard.FoundersAsync();    // generation-0 originals
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders);
             _top = await top;
             _season = await season;
             _rarest = await rarest;
@@ -247,6 +267,7 @@ else
             _tournaments = await tournaments;
             _recent = (await recent).Where(m => m.Result is not null).ToList();
             _economy = await economy;
+            _founders = await founders;
             foreach (var h in await all) _names[h.Id] = h.Name;
         }
         catch

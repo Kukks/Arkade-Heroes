@@ -433,6 +433,16 @@ api.MapGet("/fancies", (GameStore store) =>
         .Select(h => h.ToDto())
         .ToList()));
 
+// The Founders board: generation-0 heroes — the original mints, the scarcest lineage (gen-0 supply never grows).
+api.MapGet("/founders", (GameStore store) =>
+    Results.Ok(store.Heroes.Values
+        .Where(h => h.Generation == 0)
+        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
+        .ThenByDescending(h => h.Level)
+        .Take(30)
+        .Select(h => h.ToDto())
+        .ToList()));
+
 // Public escrow parameters of a covenant match: everything a player needs to
 // rebuild the per-party contracts locally (WagerEscrowContracts.Build) and
 // reclaim a timelocked refund WITHOUT trusting this server. 404 for
