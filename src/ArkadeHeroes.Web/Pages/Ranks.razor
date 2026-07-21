@@ -65,6 +65,22 @@ else
         </div>
     }
 
+    @if (TournChamps.Any())
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <h3 style="margin:0 0 .5rem">Tournament champions</h3>
+            <p class="muted" style="margin:-.2rem 0 .7rem">winners of resolved brackets</p>
+            @foreach (var t in TournChamps.Take(8))
+            {
+                <div class="match-row">
+                    <span>🏆 <b>@Champ(t.ChampionHeroId)</b> · @t.Size-hero bracket</span>
+                    <span class="spacer"></span>
+                    <span class="chip">@t.ChampionPrizeSats.ToString("N0") sat</span>
+                </div>
+            }
+        </div>
+    }
+
     <div class="card" style="margin-bottom:1.6rem">
         <h3>Top champions</h3>
         @if (_top.Count == 0)
@@ -160,10 +176,14 @@ else
     private List<LeaderboardEntryDto> _top = new();
     private List<HeroDto> _rarest = new();
     private List<HeroDto> _fancies = new();
+    private List<TournamentDto> _tournaments = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
     private bool _error;
+
+    private IEnumerable<TournamentDto> TournChamps => _tournaments.Where(t => t.Status == "resolved" && t.ChampionHeroId is not null);
+    private string Champ(string? id) => id is not null && _names.TryGetValue(id, out var n) ? n : "a champion";
 
     protected override async Task OnInitializedAsync()
     {
@@ -173,13 +193,15 @@ else
             var season = Api.Leaderboard.SeasonAsync();
             var rarest = Api.Leaderboard.RarestAsync();
             var fancies = Api.Leaderboard.FanciesAsync();
+            var tournaments = Api.Tournament.ListAsync();
             var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
             var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
-            await Task.WhenAll(top, season, rarest, fancies, recent, all);
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all);
             _top = await top;
             _season = await season;
             _rarest = await rarest;
             _fancies = await fancies;
+            _tournaments = await tournaments;
             _recent = (await recent).Where(m => m.Result is not null).ToList();
             foreach (var h in await all) _names[h.Id] = h.Name;
         }

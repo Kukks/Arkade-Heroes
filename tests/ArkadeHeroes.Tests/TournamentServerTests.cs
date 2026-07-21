@@ -50,6 +50,7 @@ public class TournamentServerTests
         Assert.NotNull(resolved.Tournament.ChampionHeroId);
         Assert.Equal(3, resolved.Bracket.Count);                             // 2 semis + 1 final
         Assert.Equal(new long[] { 2520, 1080 }, resolved.Prizes.ToArray());  // 3600 pool → 70/30
+        Assert.Equal(2520, resolved.Tournament.ChampionPrizeSats);           // champion's share, surfaced for the Hall of Champions
 
         // Buy-ins (4000) in, prizes (3600) out → the treasury nets exactly the 10% rake (400).
         Assert.Equal(treasuryStart + BuyIn * 4 * 10 / 100, await chain.TreasuryBalanceAsync());

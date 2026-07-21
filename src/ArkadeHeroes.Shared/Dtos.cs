@@ -299,7 +299,7 @@ public record OpenTournamentRequest(string HeroId, long BuyInSats, int Size);
 public record JoinTournamentRequest(string HeroId);
 public record TournamentEntrantDto(string PlayerId, string HeroId);
 public record TournamentDto(string Id, string OpenerPlayerId, long BuyInSats, int Size, int Joined, string Status,
-    IReadOnlyList<TournamentEntrantDto> Entrants, string? ChampionHeroId);
+    IReadOnlyList<TournamentEntrantDto> Entrants, string? ChampionHeroId, long ChampionPrizeSats = 0);
 /// <summary>A tournament + the buy-in fee-invoice the entrant pays into the treasury (open or join).</summary>
 public record TournamentEntryResponse(TournamentDto Tournament, FeeInvoiceDto BuyIn);
 public record TournamentMatchDto(int Round, int Index, string AId, string BId, string WinnerId);
