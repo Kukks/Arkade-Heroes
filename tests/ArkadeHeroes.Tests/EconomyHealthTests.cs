@@ -1,4 +1,5 @@
 using ArkadeHeroes.Chain;
+using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -86,5 +87,54 @@ public class EconomyHealthTests
 
         var health = await alice.Economy.HealthAsync();
         Assert.True(health.InflowByTag.GetValueOrDefault("deathmatch") > 0, "both death-match fees are tallied at settle");
+    }
+
+    [Fact]
+    public async Task Health_TalliesMatchFeeInflow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-M-A");
+        var (bob, _) = await factory.RegisterAsync("Econ-M-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
+        var bobHero = (await bob.ClaimStartersAsync())[0].Id;
+
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero, bobHero, 1000, "invoice"));
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        await alice.Matches.FightAsync(open.MatchId, new FightRequest("duel-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.GetValueOrDefault("match") > 0, "both match fees are tallied at the fight");
+    }
+
+    [Fact]
+    public async Task Health_TalliesSquadFeeInflow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Econ-Sq-A");
+        var (bob, _) = await factory.RegisterAsync("Econ-Sq-B");
+        var mine = await SquadLineup(alice);
+        var theirs = await SquadLineup(bob);
+
+        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
+        var accept = await bob.Squad.AcceptAsync(open.MatchId);
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        await alice.Squad.ResolveAsync(open.MatchId, new FightRequest("squad-nonce"));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.GetValueOrDefault("squad-fee") > 0, "both squad match fees are tallied at settle");
+    }
+
+    static async Task<List<string>> SquadLineup(ArkadeHeroesClient c)
+    {
+        var ids = (await c.ClaimStartersAsync()).Select(h => h.Id).ToList();
+        ids.Add((await c.Dev.MintHeroAsync()).Id);
+        return ids.Take(3).ToList();
     }
 }
