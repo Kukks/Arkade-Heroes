@@ -299,5 +299,11 @@ public class GameStore
     public int LastSettledSeason { get; set; }                                   // 0 = none settled yet
     public Shared.SeasonSettlementDto? LastSettlement { get; set; }              // snapshot of the most recent settled season
     public ConcurrentDictionary<int, long> SeasonFeeAccrual { get; } = new();    // seasonNumber → accrued sats
+
+    // Economy telemetry: treasury OUTFLOW tallied by category ("daily"/"season"/"tournament"/"wager"/"squad").
+    // Pure observability — recorded once per SUCCESSFUL payout; never gates or changes any behavior.
+    public ConcurrentDictionary<string, long> TreasuryOutflowByTag { get; } = new();
+    public void RecordOutflow(string tag, long sats) => TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
 }
