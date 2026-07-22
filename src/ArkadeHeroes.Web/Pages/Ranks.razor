@@ -205,21 +205,19 @@ else
         </div>
     }
 
-    @if (_recent.Any(m => m.WagerSats > 0))
+    @if (_highlights.Count > 0)
     {
         <div class="page-head">
-            <h3 style="margin:0">Biggest bouts</h3>
-            <span class="hud">the highest-stakes fights — spectate + verify</span>
+            <h3 style="margin:0">Highlights</h3>
+            <span class="hud">the fights worth watching — spectate + verify</span>
         </div>
         <div class="card" style="margin-bottom:1.6rem">
-            @foreach (var m in _recent.Where(x => x.WagerSats > 0).OrderByDescending(x => x.WagerSats).Take(5))
+            @foreach (var h in _highlights)
             {
-                var winner = m.Result!.WinnerId;
-                var loser = winner == m.ChallengerHeroId ? m.DefenderHeroId : m.ChallengerHeroId;
                 <div class="match-row">
-                    <span>💰 <b>@m.WagerSats.ToString("N0")</b> sat · <b>@Name(winner)</b> beat <b>@Name(loser)</b></span>
+                    <span>⚔ <b>@h.WinnerName</b> beat <b>@h.LoserName</b> — <span class="muted">@h.Reason</span></span>
                     <span class="spacer"></span>
-                    <a class="btn ghost sm" href="watch/@m.MatchId">Watch ↗</a>
+                    <a class="btn ghost sm" href="watch/@h.MatchId">Watch ↗</a>
                 </div>
             }
         </div>
@@ -314,6 +312,7 @@ else
     private List<TournamentDto> _tournaments = new();
     private List<TrialsBoardEntryDto> _trialsBoard = new();
     private List<FancyDiscoveryDto> _discoveries = new();
+    private List<HighlightDto> _highlights = new();
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
@@ -337,9 +336,11 @@ else
             var founders = Api.Leaderboard.FoundersAsync();    // generation-0 originals
             var trialsBoard = Api.Trials.BoardAsync();          // endless-Trials ladder (public, receipt-derived)
             var discoveries = Api.Leaderboard.FancyDiscoveriesAsync();   // the Fancy discovery race
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard, discoveries);
+            var highlights = Api.Leaderboard.HighlightsAsync();          // the spectator feed
+            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard, discoveries, highlights);
             _trialsBoard = await trialsBoard;
             _discoveries = await discoveries;
+            _highlights = await highlights;
             _top = await top;
             _season = await season;
             _rarest = await rarest;
