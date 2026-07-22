@@ -343,6 +343,15 @@ public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legenda
 /// discoverer, and a low number stays scarce no matter how many turn up later.</summary>
 public record FancyEditionDto(string HeroId, string HeroName, string Title, int Edition);
 
+/// <summary>
+/// A player's public trophy case — the standing they already see for themselves, made addressable by
+/// anyone. A collection game runs on showing off, and until now a name on the leaderboard led nowhere.
+/// Deliberately carries ONLY bragging material: no address, balance, token, or daily-claim state, because
+/// everything here is readable by the whole arena.
+/// </summary>
+public record PlayerProfileDto(string PlayerId, string Name,
+    SeasonPassProgress SeasonPass, PlayerAchievementsDto Achievements, IReadOnlyList<HeroDto> Notable);
+
 /// <summary>Treasury-health telemetry (economy control plane): the finite, fee-funded pot's current balance, what it
 /// has paid out by category ("daily"/"season"/"tournament"/"wager"/"squad"), and fees accrued to season pots. Outflow
 /// is the insolvency-risk side; per-source inflow + net-issuance is a follow-up. Read-only observability.</summary>

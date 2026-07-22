@@ -285,6 +285,29 @@ public class GameService(
             owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned, traitAlbum, fancyEditions);
     }
 
+    /// <summary>How many of a player's best heroes a public profile puts on display.</summary>
+    private const int NotableHeroes = 3;
+
+    /// <summary>A player's public trophy case: their season standing, achievements, and a few best heroes.
+    /// Pure composition of the two views they can already see of themselves — no new derivation, and
+    /// nothing here that isn't safe for the whole arena to read.</summary>
+    public Shared.PlayerProfileDto ProfileFor(Player player)
+    {
+        // Rarity first (the thing the game brags about), then level. Ties break on id so the
+        // display order is stable across calls rather than however the dictionary enumerated.
+        var notable = store.Heroes.Values
+            .Where(h => h.OwnerId == player.Id)
+            .OrderByDescending(h => Core.Progression.Rarity.Of(h.Genome).Score)
+            .ThenByDescending(h => h.Level)
+            .ThenBy(h => h.Id, StringComparer.Ordinal)
+            .Take(NotableHeroes)
+            .Select(h => h.ToDto())
+            .ToList();
+
+        return new Shared.PlayerProfileDto(
+            player.Id, player.Name, SeasonPassFor(player), PlayerAchievements(player), notable);
+    }
+
     /// <summary>Treasury-health telemetry (economy control plane): current spendable balance, treasury outflow tallied
     /// by category, and fees accrued to season pots. A pure read over live state — never mutates. Outflow is the
     /// insolvency-risk side; per-source inflow + net-issuance is a deliberate follow-up.</summary>
