@@ -72,14 +72,19 @@ public class GameClient : IAsyncDisposable
         if (receipts.Any(r => r.Type == receipt.Type && r.Id == receipt.Id)) return;
         receipts.Add(receipt);
         await File.WriteAllTextAsync(ReceiptsFile, JsonSerializer.Serialize(receipts));
-        var (ok, _) = ReceiptVerifier.Verify(receipt);
-        Console.WriteLine(ok
-            ? $"    receipt ✓ signed by the game — stored locally ({receipts.Count} held)"
-            : "    receipt ✗ SIGNATURE INVALID — the server issued a bad receipt!");
+        // "Signed by the game" is a claim about WHOSE key signed it, so it needs the
+        // advertised key — a self-consistent signature alone proves only that someone signed.
+        var (trust, detail) = ReceiptVerifier.VerifyAgainst(receipt, await AdvertisedKeyAsync());
+        Console.WriteLine(trust switch
+        {
+            ReceiptTrust.Verified => $"    receipt ✓ signed by the game — stored locally ({receipts.Count} held)",
+            ReceiptTrust.NoAnchor => $"    receipt ? stored unchecked ({receipts.Count} held) — {detail}",
+            _ => $"    receipt ✗ {detail} — run 'receipts' to re-check everything you hold",
+        });
     }
 
     private PlayerDto? _me;
-    private string? _chainMode;
+    private ChainInfoDto? _chainInfo;
     private SelfCustodyWallet? _wallet;
     private readonly List<HeroDto> _lastListing = [];
 
@@ -123,8 +128,23 @@ public class GameClient : IAsyncDisposable
         if (_ownsHttp) _http.Dispose(); // an injected client is owned by the caller
     }
 
+    private async Task<ChainInfoDto> CachedChainInfoAsync()
+        => _chainInfo ??= await _api.Chain.InfoAsync();
+
     private async Task<string> ChainModeAsync()
-        => _chainMode ??= (await _api.Chain.InfoAsync()).Mode;
+        => (await CachedChainInfoAsync()).Mode;
+
+    /// <summary>
+    /// The arena's advertised signing key, or null if we could not learn it. Null means
+    /// "unknown", never "fine" — <see cref="ReceiptVerifier.VerifyAgainst"/> keeps that
+    /// distinction. Swallows failures so a trust probe can't break the action that just
+    /// succeeded; the receipt is still stored, just reported as unchecked.
+    /// </summary>
+    private async Task<string?> AdvertisedKeyAsync()
+    {
+        try { return (await CachedChainInfoAsync()).GameSignerKey; }
+        catch { return null; }
+    }
 
     /// <summary>
     /// Settles a fee invoice from the player's OWN wallet: the embedded
@@ -1176,20 +1196,24 @@ public class GameClient : IAsyncDisposable
 
         // Signature + commit-reveal verification on everything we hold.
         var bad = 0;
+        var unknown = 0;
         foreach (var receipt in held)
         {
-            var (ok, detail) = ReceiptVerifier.Verify(receipt);
-            var keyMatches = chainInfo.GameSignerKey is null ||
-                             string.Equals(receipt.GameSignerKeyHex, chainInfo.GameSignerKey, StringComparison.OrdinalIgnoreCase);
-            if (!ok || !keyMatches)
-            {
-                bad++;
-                Console.WriteLine($"  ✗ {receipt.Type} {ShortId(receipt.Id)}: {(ok ? "signed by an unknown key" : detail)}");
-            }
+            var (trust, detail) = ReceiptVerifier.VerifyAgainst(receipt, chainInfo.GameSignerKey);
+            if (trust == ReceiptTrust.Verified) continue;
+            if (trust == ReceiptTrust.NoAnchor) unknown++; else bad++;
+            Console.WriteLine($"  {(trust == ReceiptTrust.NoAnchor ? "?" : "✗")} {receipt.Type} {ShortId(receipt.Id)}: {detail}");
         }
-        Console.WriteLine(bad == 0
-            ? $"  ✓ all {held.Count} receipt(s) verify against the game key {ShortId(chainInfo.GameSignerKey ?? "?")}"
-            : $"  {bad}/{held.Count} receipts FAILED verification");
+        // Never claim verification against a key we never learned — that reassurance
+        // would be exactly backwards for the player holding a forged receipt.
+        Console.WriteLine(bad > 0
+            ? $"  {bad}/{held.Count} receipts FAILED verification"
+            : unknown > 0
+                ? $"  ? {unknown}/{held.Count} receipt(s) could not be checked — the arena advertises no signing key"
+                : held.Count == 0
+                    // Nothing held means nothing was checked — and the key may well be null here.
+                    ? "  no receipts held yet"
+                    : $"  ✓ all {held.Count} receipt(s) verify against the game key {ShortId(chainInfo.GameSignerKey!)}");
 
         // Level replay: pull each hero's full public receipt chain and recompute.
         var mine = await _api.Heroes.MineAsync();
