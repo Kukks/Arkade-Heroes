@@ -530,12 +530,14 @@ api.MapGet("/fancies", (GameStore store) =>
         .Select(h => h.ToDto())
         .ToList()));
 
-// The Founders board: generation-0 heroes — the original mints, the scarcest lineage (gen-0 supply never grows).
+// The Founders board: generation-0 heroes — the starter-issued originals, ranked by how far their owners have
+// leveled them. NOT sorted by rarity: every gen-0 genome has its trait bytes zeroed (Genome.NewGen0), so a
+// rarity score would be a constant 0 and sort nothing. Ordered by level, id-tiebroken for a stable board.
 api.MapGet("/founders", (GameStore store) =>
     Results.Ok(store.Heroes.Values
         .Where(h => h.Generation == 0)
-        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
-        .ThenByDescending(h => h.Level)
+        .OrderByDescending(h => h.Level)
+        .ThenBy(h => h.Id, StringComparer.Ordinal)
         .Take(30)
         .Select(h => h.ToDto())
         .ToList()));
