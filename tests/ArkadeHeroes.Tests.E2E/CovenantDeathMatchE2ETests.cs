@@ -52,6 +52,26 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         });
     }
 
+    /// <summary>
+    /// Pays a per-character death-match fee from the player's OWN wallet. The settle gate
+    /// (GameService: "the challenger's death-match fee hasn't been paid yet") refuses until
+    /// BOTH have cleared, so a test that only stakes heroes never reaches the covenant at all.
+    /// </summary>
+    private static async Task PayFeeAsync(SelfCustodyWallet wallet, FeeInvoiceDto? invoice)
+    {
+        if (invoice is null) return; // fee disabled by config — nothing to pay
+        await wallet.SendAsync(invoice.PayToAddress, invoice.AmountSats);
+    }
+
+    /// <summary>Gives both players spendable sats of their own — they pay their own fees.</summary>
+    private static async Task FundPlayersAsync(SelfCustodyWallet a, SelfCustodyWallet b, long sats = 50_000)
+    {
+        await RegtestHelper.ArkSend(a.Address, sats);
+        await RegtestHelper.ArkSend(b.Address, sats);
+        await a.WaitForBalanceAsync(sats, TimeSpan.FromSeconds(60));
+        await b.WaitForBalanceAsync(sats, TimeSpan.FromSeconds(60));
+    }
+
     private async Task<ArkadeHeroesClient> RegisterAsync(string name, SelfCustodyWallet wallet)
     {
         var http = _factory.CreateClient();
@@ -92,13 +112,19 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
         await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
 
+        // Both players need sats of their own: a death-match bills a per-character fee, and
+        // the settle refuses until both invoices clear.
+        await FundPlayersAsync(_alice, _bob);
+
         // Alice opens the death-match; both players stake their hero into their escrow.
         var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
         await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
+        await PayFeeAsync(_alice, open.FeeInvoice);
 
         var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
+        await PayFeeAsync(_bob, accept.FeeInvoice);
 
         // Settle: once both heroes are staked, the covenant burns the loser + returns the winner.
         DeathMatchSettleResponse? settle = null;
@@ -205,11 +231,18 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         Assert.Equal(claim.ItemAssetId, stake.AssetId);
         Assert.Empty(open.ChallengerGear);
 
+        // Alice still holds no sats of her own (only Bob was funded, for the gear purchase),
+        // and both sides owe a per-character death-match fee before the settle will run.
+        await RegtestHelper.ArkSend(_alice.Address, 50_000);
+        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+
         // Stakes: Alice her hero; Bob his hero + the gear unit.
         await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
+        await PayFeeAsync(_alice, open.FeeInvoice);
         var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
         await _bob.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
         await _bob.SendAssetAsync(accept.EscrowAddress, stake.AssetId, (ulong)stake.Amount);
+        await PayFeeAsync(_bob, accept.FeeInvoice);
 
         DeathMatchSettleResponse? settle = null;
         var revealDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
