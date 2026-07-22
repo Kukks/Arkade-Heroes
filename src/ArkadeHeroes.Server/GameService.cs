@@ -229,6 +229,24 @@ public class GameService(
     private bool NameTaken(string name, string exceptHeroId) =>
         store.Heroes.Values.Any(h => h.Id != exceptHeroId && string.Equals(h.Name, name, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The player's season-pass standing — scored from their own signed receipts inside the current
+    /// season window, so it's derived rather than tracked, and a client holding those receipts recomputes it.</summary>
+    public Shared.SeasonPassProgress SeasonPassFor(Player player)
+    {
+        var window = Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays);
+        var from = window.Start.ToUnixTimeSeconds();
+        var to = window.End.ToUnixTimeSeconds();
+        var myHeroIds = store.Heroes.Values.Where(h => h.OwnerId == player.Id).Select(h => h.Id).ToHashSet();
+
+        // A match receipt is filed under BOTH heroes, so dedupe by receipt id or a duel would score twice.
+        var inWindow = store.ReceiptsByHero.Values.SelectMany(list => list)
+            .DistinctBy(r => r.Id)
+            .Where(r => r.UnixSeconds >= from && r.UnixSeconds < to)
+            .ToList();
+
+        return Shared.SeasonPass.Progress(inWindow, myHeroIds);
+    }
+
     /// <summary>A player's derived accomplishments — computed from their current roster + resolved tournaments,
     /// with a badge unlocked at each milestone. A pure read over in-memory state; no per-event tracking needed.</summary>
     public Shared.PlayerAchievementsDto PlayerAchievements(Player player)
