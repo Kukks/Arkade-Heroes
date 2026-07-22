@@ -262,6 +262,10 @@ public class GameService(
             .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
         var myHeroIds = mine.Select(h => h.Id).ToHashSet();
         var tournamentsWon = store.Tournaments.Values.Count(t => t.Result?.ChampionId is { } champ && myHeroIds.Contains(champ));
+        // Discovering a Fancy set is a permanent DEED, recorded once to its first finder — NOT a function
+        // of who holds the #1-edition hero now. Reading it from current holdings made the badge buyable
+        // (acquire a #1 → inherit it) and revocable (sell your discovery → lose it).
+        var discoveredAFancySet = store.FancyDiscoveries.Values.Any(d => d.OwnerId == player.Id);
 
         // The player's Fancy heroes with their edition numbers, rarest (lowest edition) first.
         var fancyEditions = mine
@@ -278,8 +282,8 @@ public class GameService(
         if (legendaries >= 1) badges.Add("Legend-keeper");
         if (fancies >= 1) badges.Add("Fancier");
         if (tournamentsWon >= 1) badges.Add("Champion");
-        // Owning an edition #1 means you discovered that set — the scarcest thing a breeder can hold.
-        if (fancyEditions.Any(e => e.Edition == 1)) badges.Add("Trailblazer");
+        // First to breed a named set, ever — credited to the discoverer for good, even if the hero is sold on.
+        if (discoveredAFancySet) badges.Add("Trailblazer");
 
         return new Shared.PlayerAchievementsDto(
             owned, bred, legendaries, fancies, tournamentsWon, badges, fancySetsOwned, traitAlbum, fancyEditions);
