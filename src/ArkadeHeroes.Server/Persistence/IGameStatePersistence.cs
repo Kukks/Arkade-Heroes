@@ -22,6 +22,10 @@ public interface IGameStatePersistence
     /// <summary>Durably record a player's identity and the once-only flags attached to it (starter claimed,
     /// day already claimed) — called at registration and whenever one of those flags moves.</summary>
     Task SavePlayerAsync(Player player, CancellationToken ct = default);
+
+    /// <summary>Durably record a Fancy find — a hero's set, edition and finder — so "first to breed this set,
+    /// forever" survives a restart. Called once per stamped hero; the row is append-only.</summary>
+    Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default);
 }
 
 /// <summary>No durability — the historical behaviour, where all state lives and dies with the process.</summary>
@@ -31,6 +35,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task SavePlayerAsync(Player player, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -106,6 +111,11 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 DeliveryTxId = row.DeliveryTxId,
             };
         }
+
+        // Fancy finds rebuild the discovery board, the per-hero editions, and — load-bearing — the per-set
+        // count, so the next live find of a set takes the right number instead of a second "#1".
+        foreach (var row in await db.FancyFinds.AsNoTracking().ToListAsync(ct))
+            store.LoadFancyFind(new FancyFind(row.Title, row.HeroId, row.HeroName, row.OwnerId, row.UnixSeconds, row.Edition));
     }
 
     public async Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default)
@@ -159,6 +169,23 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.Status = session.Status;
             row.EntrantsJson = entrantsJson;
         }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        // Assigned-once and never renumbered: if this hero is already stored, there is nothing to update.
+        if (await db.FancyFinds.FindAsync([find.HeroId], ct) is not null) return;
+        db.FancyFinds.Add(new PersistedFancyFind
+        {
+            HeroId = find.HeroId,
+            Title = find.Title,
+            HeroName = find.HeroName,
+            OwnerId = find.OwnerId,
+            UnixSeconds = find.UnixSeconds,
+            Edition = find.Edition,
+        });
         await db.SaveChangesAsync(ct);
     }
 

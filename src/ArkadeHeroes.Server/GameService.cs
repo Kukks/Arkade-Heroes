@@ -490,12 +490,13 @@ public class GameService(
     {
         var mint = await chain.MintHeroAssetAsync(player.Id, new HeroMintData(
             genome.ToHex(), generation, parentA, parentB, serverSeedHex, playerNonce), ct);
-        return BuildAndStoreHero(player, mint, genome, generation, parentA, parentB, serverSeedHex, playerNonce, entropyHex);
+        return await BuildAndStoreHero(player, mint, genome, generation, parentA, parentB, serverSeedHex, playerNonce, entropyHex, ct);
     }
 
-    private Hero BuildAndStoreHero(
+    private async Task<Hero> BuildAndStoreHero(
         Player player, HeroMintResult mint, Genome genome, int generation,
-        string? parentA, string? parentB, string? serverSeedHex, string? playerNonce, string? entropyHex)
+        string? parentA, string? parentB, string? serverSeedHex, string? playerNonce, string? entropyHex,
+        CancellationToken ct = default)
     {
         var hero = new Hero
         {
@@ -514,9 +515,11 @@ public class GameService(
         };
         store.Heroes[hero.Id] = hero;
         // Every hero in the game passes through here — starters, bred, fused, absorbed — so this is the one
-        // place the discovery race needs to watch.
-        if (FancySets.TitleFor(hero.Genome, _config) is { } fancy)
-            store.RecordFancyFind(fancy, hero.Id, hero.Name, player.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        // place the discovery race needs to watch. A newly-stamped find is persisted so the discovery, the
+        // hero's edition, and the per-set count all survive a restart (else the next find becomes a 2nd "#1").
+        if (FancySets.TitleFor(hero.Genome, _config) is { } fancy
+            && store.RecordFancyFind(fancy, hero.Id, hero.Name, player.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds()) is { } find)
+            await persistence.SaveFancyFindAsync(find, ct);
         return hero;
     }
 
@@ -639,8 +642,8 @@ public class GameService(
                     childData.ServerSeedHex ?? "", childData.PlayerNonce ?? ""));
             var oracleSig = receipts.SignDigest(root);
             var mint = await chain.ExecuteBreedCovenantAsync(session.Id, childData, oracleSig, ct);
-            child = BuildAndStoreHero(player, mint, outcome.ChildGenome, outcome.ChildGeneration,
-                session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex);
+            child = await BuildAndStoreHero(player, mint, outcome.ChildGenome, outcome.ChildGeneration,
+                session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
             // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
             store.RecordInflow(session.Id, "breed", session.FeeSats);
         }
@@ -856,8 +859,8 @@ public class GameService(
         var oracleSig = receipts.SignDigest(root);
         var mint = await chain.ExecuteMergeAsync(session.Id, fusedData, oracleSig, ct);
 
-        var fused = BuildAndStoreHero(player, mint, fusedGenome, fusedGeneration,
-            session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex);
+        var fused = await BuildAndStoreHero(player, mint, fusedGenome, fusedGeneration,
+            session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex, ct);
         // The merge spend retired both inputs and delivered FeeSats to the treasury — tally it (dedup by session id).
         store.RecordInflow(session.Id, "merge", session.FeeSats);
         // The fused hero inherits the base's level (you keep your progression); its genesis
@@ -1035,8 +1038,8 @@ public class GameService(
                 session.WinnerHeroId = result.WinnerId;
                 // The absorbed hero is a NEW asset owned by the WINNER (the settler may be the loser).
                 var winnerPlayer = store.Players[winner.OwnerId];
-                var absorbed = BuildAndStoreHero(winnerPlayer, mint, outcome.Result, absorbGen,
-                    winner.Id, loser.Id, serverSeedHex, nonce, entropyHex);
+                var absorbed = await BuildAndStoreHero(winnerPlayer, mint, outcome.Result, absorbGen,
+                    winner.Id, loser.Id, serverSeedHex, nonce, entropyHex, ct);
                 absorbed.Level = winner.Level;   // the winner keeps its progression (absorb receipt attests it)
                 absorbed.Name = winner.Name;     // the same hero, evolved — keep its name
                 // BOTH input heroes are burned on-chain — drop their server records.

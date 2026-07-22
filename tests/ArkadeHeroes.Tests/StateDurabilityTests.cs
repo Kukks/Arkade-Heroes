@@ -131,6 +131,41 @@ public class StateDurabilityTests
     }
 
     [Fact]
+    public async Task FancyDiscoveryEditionsAndCount_SurviveARestart()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var first = HostOn(dbPath))
+            {
+                _ = first.CreateClient();   // start the host so the schema is created
+                var persistence = first.Services
+                    .GetRequiredService<ArkadeHeroes.Server.Persistence.IGameStatePersistence>();
+                // Three Emberlords, found in order: player-1 discovered the set, then #2 and #3 turned up.
+                await persistence.SaveFancyFindAsync(new FancyFind("Emberlord", "hero-1", "Alpha", "player-1", 100, 1));
+                await persistence.SaveFancyFindAsync(new FancyFind("Emberlord", "hero-2", "Beta", "player-2", 200, 2));
+                await persistence.SaveFancyFindAsync(new FancyFind("Emberlord", "hero-3", "Gamma", "player-3", 300, 3));
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var store = restarted.Services.GetRequiredService<GameStore>();
+
+            // "First to breed this set, forever" — the discoverer survives the restart.
+            Assert.Equal("player-1", store.FancyDiscoveries["Emberlord"].OwnerId);
+            Assert.Equal(3, store.FancyEditionByHero["hero-3"].Edition);
+            Assert.Equal(3, store.FancyFindCount["Emberlord"]);
+            // The load-bearing property: the next LIVE find is #4, not a second "#1" from a reset count.
+            Assert.Equal(4, store.RecordFancyFind("Emberlord", "hero-4", "Delta", "player-4", 400)!.Edition);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task WithNoStatePathConfigured_NothingIsPersisted()
     {
         // The default: no database, no file, historical behaviour. Guards against persistence silently
