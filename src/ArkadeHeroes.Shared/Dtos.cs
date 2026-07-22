@@ -358,10 +358,16 @@ public record PlayerProfileDto(string PlayerId, string Name,
 ///
 /// <see cref="HeroSupply"/>/<see cref="Gen0Supply"/> track the OTHER economy — heroes, the asset with no hard cap.
 /// Sats can't be printed, but heroes can be bred without limit, so hero supply is the inflation gauge the sats
-/// figures miss. Gen0Supply is the free-starter float (gen-0 heroes only ever come from the starter grant).</summary>
+/// figures miss. Gen0Supply is the free-starter float (gen-0 heroes only ever come from the starter grant).
+///
+/// <see cref="HeroesMinted"/>/<see cref="HeroesBurned"/> are the CHURN behind a flat supply: a stable
+/// HeroSupply hides whether nothing happened or a thousand mints and burns netted out. Read as a RATE — the
+/// mint rate outrunning the burn rate is the exact smoke alarm that fired late for CryptoKitties and Axie.
+/// Counted since the server started (not persisted), so treat them as deltas over an uptime, not lifetime
+/// totals. Burned is derived (minted − supply): a burn is the only thing that removes a hero.</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
     IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
-    long HeroSupply = 0, long Gen0Supply = 0);
+    long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0);
 
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into

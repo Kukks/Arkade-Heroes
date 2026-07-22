@@ -322,11 +322,17 @@ public class GameService(
         var inflow = store.TreasuryInflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
         var outflow = store.TreasuryOutflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
         var seasonAccrual = store.SeasonFeeAccrual.Values.Sum();
+        var minted = store.HeroesMinted;
         var heroSupply = store.Heroes.Count;
         // Gen-0 heroes come ONLY from the free starter grant — this is the tradeable-asset float that grant emits.
         var gen0Supply = store.Heroes.Values.Count(h => h.Generation == 0);
+        // Burns are the ONLY path that removes a hero (merge/absorb/death-match all TryRemove; a transfer keeps
+        // the hero and just changes its owner), so burned = minted − current supply. Clamped for the nanosecond
+        // race between the two reads. ASSUMPTION, true today at all 5 removal sites: every removal is a burn — a
+        // future non-burn removal would be miscounted here, so keep hero removal to the burn flows.
+        var heroesBurned = Math.Max(0, minted - heroSupply);
         return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow,
-            seasonAccrual, heroSupply, gen0Supply);
+            seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned);
     }
 
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
@@ -519,6 +525,7 @@ public class GameService(
             MintArkTxId = mint.ArkTxId,
         };
         store.Heroes[hero.Id] = hero;
+        store.RecordMint();   // adjacent to the add so supply++ and minted++ stay in lockstep for telemetry
         // Every hero in the game passes through here — starters, bred, fused, absorbed — so this is the one
         // place the discovery race needs to watch. A newly-stamped find is persisted so the discovery, the
         // hero's edition, and the per-set count all survive a restart (else the next find becomes a 2nd "#1").
