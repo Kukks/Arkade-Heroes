@@ -257,13 +257,13 @@ else
             <div class="receipt-list">
                 @foreach (var r in _receipts.OrderByDescending(r => r.UnixSeconds))
                 {
-                    var v = Verify(r);
+                    var v = ReceiptVerifier.VerifyAgainst(r, _advertisedKey);
                     <div class="receipt">
                         <div class="receipt-head">
                             <span class="chip">@r.Type</span>
                             <span class="status-line" style="gap:.4rem">
-                                <span class="dot @(v.Ok ? "ok" : "bad")"></span>
-                                <span class="mono" style="font-size:.72rem">@(v.Ok ? "verified" : "UNVERIFIED")</span>
+                                <span class="dot @DotFor(v.Trust)"></span>
+                                <span class="mono" style="font-size:.72rem">@LabelFor(v.Trust)</span>
                             </span>
                         </div>
                         <div class="statline mono">
@@ -274,7 +274,7 @@ else
                                 <span>→ @Short(r.ResultHeroId)</span>
                             }
                         </div>
-                        @if (!v.Ok)
+                        @if (v.Trust != ReceiptTrust.Verified)
                         {
                             <div class="muted" style="font-size:.78rem">@v.Detail</div>
                         }
@@ -312,6 +312,11 @@ else
         _error = false;
         try
         {
+            // All-or-nothing on purpose — do NOT relax this into independent loads the way
+            // Ranks does. These three cross-check each other: info carries the signing key
+            // the receipts are judged against, and a partial receipt list replays to a level
+            // that silently contradicts the hero's real one. Here half the data produces
+            // WRONG claims about provenance, not merely fewer cards.
             var hero = Api.Heroes.GetAsync(Id);
             var receipts = Api.Receipts.ForHeroAsync(Id);
             var info = Api.Chain.InfoAsync();
@@ -338,15 +343,22 @@ else
         }
     }
 
-    // Trustless: the signature must verify AND be by the game key the server advertises
-    // (else a forger could embed their own key over a self-consistent receipt).
-    private (bool Ok, string Detail) Verify(ProgressionReceiptDto r)
+    // "Can't check" is shown as its own state, never as a red UNVERIFIED: accusing a
+    // perfectly good receipt of forgery because we failed to learn the arena's key would
+    // be a worse lie than staying quiet.
+    private static string DotFor(ReceiptTrust t) => t switch
     {
-        var (ok, detail) = ReceiptVerifier.Verify(r);
-        if (ok && !string.Equals(r.GameSignerKeyHex, _advertisedKey, StringComparison.OrdinalIgnoreCase))
-            return (false, "signed by an unrecognised key (not the arena's advertised signer)");
-        return (ok, detail);
-    }
+        ReceiptTrust.Verified => "ok",
+        ReceiptTrust.NoAnchor => "wait",
+        _ => "bad",
+    };
+
+    private static string LabelFor(ReceiptTrust t) => t switch
+    {
+        ReceiptTrust.Verified => "verified",
+        ReceiptTrust.NoAnchor => "can't check",
+        _ => "UNVERIFIED",
+    };
 
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
     static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();

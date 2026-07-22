@@ -40,6 +40,78 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains("tampered", detail);
     }
 
+    private static ECPrivKey NewKey()
+        => ECPrivKey.Create(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+
+    /// <summary>Signs a receipt with <paramref name="key"/> and embeds that key as the claimed signer.</summary>
+    private static (ProgressionReceiptDto Receipt, string PubKeyHex) SignedBy(ECPrivKey key)
+    {
+        Span<byte> pub = stackalloc byte[32];
+        key.CreateXOnlyPubKey().WriteToSpan(pub);
+        var hex = Convert.ToHexString(pub).ToLowerInvariant();
+        var unsigned = Unsigned() with { GameSignerKeyHex = hex };
+        return (unsigned with { SignatureHex = ReceiptVerifier.Sign(unsigned, key) }, hex);
+    }
+
+    // The hole a bare signature check cannot see: a forger mints their own key and signs
+    // whatever progression they like. The receipt is internally self-consistent, so Verify
+    // says yes. Only comparing against the key the arena advertises separates "signed"
+    // from "signed by the arena" — that anchor is what makes a receipt portable evidence.
+    [Fact]
+    public void SelfSignedReceipt_PassesBareVerify_ButIsNotTrustedAgainstTheArenaKey()
+    {
+        var (_, arenaKeyHex) = SignedBy(NewKey());
+        var (forged, forgerKeyHex) = SignedBy(NewKey());
+
+        Assert.NotEqual(arenaKeyHex, forgerKeyHex);
+        Assert.True(ReceiptVerifier.Verify(forged).Ok);   // internally sound — this is the trap
+
+        var (trust, detail) = ReceiptVerifier.VerifyAgainst(forged, arenaKeyHex);
+        Assert.Equal(ReceiptTrust.UnknownSigner, trust);
+        Assert.Contains("unrecognised", detail);
+    }
+
+    [Fact]
+    public void ReceiptSignedByTheArena_IsTrusted()
+    {
+        var key = NewKey();
+        var (receipt, arenaKeyHex) = SignedBy(key);
+
+        // Case-insensitive: the advertised key is hex and casing is not part of the identity.
+        Assert.Equal(ReceiptTrust.Verified, ReceiptVerifier.VerifyAgainst(receipt, arenaKeyHex).Trust);
+        Assert.Equal(ReceiptTrust.Verified, ReceiptVerifier.VerifyAgainst(receipt, arenaKeyHex.ToUpperInvariant()).Trust);
+    }
+
+    // Not knowing the arena's key is an absence of evidence, not evidence of forgery.
+    // It must never read as a pass (fail-open) nor as an accusation (a false alarm on
+    // a receipt that is perfectly good) — it is its own answer.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void WithoutAnAnchor_TrustIsUnknown_NotGrantedAndNotAccused(string? advertised)
+    {
+        var (receipt, _) = SignedBy(NewKey());
+
+        var (trust, detail) = ReceiptVerifier.VerifyAgainst(receipt, advertised);
+        Assert.Equal(ReceiptTrust.NoAnchor, trust);
+        Assert.NotEqual(ReceiptTrust.Verified, trust);
+        Assert.DoesNotContain("forged", detail);
+        Assert.DoesNotContain("unrecognised", detail);
+    }
+
+    // A broken signature outranks the anchor question: report the tampering, not the key.
+    [Fact]
+    public void TamperedReceipt_ReadsAsInvalid_EvenWhenTheSignerKeyMatches()
+    {
+        var (receipt, arenaKeyHex) = SignedBy(NewKey());
+        var tampered = receipt with { XpAwardA = 9_999 };
+
+        var (trust, detail) = ReceiptVerifier.VerifyAgainst(tampered, arenaKeyHex);
+        Assert.Equal(ReceiptTrust.Invalid, trust);
+        Assert.Contains("tampered", detail);
+    }
+
     [Fact]
     public void ReplayLevel_FoldsSignedDeltas_IncludingDelevelOnLoss()
     {

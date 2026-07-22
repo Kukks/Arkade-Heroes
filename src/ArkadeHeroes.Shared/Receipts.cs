@@ -30,6 +30,23 @@ public record ProgressionReceiptDto(
     string GameSignerKeyHex,
     string SignatureHex);
 
+/// <summary>
+/// How far a receipt can be trusted, given what the checker knows. Deliberately not a
+/// bool: "I could not check" is a real answer, and collapsing it into either yes or no
+/// is what turns a missing anchor into a silent pass or a false forgery alarm.
+/// </summary>
+public enum ReceiptTrust
+{
+    /// <summary>Internally sound AND signed by the key the arena advertises.</summary>
+    Verified,
+    /// <summary>Signature or commit–reveal chain is broken — tampered with or forged.</summary>
+    Invalid,
+    /// <summary>Internally sound, but signed by a key the arena does not claim as its own.</summary>
+    UnknownSigner,
+    /// <summary>Internally sound, but no advertised key was supplied — nothing to check against.</summary>
+    NoAnchor,
+}
+
 /// <summary>Canonical payload + BIP340 signing/verification + level replay for receipts.</summary>
 public static class ReceiptVerifier
 {
@@ -78,6 +95,30 @@ public static class ReceiptVerifier
         {
             return (false, $"verification error: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Verification plus the trust anchor: a receipt is only the arena's word if it is
+    /// signed by the key the arena advertises. <see cref="Verify"/> alone cannot tell a
+    /// genuine receipt from one a forger self-signed with their own key — both are
+    /// internally consistent — so every consumer that treats a receipt as evidence must
+    /// come through here with the advertised key in hand.
+    /// </summary>
+    public static (ReceiptTrust Trust, string Detail) VerifyAgainst(
+        ProgressionReceiptDto receipt, string? advertisedKey)
+    {
+        var (ok, detail) = Verify(receipt);
+        if (!ok) return (ReceiptTrust.Invalid, detail);
+
+        if (string.IsNullOrWhiteSpace(advertisedKey))
+            return (ReceiptTrust.NoAnchor,
+                "signature and commit–reveal check out, but the arena's signing key is unknown — cannot confirm it issued this");
+
+        if (!string.Equals(receipt.GameSignerKeyHex, advertisedKey, StringComparison.OrdinalIgnoreCase))
+            return (ReceiptTrust.UnknownSigner,
+                "signed by an unrecognised key (not the arena's advertised signer)");
+
+        return (ReceiptTrust.Verified, detail);
     }
 
     /// <summary>
