@@ -1,5 +1,7 @@
 using ArkadeHeroes.Chain;
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -35,6 +37,36 @@ public class EconomyHealthTests
         Assert.Equal(claim.AwardedSats, after.OutflowByTag.GetValueOrDefault("daily"));   // tagged, once
         Assert.Equal(claim.AwardedSats, after.TotalOutflowSats);                          // no other outflow
         Assert.Equal(50_000 - claim.AwardedSats, after.TreasuryBalanceSats);              // balance dropped by exactly the payout
+    }
+
+    // Sats are the insolvency gauge; hero supply is the inflation gauge — heroes have no hard cap. The
+    // telemetry must surface both, and separate the free-starter float (gen-0) from the bred total.
+    [Fact]
+    public async Task Health_ReportsHeroSupply_AndSeparatesTheGen0StarterFloat()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, playerDto) = await factory.RegisterAsync("Econ-Supply");
+
+        var fresh = await player.Economy.HealthAsync();
+        Assert.Equal(0, fresh.HeroSupply);
+        Assert.Equal(0, fresh.Gen0Supply);
+
+        await player.ClaimStartersAsync();   // two gen-0 starters — the free float
+        var afterStarters = await player.Economy.HealthAsync();
+        Assert.Equal(2, afterStarters.HeroSupply);
+        Assert.Equal(2, afterStarters.Gen0Supply);
+
+        // A bred hero (gen > 0) grows the supply but NOT the starter float — the two must not conflate.
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes["bred-1"] = new Hero
+        {
+            Id = "bred-1", OwnerId = playerDto.PlayerId, Name = "Child", Level = 1,
+            Genome = new Genome(new byte[32]), Generation = 1,
+        };
+
+        var afterBreed = await player.Economy.HealthAsync();
+        Assert.Equal(3, afterBreed.HeroSupply);   // total climbs
+        Assert.Equal(2, afterBreed.Gen0Supply);   // free float unchanged
     }
 
     [Fact]

@@ -313,15 +313,20 @@ public class GameService(
     }
 
     /// <summary>Treasury-health telemetry (economy control plane): current spendable balance, treasury outflow tallied
-    /// by category, and fees accrued to season pots. A pure read over live state — never mutates. Outflow is the
-    /// insolvency-risk side; per-source inflow + net-issuance is a deliberate follow-up.</summary>
+    /// by category, fees accrued to season pots, and the hero supply. A pure read over live state — never mutates.
+    /// Outflow is the sats-insolvency side; hero supply is the OTHER inflation side (heroes have no hard cap, sats
+    /// do). Per-source net-issuance and a mint/burn rate are a deliberate follow-up.</summary>
     public async Task<Shared.EconomyHealthDto> EconomyHealthAsync(CancellationToken ct = default)
     {
         var balance = await chain.TreasuryBalanceAsync(ct);
         var inflow = store.TreasuryInflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
         var outflow = store.TreasuryOutflowByTag.ToDictionary(kv => kv.Key, kv => kv.Value);
         var seasonAccrual = store.SeasonFeeAccrual.Values.Sum();
-        return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow, seasonAccrual);
+        var heroSupply = store.Heroes.Count;
+        // Gen-0 heroes come ONLY from the free starter grant — this is the tradeable-asset float that grant emits.
+        var gen0Supply = store.Heroes.Values.Count(h => h.Generation == 0);
+        return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow,
+            seasonAccrual, heroSupply, gen0Supply);
     }
 
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──

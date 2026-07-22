@@ -354,9 +354,14 @@ public record PlayerProfileDto(string PlayerId, string Name,
 
 /// <summary>Treasury-health telemetry (economy control plane): the finite, fee-funded pot's current balance, what it
 /// has paid out by category ("daily"/"season"/"tournament"/"wager"/"squad"), and fees accrued to season pots. Outflow
-/// is the insolvency-risk side; per-source inflow + net-issuance is a follow-up. Read-only observability.</summary>
+/// is the insolvency-risk side; per-source inflow + net-issuance is a follow-up. Read-only observability.
+///
+/// <see cref="HeroSupply"/>/<see cref="Gen0Supply"/> track the OTHER economy — heroes, the asset with no hard cap.
+/// Sats can't be printed, but heroes can be bred without limit, so hero supply is the inflation gauge the sats
+/// figures miss. Gen0Supply is the free-starter float (gen-0 heroes only ever come from the starter grant).</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
-    IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats);
+    IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
+    long HeroSupply = 0, long Gen0Supply = 0);
 
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
