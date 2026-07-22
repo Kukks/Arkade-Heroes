@@ -44,16 +44,20 @@ public static class DailyQuests
     /// WinnersOnly quests additionally require the player's hero to be the ResultHeroId. A death-match
     /// won with a trait absorb issues an "absorb" receipt (not "deathmatch"), so that counts too.</summary>
     public static bool IsComplete(
-        DailyQuestDef quest, IEnumerable<ProgressionReceiptDto> receiptsInWindow, ISet<string> playerHeroIds)
-    {
-        bool TypeMatches(string t) =>
-            t == quest.ReceiptType ||
-            (quest.ReceiptType == "deathmatch" && t == "absorb");
+        DailyQuestDef quest, IEnumerable<ProgressionReceiptDto> receiptsInWindow, ISet<string> playerHeroIds) =>
+        receiptsInWindow.Any(r => Matches(quest, r, playerHeroIds));
 
-        return receiptsInWindow.Any(r =>
-            TypeMatches(r.Type) &&
-            (quest.WinnersOnly
-                ? r.ResultHeroId is { } w && playerHeroIds.Contains(w)
-                : playerHeroIds.Contains(r.HeroAId) || playerHeroIds.Contains(r.HeroBId)));
+    /// <summary>Does this ONE receipt satisfy the quest? Shared with the season pass, which counts matching
+    /// deeds rather than asking whether any exists — the absorb aliasing and the winners-only rule are
+    /// subtle enough that a second copy would drift.</summary>
+    public static bool Matches(DailyQuestDef quest, ProgressionReceiptDto r, ISet<string> playerHeroIds)
+    {
+        var typeMatches = r.Type == quest.ReceiptType
+            || (quest.ReceiptType == "deathmatch" && r.Type == "absorb");
+        if (!typeMatches) return false;
+
+        return quest.WinnersOnly
+            ? r.ResultHeroId is { } w && playerHeroIds.Contains(w)
+            : playerHeroIds.Contains(r.HeroAId) || playerHeroIds.Contains(r.HeroBId);
     }
 }

@@ -27,5 +27,8 @@ public sealed class PlayersApi(ArkadeHeroesClient client)
     /// <summary>The signed-in player's derived accomplishments + unlocked badges.</summary>
     public Task<PlayerAchievementsDto> AchievementsAsync() => client.GetAsync<PlayerAchievementsDto>("/api/players/me/achievements");
 
+    /// <summary>Season-pass standing — points, tier and titles earned this season. Titles only, never sats.</summary>
+    public Task<SeasonPassProgress> SeasonPassAsync() => client.GetAsync<SeasonPassProgress>("/api/players/me/season-pass");
+
     public Task<PlayerDto> GetAsync(string playerId) => client.GetAsync<PlayerDto>($"/api/players/{playerId}");
 }
