@@ -27,6 +27,11 @@ public sealed record FancyDiscovery(string Title, string HeroId, string HeroName
 /// ever found. Assigned once, at the moment the hero enters the game, and never renumbered.</summary>
 public sealed record FancyEdition(string Title, int Edition);
 
+/// <summary>The complete stamped fact for one Fancy find — a hero's set, its edition, and who found it.
+/// The union of what a <see cref="FancyDiscovery"/> and a <see cref="FancyEdition"/> each hold, and exactly
+/// what durability persists so "first to breed this set, forever" survives a restart.</summary>
+public sealed record FancyFind(string Title, string HeroId, string HeroName, string OwnerId, long UnixSeconds, int Edition);
+
 /// <summary>A pending PvE gauntlet run (F1): the seed is committed at open; the run resolves once the
 /// fee invoice is paid, awarding capped XP + a full-clear item, then rate-limits the hero.</summary>
 public class GauntletSession
@@ -310,12 +315,27 @@ public class GameStore
     /// once per hero (from the single point where a hero enters the store), and guarded so a repeat can't
     /// mint a second edition. TryAdd on the discovery means the first finder can never be displaced — later
     /// finds only take the next edition.</summary>
-    public void RecordFancyFind(string title, string heroId, string heroName, string ownerId, long unixSeconds)
+    /// <returns>The stamped fact if this hero was newly recorded, or <c>null</c> if it was already stamped
+    /// (the re-number guard) — the caller persists a non-null result so the find survives a restart.</returns>
+    public FancyFind? RecordFancyFind(string title, string heroId, string heroName, string ownerId, long unixSeconds)
     {
-        if (FancyEditionByHero.ContainsKey(heroId)) return;   // already stamped — never re-number a hero
+        if (FancyEditionByHero.ContainsKey(heroId)) return null;   // already stamped — never re-number a hero
         var edition = FancyFindCount.AddOrUpdate(title, 1, (_, n) => n + 1);
         FancyEditionByHero[heroId] = new FancyEdition(title, edition);
         FancyDiscoveries.TryAdd(title, new FancyDiscovery(title, heroId, heroName, ownerId, unixSeconds));
+        return new FancyFind(title, heroId, heroName, ownerId, unixSeconds, edition);
+    }
+
+    /// <summary>Rehydrate one persisted Fancy find at boot. The edition is taken EXACTLY as stored (never
+    /// re-derived), the per-title count advances so the next LIVE find takes the right number — without this
+    /// a restart resets the count and the next hero of a set is minted as a second "#1" — and the edition-#1
+    /// row restores the set's original discoverer. Idempotent per hero.</summary>
+    public void LoadFancyFind(FancyFind find)
+    {
+        FancyEditionByHero[find.HeroId] = new FancyEdition(find.Title, find.Edition);
+        FancyFindCount.AddOrUpdate(find.Title, find.Edition, (_, n) => Math.Max(n, find.Edition));
+        if (find.Edition == 1)
+            FancyDiscoveries[find.Title] = new FancyDiscovery(find.Title, find.HeroId, find.HeroName, find.OwnerId, find.UnixSeconds);
     }
 
     public ConcurrentDictionary<string, GauntletSession> Gauntlets { get; } = new();

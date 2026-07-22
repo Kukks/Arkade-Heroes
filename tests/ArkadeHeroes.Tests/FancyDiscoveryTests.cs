@@ -27,6 +27,43 @@ public class FancyDiscoveryTests
         Assert.Equal(3, store.FancyFindCount["Sovereign"]);   // but every find counts toward the tally
     }
 
+    // The record returns the stamped fact so the caller can persist it — and returns null when nothing was
+    // stamped (a hero already recorded), so a repeat is never written twice.
+    [Fact]
+    public void RecordFancyFind_ReturnsTheStampedFact_AndNullWhenAlreadyStamped()
+    {
+        var store = new GameStore();
+
+        var first = store.RecordFancyFind("Emberlord", "hero-1", "Alpha", "player-1", 100);
+        Assert.NotNull(first);
+        Assert.Equal(1, first!.Edition);
+        Assert.Equal("Emberlord", first.Title);
+        Assert.Equal("player-1", first.OwnerId);
+
+        var second = store.RecordFancyFind("Emberlord", "hero-2", "Beta", "player-2", 200);
+        Assert.Equal(2, second!.Edition);   // a later find still returns, with the next edition
+
+        Assert.Null(store.RecordFancyFind("Emberlord", "hero-1", "Alpha", "player-1", 999));   // re-stamp: nothing to persist
+    }
+
+    // Rehydrating persisted finds must restore the discoverer, each hero's exact edition, AND the per-set
+    // count — so the next LIVE find takes the next number instead of colliding on a second "#1".
+    [Fact]
+    public void LoadFancyFind_RebuildsDiscovererEditionAndCount_SoTheNextFindDoesNotCollide()
+    {
+        var store = new GameStore();
+        store.LoadFancyFind(new FancyFind("Sovereign", "hero-1", "Alpha", "player-1", 100, 1));
+        store.LoadFancyFind(new FancyFind("Sovereign", "hero-2", "Beta", "player-2", 200, 2));
+        store.LoadFancyFind(new FancyFind("Sovereign", "hero-3", "Gamma", "player-3", 300, 3));
+
+        Assert.Equal("player-1", store.FancyDiscoveries["Sovereign"].OwnerId);   // discoverer restored from edition #1
+        Assert.Equal(2, store.FancyEditionByHero["hero-2"].Edition);             // each hero's edition restored
+        Assert.Equal(3, store.FancyFindCount["Sovereign"]);                      // count restored
+
+        // The next live find continues the sequence — #4, not a duplicate #1.
+        Assert.Equal(4, store.RecordFancyFind("Sovereign", "hero-4", "Delta", "player-4", 400)!.Edition);
+    }
+
     [Fact]
     public void EditionsAreStampedInDiscoveryOrder_AndNeverRenumbered()
     {
