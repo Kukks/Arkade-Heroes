@@ -474,6 +474,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     // ── Daily engagement loop ──
     public Task<DailyStatusDto> DailyStatusAsync() => api.Daily.StatusAsync();
 
+    /// <summary>Season-pass standing — the season-long goal that carries on after the daily is claimed.</summary>
+    public Task<SeasonPassProgress> SeasonPassAsync() => api.Players.SeasonPassAsync();
+
     /// <summary>Claim the daily reward; the sats land in the player's wallet, so refresh the balance pill.</summary>
     public async Task<DailyClaimResultDto> ClaimDailyAsync()
     {
