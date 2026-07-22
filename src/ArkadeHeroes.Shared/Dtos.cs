@@ -364,10 +364,17 @@ public record PlayerProfileDto(string PlayerId, string Name,
 /// HeroSupply hides whether nothing happened or a thousand mints and burns netted out. Read as a RATE — the
 /// mint rate outrunning the burn rate is the exact smoke alarm that fired late for CryptoKitties and Axie.
 /// Counted since the server started (not persisted), so treat them as deltas over an uptime, not lifetime
-/// totals. Burned is derived (minted − supply): a burn is the only thing that removes a hero.</summary>
+/// totals. Burned is derived (minted − supply): a burn is the only thing that removes a hero.
+///
+/// <see cref="ActiveOfferCount"/>/<see cref="ClosedOfferCount"/> are the market-liquidity gauge: active is
+/// resting inventory buyable right now, closed is cleared (fulfilled OR reclaimed — the store doesn't split
+/// them). Active climbing while closed stalls is a glut — sellers listing faster than buyers take. That
+/// listings-outran-sales cross is the earliest signal CryptoKitties gave, days before its peak. These reflect
+/// the LAST-OBSERVED offer status (the health read never forces a chain reconcile), so they can lag truth.</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
     IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
-    long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0);
+    long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0,
+    long ActiveOfferCount = 0, long ClosedOfferCount = 0);
 
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into

@@ -96,6 +96,33 @@ public class EconomyHealthTests
         Assert.Equal(1, afterBurn.HeroSupply);
     }
 
+    // Market liquidity: resting inventory (active) vs cleared (closed). Active outrunning closed is the
+    // listings-outran-sales glut that called the CryptoKitties top. Pending offers (not yet buyable) count
+    // toward neither.
+    [Fact]
+    public async Task Health_CountsRestingVsClearedOffers_IgnoringPending()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, _) = await factory.RegisterAsync("Econ-Market");
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        static OfferListing Offer(string id, string status) => new()
+        {
+            Id = id, SellerId = "s", ItemId = "rusty-blade", AskSats = 1000,
+            OfferAddress = $"addr-{id}", ItemAssetId = $"asset-{id}", OfferValueSats = 1000,
+            RefundAfterUnixSeconds = 0, Status = status,
+        };
+        store.Offers["a1"] = Offer("a1", "active");
+        store.Offers["a2"] = Offer("a2", "active");
+        store.Offers["c1"] = Offer("c1", "closed");
+        store.Offers["p1"] = Offer("p1", "pending");   // created but not yet buyable
+
+        var h = await player.Economy.HealthAsync();
+        Assert.Equal(2, h.ActiveOfferCount);   // two resting on the market
+        Assert.Equal(1, h.ClosedOfferCount);   // one cleared
+        // pending is neither resting nor cleared — it must not inflate either gauge.
+    }
+
     [Fact]
     public async Task Health_TalliesItemPurchaseInflow_Once()
     {

@@ -331,8 +331,12 @@ public class GameService(
         // race between the two reads. ASSUMPTION, true today at all 5 removal sites: every removal is a burn — a
         // future non-burn removal would be miscounted here, so keep hero removal to the burn flows.
         var heroesBurned = Math.Max(0, minted - heroSupply);
+        // Market liquidity: resting (buyable) inventory vs cleared. Last-observed status — a pure read never
+        // reconciles against the chain, so a just-sold offer may still read active until the next list call.
+        var activeOffers = store.Offers.Values.Count(o => o.Status == "active");
+        var closedOffers = store.Offers.Values.Count(o => o.Status == "closed");
         return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow,
-            seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned);
+            seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned, activeOffers, closedOffers);
     }
 
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
