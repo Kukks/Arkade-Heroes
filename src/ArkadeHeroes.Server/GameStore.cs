@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Heroes;
 
@@ -302,6 +303,15 @@ public class GameStore
     public ConcurrentDictionary<string, Player> Players { get; } = new();
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
     public ConcurrentDictionary<string, Hero> Heroes { get; } = new();
+
+    private long _heroesMinted;
+    /// <summary>Cumulative heroes minted since this server started — every starter, bred, fused and absorbed
+    /// hero passes through the one mint choke point. NOT persisted: a "since boot" churn counter, meant to be
+    /// read as a RATE (delta over time) against the burn rate, not as a lifetime total. Burns aren't counted
+    /// here — a burn is the only thing that removes a hero, so burned = minted − current supply.</summary>
+    public long HeroesMinted => Interlocked.Read(ref _heroesMinted);
+    public void RecordMint() => Interlocked.Increment(ref _heroesMinted);
+
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
     // The Fancy discovery race: who FIRST bred a hero expressing each named Fancy set, plus how many have
     // ever been found. Pure bookkeeping — it never gates or changes an outcome, it just records the race.

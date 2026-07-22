@@ -69,6 +69,33 @@ public class EconomyHealthTests
         Assert.Equal(2, afterBreed.Gen0Supply);   // free float unchanged
     }
 
+    // A flat HeroSupply can't tell "nothing happened" from "mints and burns netted out" — the churn is what
+    // the mint/burn counts surface. Mints are counted at the choke point; burns are derived, since a removed
+    // hero (only burns remove one) drops supply below the mint count.
+    [Fact]
+    public async Task Health_CountsMints_AndDerivesBurnsFromTheSupplyDrop()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, _) = await factory.RegisterAsync("Econ-Churn");
+
+        Assert.Equal(0, (await player.Economy.HealthAsync()).HeroesMinted);
+
+        var starters = await player.ClaimStartersAsync();   // two mints
+        var afterMint = await player.Economy.HealthAsync();
+        Assert.Equal(2, afterMint.HeroesMinted);
+        Assert.Equal(0, afterMint.HeroesBurned);   // nothing burned yet: minted == supply
+
+        // Burning one hero (any of the burn flows does exactly this — TryRemove from the store) leaves the mint
+        // count untouched while supply drops, so the derived burn count reflects it.
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes.TryRemove(starters[0].Id, out _);
+
+        var afterBurn = await player.Economy.HealthAsync();
+        Assert.Equal(2, afterBurn.HeroesMinted);   // mints never decrement
+        Assert.Equal(1, afterBurn.HeroesBurned);   // derived: minted(2) − supply(1)
+        Assert.Equal(1, afterBurn.HeroSupply);
+    }
+
     [Fact]
     public async Task Health_TalliesItemPurchaseInflow_Once()
     {
