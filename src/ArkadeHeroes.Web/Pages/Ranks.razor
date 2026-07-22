@@ -321,44 +321,50 @@ else
     private IEnumerable<TournamentDto> TournChamps => _tournaments.Where(t => t.Status == "resolved" && t.ChampionHeroId is not null);
     private string Champ(string? id) => id is not null && _names.TryGetValue(id, out var n) ? n : "a champion";
 
+    // Every board on this page loads INDEPENDENTLY. It fans out a dozen public calls, and Task.WhenAll
+    // propagates the first exception — so before this, one failing endpoint blanked the leaderboard, the
+    // season and the treasury along with it. Each card already guards on its own data, so a failed call
+    // now just hides that card. Only the headline board failing means "we can't reach the arena".
+    private static async Task<T?> OrNull<T>(Task<T> call) where T : class
+    {
+        try { return await call; } catch { return null; }
+    }
+
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            var top = Api.Leaderboard.TopAsync();
-            var season = Api.Leaderboard.SeasonAsync();
-            var rarest = Api.Leaderboard.RarestAsync();
-            var fancies = Api.Leaderboard.FanciesAsync();
-            var tournaments = Api.Tournament.ListAsync();
-            var recent = Api.Matches.ListAsync("resolved");   // public — no auth needed to browse the feed
-            var all = Api.Heroes.AllAsync();                   // for hero-id → name resolution
-            var economy = Api.Economy.HealthAsync();           // treasury-health telemetry (public)
-            var founders = Api.Leaderboard.FoundersAsync();    // generation-0 originals
-            var trialsBoard = Api.Trials.BoardAsync();          // endless-Trials ladder (public, receipt-derived)
-            var discoveries = Api.Leaderboard.FancyDiscoveriesAsync();   // the Fancy discovery race
-            var highlights = Api.Leaderboard.HighlightsAsync();          // the spectator feed
-            await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders, trialsBoard, discoveries, highlights);
-            _trialsBoard = await trialsBoard;
-            _discoveries = await discoveries;
-            _highlights = await highlights;
-            _top = await top;
-            _season = await season;
-            _rarest = await rarest;
-            _fancies = await fancies;
-            _tournaments = await tournaments;
-            _recent = (await recent).Where(m => m.Result is not null).ToList();
-            _economy = await economy;
-            _founders = await founders;
-            foreach (var h in await all) _names[h.Id] = h.Name;
-        }
-        catch
-        {
-            _error = true;
-        }
-        finally
-        {
-            _loading = false;
-        }
+        var top = OrNull(Api.Leaderboard.TopAsync());
+        var season = OrNull(Api.Leaderboard.SeasonAsync());
+        var rarest = OrNull(Api.Leaderboard.RarestAsync());
+        var fancies = OrNull(Api.Leaderboard.FanciesAsync());
+        var tournaments = OrNull(Api.Tournament.ListAsync());
+        var recent = OrNull(Api.Matches.ListAsync("resolved"));   // public — no auth needed to browse the feed
+        var all = OrNull(Api.Heroes.AllAsync());                   // for hero-id → name resolution
+        var economy = OrNull(Api.Economy.HealthAsync());           // treasury-health telemetry (public)
+        var founders = OrNull(Api.Leaderboard.FoundersAsync());    // generation-0 originals
+        var trialsBoard = OrNull(Api.Trials.BoardAsync());          // endless-Trials ladder (receipt-derived)
+        var discoveries = OrNull(Api.Leaderboard.FancyDiscoveriesAsync());   // the Fancy discovery race
+        var highlights = OrNull(Api.Leaderboard.HighlightsAsync());          // the spectator feed
+
+        // None of these can throw now, so the page always renders whatever did arrive.
+        await Task.WhenAll(top, season, rarest, fancies, tournaments, recent, all, economy, founders,
+            trialsBoard, discoveries, highlights);
+
+        var topResult = await top;
+        _error = topResult is null;   // the headline board doubles as the reachability probe
+        _top = topResult ?? [];
+        _season = await season;
+        _economy = await economy;
+        _rarest = await rarest ?? [];
+        _fancies = await fancies ?? [];
+        _founders = await founders ?? [];
+        _tournaments = await tournaments ?? [];
+        _trialsBoard = await trialsBoard ?? [];
+        _discoveries = await discoveries ?? [];
+        _highlights = await highlights ?? [];
+        _recent = (await recent ?? []).Where(m => m.Result is not null).ToList();
+        foreach (var h in await all ?? []) _names[h.Id] = h.Name;
+
+        _loading = false;
     }
 
     // Countdown to the season reset, from the server-supplied end instant.
