@@ -246,6 +246,18 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
 
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
 
+// The spectator feed: which resolved fights were worth watching (upsets, stakes, prized heroes, flawless
+// or near-death finishes). Public, and recomputable by anyone holding the same match + hero data.
+api.MapGet("/highlights", (GameStore store) =>
+{
+    var heroes = store.Heroes.Values.ToDictionary(h => h.Id, h => new HighlightHero(
+        h.Name, h.Level,
+        ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Tier.ToString() == "Legendary"
+            || ArkadeHeroes.Core.Progression.FancySets.TitleFor(h.Genome) is not null));
+    var resolved = store.Matches.Values.Where(m => m.Result is not null).Select(ToMatchDto);
+    return Results.Ok(HighlightsBuilder.Build(resolved, heroes));
+});
+
 // The Fancy discovery race — who FIRST bred a hero expressing each named set. Every catalog title is
 // returned, claimed or not, so the board doubles as "what's still undiscovered".
 api.MapGet("/fancies/discoveries", (GameStore store) =>

@@ -14,6 +14,9 @@ public sealed class LeaderboardApi(ArkadeHeroesClient client)
     /// <summary>Generation-0 heroes — the original mints, the scarcest lineage (gen-0 supply never grows).</summary>
     public Task<List<HeroDto>> FoundersAsync() => client.GetAsync<List<HeroDto>>("/api/founders");
 
+    /// <summary>The spectator feed — resolved fights worth watching, with the reason each one made the cut.</summary>
+    public Task<List<HighlightDto>> HighlightsAsync() => client.GetAsync<List<HighlightDto>>("/api/highlights");
+
     /// <summary>The Fancy discovery race — who first found each named set, and which are still unclaimed.</summary>
     public Task<List<FancyDiscoveryDto>> FancyDiscoveriesAsync() =>
         client.GetAsync<List<FancyDiscoveryDto>>("/api/fancies/discoveries");
