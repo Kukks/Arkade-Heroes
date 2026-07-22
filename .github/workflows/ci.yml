@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+  # Nightly, for the E2E job only. Three death-match E2Es sat red for weeks because
+  # E2E ran on manual dispatch alone, so nothing on push or PR ever exercised them.
+  schedule:
+    - cron: '17 4 * * *'   # 04:17 UTC — off the hour, where runner contention is lower
 
 jobs:
   build-and-unit-test:
@@ -51,16 +55,16 @@ jobs:
           name: unit-test-results
           path: TestResults/*.trx
 
-  # ── E2E on live regtest — MANUAL (workflow_dispatch) ────────────────────────
+  # ── E2E on live regtest — MANUAL (workflow_dispatch) + NIGHTLY (schedule) ───
   # The E2E suite drives real arkd + the Arkade Script emulator over the
   # arkade-regtest docker stack. It is opt-in because it needs Docker, is slow
   # (~2.5 min), and shares a faucet (the tests already run serially). This job is
-  # written but UNVERIFIED in Actions (the repo has no remote yet) — expect to
-  # tune stack-readiness/faucet timing on its first real run.
+  # verified green in Actions on 2026-07-22 (run 29959028986, 581s), which is why it
+  # is now also scheduled nightly rather than manual-only.
   e2e-test:
     name: E2E (regtest)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - name: Checkout (recursive — also brings the arkade-regtest harness)
         uses: actions/checkout@v4
