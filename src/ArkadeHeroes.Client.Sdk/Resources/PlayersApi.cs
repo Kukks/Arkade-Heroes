@@ -31,4 +31,8 @@ public sealed class PlayersApi(ArkadeHeroesClient client)
     public Task<SeasonPassProgress> SeasonPassAsync() => client.GetAsync<SeasonPassProgress>("/api/players/me/season-pass");
 
     public Task<PlayerDto> GetAsync(string playerId) => client.GetAsync<PlayerDto>($"/api/players/{playerId}");
+
+    /// <summary>Any player's public trophy case — season standing, achievements and best heroes. No auth needed.</summary>
+    public Task<PlayerProfileDto> ProfileAsync(string playerId) =>
+        client.GetAsync<PlayerProfileDto>($"/api/players/{playerId}/profile");
 }

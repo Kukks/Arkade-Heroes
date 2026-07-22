@@ -130,6 +130,13 @@ api.MapGet("/players/me/achievements", (HttpContext http, GameService game) =>
 api.MapGet("/economy/health", async (GameService game, CancellationToken ct) =>
     Results.Ok(await game.EconomyHealthAsync(ct)));
 
+// A player's public trophy case — the same standing /players/me/* shows them, addressable by anyone, so a
+// name on the leaderboard leads somewhere. Public and unauthenticated: every field is bragging material.
+api.MapGet("/players/{playerId}/profile", (string playerId, GameStore store, GameService game) =>
+    store.Players.TryGetValue(playerId, out var player)
+        ? Results.Ok(game.ProfileFor(player))
+        : Results.NotFound());
+
 api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChainService chain, CancellationToken ct) =>
 {
     if (!store.Players.TryGetValue(playerId, out var player)) return Results.NotFound();
