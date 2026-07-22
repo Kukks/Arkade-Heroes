@@ -74,4 +74,38 @@ public class AchievementsTests
         Assert.Contains("Emberlord", a.FancySetsOwned);
         Assert.DoesNotContain("Sovereign", a.FancySetsOwned);   // two Legendaries isn't the ultra-grail
     }
+
+    // Discovering a Fancy set is a permanent DEED, credited once to its first finder. It must not be a
+    // function of who holds the #1-edition hero right now — otherwise the badge is buyable (acquire a #1
+    // and inherit the glory) and revocable (sell the set you discovered and lose it). The discovery record
+    // already stamps the discoverer, so the badge should follow the deed, not the asset.
+    [Fact]
+    public async Task Trailblazer_FollowsTheDiscoverer_NotWhoeverHoldsTheNumberOneEditionNow()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (discoverer, discovererDto) = await factory.RegisterAsync("Ach-Trail");
+        var (buyer, buyerDto) = await factory.RegisterAsync("Ach-Buyer");
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        // A hero that expresses a Fancy set (Emberlord = Aura AND Sigil at Legendary), owned by the
+        // discoverer and stamped edition #1 — they were first to breed it.
+        var g = new byte[32];
+        g[16 + (int)TraitCategory.Aura * 2] = 255;
+        g[16 + (int)TraitCategory.Sigil * 2] = 255;
+        store.Heroes["ember-1"] = new Hero
+        {
+            Id = "ember-1", OwnerId = discovererDto.PlayerId, Name = "Ember", Level = 1,
+            Genome = new Genome(g), Generation = 1,
+        };
+        store.RecordFancyFind("Emberlord", "ember-1", "Ember", discovererDto.PlayerId, 100);
+
+        Assert.Contains("Trailblazer", (await discoverer.Players.AchievementsAsync()).Badges);
+
+        // They sell the #1-edition hero to the buyer. The deed of discovery stays with the discoverer…
+        store.Heroes["ember-1"].OwnerId = buyerDto.PlayerId;
+
+        Assert.Contains("Trailblazer", (await discoverer.Players.AchievementsAsync()).Badges);
+        // …and does NOT transfer to the buyer, who merely holds the hero and discovered nothing.
+        Assert.DoesNotContain("Trailblazer", (await buyer.Players.AchievementsAsync()).Badges);
+    }
 }
