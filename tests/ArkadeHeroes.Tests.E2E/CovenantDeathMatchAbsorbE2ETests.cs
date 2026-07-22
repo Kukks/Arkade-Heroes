@@ -123,6 +123,11 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
 
         var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
+
+        // Alice pays an absorb death-match fee (3x MatchFee, and her hero is level 20) on EVERY
+        // attempt below, and the settle refuses until it clears — so fund her for all of them.
+        await RegtestHelper.ArkSend(_alice.Address, 300_000);
+        await _alice.WaitForBalanceAsync(300_000, TimeSpan.FromSeconds(60));
         var store = _factory.Services.GetRequiredService<GameStore>();
         store.Heroes[aliceHero.Id].Level = 20; // Alice reliably wins the deterministic fight
 
@@ -131,6 +136,9 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
         {
             var bobWallet = await NewWalletAsync();
             var bob = await RegisterAsync($"DMA-Bob{attempt}", bobWallet);
+            // The defender owes his own per-character fee too — a fresh wallet has nothing.
+            await RegtestHelper.ArkSend(bobWallet.Address, 50_000);
+            await bobWallet.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
             var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
             await bobWallet.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
             store.Heroes[bobHero.Id] = WithTrait(store.Heroes[bobHero.Id], TraitCategory.Aura, 255); // Bob has a Legendary Aura to absorb
@@ -139,8 +147,12 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
             await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(60)); // (returned to Alice after a prior keep)
             var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id, Absorb: true));
             await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);
+            if (open.FeeInvoice is { } challengerFee)
+                await _alice.SendAsync(challengerFee.PayToAddress, challengerFee.AmountSats);
             var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
             await bobWallet.SendAssetAsync(accept.EscrowAddress, bobHero.AssetId!, 1);
+            if (accept.FeeInvoice is { } defenderFee)
+                await bobWallet.SendAsync(defenderFee.PayToAddress, defenderFee.AmountSats);
 
             var settle = await SettleWithRetryAsync(alice, open.DeathMatchId, "e2e-absorb");
             if (!settle.Minted) continue; // rare keep roll — Alice's hero returns; try a fresh loser
