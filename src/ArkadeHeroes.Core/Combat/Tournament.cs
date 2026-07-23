@@ -59,6 +59,13 @@ public static class Tournament
     /// <summary>Prize split (%) for the podium: champion, then runner-up. A Core constant (like SeasonPrize.Weights).</summary>
     public static readonly IReadOnlyList<int> PrizeWeights = [70, 30];
 
+    /// <summary>The sats the podium splits: the buy-in pot minus the house rake. The rake is CLAMPED to 0..100%
+    /// so a misconfigured <see cref="GameConfig.TournamentRakePct"/> — negative would push the pool ABOVE the
+    /// pot (the treasury funding the gap on every tournament), &gt;100 would drive it negative — can never make
+    /// the podium pay out more than the buy-ins collected. The treasury's solvency floor then holds under ANY
+    /// config, not just the default. Pinned by PotSolvencyTests.</summary>
+    public static long PrizePool(long pot, int rakePct) => pot - pot * Math.Clamp(rakePct, 0, 100) / 100;
+
     /// <summary>The podium — champion first, then the runner-up (the loser of the final match); the basis for
     /// the prize split. A degenerate all-bye bracket returns just the champion.</summary>
     public static IReadOnlyList<string> Podium(TournamentResult result)
