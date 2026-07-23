@@ -1,22 +1,22 @@
 # Engineering handoff — Arkade Heroes autonomous build
 
-**Audience:** the next agent (Opus) continuing this build autonomously via /loop.
-**Baseline:** commit `bd901fa`, clean working tree. Gates verified green 2026-07-04: **65/65 unit, 6/6 regtest E2E**.
-**Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → `docs/plans/18-client-refund.md` (the next task, fully specced) → `docs/DESIGN.md`.
+**Audience:** the next agent continuing this build autonomously via /loop.
+**Baseline:** current `main` (HEAD `e265fc3` as of 2026-07-23), clean tree. Gate: **400 unit** (`dotnet test tests/ArkadeHeroes.Tests`, ~7s) + **53 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+**Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → the auto-memory backlog (`arkade-heroes-backlog.md`, the live prioritized queue) → `docs/DESIGN.md`.
 
 ---
 
 ## 1. Mission and standing directives
 
-Build **Arkade Heroes**: a CryptoKitties-inspired breeding/battling game on Arkade (Bitcoin L2), in .NET, playable on local regtest, console UI only (graphics explicitly out of scope). The user's standing directives, in force until countermanded:
+Build **Arkade Heroes**: a CryptoKitties-inspired breeding/battling game on Arkade (Bitcoin L2), in .NET, playable on local regtest, with a graphical **Blazor WebAssembly** frontend (`src/ArkadeHeroes.Web`, in-browser non-custodial wallet) alongside the console client. The user's standing directives, in force until countermanded:
 
 1. **No shortcuts. Loop until perfection.** Users must own their characters and progression **non-custodially**, and **covenants enforce consistent fairness** across the board. When a fix can be "server promises" or "covenant enforces", pick the covenant.
 2. **Fast cadence**: self-schedule wakeups (~120s), maximize throughput within the Claude Max 20× 5-hour rate windows. If a window caps out, resume after reset.
-3. **Commit locally per milestone** — never push (no remote exists). Verify every commit's contents with `git show --stat` (see §5 trap about `.gitignore`).
+3. **Ship per milestone via PR** — the repo now has a GitHub remote (`Kukks/Arkade-Heroes`) with a CI gate. Branch → GPG-signed commit (`%G?` must be `G`, NEVER `--no-gpg-sign`) → PR (body via a quoted heredoc, never inline `--body` — bash eats backticked code spans) → gate on CI conclusion `success` AND headSha match → squash-merge → `git checkout main && git pull --ff-only`. No AI attribution anywhere. Verify commit contents with `git show --stat` (see §5 trap about `.gitignore`).
 4. **Never skip, weaken, or filter out failing tests.** Fix root causes.
 5. Covenant-first design: `contracts/*.ark` are the authoritative rules; runtime covenants are arg-free bytecode in `ArkadeCovenants` (see `contracts/README.md` for why).
 
-Loop protocol per iteration: keep the gate green → implement milestone → full gate (65+ unit, 6+ E2E) → commit (verify with `git show --stat`) → update `contracts/README.md` + `docs/DESIGN.md` + auto-memory → `TaskUpdate` the task list → `ScheduleWakeup` ~120s with a precise continuation prompt (include: where you stopped, next steps, and "if the user has returned with new instructions, follow those instead").
+Loop protocol per iteration: keep the gate green → implement milestone (TDD; route sensitive money-path / concurrency / durability fixes to the `sensitive-bugfix` agent, then verify its "done" yourself — re-read the code, re-run the gate) → full unit gate (currently 400) + a live E2E for money-path changes → PR → gate on CI → merge → update auto-memory. Sats are REAL BTC: the treasury is finite and fee-funded, so the failure mode is INSOLVENCY, not inflation — every faucet must be gated behind a costlier action.
 
 ## 2. Current state — what is live and proven (all on regtest unless noted)
 
@@ -28,15 +28,15 @@ Loop protocol per iteration: keep the gate green → implement milestone → ful
 - **Portable progression receipts**: BIP340-signed match/breeding facts, player-held, independently replayable (`ReceiptVerifier`).
 - All three `.ark` contracts compile with `arkadec` (artifacts committed under `contracts/build/`).
 
-What is **not** yet built: covenant breeding, XP-as-assets, marketplace, leaderboard, wallet-file encryption. See §7. (Task 18 — the client `refund` command — SHIPPED after this document was first written: gate is now **69 unit + 7 E2E**; see `docs/plans/18-client-refund.md` for the design record and §6.)
+The bullets above are the ORIGINAL MVP proof, still live. Everything this section once listed as "not yet built" — covenant breeding, XP-as-assets, marketplace, leaderboard, wallet encryption — has since shipped, plus a graphical frontend, tournaments, seasons, a daily loop, 3v3 squads, death-matches with trait-absorb, and a full money-path correctness pass. **Do NOT rebuild any of it** — §6 is the current surface and §7 is what's genuinely open.
 
 ## 3. World verification runbook — run this BEFORE any work
 
-Expected outputs recorded 2026-07-04 at `bd901fa`. If any check fails, fix the world first — do not code against a broken baseline.
+Expected outputs as of `main`@`e265fc3`. If any check fails, fix the world first — do not code against a broken baseline.
 
 ```bash
 # 1. Repo state (clean tree; HEAD is bd901fa or a descendant — handoff-doc commits follow it)
-git -C C:/Git/Arkade-Heroes log --oneline -8     # → task-18 + handoff commits, then bd901fa
+git -C C:/Git/Arkade-Heroes log --oneline -8     # → recent squash-merges (#NN) on main
 git -C C:/Git/Arkade-Heroes status --short       # → (empty)
 
 # 2. Regtest stack up? (start: `node regtest/regtest.mjs start --profile ark --profile emulator` from repo root)
@@ -44,10 +44,10 @@ docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 69/69, ~3s
+dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 400/400, ~7s
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~2 min)
-dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 7/7
+dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 53/53 (serial, ~2-3 min)
 
 # 5. Chain plumbing probes
 node regtest/regtest.mjs rpc getblockcount                       # bitcoin-cli passthrough works
@@ -71,6 +71,8 @@ Research clones (read-only reference, shallow) at `C:/Git/Arkade-Heroes-research
 | `ArkadeHeroes.Chain` | Chain abstraction | `IChainService` (the seam), `InMemoryChainService` (simulation with the SAME semantics — real BIP340 checks etc.), `NArk/NArkChainService` (real backend), `NArk/SelfCustodyWallet` (player wallet: isolated ServiceProvider, EF sqlite, mnemonic in wallet DB), `Covenants/*` |
 | `ArkadeHeroes.Server` | Minimal API game service | `Program.cs` (endpoints incl. InMemory-only `/api/dev/*`), `GameService`, `GameStore` (in-memory; the money-bearing slice is optionally durable — see Durability), `Persistence/*`, `ReceiptSigner`, `GameOptions` |
 | `ArkadeHeroes.Client` | Console REPL | `GameClient.cs` (embedded `SelfCustodyWallet` per player via `ARKADE_HEROES_HOME`) |
+| `ArkadeHeroes.Client.Sdk` | Typed .NET client for the game API | `ArkadeHeroesClient` + `Resources/*` facades; the console client and the API tests both run on it |
+| `ArkadeHeroes.Web` | **Blazor WebAssembly frontend** — the graphical arcade | in-browser non-custodial wallet; breed/merge/trade/tournament/death-match driven client-side; serves `:5132`, calls the API at `:5210` (override `ApiBaseUrl`) |
 
 ### Durability (`src/ArkadeHeroes.Server/Persistence/`)
 
@@ -128,23 +130,19 @@ Covenant/protocol traps live in **`contracts/README.md`** (authoritative, incl. 
 10. **Debug arsenal**: `docker logs emulator|arkd --since 10m`; `node regtest/regtest.mjs rpc <bitcoin-cli args>`; arkd REST indexer `http://localhost:7070/v1/indexer/vtxos?outpoints=<txid>:<vout>` (also `?scripts=`); esplora `:8999/api/v1`. When a spend "succeeds" but funds don't appear, interrogate the indexer by outpoint FIRST — it distinguishes "never created" from "created but filtered".
 11. **Session quirk (not code)**: the remote permission stream ("Yep Anywhere") intermittently dies mid-turn — Write/Edit/Bash all fail with "Tool permission request failed: Error: Stream closed". Work already on disk survives. Remedy: end the turn with a precise `ScheduleWakeup` continuation prompt; the channel heals between turns. Never leave a milestone uncommitted longer than necessary.
 
-## 6. Task 18: client `refund <matchId>` — SHIPPED
+## 6. Shipped surface (the original MVP map is complete)
 
-Implemented and gated (69 unit + 7 E2E). Design record: **`docs/plans/18-client-refund.md`**. The next task is covenant breeding — start from `docs/plans/19-backlog.md` §19 (pinned opcode semantics + probe list).
+The MVP completion map (`docs/plans/20-mvp-completion.md`) and the covenant rollout are DONE — every covenant flow (breeding, merge/fusion, item + hero offers, geared stakes, death-match) was rebuilt on **structural** covenant enforcement (the emulator checks transaction shape, not just an oracle signature). On top of the core loop, the game now has: covenant breeding + merge/fusion + hero **death-matches** (permadeath, winner absorbs a trait); a full item + hero **marketplace** with a treasury fee; **XP-as-assets** with a conserved anti-farm transfer; **VRF** entropy (replaced commit–reveal); **tournaments** (buy-in bracket → pot → podium split − house rake); **season prize pools**; a **daily** quest loop + streaks + faucet governor; **3v3 squad** matches; a PvE **gauntlet**; a unique-**name registry**; **achievements**; Fancy/rarity boards; a typed **Client.Sdk**; and a graphical **Blazor WASM frontend** for all of it. A money-path correctness pass then hardened all 8 covenant flows against concurrent double-execute (per-key locks), pinned pot solvency, and fixed a daily-faucet crash-restart double-pay. Gate: 400 unit + 53 E2E.
 
-## 7. Remaining work — the MVP completion map
+## 7. What's genuinely open (the live queue is `arkade-heroes-backlog.md` in auto-memory)
 
-**`docs/plans/20-mvp-completion.md` is the authoritative remaining-work list**, with the
-acceptance bar (a two-player MVP walkthrough E2E + human runbook) and per-item
-definitions-of-done. Current position: task 19 (covenant breeding) rungs 1–3 PROVEN, rung 4
-(`BreedAuthorized` composition) is next — pinned semantics and the byte-order rule live in
-`docs/plans/19-backlog.md` §19. After breeding: XP-assets → item marketplace → leaderboard →
-wallet encryption → warts → the walkthrough. Parking lot (do not start early): CI, upstream
-arkd bug report, hero marketplace, VRF.
+- **User-owned decisions — do NOT decide these unilaterally, surface them:** combat balance (measured: ~41% of equal-level matches are pre-decided before the seed; the dominant lever is the `StatBlock` base-stat spread — a design call, not a bug); legal/regulatory review (permadeath wagering + real-BTC cash-out — see `arkade-heroes-legal-risk.md`); whether to flip the marketplace listing fee default-on; browser fee-flow verification (#212 — the server side is E2E-proven; the browser click-through needs a human watching the UI).
+- **Noted low-priority follow-ups:** idempotent memo-keyed `PayoutAsync` (would close the daily's rare in-process settled-then-threw retry — but touches the chain seam + needs a durable dedup ledger, so it's a design decision); season-settle durability is safe ONLY because receipts are volatile (re-audit if receipts ever become durable).
+- **Standing insolvency guard:** keep `fee inflow + solvency-safe rake ≥ faucet outflow + reserve floor`. `EconomySolvencyTests` + `PotSolvencyTests` pin the structural invariants against config drift; the daily loop is treasury-positive because every quest is gated behind a costlier fee-paying action.
 
 ## 8. Working agreements recap
 
 - Auto-memory lives at `C:\Users\evilk\.claude\projects\C--Git-Arkade-Heroes\memory\` (index `MEMORY.md` → `arkade-heroes-project.md`, `cadence-preference.md`). Keep it updated per milestone; it is the cross-session brain, but **this repo's docs are the durable source of truth** — anything load-bearing goes in the repo.
 - Never add AI attribution to commits/PRs. No time estimates in any artifact. Match existing file style. Commit messages: dense, technical, capture the WHY and the traps (see `git log` for the house style).
 - The user reads results asynchronously; close each turn with honest status: what ran, what's confirmed vs inferred, commit hashes.
-- The harness task list (TaskList/TaskUpdate tools) tracks milestones — tasks #1–#17 completed, **#18 in_progress** (its description points at the spec file). Keep it in sync per milestone; if a fresh session has an empty task list, recreate #18 from `docs/plans/18-client-refund.md`.
+- Route sensitive money-path / concurrency / durability fixes to the `sensitive-bugfix` agent (Fable-pinned; Opus fallback via the Agent tool `model: opus` override if Fable errors), then verify its "done" yourself before merging. The live prioritized queue is the **auto-memory backlog** (`arkade-heroes-backlog.md`), not the harness task list — the task list is now a long historical log.
