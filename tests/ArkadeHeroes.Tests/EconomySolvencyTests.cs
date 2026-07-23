@@ -62,10 +62,13 @@ public class EconomySolvencyTests
     [Fact]
     public void PveGauntlet_CostsMoreThanItsBestDrop()
     {
-        // The one PvE path that hands out a real asset: entry must always exceed the 500-sat item tier it
-        // can drop, so a full-clear farm can never be treasury-negative at any level.
+        // The one PvE path that hands out a real asset: entry must always exceed the BEST item it can drop,
+        // so a full-clear farm can never be treasury-negative at any level. Derived from the real reward pool
+        // so a future pricier drop trips this, instead of silently beating a stale hardcoded number.
         var cfg = GameConfig.Default;
+        var bestDrop = Gauntlet.RewardItems.Max(id => Core.Equipment.ItemCatalog.Find(id)!.PriceSats);
         for (var level = 1; level <= cfg.Curve.MaxLevel; level++)
-            Assert.True(Gauntlet.Fee(level, cfg) > 500, $"level {level}: gauntlet entry {Gauntlet.Fee(level, cfg)} sat");
+            Assert.True(Gauntlet.Fee(level, cfg) > bestDrop,
+                $"level {level}: gauntlet entry {Gauntlet.Fee(level, cfg)} must exceed its {bestDrop}-sat best drop");
     }
 }
