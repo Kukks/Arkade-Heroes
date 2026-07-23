@@ -1,3 +1,6 @@
+using ArkadeHeroes.Core.Combat;
+using ArkadeHeroes.Core.Genetics;
+
 namespace ArkadeHeroes.Core.Progression;
 
 /// <summary>
@@ -32,11 +35,17 @@ public static class Matchmaking
     public static int PowerGapPercent(int heroPower, int opponentPower)
         => (int)Math.Round(Math.Abs(heroPower - opponentPower) * 100.0 / Math.Max(1, Math.Max(heroPower, opponentPower)));
 
-    /// <summary>Coarse favorability from realized POWER, not level — the honest read where gear is staked
-    /// (death-match). Favored ≥ 1.15× the opponent's power, underdog ≤ 0.87×, else even.</summary>
-    public static string PowerFavor(int heroPower, int opponentPower)
+    /// <summary>Coarse favorability from realized POWER <em>and the element matchup</em>, not level — the honest
+    /// read where gear is staked (death-match). Each side's power is scaled by the SAME element ring the fight
+    /// uses (<see cref="ElementMatrix"/>), so a hard-counter attacker reads favored even at lower raw power —
+    /// the ring is the single biggest combat lever, and a power-only read that ignored it labelled a heavy
+    /// favourite an underdog. Favored ≥ 1.15× the opponent's effective power, underdog ≤ 0.87×, else even.</summary>
+    public static string PowerFavor(int heroPower, int opponentPower, Element heroElement, Element opponentElement,
+        GameConfig? config = null)
     {
-        var ratio = heroPower / (double)Math.Max(1, opponentPower);
+        var heroEffective = heroPower * ElementMatrix.Multiplier(heroElement, opponentElement, config);
+        var opponentEffective = opponentPower * ElementMatrix.Multiplier(opponentElement, heroElement, config);
+        var ratio = heroEffective / Math.Max(1.0, opponentEffective);
         return ratio >= 1.15 ? "favored" : ratio <= 0.87 ? "underdog" : "even";
     }
 }
