@@ -42,6 +42,7 @@ public static class TrialsBoardBuilder
             .OrderByDescending(h => h.Best)
             .ThenByDescending(h => h.Level)
             .ThenBy(h => h.Name, StringComparer.Ordinal)
+            .ThenBy(h => h.HeroId, StringComparer.Ordinal)   // unique id last → a TOTAL order, so any recompute agrees
             .Select((h, i) => new TrialsBoardEntryDto(
                 i + 1, h.HeroId, h.Name, h.Level, h.Best,
                 ArkadeHeroes.Core.Progression.Trials.TitleFor(h.Best)))
@@ -79,6 +80,7 @@ public static class LeaderboardBuilder
             .ThenByDescending(h => h.Level)
             .ThenByDescending(h => h.Matches)
             .ThenBy(h => h.Name, StringComparer.Ordinal)
+            .ThenBy(h => h.Key, StringComparer.Ordinal)   // unique id last → a TOTAL order, so any recompute agrees
             .Select((h, i) => new LeaderboardEntryDto(i + 1, h.Key, h.Name, h.Level, h.Wins, h.Matches, h.OwnerId))
             .ToList();
     }
