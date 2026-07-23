@@ -38,11 +38,14 @@ public static class Gauntlet
     public static readonly int[] WaveXp = [15, 20, 25, 30, 40];
 
     /// <summary>Flat premium over a same-level match fee — entry is strictly more expensive than the best
-    /// item it can drop (500-sat tier), so PvE is EV-negative for the treasury at any clear rate.</summary>
+    /// item it can drop (500-sat tier), so PvE is EV-POSITIVE for the treasury (EV-negative for the PLAYER:
+    /// a sats sink, not a faucet) at any clear rate. PveGauntlet_CostsMoreThanItsBestDrop pins it.</summary>
     public const long FeeBonusSats = 250;
 
-    // The item pool a full clear can drop — all 500-sat tier, entropy-picked; EV < the entry fee.
-    private static readonly string[] RewardItems = ["rusty-blade", "padded-vest", "lucky-feather"];
+    /// <summary>The item pool a full clear can drop — all 500-sat tier, entropy-picked, each worth less than
+    /// the entry fee. Public (like <see cref="WaveXp"/>) so the treasury-positive invariant can be pinned
+    /// against the REAL pool instead of a copied number.</summary>
+    public static readonly string[] RewardItems = ["rusty-blade", "padded-vest", "lucky-feather"];
 
     /// <summary>Sats to enter: a same-level <see cref="Leveling.MatchFee"/> plus <see cref="FeeBonusSats"/>.</summary>
     public static long Fee(int heroLevel, GameConfig? config = null)
