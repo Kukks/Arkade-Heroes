@@ -77,14 +77,63 @@ public class TournamentServerTests
         }
         await players[0].Client.Tournament.ResolveAsync(tid, new FightRequest("verify-nonce"));
 
+        // The entrant-set commitment comes from the tournament's own DTO — fetched INDEPENDENTLY of the
+        // replay below, which is entirely server-supplied — and pins the fill-time snapshots.
+        var dto = await players[0].Client.Tournament.GetAsync(tid);
+        Assert.False(string.IsNullOrEmpty(dto.EntrantsCommitmentHex));
+
         var replay = await players[0].Client.Tournament.ReplayAsync(tid);
-        var verdict = FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex, replay);
+        Assert.Equal(dto.EntrantsCommitmentHex, replay.EntrantsCommitmentHex);   // the replay echoes the same commitment
+        var verdict = FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex,
+            dto.EntrantsCommitmentHex!, replay);
         Assert.True(verdict.Ok, verdict.Detail);                 // the real bracket re-runs identically client-side
         Assert.Equal(4, replay.Entrants.Count);
 
         // …and a server that misreported the champion would be caught.
         Assert.False(FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex,
-            replay with { ChampionHeroId = "phantom" }).Ok);
+            dto.EntrantsCommitmentHex!, replay with { ChampionHeroId = "phantom" }).Ok);
+
+        // …as would a replay pinned to the WRONG entrant-set commitment (a set this bracket never held).
+        Assert.False(FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex,
+            FairnessAudit.ComputeEntrantsCommitment(replay.Entrants.Skip(1).ToList()), replay).Ok);
+    }
+
+    [Fact]
+    public async Task Tournament_EntrantMutation_AfterFill_DoesNotChangeTheCommittedBracket()
+    {
+        // The field LOCKS the instant the bracket fills: the commitment is published then, and resolve
+        // fights from the fill-time snapshots — so a hero levelled (or re-geared) between fill and resolve
+        // fights at its locked state, and the replay still verifies against the fill-time commitment.
+        using var factory = new WebApplicationFactory<Program>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var players = await FourPlayersAsync(factory);
+        var open = await players[0].Client.Tournament.OpenAsync(new OpenTournamentRequest(players[0].HeroId, BuyIn, 4));
+        var tid = open.Tournament.Id;
+        await players[0].Client.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        for (var i = 1; i < 4; i++)
+        {
+            var join = await players[i].Client.Tournament.JoinAsync(tid, new JoinTournamentRequest(players[i].HeroId));
+            await players[i].Client.Dev.PayInvoiceAsync(new { join.BuyIn.InvoiceId });
+        }
+
+        // Full — the commitment is already published, before anything resolves.
+        var pinned = await players[0].Client.Tournament.GetAsync(tid);
+        Assert.Equal("full", pinned.Status);
+        Assert.False(string.IsNullOrEmpty(pinned.EntrantsCommitmentHex));
+
+        // The late mutation: an entrant hero levels up sharply AFTER the bracket filled.
+        var mutated = store.Heroes[players[1].HeroId];
+        var fillLevel = mutated.Level;
+        mutated.Level = fillLevel + 30;
+
+        await players[0].Client.Tournament.ResolveAsync(tid, new FightRequest("late-mutation-nonce"));
+        var replay = await players[0].Client.Tournament.ReplayAsync(tid);
+        // The replay carries the FILL-time snapshot — the late mutation never reached the bracket…
+        Assert.Equal(fillLevel, replay.Entrants.Single(e => e.Id == players[1].HeroId).Level);
+        // …and the resolved bracket still verifies against the commitment pinned at fill.
+        var verdict = FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex,
+            pinned.EntrantsCommitmentHex!, replay);
+        Assert.True(verdict.Ok, verdict.Detail);
     }
 
     [Fact]

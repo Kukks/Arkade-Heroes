@@ -520,7 +520,7 @@ api.MapGet("/tournament/{id}/replay", (string id, GameStore store) =>
             r.Matches.Where(m => m.Result is not null)
                 .Select(m => new TournamentMatchDto(m.Round, m.Index, m.AId, m.BId, m.WinnerId)).ToList(),
             r.ChampionId, t.CommitmentHex, Convert.ToHexString(t.ServerSeed).ToLowerInvariant(),
-            t.EntropyHex ?? "", t.Nonce ?? ""))
+            t.EntropyHex ?? "", t.Nonce ?? "", t.EntrantsCommitmentHex))
         : Results.NotFound());
 
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
@@ -884,7 +884,7 @@ static SquadMatchDto ToSquadMatchDto(SquadMatchSession s) => new(
 static TournamentDto ToTournamentDto(TournamentSession t) => new(
     t.Id, t.OpenerPlayerId, t.BuyInSats, t.Size, t.Entrants.Count, t.Status,
     t.Entrants.Select(e => new TournamentEntrantDto(e.PlayerId, e.HeroId)).ToList(),
-    t.Result?.ChampionId, t.Prizes.Count > 0 ? t.Prizes[0] : 0);
+    t.Result?.ChampionId, t.Prizes.Count > 0 ? t.Prizes[0] : 0, t.EntrantsCommitmentHex);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,

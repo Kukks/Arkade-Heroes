@@ -295,10 +295,15 @@ public sealed class TournamentSession
     public IReadOnlyList<long> Prizes { get; set; } = [];
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
-    /// <summary>Entrant hero snapshots in SEEDING ORDER, captured at resolve — lets any client re-run
-    /// Tournament.Resolve and verify the bracket (FairnessAudit.VerifyTournament) even after the heroes
-    /// later change.</summary>
+    /// <summary>Entrant hero snapshots captured the moment the bracket FILLS — the locked fighting state
+    /// the resolver runs over and any client re-runs (FairnessAudit.VerifyTournament), even after the
+    /// heroes later change. NOT persisted: a restart-rehydrated bracket has none, can't honor its
+    /// commitment, and lands in the strand refund instead.</summary>
     public IReadOnlyList<Shared.HeroDto>? EntrantSnapshots { get; set; }
+    /// <summary>Domain-tagged hash of the canonical entrant set above, computed at the same fill instant
+    /// (FairnessAudit.ComputeEntrantsCommitment) and published on the tournament DTO — so a client can pin
+    /// the snapshots independently of the replay and a server can't substitute a genome/level/gear.</summary>
+    public string? EntrantsCommitmentHex { get; set; }
 }
 
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
