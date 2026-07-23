@@ -452,6 +452,9 @@ public class GameService(
     /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
+        // Per-player gate: the claimed-check → reserve pair below is only race-safe when concurrent
+        // claims are serialized — without it two requests can both read false and mint four starters.
+        using var gate = await store.LockAsync($"starters:{player.Id}", ct);
         if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
         player.StarterClaimed = true; // reserve first so concurrent claims can't double-mint
         // Durably too — otherwise a restart lets the same player claim free starter heroes all over again.
@@ -603,6 +606,9 @@ public class GameService(
     {
         if (!store.Breedings.TryGetValue(breedingId, out var session) || session.PlayerId != player.Id)
             throw new GameRuleException($"Unknown breeding session '{breedingId}'.");
+        // Per-session gate: completed-check → mint → complete-set must be one atomic step, or two
+        // concurrent reveals of one paid fee both pass the guard and mint two children.
+        using var gate = await store.LockAsync($"breed:{session.Id}", ct);
         if (session.Completed) throw new GameRuleException("Breeding already completed.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
@@ -630,16 +636,9 @@ public class GameService(
         if (BreedingService.Validate(parentA, parentB, now) is { } error)
             throw new GameRuleException(error);
 
-        session.Completed = true;
-
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.ParentAId, session.ParentBId, nonce);
         var policy = new BreedingPolicy(_options.BreedingCooldownBaseUnit);
         var outcome = BreedingService.Breed(parentA, parentB, entropy, policy, _config);
-
-        parentA.BreedCount++;
-        parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
-        parentB.BreedCount++;
-        parentB.BreedCooldownUntil = now + outcome.ParentBCooldown;
 
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
@@ -668,6 +667,14 @@ public class GameService(
             child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
                 session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
         }
+        // Chain FIRST, latch + in-memory effects after (the death-match settle pattern): if the mint
+        // faults, the session stays open and the parents untouched, so the already-paid fee can be
+        // retried instead of stranded behind a Completed flag and a burned cooldown.
+        session.Completed = true;
+        parentA.BreedCount++;
+        parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
+        parentB.BreedCount++;
+        parentB.BreedCooldownUntil = now + outcome.ParentBCooldown;
         session.ChildHeroId = child.Id;
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
@@ -709,6 +716,9 @@ public class GameService(
     {
         if (!store.Gauntlets.TryGetValue(gauntletId, out var session) || session.PlayerId != player.Id)
             throw new GameRuleException($"Unknown gauntlet '{gauntletId}'.");
+        // Per-session gate: completed-check → run → complete-set must be one atomic step, or two
+        // concurrent runs of one paid fee both resolve — double XP and a doubled full-clear item.
+        using var gate = await store.LockAsync($"gauntlet:{session.Id}", ct);
         if (session.Completed) throw new GameRuleException("This gauntlet has already been run.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
         if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
@@ -1371,6 +1381,10 @@ public class GameService(
     /// doesn't consume the day.</summary>
     public async Task<Shared.DailyClaimResultDto> ClaimDailyAsync(Player player, CancellationToken ct)
     {
+        // Per-player gate: the claimed-today check, the payout, and the day-consuming write below must
+        // be one atomic step — the client poll-retries, so two concurrent claims would otherwise both
+        // pass the guard and the faucet would pay twice off the same treasury reading.
+        using var gate = await store.LockAsync($"daily:{player.Id}", ct);
         var window = Daily.ForDay(DateTimeOffset.UtcNow);
         if (player.LastClaimDay == window.DayIndex)
             throw new GameRuleException("Daily reward already claimed today.");
@@ -1434,6 +1448,10 @@ public class GameService(
     {
         if (!store.Matches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
             throw new GameRuleException($"Unknown match '{matchId}'.");
+        // Per-match gate: status-check → fight → resolved-set → pot payout must be one atomic step, or
+        // two concurrent resolves both see "accepted" — double XP in any mode, and in invoice mode the
+        // treasury pays the pot twice.
+        using var gate = await store.LockAsync($"match:{session.Id}", ct);
         var fightable = session.Status == "accepted" || (session.Status == "open" && session.WagerSats == 0);
         if (!fightable)
             throw new GameRuleException(session.Status == "open"
@@ -1663,6 +1681,8 @@ public class GameService(
     {
         if (!store.SquadMatches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
             throw new GameRuleException($"Unknown squad match '{matchId}'.");
+        // Per-match gate: the same double-resolve race as FightAsync (per-duel XP + one pot payout).
+        using var gate = await store.LockAsync($"squad:{session.Id}", ct);
         var fightable = session.Status == "accepted" || (session.Status == "open" && session.WagerSats == 0);
         if (!fightable)
             throw new GameRuleException(session.Status == "open"

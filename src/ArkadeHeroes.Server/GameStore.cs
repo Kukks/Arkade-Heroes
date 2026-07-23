@@ -393,4 +393,27 @@ public class GameStore
     }
 
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
+
+    // ── Per-key async mutexes: the money-path once-only guards ──
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _keyedLocks = new();
+
+    /// <summary>
+    /// Serializes one keyed flow (a player's daily/starter claim, one session's reveal/resolve):
+    /// guard-check → chain effect → guard-set must be one atomic step, and the chain calls await,
+    /// so this is the awaitable analogue of <see cref="ItemPurchase.Gate"/>. Dispose the returned
+    /// handle to release. Semaphores accrue one per key and are never removed — keys are player and
+    /// session ids, which this in-memory store already retains for the process lifetime anyway.
+    /// </summary>
+    public async Task<IDisposable> LockAsync(string key, CancellationToken ct = default)
+    {
+        var gate = _keyedLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        return new KeyedLockReleaser(gate);
+    }
+
+    private sealed class KeyedLockReleaser(SemaphoreSlim gate) : IDisposable
+    {
+        private SemaphoreSlim? _gate = gate;
+        public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
+    }
 }
