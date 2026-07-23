@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Heroes;
 
@@ -14,8 +15,9 @@ public readonly record struct TournamentResult(string ChampionId, IReadOnlyList<
 /// with a per-match sub-seed derived from the tournament seed), winners advance, until one champion remains. An
 /// odd entrant in a round takes a bye to the next round. Pure + deterministic in (entrants, seed, config), reusing
 /// the engine unchanged — the server scores with it and the client replays it identically (mirrors
-/// <see cref="SquadBattle"/> and <see cref="ArkadeHeroes.Core.Progression.Gauntlet"/>). Entrant order IS the
-/// bracket seeding.
+/// <see cref="SquadBattle"/> and <see cref="ArkadeHeroes.Core.Progression.Gauntlet"/>). The bracket seeding is
+/// drawn from the tournament seed itself — caller order is INERT, so whoever assembles the entrant list
+/// cannot choose the matchups.
 /// </summary>
 public static class Tournament
 {
@@ -30,7 +32,19 @@ public static class Tournament
         var seed = tournamentSeed.ToArray();
         var byId = entrants.ToDictionary(h => h.Id);   // advance winners/byes carry forward by id
         var matches = new List<TournamentMatch>();
-        var alive = entrants.Select(h => h.Id).ToList();
+        // Seed the bracket from the COMMITTED tournament seed, not caller order, so neither the server nor a
+        // colluding entrant can choose the matchups (VerifyTournament re-runs this and rejects any other order).
+        // Canonicalize by id first so the input order is inert, then shuffle deterministically from the seed.
+        var ordered = entrants.OrderBy(h => h.Id, StringComparer.Ordinal).ToList();
+        for (var i = ordered.Count - 1; i > 0; i--)
+        {
+            var r = CommitReveal.DeriveEntropy(seed, "tourney-seed", i.ToString());
+            // Read the hash bytes little-endian (NOT platform-dependent BitConverter) so the shuffle is
+            // byte-identical for every consensus participant — server, x64 client, and WASM client alike.
+            var j = (int)(BinaryPrimitives.ReadUInt32LittleEndian(r) % (uint)(i + 1));
+            (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
+        }
+        var alive = ordered.Select(h => h.Id).ToList();
         var round = 0;
 
         while (alive.Count > 1)

@@ -284,9 +284,10 @@ public static class FairnessAudit
 
     /// <summary>
     /// Verifies a tournament bracket: the revealed seed matches the commitment, the entropy is the documented
-    /// derivation, and re-running <c>Tournament.Resolve</c> over the entrant snapshots (in seeding order)
-    /// reproduces the champion AND every fought bracket match — so the server can't misreport who took the
-    /// real-sats pot. Mirrors <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
+    /// derivation, and re-running <c>Tournament.Resolve</c> over the entrant snapshots reproduces the champion
+    /// AND every fought bracket match — so the server can't misreport who took the real-sats pot. The bracket
+    /// SEEDING is drawn from the seed (caller order is inert), so a reordered entrant list can't change the
+    /// outcome. Mirrors <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
     /// </summary>
     public static (bool Ok, string Detail) VerifyTournament(
         string tournamentId, string nonce, string commitmentHex, TournamentReplayDto replay)

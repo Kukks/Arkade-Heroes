@@ -431,7 +431,8 @@ public class GameService(
             session.Result = result;
             session.Nonce = nonce;
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
-            // Snapshot the entrants in seeding order so any client can replay + verify the bracket later.
+            // Snapshot the entrants (order is inert — the bracket seeding is drawn from the seed) so any
+            // client can rebuild the set and replay + verify the bracket later.
             session.EntrantSnapshots = entrants.Select(h => h.ToDto()).ToList();
 
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
