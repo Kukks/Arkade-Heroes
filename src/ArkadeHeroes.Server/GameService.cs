@@ -1009,6 +1009,11 @@ public class GameService(
             throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
         if (session.ChallengerPlayerId != player.Id && session.DefenderPlayerId != player.Id)
             throw new GameRuleException("Only a participant can settle this death-match.");
+        // Per-match gate: completed-check → chain settle → complete-set must be one atomic step, or two
+        // concurrent settles (a poll-retrying client, or both participants at once) both pass the guard
+        // and race the once-only burn/mint. Keyed to the death-match itself (not settle-specific) so the
+        // timelocked reclaim path can later serialize against settle under the same key.
+        using var gate = await store.LockAsync($"deathmatch:{deathMatchId}", ct);
         if (session.Completed) throw new GameRuleException("Death-match already resolved.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
