@@ -1,3 +1,4 @@
+using System.Globalization;
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Progression;
@@ -38,6 +39,44 @@ public class ReceiptTests : IClassFixture<WebApplicationFactory<Program>>
         var (ok, detail) = ReceiptVerifier.Verify(tampered);
         Assert.False(ok);
         Assert.Contains("tampered", detail);
+    }
+
+    [Fact]
+    public void CanonicalPayload_IsCultureInvariant_SoAU2212LocaleClientStillVerifies()
+    {
+        // A staked "match" receipt carries a NEGATIVE XpAward (the loser's conserved delta). The signed
+        // preimage must not depend on the verifier's locale: a sv-SE / fi-FI client formats a negative
+        // long with U+2212 MINUS, not U+002D HYPHEN — a different byte string, a different SHA-256, a
+        // genuine receipt wrongly read as forged. Pin the sign glyph directly (ICU data varies by CI
+        // runner) rather than trusting a named culture, then prove a receipt the server signed under its
+        // invariant culture still verifies under a locale that renders '-' differently.
+        var key = ECPrivKey.Create(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        Span<byte> pub = stackalloc byte[32];
+        key.CreateXOnlyPubKey().WriteToSpan(pub);
+        var unsigned = Unsigned() with { GameSignerKeyHex = Convert.ToHexString(pub).ToLowerInvariant() };
+        Assert.True(unsigned.XpAwardB < 0);   // the negative field whose sign glyph the preimage hangs on
+
+        var u2212 = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        u2212.NumberFormat.NegativeSign = "−";   // MINUS SIGN, as a Nordic browser locale renders it
+
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            // Server signs under its invariant culture (U+002D hyphen-minus).
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            var receipt = unsigned with { SignatureHex = ReceiptVerifier.Sign(unsigned, key) };
+            Assert.True(ReceiptVerifier.Verify(receipt).Ok);   // sanity: verifies in its own culture
+
+            // A client whose locale renders '-' as U+2212 recomputes the preimage — it must reach the SAME bytes.
+            CultureInfo.CurrentCulture = u2212;
+            Assert.Equal("−40", (-40L).ToString());   // guard: the forced sign really is in effect here
+            Assert.True(ReceiptVerifier.Verify(receipt).Ok,
+                "a genuine receipt must verify regardless of the recomputing client's number-format locale");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 
     private static ECPrivKey NewKey()
