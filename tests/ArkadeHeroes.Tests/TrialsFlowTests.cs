@@ -1,8 +1,10 @@
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Progression;
+using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ArkadeHeroes.Tests;
 
@@ -133,5 +135,31 @@ public class TrialsFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var bobHero = (await bob.ClaimStartersAsync())[0];
         // Alice cannot open a trials run on Bob's hero.
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Trials.OpenAsync(bobHero.Id));
+    }
+
+    [Fact]
+    public async Task Trials_OpenSessions_AreCappedPerPlayer_AndEvictedOnRun()
+    {
+        // Trials is the one FREE, chainless open-flow, so an unbounded open-loop would grow the in-memory
+        // store without limit — a one-player memory DoS. Fresh factory: the cap is per player and this test
+        // fills a player's whole quota, so keep it off the shared fixture.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Trials-Cap");
+        var hero = (await alice.ClaimStartersAsync())[0];
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        // Open right up to the cap.
+        var opened = new List<string>();
+        for (var i = 0; i < GameService.MaxOpenTrialsPerPlayer; i++)
+            opened.Add((await alice.Trials.OpenAsync(hero.Id)).TrialsId);
+
+        // The next open is refused — a player cannot accumulate unbounded free sessions.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Trials.OpenAsync(hero.Id));
+
+        // Running one evicts it (the score is attested by the receipt, not the live session), freeing a slot.
+        await alice.Trials.RunAsync(opened[0], "run-nonce");
+        Assert.False(store.Trials.ContainsKey(opened[0]));            // evicted on completion
+        var reopened = await alice.Trials.OpenAsync(hero.Id);         // slot freed → open succeeds again
+        Assert.False(string.IsNullOrEmpty(reopened.TrialsId));
     }
 }
