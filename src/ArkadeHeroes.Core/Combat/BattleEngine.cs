@@ -14,15 +14,18 @@ public static class BattleEngine
 {
     public const int MaxTurns = 60;
 
-    public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed, GameConfig? config = null)
+    public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed, GameConfig? config = null,
+        double advantageA = 1.0, double advantageB = 1.0)
     {
         if (a.Id == b.Id) throw new ArgumentException("A hero cannot fight itself.");
         var cfg = config ?? GameConfig.Default;
         var maxTurns = cfg.Combat.MaxTurns;
         var rng = new DeterministicRng(matchSeed);
 
-        var fighterA = new FighterState(a, cfg.Combat);
-        var fighterB = new FighterState(b, cfg.Combat);
+        // advantageA/B default to 1.0 (a no-op) for every caller except SquadBattle with team synergy on — a
+        // per-side whole-lineup damage multiplier applied like affinity below, so a plain fight is unchanged.
+        var fighterA = new FighterState(a, cfg.Combat, advantageA);
+        var fighterB = new FighterState(b, cfg.Combat, advantageB);
         var events = new List<BattleEvent>();
 
         for (var turn = 1; turn <= maxTurns; turn++)
@@ -159,7 +162,8 @@ public static class BattleEngine
         var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
         // Genome-derived innate nudge from cosmetic traits — off by default, so replays stay byte-identical.
         var innate = cfg.Combat.InnateAbilities ? Traits.InnateModifier(actor.Hero.Genome, cfg) : 1.0;
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * innate));
+        // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * innate * actor.Advantage));
 
         target.Hp = Math.Max(0, target.Hp - damage);
 
@@ -192,13 +196,16 @@ public static class BattleEngine
         public int Hp { get; set; }
         public int DefenseBreakStacks { get; set; }
         public int FocusStacks { get; set; }
+        /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy.</summary>
+        public double Advantage { get; }
         private readonly CombatConfig _cfg;
         private readonly Dictionary<string, int> _cooldowns = [];
 
-        public FighterState(Hero hero, CombatConfig cfg)
+        public FighterState(Hero hero, CombatConfig cfg, double advantage = 1.0)
         {
             Hero = hero;
             _cfg = cfg;
+            Advantage = advantage;
             Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
             Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, cfg);
             Hp = Stats.MaxHp;

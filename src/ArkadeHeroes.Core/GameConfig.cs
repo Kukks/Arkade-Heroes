@@ -146,7 +146,15 @@ public sealed record CombatConfig(
     // Traits.InnateModifier — so rarity/breeding start to matter in the fight, not just on the card.
     // DEFAULT FALSE (same discipline as ElementAwareSelection): Default stays byte-identical and every
     // existing replay verifies unchanged; flipping it on is a coordinated client+server release.
-    bool InnateAbilities = false)
+    bool InnateAbilities = false,
+    // 3v3 team synergy: when true, a squad's ELEMENTAL DIVERSITY grants each of its heroes a small capped
+    // (<= SquadSynergy.MaxBonus) damage bonus in that squad match — a lineup spanning more of the element
+    // ring can't be hard-countered by one type, so it fights a little better, giving breeding a reason to
+    // build a COMP rather than three of a kind. ONLY SquadBattle.Resolve reads it (1v1 / gauntlet /
+    // tournament / death-match are untouched). DEFAULT FALSE (same discipline as the flags above): Default
+    // stays byte-identical and every existing replay verifies unchanged; the flip is a coordinated
+    // client+server release.
+    bool SquadSynergy = false)
 {
     public static CombatConfig Default { get; } = new(
         MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,
@@ -156,5 +164,6 @@ public sealed record CombatConfig(
         FocusPerStack: 0.12, DefenseBreakPerStack: 0.12, MaxEffectStacks: 3, DrainFraction: 0.5,
         SelectionPolicy: CombatSelectionPolicy.Tactical, HealHpThresholdPercent: 45,
         ElementAwareSelection: false,
-        InnateAbilities: false);
+        InnateAbilities: false,
+        SquadSynergy: false);
 }

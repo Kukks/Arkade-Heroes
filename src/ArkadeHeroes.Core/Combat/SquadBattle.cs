@@ -26,13 +26,18 @@ public static class SquadBattle
         ReadOnlySpan<byte> matchSeed, GameConfig? config = null)
     {
         var cfg = config ?? GameConfig.Default;
+        // Team synergy (default OFF): each side's whole-lineup elemental diversity boosts its heroes' damage
+        // in every duel. Exactly 1.0 when the flag is off, so the fights stay byte-identical to a plain
+        // best-of-3 and every existing squad replay verifies unchanged.
+        var challengerSynergy = cfg.Combat.SquadSynergy ? SquadSynergy.Multiplier(challengers) : 1.0;
+        var defenderSynergy = cfg.Combat.SquadSynergy ? SquadSynergy.Multiplier(defenders) : 1.0;
         var seed = matchSeed.ToArray();
         var duels = new List<SquadDuel>(LineupSize);
         int challengerWins = 0, defenderWins = 0;
         for (var slot = 0; slot < LineupSize; slot++)
         {
             var fightSeed = CommitReveal.DeriveEntropy(seed, "squad-fight", slot.ToString());
-            var result = BattleEngine.Fight(challengers[slot], defenders[slot], fightSeed, cfg);
+            var result = BattleEngine.Fight(challengers[slot], defenders[slot], fightSeed, cfg, challengerSynergy, defenderSynergy);
             if (result.WinnerId == challengers[slot].Id) challengerWins++; else defenderWins++;
             duels.Add(new SquadDuel(slot, result));
         }
