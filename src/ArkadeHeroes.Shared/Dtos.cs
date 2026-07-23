@@ -325,8 +325,11 @@ public record RenameHeroResponse(long FeeSats, FeeInvoiceDto? Fee);
 public record OpenTournamentRequest(string HeroId, long BuyInSats, int Size);
 public record JoinTournamentRequest(string HeroId);
 public record TournamentEntrantDto(string PlayerId, string HeroId);
+/// <summary>EntrantsCommitmentHex (set once the bracket fills) is the FILL-time entrant-set commitment —
+/// fetched here, independently of the server-controlled replay, so VerifyTournament can pin the snapshots.</summary>
 public record TournamentDto(string Id, string OpenerPlayerId, long BuyInSats, int Size, int Joined, string Status,
-    IReadOnlyList<TournamentEntrantDto> Entrants, string? ChampionHeroId, long ChampionPrizeSats = 0);
+    IReadOnlyList<TournamentEntrantDto> Entrants, string? ChampionHeroId, long ChampionPrizeSats = 0,
+    string? EntrantsCommitmentHex = null);
 /// <summary>A tournament + the buy-in fee-invoice the entrant pays into the treasury (open or join).</summary>
 public record TournamentEntryResponse(TournamentDto Tournament, FeeInvoiceDto BuyIn);
 public record TournamentMatchDto(int Round, int Index, string AId, string BId, string WinnerId);
@@ -339,10 +342,13 @@ public record TournamentRefundResponse(TournamentDto Tournament, int EntrantsRef
 /// <summary>Everything a spectator needs to REPLAY + verify a resolved tournament bracket
 /// (FairnessAudit.VerifyTournament): the entrant snapshots (order-inert — the bracket seeding is drawn from
 /// the seed), the final bracket, the champion, and the commit-reveal (commitment + revealed seed + entropy +
-/// nonce). Mirrors SquadReplayDto.</summary>
+/// nonce). EntrantsCommitmentHex echoes the fill-time entrant-set commitment for convenience, but a
+/// verifier must take it from the tournament DTO — this whole replay is server-supplied. Mirrors
+/// SquadReplayDto.</summary>
 public record TournamentReplayDto(
     IReadOnlyList<HeroDto> Entrants, IReadOnlyList<TournamentMatchDto> Bracket, string ChampionHeroId,
-    string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
+    string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
+    string? EntrantsCommitmentHex = null);
 
 /// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,

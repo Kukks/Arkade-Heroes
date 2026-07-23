@@ -391,7 +391,18 @@ public class GameService(
     {
         var buyIn = await chain.CreateFeeInvoiceAsync($"tournament-buyin:{player.Id}:{session.Id}", session.BuyInSats, ct);
         session.Entrants.Add(new TournamentEntrant { PlayerId = player.Id, HeroId = heroId, BuyInInvoiceId = buyIn.InvoiceId });
-        if (session.Entrants.Count >= session.Size) session.Status = "full";
+        if (session.Entrants.Count >= session.Size)
+        {
+            session.Status = "full";
+            // The bracket is full — LOCK the field. Snapshot every entrant's fighting state as of this
+            // instant and commit to the canonical set: the commitment rides on the tournament DTO (so a
+            // client pins it independently of the replay) and VerifyTournament recomputes it over the
+            // replay's snapshots — a server can't substitute a genome/level/gear after the fact to steer
+            // the real-sats pot. Resolve fights from THESE snapshots, so the committed set is exactly
+            // what the bracket runs over (a hero re-geared/levelled after joining fights at fill state).
+            session.EntrantSnapshots = session.Entrants.Select(e => GetHero(e.HeroId).ToDto()).ToList();
+            session.EntrantsCommitmentHex = Shared.FairnessAudit.ComputeEntrantsCommitment(session.EntrantSnapshots);
+        }
         // Durable BEFORE the buy-in invoice reaches the player: once they can pay it, the bracket holding
         // their sats has to survive a restart. (No-op unless persistence is configured.)
         await persistence.SaveTournamentAsync(session, ct);
@@ -420,7 +431,14 @@ public class GameService(
                 if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct))
                     throw new GameRuleException("All buy-ins must be paid before the tournament can run.");
 
-            var entrants = session.Entrants.Select(e => GetHero(e.HeroId)).ToList();
+            // Fight from the FILL-time locked snapshots — the set the published entrants-commitment binds
+            // — via the SAME rebuild the client verifies with, so server resolution and client replay are
+            // one computation. A full bracket without snapshots (rehydrated after a restart — they are
+            // never persisted) can no longer honor its commitment: refuse, and let the strand refund
+            // return the paid buy-ins.
+            if (session.EntrantSnapshots is not { Count: > 0 })
+                throw new GameRuleException("This bracket lost its locked entrant snapshots — refund it instead.");
+            var entrants = session.EntrantSnapshots.Select(Shared.FairnessAudit.RebuildHero).ToList();
             var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, "tournament", session.Id, nonce);
             var result = Tournament.Resolve(entrants, entropy, _config);
 
@@ -431,9 +449,6 @@ public class GameService(
             session.Result = result;
             session.Nonce = nonce;
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
-            // Snapshot the entrants (order is inert — the bracket seeding is drawn from the seed) so any
-            // client can rebuild the set and replay + verify the bracket later.
-            session.EntrantSnapshots = entrants.Select(h => h.ToDto()).ToList();
 
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
             // PrizePool clamps the rake to 0..100% so a misconfigured rake can never pay the podium above the pot.

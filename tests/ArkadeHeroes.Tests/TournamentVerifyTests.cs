@@ -1,4 +1,5 @@
 using ArkadeHeroes.Core.Combat;
+using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
@@ -9,8 +10,8 @@ namespace ArkadeHeroes.Tests;
 
 /// <summary>Trustless replay of a tournament bracket — the highest-stakes flow (real-sats buy-ins -> pot ->
 /// podium). A faithful TournamentReplayDto verifies; any tamper (champion, a fought-match winner, a
-/// substituted entrant, the nonce, a broken commitment) is caught. Mirrors SquadVerifyTests; closes the one
-/// resolvable outcome a client previously could not recompute.</summary>
+/// substituted entrant — id, genome, level or gear — the nonce, a broken commitment) is caught. Mirrors
+/// SquadVerifyTests; closes the one resolvable outcome a client previously could not recompute.</summary>
 public class TournamentVerifyTests
 {
     static Hero MakeHero(string id, int level, byte seed)
@@ -101,6 +102,7 @@ public class TournamentVerifyTests
         Array.Fill(seed, (byte)7);
         var entrants = Entrants();
         var honest = BuildReplay(id, nonce, seed, entrants, out var commitment);
+        var entrantsCommitment = FairnessAudit.ComputeEntrantsCommitment(honest.Entrants);
 
         // The attack: the entrant ORDER is not committed, so a server resolves every permutation under the
         // pre-fix caller-order seeding and publishes the one whose champion it prefers — honest genomes,
@@ -120,12 +122,13 @@ public class TournamentVerifyTests
             Bracket = attackRun.Run.Bracket,
             ChampionHeroId = attackRun.Run.ChampionId,
         };
-        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, attack).Ok);
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, attack).Ok);
 
         // Flip side: order is now INERT — the same reordered entrants under the HONEST bracket + champion
-        // still verify, so a benign transport/storage reorder can't brick a genuine replay.
+        // still verify (the entrant-set commitment sorts by id, so a reorder doesn't change it either),
+        // meaning a benign transport/storage reorder can't brick a genuine replay.
         var reorderedHonest = honest with { Entrants = attackRun.Perm.Select(h => h.ToDto()).ToList() };
-        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, reorderedHonest).Ok);
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, reorderedHonest).Ok);
     }
 
     [Fact]
@@ -136,28 +139,30 @@ public class TournamentVerifyTests
         var seed = new byte[32];
         Array.Fill(seed, (byte)5);
         var replay = BuildReplay(id, nonce, seed, Entrants(), out var commitment);
+        var entrantsCommitment = FairnessAudit.ComputeEntrantsCommitment(replay.Entrants);
 
-        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, replay).Ok);
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, replay).Ok);
 
         // Tamper 1: claim a different champion took the pot.
-        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment,
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment,
             replay with { ChampionHeroId = "phantom" }).Ok);
 
         // Tamper 2: flip a fought match's winner.
         var badBracket = replay.Bracket.ToList();
         badBracket[0] = badBracket[0] with { WinnerId = "phantom" };
-        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment,
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment,
             replay with { Bracket = badBracket }).Ok);
 
-        // Tamper 3: substitute a ringer for an entrant — slot 0 always fights round 0, so it must appear in
-        // the bracket, and its new id can't match the reported bracket's.
+        // Tamper 3: substitute a ringer for an entrant — a changed SET breaks the entrant-set commitment
+        // first (and even without it, slot 0 always fights round 0, so the ringer's id couldn't match the
+        // reported bracket's).
         var badEntrants = replay.Entrants.ToList();
         badEntrants[0] = MakeHero("ringer", 50, 250).ToDto();
-        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment,
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment,
             replay with { Entrants = badEntrants }).Ok);
 
         // Tamper 4: verify under a different nonce than the bracket was drawn with.
-        Assert.False(FairnessAudit.VerifyTournament(id, "wrong-nonce", commitment, replay).Ok);
+        Assert.False(FairnessAudit.VerifyTournament(id, "wrong-nonce", commitment, entrantsCommitment, replay).Ok);
     }
 
     [Fact]
@@ -169,6 +174,94 @@ public class TournamentVerifyTests
         Array.Fill(seed, (byte)9);
         var replay = BuildReplay(id, nonce, seed, Entrants(), out _);
         var commitToOtherSeed = CommitReveal.Commit(new byte[32]);
-        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitToOtherSeed, replay).Ok);
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitToOtherSeed,
+            FairnessAudit.ComputeEntrantsCommitment(replay.Entrants), replay).Ok);
+    }
+
+    // ── The entrant-SUBSTITUTION attack: #102 pinned the bracket ORDER to the seed, but the entrant
+    // SNAPSHOTS were still the server's word — swap one entrant's genome/level/gear in the replay and
+    // re-run the resolver over the forged field, and every seed/entropy/champion/bracket re-check passes
+    // (the forgery is self-consistent). Only a commitment to the entrant SET, taken when the bracket
+    // fills and fetched independently of the replay, can catch it. ──
+
+    /// <summary>Entrants carrying GEAR in the honest field, so the commitment provably binds equipment too.</summary>
+    static List<Hero> GearedEntrants()
+    {
+        var entrants = Entrants();
+        entrants[0].Equipment.Equip(ItemCatalog.Find("rusty-blade")!);
+        entrants[3].Equipment.Equip(ItemCatalog.Find("lucky-feather")!);
+        return entrants;
+    }
+
+    /// <summary>The substitution: swap ONE entrant's wire snapshot, then let the REAL resolver recompute
+    /// the bracket + champion over the forged field — a fully self-consistent replay (honest seed, honest
+    /// entropy, a bracket that replays exactly) that only the entrant-set commitment can catch.</summary>
+    static TournamentReplayDto SubstituteEntrant(
+        string id, string nonce, byte[] seed, List<Hero> entrants, int victim, Func<HeroDto, HeroDto> tamper)
+    {
+        var forged = entrants.Select(h => h.ToDto()).ToList();
+        forged[victim] = tamper(forged[victim]);
+        return BuildReplay(id, nonce, seed, forged.Select(FairnessAudit.RebuildHero).ToList(), out _);
+    }
+
+    [Fact]
+    public void VerifyTournament_RejectsAnEntrantGenomeSubstitution()
+    {
+        const string id = "t5";
+        const string nonce = "n5";
+        var seed = new byte[32];
+        Array.Fill(seed, (byte)11);
+        var entrants = GearedEntrants();
+        var honest = BuildReplay(id, nonce, seed, entrants, out var commitment);
+        var entrantsCommitment = FairnessAudit.ComputeEntrantsCommitment(honest.Entrants);
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, honest).Ok);
+
+        // Weaken entrant 3's genome to a genome the fill-time field never held — "soften my opponent".
+        var weak = new byte[32];
+        Array.Fill(weak, (byte)199);
+        var forged = SubstituteEntrant(id, nonce, seed, entrants, 3,
+            d => d with { GenomeHex = Genome.NewGen0(weak).ToHex() });
+        var verdict = FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, forged);
+        Assert.False(verdict.Ok);
+        Assert.Contains("entrant-set commitment", verdict.Detail);
+    }
+
+    [Fact]
+    public void VerifyTournament_RejectsAnEntrantLevelSubstitution()
+    {
+        const string id = "t6";
+        const string nonce = "n6";
+        var seed = new byte[32];
+        Array.Fill(seed, (byte)13);
+        var entrants = GearedEntrants();
+        var honest = BuildReplay(id, nonce, seed, entrants, out var commitment);
+        var entrantsCommitment = FairnessAudit.ComputeEntrantsCommitment(honest.Entrants);
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, honest).Ok);
+
+        // Drop entrant 1 from its true level 5 to 1 — weaker stats AND a stripped skill kit.
+        var forged = SubstituteEntrant(id, nonce, seed, entrants, 1, d => d with { Level = 1 });
+        var verdict = FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, forged);
+        Assert.False(verdict.Ok);
+        Assert.Contains("entrant-set commitment", verdict.Detail);
+    }
+
+    [Fact]
+    public void VerifyTournament_RejectsAnEntrantGearSubstitution()
+    {
+        const string id = "t7";
+        const string nonce = "n7";
+        var seed = new byte[32];
+        Array.Fill(seed, (byte)17);
+        var entrants = GearedEntrants();
+        var honest = BuildReplay(id, nonce, seed, entrants, out var commitment);
+        var entrantsCommitment = FairnessAudit.ComputeEntrantsCommitment(honest.Entrants);
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, honest).Ok);
+
+        // Swap entrant 0's committed rusty-blade for the top-tier weapon it never equipped.
+        var forged = SubstituteEntrant(id, nonce, seed, entrants, 0,
+            d => d with { Equipment = new Dictionary<string, string> { ["Weapon"] = "arkforged-edge" } });
+        var verdict = FairnessAudit.VerifyTournament(id, nonce, commitment, entrantsCommitment, forged);
+        Assert.False(verdict.Ok);
+        Assert.Contains("entrant-set commitment", verdict.Detail);
     }
 }

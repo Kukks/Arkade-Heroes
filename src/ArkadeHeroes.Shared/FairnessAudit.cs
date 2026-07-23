@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Fairness;
@@ -282,16 +285,58 @@ public static class FairnessAudit
         return (true, $"squad match verifies: {resolved.ChallengerWins}-{resolved.DefenderWins} over {resolved.Duels.Count} duels");
     }
 
+    /// <summary>The domain tag pinning the entrant-set commitment's canonical serialization version.</summary>
+    private const string EntrantsCommitmentTag = "arkade-tournament-entrants-v1";
+
     /// <summary>
-    /// Verifies a tournament bracket: the revealed seed matches the commitment, the entropy is the documented
-    /// derivation, and re-running <c>Tournament.Resolve</c> over the entrant snapshots reproduces the champion
-    /// AND every fought bracket match — so the server can't misreport who took the real-sats pot. The bracket
+    /// The tournament entrant-set commitment: a domain-tagged SHA-256 over the CANONICAL serialization of
+    /// the entrant snapshots — per entrant its id, genome hex, level, and equipped item ids, the exact
+    /// inputs a fight consumes (<c>StatBlock.ComputeFor</c> + <c>SkillCatalog.SkillsFor</c> +
+    /// <see cref="RebuildHero"/>) and nothing else. Canonical means deterministic on BOTH sides of the
+    /// wire: entrants sort by id and item ids sort Ordinal (culture-independent, like the resolver's
+    /// seeding), the genome hex is lower-cased invariantly, the level renders InvariantCulture, and the
+    /// hash reads UTF-8 bytes — so server, x64 client, and WASM client compute byte-identical commitments
+    /// in any locale. The separators are unambiguous because every field's alphabet excludes them (ids are
+    /// server-minted hex tags, genomes are hex, levels are digits, item ids are catalog constants). The
+    /// server computes + publishes this on the tournament DTO the moment the bracket FILLS;
+    /// <see cref="VerifyTournament"/> recomputes it over the replay's snapshots — closing the one gap
+    /// #102's seed-drawn seeding left open: a server substituting an entrant's genome/level/gear.
+    /// </summary>
+    public static string ComputeEntrantsCommitment(IEnumerable<HeroDto> entrants)
+    {
+        var canon = new StringBuilder(EntrantsCommitmentTag);
+        foreach (var e in entrants.OrderBy(h => h.Id, StringComparer.Ordinal))
+        {
+            canon.Append('\n').Append(e.Id)
+                 .Append('|').Append(e.GenomeHex.ToLowerInvariant())
+                 .Append('|').Append(e.Level.ToString(CultureInfo.InvariantCulture));
+            foreach (var itemId in e.Equipment.Values.OrderBy(i => i, StringComparer.Ordinal))
+                canon.Append('|').Append(itemId);
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canon.ToString()))).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Verifies a tournament bracket: the replay's entrant snapshots match the FILL-time entrant-set
+    /// commitment, the revealed seed matches its commitment, the entropy is the documented derivation, and
+    /// re-running <c>Tournament.Resolve</c> over the entrant snapshots reproduces the champion AND every
+    /// fought bracket match — so the server can't misreport who took the real-sats pot. The bracket
     /// SEEDING is drawn from the seed (caller order is inert), so a reordered entrant list can't change the
-    /// outcome. Mirrors <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
+    /// outcome; the entrant-set commitment (fetched from the tournament DTO, NOT from this replay) pins the
+    /// snapshots themselves, so a substituted genome/level/gear can't either. Mirrors
+    /// <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
     /// </summary>
     public static (bool Ok, string Detail) VerifyTournament(
-        string tournamentId, string nonce, string commitmentHex, TournamentReplayDto replay)
+        string tournamentId, string nonce, string commitmentHex, string entrantsCommitmentHex,
+        TournamentReplayDto replay)
     {
+        // Pin the entrant SET before anything else: a substituted snapshot re-resolves self-consistently
+        // (same seed, same entropy, a bracket that replays), so no downstream check would catch it — only
+        // this recompute against the commitment the server published when the bracket filled can.
+        if (!ComputeEntrantsCommitment(replay.Entrants)
+                .Equals(entrantsCommitmentHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entrant snapshots do not match the fill-time entrant-set commitment");
+
         var seed = Convert.FromHexString(replay.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
             return (false, "revealed server seed does not match the commitment");
