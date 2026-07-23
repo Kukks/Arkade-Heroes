@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Progression;
@@ -55,12 +56,20 @@ public static class ReceiptVerifier
     /// <summary>The exact bytes the signature covers — order and framing are part of the protocol.</summary>
     public static byte[] CanonicalPayload(ProgressionReceiptDto receipt)
     {
+        // Numerics are formatted with the INVARIANT culture: a signed field must hash to the same bytes
+        // for the server (which signs) and for any client that recomputes this. A NEGATIVE XpAward (the
+        // loser's conserved delta) renders its sign as U+2212 MINUS — not U+002D HYPHEN — under a sv-SE /
+        // fi-FI browser locale, so without this a Blazor-WASM client there would build a different
+        // preimage and flag a genuine receipt as forged. (The hex + SHA-256 below are already invariant.)
         var text = string.Join('|',
             PayloadTag, receipt.Type, receipt.Id,
             receipt.HeroAId, receipt.HeroBId, receipt.ResultHeroId ?? "",
             receipt.ServerSeedHex, receipt.Nonce, receipt.CommitmentHex,
-            receipt.XpAwardA, receipt.XpAwardB, receipt.LevelA, receipt.LevelB,
-            receipt.UnixSeconds);
+            receipt.XpAwardA.ToString(CultureInfo.InvariantCulture),
+            receipt.XpAwardB.ToString(CultureInfo.InvariantCulture),
+            receipt.LevelA.ToString(CultureInfo.InvariantCulture),
+            receipt.LevelB.ToString(CultureInfo.InvariantCulture),
+            receipt.UnixSeconds.ToString(CultureInfo.InvariantCulture));
         return SHA256.HashData(Encoding.UTF8.GetBytes(text));
     }
 
