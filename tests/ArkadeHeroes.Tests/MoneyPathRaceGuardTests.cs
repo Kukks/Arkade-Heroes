@@ -209,12 +209,69 @@ public class MoneyPathRaceGuardTests
         Assert.True(delivered <= 1);
     }
 
-    /// <summary>Delegates to the real InMemory sim but can fault the NEXT hero mint — the deterministic
-    /// stand-in for "the chain call failed after the fee was verified paid".</summary>
+    [Fact]
+    public async Task ConcurrentMergeReveals_MintExactlyOneFusedHero()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-Merge");
+        var heroes = await alice.ClaimStartersAsync();
+        var commit = await alice.Merge.CommitAsync(new MergeCommitRequest(heroes[0].Id, heroes[1].Id));
+        await alice.Dev.FundMergeEscrowAsync(new { MergeId = commit.MergeId });
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+
+        var wins = await RaceAsync(Racers, () => svc.RevealMergeAsync(player, commit.MergeId, "race-nonce", CancellationToken.None));
+
+        Assert.Equal(1, wins);
+        Assert.Equal(1, store.Heroes.Values.Count(h => h.OwnerId == player.Id));   // both inputs burned, ONE fused hero
+        Assert.Equal(store.Merges[commit.MergeId].FeeSats, store.TreasuryInflowByTag.GetValueOrDefault("merge"));   // fee tallied once
+    }
+
+    [Fact]
+    public async Task MergeReveal_ExecuteFailure_LeavesSessionOpenForRetry()
+    {
+        var chain = new FailableChain(new InMemoryChainService());
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-Merge-Retry");
+        var heroes = await alice.ClaimStartersAsync();
+        var commit = await alice.Merge.CommitAsync(new MergeCommitRequest(heroes[0].Id, heroes[1].Id));
+        chain.Inner.FundMergeEscrowFromPlayer(aliceDto.PlayerId, commit.MergeId);
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+
+        // The escrow execute faults AFTER the deposit was verified funded: the session must NOT latch
+        // Completed (or burn the inputs), else the deposited base + sacrifice + fee sit stranded in
+        // escrow until the timelock refund.
+        chain.FailNextMergeExecute = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.RevealMergeAsync(player, commit.MergeId, "retry-nonce", CancellationToken.None));
+
+        Assert.False(store.Merges[commit.MergeId].Completed);   // still open — the deposit is retryable
+        Assert.True(store.Heroes.ContainsKey(heroes[0].Id));    // inputs untouched on a failed execute
+        Assert.True(store.Heroes.ContainsKey(heroes[1].Id));
+        Assert.Equal(0, store.TreasuryInflowByTag.GetValueOrDefault("merge"));   // no fee tallied for an execute that never landed
+
+        // And the retry succeeds: the SAME funded escrow mints the fused hero and burns the inputs.
+        var (fused, _, _, _) = await svc.RevealMergeAsync(player, commit.MergeId, "retry-nonce", CancellationToken.None);
+        Assert.Equal(player.Id, fused.OwnerId);
+        Assert.True(store.Merges[commit.MergeId].Completed);
+        Assert.Equal(fused.Id, store.Merges[commit.MergeId].FusedHeroId);
+        Assert.False(store.Heroes.ContainsKey(heroes[0].Id));
+        Assert.False(store.Heroes.ContainsKey(heroes[1].Id));
+    }
+
+    /// <summary>Delegates to the real InMemory sim but can fault the NEXT hero mint or merge execute —
+    /// the deterministic stand-in for "the chain call failed after the deposit was verified paid".</summary>
     private sealed class FailableChain(InMemoryChainService inner) : IChainService
     {
         public InMemoryChainService Inner => inner;
         public volatile bool FailNextHeroMint;
+        public volatile bool FailNextMergeExecute;
 
         public Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)
         {
@@ -245,7 +302,15 @@ public class MoneyPathRaceGuardTests
         public Task<Covenants.BreedEscrowParams?> GetBreedEscrowParamsAsync(string breedingId, CancellationToken ct = default) => inner.GetBreedEscrowParamsAsync(breedingId, ct);
         public Task<string> CreateMergeEscrowAsync(string mergeId, string playerId, string baseAssetId, string sacrificeAssetId, long feeSats, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default) => inner.CreateMergeEscrowAsync(mergeId, playerId, baseAssetId, sacrificeAssetId, feeSats, oraclePubKeyHex, refundAfterUnixSeconds, ct);
         public Task<bool> IsMergeEscrowFundedAsync(string mergeId, CancellationToken ct = default) => inner.IsMergeEscrowFundedAsync(mergeId, ct);
-        public Task<HeroMintResult> ExecuteMergeAsync(string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default) => inner.ExecuteMergeAsync(mergeId, fusedData, oracleSignature64, ct);
+        public Task<HeroMintResult> ExecuteMergeAsync(string mergeId, HeroMintData fusedData, byte[] oracleSignature64, CancellationToken ct = default)
+        {
+            if (FailNextMergeExecute)
+            {
+                FailNextMergeExecute = false;
+                throw new InvalidOperationException("Simulated merge-execute fault (injected by test).");
+            }
+            return inner.ExecuteMergeAsync(mergeId, fusedData, oracleSignature64, ct);
+        }
         public Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default) => inner.GetMergeEscrowParamsAsync(mergeId, ct);
         public Task<string> CreateDeathMatchJointEscrowAsync(string deathMatchId, string challengerPlayerId, string challengerHeroAssetId, string defenderPlayerId, string defenderHeroAssetId, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, IReadOnlyList<string>? challengerGearItemIds = null, IReadOnlyList<string>? defenderGearItemIds = null, bool absorb = false, string speciesId = "", CancellationToken ct = default) => inner.CreateDeathMatchJointEscrowAsync(deathMatchId, challengerPlayerId, challengerHeroAssetId, defenderPlayerId, defenderHeroAssetId, seedCommitment32, oraclePubKeyHex, refundAfterUnixSeconds, challengerGearItemIds, defenderGearItemIds, absorb, speciesId, ct);
         public Task<bool> IsDeathMatchEscrowFundedAsync(string deathMatchId, CancellationToken ct = default) => inner.IsDeathMatchEscrowFundedAsync(deathMatchId, ct);

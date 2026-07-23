@@ -852,6 +852,9 @@ public class GameService(
     {
         if (!store.Merges.TryGetValue(mergeId, out var session) || session.PlayerId != player.Id)
             throw new GameRuleException($"Unknown merge session '{mergeId}'.");
+        // Per-session gate: completed-check → execute → complete-set must be one atomic step, or two
+        // concurrent reveals of one funded escrow both pass the guard and race the once-only execute.
+        using var gate = await store.LockAsync($"merge:{session.Id}", ct);
         if (session.Completed) throw new GameRuleException("Merge already completed.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
@@ -861,8 +864,6 @@ public class GameService(
 
         var baseHero = GetOwnedHero(player, session.BaseId);
         var sacrificeHero = GetOwnedHero(player, session.SacrificeId);
-
-        session.Completed = true;
 
         // Entropy-seeded fusion: concentration almost always succeeds, but the fused
         // genome (hence its sterility) can't be precomputed — the gamble that keeps
@@ -889,6 +890,10 @@ public class GameService(
             session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex, ct);
         // The merge spend retired both inputs and delivered FeeSats to the treasury — tally it (dedup by session id).
         store.RecordInflow(session.Id, "merge", session.FeeSats);
+        // Chain FIRST, latch + in-memory effects after (the breed/death-match settle pattern): if the
+        // execute faults, the session stays open and the inputs untouched, so the deposited base +
+        // sacrifice + fee can be retried instead of stranded in escrow behind a Completed flag.
+        session.Completed = true;
         // The fused hero inherits the base's level (you keep your progression); its genesis
         // level is attested by the merge receipt below so ReplayLevel stays consistent.
         fused.Level = baseHero.Level;
