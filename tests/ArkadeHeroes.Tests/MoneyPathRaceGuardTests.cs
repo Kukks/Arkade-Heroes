@@ -1,5 +1,7 @@
 using ArkadeHeroes.Chain;
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
 using Covenants = ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
@@ -263,6 +265,91 @@ public class MoneyPathRaceGuardTests
         Assert.Equal(fused.Id, store.Merges[commit.MergeId].FusedHeroId);
         Assert.False(store.Heroes.ContainsKey(heroes[0].Id));
         Assert.False(store.Heroes.ContainsKey(heroes[1].Id));
+    }
+
+    [Fact]
+    public async Task ConcurrentDeathMatchSettles_BurnAndReceiptExactlyOnce()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-DM-A");
+        var (bob, _) = await factory.RegisterAsync("Race-DM-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0];
+        var bobHero = (await bob.ClaimStartersAsync())[0];
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+
+        var wins = await RaceAsync(Racers, () => svc.SettleDeathMatchAsync(player, open.DeathMatchId, "race-nonce", CancellationToken.None));
+
+        Assert.Equal(1, wins);                                                       // one settle resolved it; the rest hit "already resolved"
+        var session = store.DeathMatches[open.DeathMatchId];
+        Assert.True(session.Completed);
+        Assert.False(store.Heroes.ContainsKey(
+            session.WinnerHeroId == aliceHero.Id ? bobHero.Id : aliceHero.Id));      // the loser's hero burned
+        Assert.Equal(1, store.ReceiptsByHero[aliceHero.Id].Count(r => r.Id == open.DeathMatchId));   // settled once → ONE receipt
+    }
+
+    [Fact]
+    public async Task ConcurrentAbsorbDeathMatchSettles_MintExactlyOneAbsorbedHero()
+    {
+        // AbsorbChance=255 → the roll (nearly) always fires; a ~1/256 keep roll, or a seeded upset where
+        // the trait-carrying defender wins (nothing to absorb), retries with fresh heroes — every attempt
+        // still races the guard. The absorb double-execute is the WORST case on this path: TWO absorbed
+        // heroes minted from ONE death-match.
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseSetting("Game:AbsorbChance", "255"));
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var (alice, aliceDto) = await factory.RegisterAsync($"Race-Absorb-A{attempt}");
+            var (bob, _) = await factory.RegisterAsync($"Race-Absorb-B{attempt}");
+            var aliceHero = (await alice.ClaimStartersAsync())[0];
+            var bobHero = (await bob.ClaimStartersAsync())[0];
+            store.Heroes[aliceHero.Id].Level = 20;                                   // favored — the trait-carrier should lose
+            store.Heroes[bobHero.Id] = WithTrait(store.Heroes[bobHero.Id], TraitCategory.Aura, 255); // a Legendary Aura to absorb
+
+            var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(aliceHero.Id, bobHero.Id, Absorb: true));
+            await alice.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+            await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+            var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+            await bob.Dev.FundDeathMatchEscrowAsync(new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+            await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+
+            var player = store.Players[aliceDto.PlayerId];
+            var wins = await RaceAsync(Racers, () => svc.SettleDeathMatchAsync(player, open.DeathMatchId, "race-nonce", CancellationToken.None));
+
+            Assert.Equal(1, wins);                                                   // the guard holds whichever way the roll went
+            Assert.Equal(1, store.ReceiptsByHero[aliceHero.Id].Count(r => r.Id == open.DeathMatchId));
+            var absorbed = store.Heroes.Values.Count(h => h.ParentAId == aliceHero.Id && h.ParentBId == bobHero.Id);
+            if (absorbed == 0) continue;   // keep roll / upset — retry with fresh heroes
+            Assert.Equal(1, absorbed);     // ONE absorbed hero minted, never two
+            return;
+        }
+        Assert.Fail("expected an absorb mint within 8 attempts at AbsorbChance=255");
+    }
+
+    /// <summary>Clones a hero with one dominant trait gene set (mirrors DeathMatchFlowTests.WithTrait) —
+    /// starters are blank on traits, so this gives the loser a trait the winner can absorb.</summary>
+    private static Hero WithTrait(Hero h, TraitCategory cat, byte value)
+    {
+        var bytes = h.Genome.Bytes.ToArray();
+        bytes[16 + (int)cat * 2] = value;
+        return new Hero
+        {
+            Id = h.Id, OwnerId = h.OwnerId, Name = h.Name, Genome = new Genome(bytes),
+            Generation = h.Generation, ParentAId = h.ParentAId, ParentBId = h.ParentBId,
+            Level = h.Level, Xp = h.Xp, BreedCount = h.BreedCount,
+            EntropyHex = h.EntropyHex, ServerSeedHex = h.ServerSeedHex, PlayerNonce = h.PlayerNonce,
+            AssetId = h.AssetId, MintArkTxId = h.MintArkTxId,
+        };
     }
 
     /// <summary>Delegates to the real InMemory sim but can fault the NEXT hero mint or merge execute —
