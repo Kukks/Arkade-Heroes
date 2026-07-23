@@ -774,9 +774,19 @@ public class GameService(
 
     // ── Endless PvE Trials: open (commit, FREE) → run (endless ghost ladder, score-only) ──
 
+    /// <summary>Per-player cap on open Trials sessions. Trials is the one FREE, chainless open-flow, so
+    /// without a bound a single player's open-loop would grow the in-memory store without limit (a
+    /// one-player memory DoS). Generous for honest open→run play; a completed run is evicted in
+    /// <see cref="RunTrials"/> (its score lives in the signed receipt + best-by-hero, not the session).</summary>
+    public const int MaxOpenTrialsPerPlayer = 8;
+
     public TrialsSession OpenTrials(Player player, string heroId)
     {
         GetOwnedHero(player, heroId);   // ownership check (throws if not the player's hero)
+        // Bound the free flow: refuse a player already sitting on a full quota of open sessions (a
+        // completed run is evicted in RunTrials, so this counts only live, open-and-unrun sessions).
+        if (store.Trials.Values.Count(s => s.PlayerId == player.Id) >= MaxOpenTrialsPerPlayer)
+            throw new GameRuleException("Too many open trials runs — finish one before starting another.");
         var seed = CommitReveal.NewSeed();
         var id = NewId("trials");
         var session = new TrialsSession
@@ -819,6 +829,10 @@ public class GameService(
                 0, run.WavesCleared, hero.Level, hero.Level,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.HeroId);
+
+        // Evict the completed session — its score now lives in the signed receipt + best-by-hero, so the
+        // live session is never read again; dropping it bounds the free-flow store to only open runs.
+        store.Trials.TryRemove(trialsId, out _);
 
         return (run, heroSnapshot, title, best, session.Affix, serverSeedHex, entropyHex, receipt);
     }
