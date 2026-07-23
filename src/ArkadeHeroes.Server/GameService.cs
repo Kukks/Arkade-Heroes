@@ -1382,11 +1382,12 @@ public class GameService(
     }
 
     /// <summary>Claim the daily reward: base + bonus per completed quest, streak-scaled, paid from the
-    /// treasury. Once per UTC day; state is written only after the payout succeeds so a failed payout
-    /// doesn't consume the day.</summary>
+    /// treasury. Once per UTC day; the day is consumed durably BEFORE the payout (a crash mid-payout must
+    /// not let a restart re-pay it), and a cleanly failed payout releases it in memory so the player can
+    /// retry without losing the day.</summary>
     public async Task<Shared.DailyClaimResultDto> ClaimDailyAsync(Player player, CancellationToken ct)
     {
-        // Per-player gate: the claimed-today check, the payout, and the day-consuming write below must
+        // Per-player gate: the claimed-today check, the day-consuming write, and the payout below must
         // be one atomic step — the client poll-retries, so two concurrent claims would otherwise both
         // pass the guard and the faucet would pay twice off the same treasury reading.
         using var gate = await store.LockAsync($"daily:{player.Id}", ct);
@@ -1413,16 +1414,33 @@ public class GameService(
             reserved += _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(season.Number);
         }
         var affordable = Math.Clamp(await chain.TreasuryBalanceAsync(ct) - reserved, 0, reward.Total);
-        if (affordable > 0)
-        {
-            await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
-            store.RecordOutflow("daily", affordable);
-        }
 
+        // Consume the day BEFORE any sat moves, and durably — mirroring the starter reservation and the
+        // tournament resolved marker: PayoutAsync is NOT idempotent, so a crash between a payout and a
+        // later write would let a restart rehydrate this player as unclaimed and pay the same day twice.
+        var prevClaimDay = player.LastClaimDay;
+        var prevStreak = player.StreakCount;
         player.LastClaimDay = window.DayIndex;   // consume the day even at a partial/zero payout
         player.StreakCount = newStreak;
-        // The day must stay consumed across a restart, or the faucet pays the same player twice today.
         await persistence.SavePlayerAsync(player, ct);
+
+        if (affordable > 0)
+        {
+            try
+            {
+                await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
+                store.RecordOutflow("daily", affordable);
+            }
+            catch
+            {
+                // A cleanly failed payout releases the day IN MEMORY ONLY, so the player can retry in this
+                // process. Never re-persist the release: if the payout actually settled before throwing,
+                // the durable consume is the one thing keeping a restart from paying this day twice.
+                player.LastClaimDay = prevClaimDay;
+                player.StreakCount = prevStreak;
+                throw;
+            }
+        }
 
         return new Shared.DailyClaimResultDto(
             affordable, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,
