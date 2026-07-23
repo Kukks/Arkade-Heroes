@@ -453,6 +453,55 @@ public class GameService(
         finally { store.TournamentLock.Release(); }
     }
 
+    /// <summary>Refunds an UNRESOLVABLE bracket — one whose entrants can never all fight again because at least
+    /// one entrant hero is gone from the store (lost to a restart while heroes aren't persisted, or burned /
+    /// merged away between join and resolve). Every buy-in that actually CLEARED goes back to its entrant and
+    /// the bracket lands terminally <c>refunded</c>; a bracket whose heroes are all present is refused, so this
+    /// is safe for anyone to trigger — it can't unwind a pot that can still be played. Single-shot + double-refund-safe.</summary>
+    public async Task<(TournamentSession Session, int EntrantsRefunded, long RefundedSats)>
+        RefundTournamentAsync(string tournamentId, CancellationToken ct)
+    {
+        if (!store.Tournaments.TryGetValue(tournamentId, out var session))
+            throw new GameRuleException($"Unknown tournament '{tournamentId}'.");
+
+        await store.TournamentLock.WaitAsync(ct);
+        try
+        {
+            if (session.Status == "refunded") throw new GameRuleException("This tournament is already refunded.");
+            if (session.Status == "resolved") throw new GameRuleException("This tournament is already resolved.");
+            // The unresolvable gate: with every entrant hero still present the bracket can still run, so the
+            // refund is refused — the pot stays live and nobody can use this path to duck a likely loss.
+            if (session.Entrants.All(e => store.Heroes.ContainsKey(e.HeroId)))
+                throw new GameRuleException("This tournament can still be resolved — refunds are only for a stranded bracket.");
+
+            session.Status = "refunded";   // commit BEFORE paying → no double-refund (mirrors the resolve marker)
+            // Make that commit DURABLE before a single sat moves: a crash mid-refund must not let a restart
+            // rehydrate this bracket as stranded-but-live and pay every buy-in back a second time.
+            await persistence.SaveTournamentAsync(session, ct);
+
+            var refunded = 0;
+            long refundedSats = 0;
+            foreach (var e in session.Entrants)
+            {
+                try
+                {
+                    // Only a CLEARED buy-in ever reached the treasury — "refunding" an unpaid seat would pay
+                    // sats the treasury never received. The paid-check AND the payout both sit inside this try,
+                    // so a chain fault on EITHER loses only THIS entrant's refund — it never aborts the rest
+                    // with the bracket already durably marked refunded (mirrors the podium's per-prize catch).
+                    if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct)) continue;
+                    await chain.PayoutAsync(e.PlayerId, session.BuyInSats, $"tournament-refund:{session.Id}:{e.PlayerId}", ct);
+                    store.RecordOutflow("tournament-refund", session.BuyInSats);
+                    refunded++;
+                    refundedSats += session.BuyInSats;
+                }
+                catch { /* a rare payout / paid-check failure loses that one refund (never re-paid) — documented v1 limit */ }
+            }
+            return (session, refunded, refundedSats);
+        }
+        finally { store.TournamentLock.Release(); }
+    }
+
     /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
