@@ -11,4 +11,6 @@ public sealed class TournamentApi(ArkadeHeroesClient client)
     public Task<TournamentResolveResponse> ResolveAsync(string id, FightRequest req) => client.PostAsync<TournamentResolveResponse>($"/api/tournament/{id}/resolve", req);
     public Task<List<TournamentDto>> ListAsync() => client.GetAsync<List<TournamentDto>>("/api/tournament");
     public Task<TournamentDto> GetAsync(string id) => client.GetAsync<TournamentDto>($"/api/tournament/{id}");
+    /// <summary>The resolved bracket + entrant snapshots + revealed seed, for client-side FairnessAudit.VerifyTournament.</summary>
+    public Task<TournamentReplayDto> ReplayAsync(string id) => client.GetAsync<TournamentReplayDto>($"/api/tournament/{id}/replay");
 }

@@ -57,6 +57,33 @@ public class TournamentServerTests
     }
 
     [Fact]
+    public async Task Tournament_ResolvedBracket_IsClientVerifiable()
+    {
+        // The bracket pays out real sats — so, like every other resolvable outcome, a client must be able to
+        // re-run it from the revealed seed and trust nothing. Drive the real flow, pull the replay, verify.
+        using var factory = new WebApplicationFactory<Program>();
+        var players = await FourPlayersAsync(factory);
+        var open = await players[0].Client.Tournament.OpenAsync(new OpenTournamentRequest(players[0].HeroId, BuyIn, 4));
+        var tid = open.Tournament.Id;
+        await players[0].Client.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        for (var i = 1; i < 4; i++)
+        {
+            var join = await players[i].Client.Tournament.JoinAsync(tid, new JoinTournamentRequest(players[i].HeroId));
+            await players[i].Client.Dev.PayInvoiceAsync(new { join.BuyIn.InvoiceId });
+        }
+        await players[0].Client.Tournament.ResolveAsync(tid, new FightRequest("verify-nonce"));
+
+        var replay = await players[0].Client.Tournament.ReplayAsync(tid);
+        var verdict = FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex, replay);
+        Assert.True(verdict.Ok, verdict.Detail);                 // the real bracket re-runs identically client-side
+        Assert.Equal(4, replay.Entrants.Count);
+
+        // …and a server that misreported the champion would be caught.
+        Assert.False(FairnessAudit.VerifyTournament(tid, replay.Nonce, replay.CommitmentHex,
+            replay with { ChampionHeroId = "phantom" }).Ok);
+    }
+
+    [Fact]
     public async Task Tournament_CannotResolveBeforeFull()
     {
         using var factory = new WebApplicationFactory<Program>();

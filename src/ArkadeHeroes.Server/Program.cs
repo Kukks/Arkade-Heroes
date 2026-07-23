@@ -502,6 +502,17 @@ api.MapGet("/tournament", (GameStore store) =>
 api.MapGet("/tournament/{id}", (string id, GameStore store) =>
     store.Tournaments.TryGetValue(id, out var t) ? Results.Ok(ToTournamentDto(t)) : Results.NotFound());
 
+// Public spectator replay of a resolved tournament (VerifyTournament re-runs the bracket from the revealed seed).
+api.MapGet("/tournament/{id}/replay", (string id, GameStore store) =>
+    store.Tournaments.TryGetValue(id, out var t) && t.Result is { } r && t.EntrantSnapshots is not null
+        ? Results.Ok(new TournamentReplayDto(
+            t.EntrantSnapshots,
+            r.Matches.Where(m => m.Result is not null)
+                .Select(m => new TournamentMatchDto(m.Round, m.Index, m.AId, m.BId, m.WinnerId)).ToList(),
+            r.ChampionId, t.CommitmentHex, Convert.ToHexString(t.ServerSeed).ToLowerInvariant(),
+            t.EntropyHex ?? "", t.Nonce ?? ""))
+        : Results.NotFound());
+
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
 // given hero, each annotated with the conserved XP a staked win/loss would move.
 api.MapGet("/matchmaking/{heroId}", (string heroId, HttpContext http, GameService game) =>
