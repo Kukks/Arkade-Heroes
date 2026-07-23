@@ -496,6 +496,16 @@ api.MapPost("/tournament/{id}/resolve", async (string id, FightRequest request, 
         seedHex, entropyHex, prizes));
 });
 
+// Safety valve for a STRANDED bracket (an entrant hero lost to a restart, or burned/merged away): it can
+// never resolve, so every PAID buy-in goes back to its entrant. Any signed-in player may trigger it — a
+// still-resolvable bracket is refused, so the pot can't be unwound out from under a live tournament.
+api.MapPost("/tournament/{id}/refund", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    game.Authenticate(BearerToken(http));
+    var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, ct);
+    return Results.Ok(new TournamentRefundResponse(ToTournamentDto(session), entrantsRefunded, refundedSats));
+});
+
 api.MapGet("/tournament", (GameStore store) =>
     Results.Ok(store.Tournaments.Values.OrderByDescending(t => t.Id).Select(ToTournamentDto).Take(50).ToList()));
 

@@ -76,10 +76,11 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             store.PlayersByToken[player.Token] = player;
         }
 
-        // Resolved brackets are NEVER rehydrated. Their row survives as an audit marker, but putting one
-        // back into the live store would let it be resolved a SECOND time — paying the podium twice out of
-        // a treasury that can't print. Unresolved brackets are exactly the ones holding paid buy-ins.
-        foreach (var row in await db.Tournaments.AsNoTracking().Where(t => t.Status != "resolved").ToListAsync(ct))
+        // Resolved and refunded brackets are NEVER rehydrated — both are TERMINAL. Their rows survive as
+        // audit markers, but putting one back into the live store would let it settle a SECOND time —
+        // paying the podium (or every buy-in) twice out of a treasury that can't print. Unsettled brackets
+        // are exactly the ones holding paid buy-ins.
+        foreach (var row in await db.Tournaments.AsNoTracking().Where(t => t.Status != "resolved" && t.Status != "refunded").ToListAsync(ct))
         {
             var session = new TournamentSession
             {

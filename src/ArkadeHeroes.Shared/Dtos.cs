@@ -333,6 +333,8 @@ public record TournamentMatchDto(int Round, int Index, string AId, string BId, s
 /// <summary>A resolved tournament: the final bracket, the revealed seed/entropy (for replay), and the podium prizes.</summary>
 public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<TournamentMatchDto> Bracket,
     string ServerSeedHex, string EntropyHex, IReadOnlyList<long> Prizes);
+/// <summary>A refunded (unresolvable) tournament: how many entrants got their paid buy-in back, and the sats total.</summary>
+public record TournamentRefundResponse(TournamentDto Tournament, int EntrantsRefunded, long RefundedSats);
 
 /// <summary>Everything a spectator needs to REPLAY + verify a resolved tournament bracket
 /// (FairnessAudit.VerifyTournament): the entrant snapshots (order-inert — the bracket seeding is drawn from
