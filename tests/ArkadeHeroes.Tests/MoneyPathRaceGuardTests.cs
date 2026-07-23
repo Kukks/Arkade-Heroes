@@ -1,13 +1,16 @@
 using ArkadeHeroes.Chain;
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
+using ArkadeHeroes.Core.Progression;
 using Covenants = ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace ArkadeHeroes.Tests;
 
@@ -106,6 +109,53 @@ public class MoneyPathRaceGuardTests
     }
 
     [Fact]
+    public async Task FightResolve_PayoutFailure_LeavesMatchRetryable_AndPaysOnce()
+    {
+        var chain = new FailableChain(new InMemoryChainService());
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-Fight-Retry-A");
+        var (bob, bobDto) = await factory.RegisterAsync("Race-Fight-Retry-B");
+        var aliceHero = (await alice.ClaimStartersAsync())[0];
+        var bobHero = (await bob.ClaimStartersAsync())[0];
+        chain.Inner.FundTreasury(100_000);   // generous, so the injected fault is the ONLY way the payout can fail
+
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero.Id, bobHero.Id, 1000, "invoice"));
+        chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.StakeInvoice!.InvoiceId);
+        chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.MatchFeeInvoice!.InvoiceId);
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
+        chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, accept.StakeInvoice!.InvoiceId);
+        chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, accept.MatchFeeInvoice!.InvoiceId);
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+        var xpBefore = (store.Heroes[aliceHero.Id].Level, store.Heroes[aliceHero.Id].Xp,
+                        store.Heroes[bobHero.Id].Level, store.Heroes[bobHero.Id].Xp);
+
+        // The pot payout faults AFTER both stakes + fees were verified paid: the match must NOT latch
+        // "resolved" (or move XP, or issue a receipt), else the pot is stranded in the treasury, the
+        // winner unpaid, and every retry bounces off "Match already resolved."
+        chain.FailNextPotPayout = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.FightAsync(player, open.MatchId, "retry-nonce", CancellationToken.None));
+
+        Assert.Equal("accepted", store.Matches[open.MatchId].Status);   // still fightable — the pot is retryable
+        Assert.Equal(xpBefore, (store.Heroes[aliceHero.Id].Level, store.Heroes[aliceHero.Id].Xp,
+                                store.Heroes[bobHero.Id].Level, store.Heroes[bobHero.Id].Xp));   // no receiptless XP
+        Assert.Equal(0, store.TreasuryOutflowByTag.GetValueOrDefault("wager"));   // no phantom outflow tally either
+        Assert.DoesNotContain(store.ReceiptsByHero.GetValueOrDefault(aliceHero.Id) ?? [],
+            r => r.Id == open.MatchId);
+
+        // And the retry succeeds: same nonce → same deterministic fight → same winner, paid exactly once.
+        var fight = await svc.FightAsync(player, open.MatchId, "retry-nonce", CancellationToken.None);
+        Assert.Equal(2000, fight.WinnerPayout);
+        Assert.Equal("resolved", store.Matches[open.MatchId].Status);
+        Assert.Equal(2000, store.TreasuryOutflowByTag.GetValueOrDefault("wager"));               // the pot, once
+        Assert.Equal(1, store.ReceiptsByHero[aliceHero.Id].Count(r => r.Id == open.MatchId));    // ONE match receipt
+    }
+
+    [Fact]
     public async Task ConcurrentSquadResolves_PayThePotExactlyOnce()
     {
         using var factory = new WebApplicationFactory<Program>();
@@ -133,6 +183,50 @@ public class MoneyPathRaceGuardTests
 
         Assert.Equal(1, wins);
         Assert.Equal(2000, store.TreasuryOutflowByTag.GetValueOrDefault("squad"));   // the 2×stake pot, once
+        Assert.Equal(1, store.ReceiptsByHero[mine[0]].Count(r => r.Id.StartsWith($"{open.MatchId}:")));   // slot-0 duel scored once
+    }
+
+    [Fact]
+    public async Task SquadResolve_PayoutFailure_LeavesMatchRetryable_AndPaysOnce()
+    {
+        var chain = new FailableChain(new InMemoryChainService());
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-Squad-Retry-A");
+        var (bob, bobDto) = await factory.RegisterAsync("Race-Squad-Retry-B");
+        var mine = (await alice.ClaimStartersAsync()).Select(h => h.Id).ToList();
+        mine.Add((await alice.Dev.MintHeroAsync()).Id);
+        var theirs = (await bob.ClaimStartersAsync()).Select(h => h.Id).ToList();
+        theirs.Add((await bob.Dev.MintHeroAsync()).Id);
+        chain.Inner.FundTreasury(100_000);
+
+        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
+        chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.StakeInvoice!.InvoiceId);
+        chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.MatchFeeInvoice!.InvoiceId);
+        var accept = await bob.Squad.AcceptAsync(open.MatchId);
+        chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, accept.StakeInvoice!.InvoiceId);
+        chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, accept.MatchFeeInvoice!.InvoiceId);
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+
+        // The pot payout faults AFTER both stakes + fees were verified paid: the squad match must NOT
+        // latch "resolved" (or score the duels), else the pot is stranded and unretryable.
+        chain.FailNextPotPayout = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.ResolveSquadMatchAsync(player, open.MatchId, "retry-nonce", CancellationToken.None));
+
+        Assert.Equal("accepted", store.SquadMatches[open.MatchId].Status);   // still fightable — the pot is retryable
+        Assert.Equal(0, store.TreasuryOutflowByTag.GetValueOrDefault("squad"));
+        Assert.DoesNotContain(store.ReceiptsByHero.GetValueOrDefault(mine[0]) ?? [],
+            r => r.Id.StartsWith($"{open.MatchId}:"));                       // no receiptless duel XP
+
+        // And the retry succeeds: same nonce → same deterministic relay → same winner, paid exactly once.
+        var resolve = await svc.ResolveSquadMatchAsync(player, open.MatchId, "retry-nonce", CancellationToken.None);
+        Assert.Equal(2000, resolve.WinnerPayout);
+        Assert.Equal("resolved", store.SquadMatches[open.MatchId].Status);
+        Assert.Equal(2000, store.TreasuryOutflowByTag.GetValueOrDefault("squad"));                        // the pot, once
         Assert.Equal(1, store.ReceiptsByHero[mine[0]].Count(r => r.Id.StartsWith($"{open.MatchId}:")));   // slot-0 duel scored once
     }
 
@@ -209,6 +303,61 @@ public class MoneyPathRaceGuardTests
         foreach (var item in ArkadeHeroes.Core.Equipment.ItemCatalog.All)
             delivered += await chain.GetItemAssetBalanceAsync(player.Id, item.Id, CancellationToken.None);
         Assert.True(delivered <= 1);
+    }
+
+    [Fact]
+    public async Task GauntletRun_DeliveryFailure_LeavesRunRetryable()
+    {
+        var chain = new FailableChain(new InMemoryChainService());
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        var (alice, aliceDto) = await factory.RegisterAsync("Race-Gauntlet-Retry");
+        var hero = (await alice.ClaimStartersAsync())[0];
+
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var player = store.Players[aliceDto.PlayerId];
+
+        // Stack the deck for a FULL clear (the only path that delivers an item): at level 1 the growth
+        // genes are moot, so an all-FF genome pins every VISIBLE gene at the 73-point ceiling — far above
+        // any typical gen-0 ghost draw — and wearing the wave-5 ghost's own top-gear loadout matches its
+        // gear too. (High LEVEL is the wrong lever: it multiplies growth-gene variance, wave by wave.)
+        var maxedGenome = store.Heroes[hero.Id].Genome.Bytes.ToArray();
+        Array.Fill(maxedGenome, (byte)0xFF);
+        var storeHero = WithGenome(store.Heroes[hero.Id], maxedGenome);
+        store.Heroes[hero.Id] = storeHero;
+        foreach (var itemId in Gauntlet.GhostGear(Gauntlet.WaveCount))
+            storeHero.Equipment.Equip(ArkadeHeroes.Core.Equipment.ItemCatalog.Find(itemId)!);
+
+        var open = await alice.Gauntlet.OpenAsync(hero.Id);
+        chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.FeeInvoice.InvoiceId);
+
+        // Gauntlet.Resolve is pure + deterministic in (hero, entropy, config), and the run entropy hangs
+        // only on the session seed + our nonce — so search nonces OFFLINE for one that full-clears, then
+        // run it for real exactly once. Deterministic, no probabilistic looping.
+        var session = store.Gauntlets[open.GauntletId];
+        var config = factory.Services.GetRequiredService<IOptions<GameOptions>>().Value.ToGameConfig();
+        var clearNonce = Enumerable.Range(0, 500).Select(i => $"clear-{i}").FirstOrDefault(nonce =>
+            Gauntlet.Resolve(storeHero,
+                CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.HeroId, nonce),
+                config).WavesCleared >= Gauntlet.WaveCount);
+        Assert.NotNull(clearNonce);   // deck stacked above — a full-clearing nonce is all but certain
+
+        // The item delivery faults AFTER the fee was verified paid and the run full-cleared: the session
+        // must NOT latch Completed (or burn the cooldown), else the paid fee is stranded — run resolved,
+        // item never delivered, every retry refused as "already been run".
+        chain.FailNextItemDelivery = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.RunGauntletAsync(player, open.GauntletId, clearNonce!, CancellationToken.None));
+
+        Assert.False(store.Gauntlets[open.GauntletId].Completed);   // still open — the fee is retryable
+        Assert.Null(storeHero.GauntletCooldownUntil);               // no cooldown burned on a failed delivery
+
+        // And the retry succeeds: same nonce → same deterministic run → same full clear, ONE item delivered.
+        var run = await svc.RunGauntletAsync(player, open.GauntletId, clearNonce!, CancellationToken.None);
+        Assert.True(store.Gauntlets[open.GauntletId].Completed);
+        Assert.NotNull(run.ItemAwarded);
+        Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(player.Id, run.ItemAwarded!, CancellationToken.None));
     }
 
     [Fact]
@@ -342,23 +491,31 @@ public class MoneyPathRaceGuardTests
     {
         var bytes = h.Genome.Bytes.ToArray();
         bytes[16 + (int)cat * 2] = value;
-        return new Hero
-        {
-            Id = h.Id, OwnerId = h.OwnerId, Name = h.Name, Genome = new Genome(bytes),
-            Generation = h.Generation, ParentAId = h.ParentAId, ParentBId = h.ParentBId,
-            Level = h.Level, Xp = h.Xp, BreedCount = h.BreedCount,
-            EntropyHex = h.EntropyHex, ServerSeedHex = h.ServerSeedHex, PlayerNonce = h.PlayerNonce,
-            AssetId = h.AssetId, MintArkTxId = h.MintArkTxId,
-        };
+        return WithGenome(h, bytes);
     }
 
-    /// <summary>Delegates to the real InMemory sim but can fault the NEXT hero mint or merge execute —
-    /// the deterministic stand-in for "the chain call failed after the deposit was verified paid".</summary>
+    /// <summary>Clones a hero with a replacement genome (<see cref="Hero.Genome"/> is init-only) — the
+    /// gauntlet retry test pins every stat gene at the ceiling so a full clear is near-certain per nonce.</summary>
+    private static Hero WithGenome(Hero h, byte[] genomeBytes) => new()
+    {
+        Id = h.Id, OwnerId = h.OwnerId, Name = h.Name, Genome = new Genome(genomeBytes),
+        Generation = h.Generation, ParentAId = h.ParentAId, ParentBId = h.ParentBId,
+        Level = h.Level, Xp = h.Xp, BreedCount = h.BreedCount,
+        EntropyHex = h.EntropyHex, ServerSeedHex = h.ServerSeedHex, PlayerNonce = h.PlayerNonce,
+        AssetId = h.AssetId, MintArkTxId = h.MintArkTxId,
+    };
+
+    /// <summary>Delegates to the real InMemory sim but can fault the NEXT hero mint, merge execute,
+    /// pot payout (a `wager-pot:`/`squad-pot:` memo — other payouts pass through, the PayoutProbeChain
+    /// pattern), or item delivery — the deterministic stand-in for "the chain call failed after the
+    /// deposit was verified paid".</summary>
     private sealed class FailableChain(InMemoryChainService inner) : IChainService
     {
         public InMemoryChainService Inner => inner;
         public volatile bool FailNextHeroMint;
         public volatile bool FailNextMergeExecute;
+        public volatile bool FailNextPotPayout;
+        public volatile bool FailNextItemDelivery;
 
         public Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)
         {
@@ -376,8 +533,25 @@ public class MoneyPathRaceGuardTests
         public Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default) => inner.GetAddressBalanceSatsAsync(playerId, ct);
         public Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default) => inner.CreateFeeInvoiceAsync(memo, amountSats, ct);
         public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default) => inner.IsInvoicePaidAsync(invoiceId, ct);
-        public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default) => inner.DeliverItemAssetAsync(toPlayerId, itemId, itemName, ct);
-        public Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default) => inner.PayoutAsync(toPlayerId, amountSats, memo, ct);
+        public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default)
+        {
+            if (FailNextItemDelivery)
+            {
+                FailNextItemDelivery = false;
+                throw new InvalidOperationException("Simulated item-delivery fault (injected by test).");
+            }
+            return inner.DeliverItemAssetAsync(toPlayerId, itemId, itemName, ct);
+        }
+        public Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default)
+        {
+            if (FailNextPotPayout && (memo.StartsWith("wager-pot:", StringComparison.Ordinal)
+                                      || memo.StartsWith("squad-pot:", StringComparison.Ordinal)))
+            {
+                FailNextPotPayout = false;
+                throw new InvalidOperationException("Simulated pot-payout fault (injected by test).");
+            }
+            return inner.PayoutAsync(toPlayerId, amountSats, memo, ct);
+        }
         public Task<long> TreasuryBalanceAsync(CancellationToken ct = default) => inner.TreasuryBalanceAsync(ct);
         public Task<WagerEscrowInfo> CreateWagerEscrowAsync(string matchId, string challengerPlayerId, string defenderPlayerId, long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default) => inner.CreateWagerEscrowAsync(matchId, challengerPlayerId, defenderPlayerId, stakeSats, seedCommitment32, oraclePubKeyHex, refundAfterUnixSeconds, ct);
         public Task<bool> IsEscrowFundedAsync(string matchId, CancellationToken ct = default) => inner.IsEscrowFundedAsync(matchId, ct);

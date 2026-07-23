@@ -719,8 +719,8 @@ public class GameService(
     {
         if (!store.Gauntlets.TryGetValue(gauntletId, out var session) || session.PlayerId != player.Id)
             throw new GameRuleException($"Unknown gauntlet '{gauntletId}'.");
-        // Per-session gate: completed-check → run → complete-set must be one atomic step, or two
-        // concurrent runs of one paid fee both resolve — double XP and a doubled full-clear item.
+        // Per-session gate: completed-check → run → item delivery → complete-set must be one atomic
+        // step, or two concurrent runs of one paid fee both resolve — double XP and a doubled full-clear item.
         using var gate = await store.LockAsync($"gauntlet:{session.Id}", ct);
         if (session.Completed) throw new GameRuleException("This gauntlet has already been run.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
@@ -731,7 +731,6 @@ public class GameService(
         var hero = GetOwnedHero(player, session.HeroId);
         var heroSnapshot = hero.ToDto();          // pre-run, so the client can replay the ghosts + fights
         var preRunLevel = hero.Level;
-        session.Completed = true;
 
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.Id, session.HeroId, nonce);
         var run = Gauntlet.Resolve(hero, entropy, _config);
@@ -739,9 +738,12 @@ public class GameService(
         // Capped, priced XP faucet (anti-farming): the award is computed from the PRE-run level, so a run
         // that crosses the cap keeps its award, but future runs (already past the cap) award nothing.
         var xpAward = Gauntlet.XpForRun(preRunLevel, run.WavesCleared);
-        ApplyXp(hero, xpAward);
 
-        // A full clear delivers one entropy-picked 500-sat-tier item to the player's wallet.
+        // A full clear delivers one entropy-picked 500-sat-tier item to the player's wallet — chain
+        // FIRST, latch + in-memory effects after (the breed-reveal pattern): if the delivery faults,
+        // the session stays open and the hero untouched, so the already-paid fee re-runs the SAME
+        // deterministic gauntlet (same seed + nonce) instead of stranding behind a Completed flag
+        // with the item undelivered.
         var itemAwarded = Gauntlet.RewardItem(entropy, run.WavesCleared);
         string? itemAssetId = null;
         if (itemAwarded is not null)
@@ -751,6 +753,8 @@ public class GameService(
             itemAssetId = delivery.ItemAssetId;
         }
 
+        session.Completed = true;
+        ApplyXp(hero, xpAward);
         hero.GauntletCooldownUntil = DateTimeOffset.UtcNow + _options.GauntletCooldown;
 
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
@@ -1479,7 +1483,7 @@ public class GameService(
     {
         if (!store.Matches.TryGetValue(matchId, out var session) || session.ChallengerPlayerId != player.Id)
             throw new GameRuleException($"Unknown match '{matchId}'.");
-        // Per-match gate: status-check → fight → resolved-set → pot payout must be one atomic step, or
+        // Per-match gate: status-check → fight → pot payout → resolved-set must be one atomic step, or
         // two concurrent resolves both see "accepted" — double XP in any mode, and in invoice mode the
         // treasury pays the pot twice.
         using var gate = await store.LockAsync($"match:{session.Id}", ct);
@@ -1535,27 +1539,12 @@ public class GameService(
 
         var challengerWon = result.WinnerId == challenger.Id;
         var (winner, loser) = challengerWon ? (challenger, defender) : (defender, challenger);
-        // Staked fights only: XP is a CONSERVED transfer from loser to winner,
-        // scaled by the level gap (pre-fight levels). Friendly fights are
-        // practice — no XP. The loser can DELEVEL, so a champion is held by
-        // winning, not bought. No on-chain XP mirror: a losable ladder can't be a
-        // non-custodial asset you'd have to claw back — progression stays
-        // receipt-based (the receipts are the audit trail; the server is the ledger).
-        var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(winner.Level, loser.Level) : 0;
-        ApplyXp(winner, transfer);
-        ApplyXp(loser, -transfer);
-        var challengerDelta = challengerWon ? transfer : -transfer;
-        var defenderDelta = -challengerDelta;
 
-        session.Status = "resolved";
-        session.Result = result;
-        session.ChallengerSnapshot = challengerSnapshot;   // persist the fight-time snapshots for spectator replay
-        session.DefenderSnapshot = defenderSnapshot;
-        session.Nonce = nonce;
-        session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
-
-        // Wager settlement: covenant mode sweeps the escrow to the winner via
-        // the emulator-enforced covenant (revealing the committed seed);
+        // Wager settlement — chain FIRST, latch + in-memory effects after (the breed-reveal /
+        // death-match pattern): if the settle or payout faults, the match stays "accepted" and the
+        // heroes untouched, so the escrowed pot can be retried (same seed + nonce → the same winner)
+        // instead of stranded behind a "resolved" flag with the winner unpaid. Covenant mode sweeps
+        // the escrow to the winner via the emulator-enforced covenant (revealing the committed seed);
         // invoice mode pays out from the treasury.
         long winnerPayout = 0;
         if (session.WagerSats > 0)
@@ -1584,6 +1573,25 @@ public class GameService(
                     Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays).Number,
                     seasonAccrue, (_, cur) => cur + seasonAccrue);
         }
+
+        // Staked fights only: XP is a CONSERVED transfer from loser to winner,
+        // scaled by the level gap (pre-fight levels). Friendly fights are
+        // practice — no XP. The loser can DELEVEL, so a champion is held by
+        // winning, not bought. No on-chain XP mirror: a losable ladder can't be a
+        // non-custodial asset you'd have to claw back — progression stays
+        // receipt-based (the receipts are the audit trail; the server is the ledger).
+        var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(winner.Level, loser.Level) : 0;
+        ApplyXp(winner, transfer);
+        ApplyXp(loser, -transfer);
+        var challengerDelta = challengerWon ? transfer : -transfer;
+        var defenderDelta = -challengerDelta;
+
+        session.Status = "resolved";
+        session.Result = result;
+        session.ChallengerSnapshot = challengerSnapshot;   // persist the fight-time snapshots for spectator replay
+        session.DefenderSnapshot = defenderSnapshot;
+        session.Nonce = nonce;
+        session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         // Friendly (unstaked) fights are practice: they carry no XP and must NOT feed the
@@ -1755,6 +1763,34 @@ public class GameService(
         var result = SquadBattle.Resolve(challengers, defenders, entropy, _config);
         var challengerWon = result.ChallengerWon;
 
+        // Settle the pot ONCE, to the best-of-3 winner (reuses the wager escrow / treasury payout) —
+        // chain FIRST, latch + per-duel effects after (the FightAsync pattern): a faulted settle leaves
+        // the match "accepted" and the duels unscored, so the escrowed pot can be retried (same seed +
+        // nonce → the same relay) instead of stranded behind a "resolved" flag.
+        long winnerPayout = 0;
+        if (session.WagerSats > 0)
+        {
+            winnerPayout = session.WagerSats * 2;
+            if (session.Mode == "covenant")
+            {
+                var settleMessage = Chain.Covenants.ArkadeCovenants.SettleMessage(session.Id, challengerWon);
+                var oracleSignature = receipts.SignDigest(settleMessage);
+                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, oracleSignature, ct);
+            }
+            else
+            {
+                var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
+                await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
+                store.RecordOutflow("squad", winnerPayout);
+            }
+            var seasonFee = Leveling.MatchFee(challengers.Max(h => h.Level), _config) + Leveling.MatchFee(defenders.Max(h => h.Level), _config);
+            var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;
+            if (seasonAccrue > 0)
+                store.SeasonFeeAccrual.AddOrUpdate(
+                    Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays).Number,
+                    seasonAccrue, (_, cur) => cur + seasonAccrue);
+        }
+
         // Per-duel conserved XP transfer + one "match" receipt per duel (feeds the season ladder + prize pool).
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var duelReceipts = new List<Shared.ProgressionReceiptDto>();
@@ -1781,31 +1817,6 @@ public class GameService(
         session.DefenderSnapshots = defenderSnapshots;
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
-
-        // Settle the pot ONCE, to the best-of-3 winner (reuses the wager escrow / treasury payout).
-        long winnerPayout = 0;
-        if (session.WagerSats > 0)
-        {
-            winnerPayout = session.WagerSats * 2;
-            if (session.Mode == "covenant")
-            {
-                var settleMessage = Chain.Covenants.ArkadeCovenants.SettleMessage(session.Id, challengerWon);
-                var oracleSignature = receipts.SignDigest(settleMessage);
-                await chain.SettleWagerEscrowAsync(session.Id, challengerWon, session.ServerSeed, oracleSignature, ct);
-            }
-            else
-            {
-                var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
-                await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
-                store.RecordOutflow("squad", winnerPayout);
-            }
-            var seasonFee = Leveling.MatchFee(challengers.Max(h => h.Level), _config) + Leveling.MatchFee(defenders.Max(h => h.Level), _config);
-            var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;
-            if (seasonAccrue > 0)
-                store.SeasonFeeAccrual.AddOrUpdate(
-                    Season.Current(DateTimeOffset.UtcNow, _config.SeasonLengthDays).Number,
-                    seasonAccrue, (_, cur) => cur + seasonAccrue);
-        }
 
         return (session, result, serverSeedHexOut, session.EntropyHex, challengerSnapshots, defenderSnapshots, winnerPayout, duelReceipts);
     }
