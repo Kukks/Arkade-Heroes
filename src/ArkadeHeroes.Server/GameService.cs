@@ -433,8 +433,9 @@ public class GameService(
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
+            // PrizePool clamps the rake to 0..100% so a misconfigured rake can never pay the podium above the pot.
             var pot = session.BuyInSats * session.Entrants.Count;
-            var prizePool = pot - pot * _config.TournamentRakePct / 100;
+            var prizePool = Tournament.PrizePool(pot, _config.TournamentRakePct);
             var podium = Tournament.Podium(result);
             var prizes = SeasonPrize.Split(prizePool, podium.Count, Tournament.PrizeWeights);
             session.Prizes = prizes;

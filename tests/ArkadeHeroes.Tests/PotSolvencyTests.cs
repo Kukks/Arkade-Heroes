@@ -47,21 +47,22 @@ public class PotSolvencyTests
     [Fact]
     public void TournamentPrizePool_NeverExceedsTheCollectedPot()
     {
-        // The shipped rake default must stay in the band the invariant assumes: a negative rake would inflate
-        // the prize pool ABOVE the pot, and a >100 rake would drive it negative. 10% today.
+        // The shipped default is in band, but the invariant must hold for ANY configured rake — a negative
+        // one would otherwise inflate the pool ABOVE the pot and fund the gap on every tournament from a
+        // real-BTC treasury. Tournament.PrizePool clamps to [0,100] so it can't; the default is 10% today.
         Assert.InRange(GameConfig.Default.TournamentRakePct, 0, 100);
 
-        // Mirrors ResolveTournamentAsync's money formula (GameService.cs): pot = buy-in × entrants, the house
-        // keeps floor(pot × rake%), the podium splits the rest. Across the valid rake band the podium payout
-        // PLUS the rake kept must never exceed the pot — i.e. the treasury never funds a tournament.
+        // Drives the REAL Tournament.PrizePool (what ResolveTournamentAsync calls), across every rake INCLUDING
+        // out-of-band negatives and >100: pot = buy-in × entrants, the house keeps whatever the podium doesn't.
+        // The pool must stay within [0, pot] and the podium payout PLUS the rake kept must never exceed the pot.
         foreach (var buyIn in new long[] { 1, 500, 10_000, 1_000_000 })
             foreach (var entrants in new[] { 2, 3, 4, 8, 16, 17 })
-                foreach (var rakePct in new[] { 0, 10, 50, 100 })
+                foreach (var rakePct in new[] { -50, 0, 10, 50, 100, 150 })
                 {
                     var pot = buyIn * entrants;
-                    var rakeKept = pot * rakePct / 100;
-                    var prizePool = pot - rakeKept;
-                    Assert.True(prizePool <= pot, $"rake {rakePct}% produced a prize pool {prizePool} above the {pot}-sat pot");
+                    var prizePool = Tournament.PrizePool(pot, rakePct);
+                    Assert.InRange(prizePool, 0, pot);        // clamped: never above the pot, never negative
+                    var rakeKept = pot - prizePool;           // the house keeps whatever isn't the pool
 
                     foreach (var podium in new[] { 1, 2 })   // champion only, or champion + runner-up
                     {
