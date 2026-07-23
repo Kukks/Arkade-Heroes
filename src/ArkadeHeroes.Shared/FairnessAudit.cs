@@ -281,4 +281,43 @@ public static class FairnessAudit
 
         return (true, $"squad match verifies: {resolved.ChallengerWins}-{resolved.DefenderWins} over {resolved.Duels.Count} duels");
     }
+
+    /// <summary>
+    /// Verifies a tournament bracket: the revealed seed matches the commitment, the entropy is the documented
+    /// derivation, and re-running <c>Tournament.Resolve</c> over the entrant snapshots (in seeding order)
+    /// reproduces the champion AND every fought bracket match — so the server can't misreport who took the
+    /// real-sats pot. Mirrors <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
+    /// </summary>
+    public static (bool Ok, string Detail) VerifyTournament(
+        string tournamentId, string nonce, string commitmentHex, TournamentReplayDto replay)
+    {
+        var seed = Convert.FromHexString(replay.ServerSeedHex);
+        if (!CommitReveal.Verify(seed, commitmentHex))
+            return (false, "revealed server seed does not match the commitment");
+
+        var entropy = CommitReveal.DeriveEntropy(seed, "tournament", tournamentId, nonce);
+        if (!Convert.ToHexString(entropy).Equals(replay.EntropyHex, StringComparison.OrdinalIgnoreCase))
+            return (false, "entropy does not match DeriveEntropy(seed, tournament, tournamentId, nonce)");
+
+        var entrants = replay.Entrants.Select(RebuildHero).ToList();
+        var resolved = Tournament.Resolve(entrants, entropy);
+
+        if (resolved.ChampionId != replay.ChampionHeroId)
+            return (false, "replayed champion differs from the reported champion");
+
+        // The wire bracket carries only FOUGHT matches (a bye has no BattleResult), so replay the same
+        // projection the server sends — the byes are implied by the resolver over the same entrants + entropy.
+        var mine = resolved.Matches.Where(m => m.Result is not null).ToList();
+        if (mine.Count != replay.Bracket.Count)
+            return (false, $"replayed bracket has {mine.Count} fought matches, reported {replay.Bracket.Count}");
+        for (var i = 0; i < mine.Count; i++)
+        {
+            var m = mine[i];
+            var r = replay.Bracket[i];
+            if (m.Round != r.Round || m.Index != r.Index || m.AId != r.AId || m.BId != r.BId || m.WinnerId != r.WinnerId)
+                return (false, $"replayed bracket match {i} differs from the reported bracket");
+        }
+
+        return (true, $"tournament verifies: {mine.Count} fought matches, champion {resolved.ChampionId}");
+    }
 }

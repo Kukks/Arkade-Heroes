@@ -295,6 +295,10 @@ public sealed class TournamentSession
     public IReadOnlyList<long> Prizes { get; set; } = [];
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
+    /// <summary>Entrant hero snapshots in SEEDING ORDER, captured at resolve — lets any client re-run
+    /// Tournament.Resolve and verify the bracket (FairnessAudit.VerifyTournament) even after the heroes
+    /// later change.</summary>
+    public IReadOnlyList<Shared.HeroDto>? EntrantSnapshots { get; set; }
 }
 
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
