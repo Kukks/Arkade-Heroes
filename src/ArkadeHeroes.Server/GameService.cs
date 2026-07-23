@@ -951,9 +951,11 @@ public class GameService(
             SpeciesId = speciesId,
         };
         store.DeathMatches[session.Id] = session;
-        // Favorability from realized POWER (F18) — gear is staked here, so a level read would lie.
+        // Favorability from realized POWER + the element matchup (F18) — gear is staked here, so a level read
+        // would lie, and a power-only read would ignore the ring, the biggest lever between these two heroes.
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level,
-            Matchmaking.PowerFavor(PowerScore.Compute(challenger, _config), PowerScore.Compute(defender, _config)));
+            Matchmaking.PowerFavor(PowerScore.Compute(challenger, _config), PowerScore.Compute(defender, _config),
+                challenger.Genome.Element, defender.Genome.Element, _config));
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(id, ct);
         return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }

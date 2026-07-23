@@ -47,8 +47,23 @@ public class PowerScoreTests
     [Fact]
     public void PowerFavorBands()
     {
-        Assert.Equal("favored", Matchmaking.PowerFavor(300, 200));   // 1.5×
-        Assert.Equal("underdog", Matchmaking.PowerFavor(200, 300));  // 0.67×
-        Assert.Equal("even", Matchmaking.PowerFavor(105, 100));      // within ±15%
+        // Same element both sides = a neutral matchup, isolating the raw-power bands.
+        Assert.Equal("favored", Matchmaking.PowerFavor(300, 200, Element.Ember, Element.Ember));   // 1.5×
+        Assert.Equal("underdog", Matchmaking.PowerFavor(200, 300, Element.Ember, Element.Ember));  // 0.67×
+        Assert.Equal("even", Matchmaking.PowerFavor(105, 100, Element.Ember, Element.Ember));      // within ±15%
+    }
+
+    // The element ring is the single biggest lever between two heroes, and the pre-stake label must reflect it.
+    // A hard-counter attacker (Ember beats Gale, 1.3× vs 0.75×) reads FAVORED even at lower raw power — where a
+    // power-only read called it "even" — and the countered hero reads underdog. Same math the fight itself uses.
+    [Fact]
+    public void PowerFavor_AccountsForTheElementRing_NotJustRawPower()
+    {
+        // 100 vs 110 raw is "even" (0.91×); with Ember countering Gale it becomes 130 vs 82.5 = 1.58×.
+        Assert.Equal("favored", Matchmaking.PowerFavor(100, 110, Element.Ember, Element.Gale));
+        // The mirror: the countered hero (Gale into Ember) is the underdog despite the slightly higher raw power.
+        Assert.Equal("underdog", Matchmaking.PowerFavor(110, 100, Element.Gale, Element.Ember));
+        // Control — the same raw powers with a NEUTRAL pair stay "even", proving the ring is what moved the label.
+        Assert.Equal("even", Matchmaking.PowerFavor(100, 110, Element.Ember, Element.Terra));
     }
 }
