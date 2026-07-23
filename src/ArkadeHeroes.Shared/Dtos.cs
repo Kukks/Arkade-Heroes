@@ -335,8 +335,9 @@ public record TournamentResolveResponse(TournamentDto Tournament, IReadOnlyList<
     string ServerSeedHex, string EntropyHex, IReadOnlyList<long> Prizes);
 
 /// <summary>Everything a spectator needs to REPLAY + verify a resolved tournament bracket
-/// (FairnessAudit.VerifyTournament): the entrant snapshots in SEEDING ORDER, the final bracket, the champion,
-/// and the commit-reveal (commitment + revealed seed + entropy + nonce). Mirrors SquadReplayDto.</summary>
+/// (FairnessAudit.VerifyTournament): the entrant snapshots (order-inert — the bracket seeding is drawn from
+/// the seed), the final bracket, the champion, and the commit-reveal (commitment + revealed seed + entropy +
+/// nonce). Mirrors SquadReplayDto.</summary>
 public record TournamentReplayDto(
     IReadOnlyList<HeroDto> Entrants, IReadOnlyList<TournamentMatchDto> Bracket, string ChampionHeroId,
     string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);

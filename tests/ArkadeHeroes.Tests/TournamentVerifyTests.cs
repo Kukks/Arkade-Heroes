@@ -36,6 +36,98 @@ public class TournamentVerifyTests
             commitment, Convert.ToHexString(seed), Convert.ToHexString(entropy), nonce);
     }
 
+    /// <summary>Every ordering of the list, depth-first — 720 for the 6-entrant field, cheap enough to sweep.</summary>
+    static IEnumerable<List<Hero>> Permutations(List<Hero> heroes)
+    {
+        if (heroes.Count <= 1) { yield return heroes.ToList(); yield break; }
+        for (var i = 0; i < heroes.Count; i++)
+        {
+            var rest = heroes.ToList();
+            rest.RemoveAt(i);
+            foreach (var tail in Permutations(rest)) { tail.Insert(0, heroes[i]); yield return tail; }
+        }
+    }
+
+    /// <summary>The PRE-FIX seeding, frozen as the ATTACKER'S math: pair in the GIVEN list order with the
+    /// positional per-fight sub-seed — exactly what Tournament.Resolve did when caller order WAS the bracket.
+    /// A server owning the (uncommitted) entrant order could run this over every permutation and publish the
+    /// one whose champion it liked; keeping a copy here pins that artifact as rejected even as the real
+    /// resolver evolves.</summary>
+    static (string ChampionId, List<TournamentMatchDto> Bracket) ResolveInCallerOrder(List<Hero> entrants, byte[] entropy)
+    {
+        var byId = entrants.ToDictionary(h => h.Id);
+        var bracket = new List<TournamentMatchDto>();
+        var alive = entrants.Select(h => h.Id).ToList();
+        for (var round = 0; alive.Count > 1; round++)
+        {
+            var next = new List<string>();
+            for (var i = 0; i < alive.Count; i += 2)
+            {
+                if (i + 1 >= alive.Count) { next.Add(alive[i]); continue; }   // bye — never on the wire
+                var fightSeed = CommitReveal.DeriveEntropy(entropy, "tourney-fight", $"{round}-{i / 2}");
+                var result = BattleEngine.Fight(byId[alive[i]], byId[alive[i + 1]], fightSeed);
+                bracket.Add(new TournamentMatchDto(round, i / 2, alive[i], alive[i + 1], result.WinnerId));
+                next.Add(result.WinnerId);
+            }
+            alive = next;
+        }
+        return (alive[0], bracket);
+    }
+
+    [Fact]
+    public void Resolve_ChampionIsIndependentOfEntrantOrder_SoTheServerCannotSeedTheBracket()
+    {
+        // The bracket seeding must derive from the COMMITTED seed, not caller order — else a server reorders
+        // honest entrants to crown any champion of the real-sats pot, and VerifyTournament (which re-runs
+        // Resolve over the server's order) waves it through.
+        var seed = new byte[32];
+        Array.Fill(seed, (byte)5);
+        var entropy = CommitReveal.DeriveEntropy(seed, "tournament", "t1", "nonce");
+        var entrants = Entrants();
+        var honest = Tournament.Resolve(entrants, entropy).ChampionId;
+
+        // EVERY permutation must resolve to the SAME champion — pre-fix, some ordering crowned another,
+        // which is exactly the exploit. 720 tiny brackets keep this exhaustive, not sampled.
+        foreach (var perm in Permutations(entrants))
+            Assert.Equal(honest, Tournament.Resolve(perm, entropy).ChampionId);
+    }
+
+    [Fact]
+    public void VerifyTournament_RejectsTheEntrantReorderAttack()
+    {
+        const string id = "t3";
+        const string nonce = "n3";
+        var seed = new byte[32];
+        Array.Fill(seed, (byte)7);
+        var entrants = Entrants();
+        var honest = BuildReplay(id, nonce, seed, entrants, out var commitment);
+
+        // The attack: the entrant ORDER is not committed, so a server resolves every permutation under the
+        // pre-fix caller-order seeding and publishes the one whose champion it prefers — honest genomes,
+        // honest seed, honest entropy, self-consistent bracket. Find one that crowns a different champion.
+        var entropy = CommitReveal.DeriveEntropy(seed, "tournament", id, nonce);
+        var attackRun = Permutations(entrants)
+            .Select(perm => (Perm: perm, Run: ResolveInCallerOrder(perm, entropy)))
+            .FirstOrDefault(x => x.Run.ChampionId != honest.ChampionHeroId);
+        Assert.NotNull(attackRun.Perm);   // the lever is real: some ordering crowns a different champion
+
+        // Pre-fix, VerifyTournament replayed this artifact verbatim and returned Ok. Now the resolver
+        // re-seeds from the committed seed, so the rigged order replays to the honest champion and the
+        // reported one mismatches — the pot can no longer be steered by reordering.
+        var attack = honest with
+        {
+            Entrants = attackRun.Perm.Select(h => h.ToDto()).ToList(),
+            Bracket = attackRun.Run.Bracket,
+            ChampionHeroId = attackRun.Run.ChampionId,
+        };
+        Assert.False(FairnessAudit.VerifyTournament(id, nonce, commitment, attack).Ok);
+
+        // Flip side: order is now INERT — the same reordered entrants under the HONEST bracket + champion
+        // still verify, so a benign transport/storage reorder can't brick a genuine replay.
+        var reorderedHonest = honest with { Entrants = attackRun.Perm.Select(h => h.ToDto()).ToList() };
+        Assert.True(FairnessAudit.VerifyTournament(id, nonce, commitment, reorderedHonest).Ok);
+    }
+
     [Fact]
     public void VerifyTournament_AcceptsFaithful_RejectsTampered()
     {
