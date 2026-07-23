@@ -59,6 +59,30 @@ else
             {
                 <p class="muted" style="margin:0">No treasury payouts yet.</p>
             }
+
+            <div style="border-top:1px solid rgba(255,255,255,.08);margin:.7rem 0 .5rem"></div>
+            <p class="muted" style="margin:0 0 .3rem">hero economy — the asset with no hard cap</p>
+            <div class="match-row">
+                <span>heroes in play</span>
+                <span class="spacer"></span>
+                <span class="chip mono">@_economy.HeroSupply.ToString("N0") · @_economy.Gen0Supply.ToString("N0") starter</span>
+            </div>
+            @if (_economy.HeroesMinted > 0)
+            {
+                <div class="match-row">
+                    <span>churn this uptime</span>
+                    <span class="spacer"></span>
+                    <span class="chip mono">+@_economy.HeroesMinted.ToString("N0") · −@_economy.HeroesBurned.ToString("N0")</span>
+                </div>
+            }
+            @if (_economy.ActiveOfferCount > 0 || _economy.ClosedOfferCount > 0)
+            {
+                <div class="match-row">
+                    <span>market</span>
+                    <span class="spacer"></span>
+                    <span class="chip mono">@_economy.ActiveOfferCount.ToString("N0") resting · @_economy.ClosedOfferCount.ToString("N0") cleared</span>
+                </div>
+            }
         </div>
     }
 
