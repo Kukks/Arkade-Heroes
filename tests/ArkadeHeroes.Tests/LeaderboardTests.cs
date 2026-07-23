@@ -61,4 +61,32 @@ public class LeaderboardTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(winnerRank < loserRank, "winner should outrank the loser");
         Assert.Equal(1, board.First(e => e.HeroId == fight.Result.WinnerId).Wins);
     }
+
+    [Fact]
+    public void Leaderboard_TiedHeroes_RankIndependentOfRosterOrder()
+    {
+        // Two heroes tied on EVERY sort key including name (auto-names collide across the 256-name space).
+        // The board promises "anyone recomputes the same ranking", so a tie must break on the unique hero id —
+        // not on the roster's (ConcurrentDictionary, unstable) enumeration order.
+        var twin = (Name: "Crimson Vanguard", Level: 1, OwnerId: "p");
+        var forward = new Dictionary<string, (string Name, int Level, string OwnerId)> { ["z-hero"] = twin, ["a-hero"] = twin };
+        var backward = new Dictionary<string, (string Name, int Level, string OwnerId)> { ["a-hero"] = twin, ["z-hero"] = twin };
+
+        var b1 = LeaderboardBuilder.Build(forward, Array.Empty<ProgressionReceiptDto>());
+        var b2 = LeaderboardBuilder.Build(backward, Array.Empty<ProgressionReceiptDto>());
+        Assert.Equal(b1.Select(e => e.HeroId), b2.Select(e => e.HeroId));   // same facts ⇒ same ranking
+    }
+
+    [Fact]
+    public void TrialsBoard_TiedHeroes_RankIndependentOfReceiptOrder()
+    {
+        // Same trustless-recompute invariant for the Trials ladder: two heroes tied on name/level/best score
+        // must rank identically no matter what order their signed receipts arrive in.
+        var heroes = new Dictionary<string, (string Name, int Level)> { ["z-hero"] = ("Twin", 1), ["a-hero"] = ("Twin", 1) };
+        ProgressionReceiptDto Trial(string heroId) => new("trials", $"t-{heroId}", heroId, "", heroId, "", "", "", 0, 5, 0, 0, 0, "", "");
+
+        var b1 = TrialsBoardBuilder.Build(heroes, new[] { Trial("z-hero"), Trial("a-hero") });
+        var b2 = TrialsBoardBuilder.Build(heroes, new[] { Trial("a-hero"), Trial("z-hero") });
+        Assert.Equal(b1.Select(e => e.HeroId), b2.Select(e => e.HeroId));
+    }
 }
