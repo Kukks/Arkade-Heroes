@@ -9,6 +9,14 @@ public enum BattleEventKind
     Dodged,
     Defeated,
     TimeoutDecision,
+    // ── innate-v2 (rung 2) passive beats ── appended so the existing ordinals stay put. Each is emitted ONLY
+    // when CombatConfig.InnateAbilities is on AND the effect is non-zero, so a flag-off fight logs none of them
+    // (its event stream is byte-identical to the pre-passives engine). Convention: ActorId = the hero whose
+    // passive fired (the source), TargetId = the hero whose HP the effect changed — self-effects have both equal.
+    ShieldAbsorbed,   // Aura: the defender's shield pool soaked part of an incoming blow
+    Regenerated,      // Marking: the hero self-heals at the start of its turn
+    Thorns,           // Crest: part of a blow reflected back at the attacker
+    Burned,           // Sigil: a brand DoT tick on the branded hero
 }
 
 /// <summary>
