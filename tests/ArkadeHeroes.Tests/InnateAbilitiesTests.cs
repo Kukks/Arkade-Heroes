@@ -127,4 +127,52 @@ public class InnateAbilitiesTests
         }
         Assert.True(TotalAtkHpFrac(crest: true) < TotalAtkHpFrac(crest: false));   // reflected damage cost the attacker HP
     }
+
+    [Fact]
+    public void Regen_MarkingHealsOverTheFight()
+    {
+        // A Legendary-Marking hero regenerates a slice of MaxHp at the start of each of its turns. Across a
+        // deterministic seed sweep its TOTAL winning HP fraction is strictly higher than the same hero WITHOUT
+        // regen (identical stats + seed) — regen only ever adds HP. A mid stat line (100) at level 10 gives a
+        // MaxHp high enough that the per-turn heal rounds to >= 1, while keeping fights long enough for it to tell.
+        // (A single seed is too coarse in this mirror — the hero only wins a subset — so we sum over the sweep.)
+        var foe = HeroWith("b", 10, GenomeWith(100));
+        double TotalHpFrac(bool marking)
+        {
+            double total = 0;
+            for (var i = 0; i < 60; i++)
+            {
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var a = HeroWith("a", 10, marking ? GenomeWith(100, (TraitCategory.Marking, 255)) : GenomeWith(100));
+                var r = BattleEngine.Fight(a, foe, s, Innate);
+                if (r.WinnerId == "a") total += (double)r.WinnerRemainingHp / r.WinnerMaxHp;
+            }
+            return total;
+        }
+        Assert.True(TotalHpFrac(marking: true) > TotalHpFrac(marking: false));   // regen never lowers own HP
+    }
+
+    [Fact]
+    public void Brand_SigilBurnsTheTargetOverTime()
+    {
+        // A Legendary-Sigil attacker brands its target on each landing hit; the brand ticks a slice of the
+        // target's MaxHp for BrandTurns turns. Against a STRONGER defender (so the defender wins and its
+        // remaining HP is readable), the defender's TOTAL winning HP across a seed sweep is strictly lower when
+        // the attacker brands than when it does not — the burn is the only difference and only costs HP (and any
+        // fight it burns the defender to death simply drops from the winning total, deepening the gap).
+        var def = HeroWith("def", 20, GenomeWith(200));   // strong → wins; high MaxHp → burn tick rounds to >= 1
+        double TotalDefHpFrac(bool sigil)
+        {
+            double total = 0;
+            for (var i = 0; i < 60; i++)
+            {
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var atk = HeroWith("atk", 20, sigil ? GenomeWith(140, (TraitCategory.Sigil, 255)) : GenomeWith(140));
+                var r = BattleEngine.Fight(atk, def, s, Innate);
+                if (r.WinnerId == "def") total += (double)r.WinnerRemainingHp / r.WinnerMaxHp;
+            }
+            return total;
+        }
+        Assert.True(TotalDefHpFrac(sigil: true) < TotalDefHpFrac(sigil: false));   // the brand burned the target down
+    }
 }

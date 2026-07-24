@@ -33,6 +33,21 @@ public static class BattleEngine
             foreach (var (actor, target) in TurnOrder(fighterA, fighterB))
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
+
+                // innate ticks (Marking regen, then Sigil burn) — deterministic, RNG-free, own-turn start.
+                if (actor.RegenPerTurn > 0) actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.RegenPerTurn);
+                if (actor.BurnTurnsLeft > 0)
+                {
+                    actor.Hp = Math.Max(0, actor.Hp - actor.BurnPerTurn);   // DoT hits HP directly
+                    actor.BurnTurnsLeft--;
+                    if (actor.Hp <= 0)   // burned down on its own turn — the opponent wins
+                    {
+                        events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,
+                            BattleEventKind.Defeated, "", 0, false, 0, 0));
+                        return new BattleResult(target.Hero.Id, actor.Hero.Id, turn, events, target.Hp, target.Stats.MaxHp);
+                    }
+                }
+
                 actor.TickCooldowns();
                 var skill = ChooseSkill(actor, target, cfg);
                 Execute(turn, actor, target, skill, rng, events, cfg);
@@ -178,6 +193,12 @@ public static class BattleEngine
         {
             var reflected = (int)Math.Round(damage * target.ThornsFraction);   // pre-shield blow — the crest bites back
             if (reflected > 0) actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+        }
+
+        if (actor.BrandStrength > 0 && target.Hp > 0)
+        {
+            var per = (int)Math.Round(target.Stats.MaxHp * actor.BrandStrength);   // fraction of the TARGET's MaxHp
+            if (per > 0) { target.BurnPerTurn = per; target.BurnTurnsLeft = cfg.Combat.InnateOrDefault.BrandTurns; }  // refresh, never stack
         }
 
         var healed = 0;
