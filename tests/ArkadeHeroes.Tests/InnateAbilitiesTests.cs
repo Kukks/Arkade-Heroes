@@ -103,4 +103,28 @@ public class InnateAbilitiesTests
         // With a shield, the defender ends the first landed blow with MORE HP than bare (shield ate part of it).
         Assert.True(FirstDefHp(aura) > FirstDefHp(bare));
     }
+
+    [Fact]
+    public void Thorns_CrestReflectsPartOfTheBlowAtTheAttacker()
+    {
+        // A Legendary-Crest defender reflects 3% of each blow at the attacker. The attacker's TOTAL winning HP
+        // fraction across a deterministic seed sweep is strictly lower against thorny defenders than against bare
+        // ones of identical stats — thorns is the only difference, and reflected damage only ever costs the
+        // attacker HP (at stat-gene 160 neither hero rolls a drain skill, so nothing heals it back). A single seed
+        // is too coarse here: in this mirror the attacker only wins a subset of fights, so we sum over the sweep.
+        var atk = HeroWith("atk", 20, GenomeWith(160));
+        double TotalAtkHpFrac(bool crest)
+        {
+            double total = 0;
+            for (var i = 0; i < 60; i++)
+            {
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var def = HeroWith("def", 20, crest ? GenomeWith(160, (TraitCategory.Crest, 255)) : GenomeWith(160));
+                var r = BattleEngine.Fight(atk, def, s, Innate);
+                if (r.WinnerId == "atk") total += (double)r.WinnerRemainingHp / r.WinnerMaxHp;
+            }
+            return total;
+        }
+        Assert.True(TotalAtkHpFrac(crest: true) < TotalAtkHpFrac(crest: false));   // reflected damage cost the attacker HP
+    }
 }

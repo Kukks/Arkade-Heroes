@@ -37,11 +37,14 @@ public static class BattleEngine
                 var skill = ChooseSkill(actor, target, cfg);
                 Execute(turn, actor, target, skill, rng, events, cfg);
 
-                if (target.Hp <= 0)
+                if (target.Hp <= 0 || actor.Hp <= 0)   // actor can die to the target's thorns this swing
                 {
-                    events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
+                    // If both hit 0 the same swing, the target died to the attack first, so the attacker wins
+                    // (the target.Hp <= 0 branch is checked first, matching that ordering).
+                    var (win, lose) = target.Hp <= 0 ? (actor, target) : (target, actor);
+                    events.Add(new BattleEvent(turn, win.Hero.Id, lose.Hero.Id,
                         BattleEventKind.Defeated, skill.Id, 0, false, 0, 0));
-                    return new BattleResult(actor.Hero.Id, target.Hero.Id, turn, events, actor.Hp, actor.Stats.MaxHp);
+                    return new BattleResult(win.Hero.Id, lose.Hero.Id, turn, events, win.Hp, win.Stats.MaxHp);
                 }
             }
         }
@@ -164,12 +167,18 @@ public static class BattleEngine
         // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
         // so replays stay verifiable.
         var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
-        // Genome-derived innate nudge from cosmetic traits — off by default, so replays stay byte-identical.
-        var innate = cfg.Combat.InnateAbilities ? Traits.InnateModifier(actor.Hero.Genome, cfg) : 1.0;
+        // (innate-v2 replaces the old single Traits.InnateModifier damage nudge with the six per-category
+        //  passives resolved on FighterState; there is no flat innate damage factor here anymore.)
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * innate * actor.Advantage));
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
 
         target.TakeAttackDamage(damage);
+
+        if (target.ThornsFraction > 0 && actor.Hp > 0)
+        {
+            var reflected = (int)Math.Round(damage * target.ThornsFraction);   // pre-shield blow — the crest bites back
+            if (reflected > 0) actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+        }
 
         var healed = 0;
         switch (skill.Effect)
