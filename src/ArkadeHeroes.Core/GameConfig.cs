@@ -107,6 +107,15 @@ public sealed record AffinityBonuses(
     public static AffinityBonuses Default { get; } = new(0.030, 0.020, 0.012, 0.006, 0.002, 0.05);
 }
 
+/// <summary>Per-passive magnitude knobs for innate-v2 combat passives — each scales a cosmetic category's
+/// capped <see cref="Traits.InnateStrength"/> into that passive's own units. Applied ONLY when
+/// <see cref="CombatConfig.InnateAbilities"/> is on; conservative defaults, tuned by the balance probe.</summary>
+public sealed record InnateBonuses(
+    double Shield, double Regen, double Accuracy, double Thorns, double Brand, int BrandTurns, double Initiative)
+{
+    public static InnateBonuses Default { get; } = new(1.0, 0.10, 1.0, 1.0, 0.10, 3, 1.0);
+}
+
 /// <summary>The XP-to-next-level curve — XpToNext(level) = Base + Coefficient·level^Exponent — and the level ceiling.</summary>
 public sealed record XpCurve(long Base, double Coefficient, double Exponent, int MaxLevel)
 {
@@ -154,8 +163,13 @@ public sealed record CombatConfig(
     // tournament / death-match are untouched). DEFAULT FALSE (same discipline as the flags above): Default
     // stays byte-identical and every existing replay verifies unchanged; the flip is a coordinated
     // client+server release.
-    bool SquadSynergy = false)
+    bool SquadSynergy = false,
+    // innate-v2 per-passive magnitudes; null = InnateBonuses.Default (a record type can't be a const param default).
+    InnateBonuses? Innate = null)
 {
+    /// <summary>The innate magnitudes, resolving the null default.</summary>
+    public InnateBonuses InnateOrDefault => Innate ?? InnateBonuses.Default;
+
     public static CombatConfig Default { get; } = new(
         MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,
         // gene-A from level 1 so every hero has a second move immediately (no more Strike-only starters);
