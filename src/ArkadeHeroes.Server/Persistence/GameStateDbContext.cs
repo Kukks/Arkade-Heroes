@@ -72,13 +72,48 @@ public class PersistedFancyFind
 }
 
 /// <summary>
+/// A durable hero. Like the purchase row, deliberately a SEPARATE type from the in-memory <see cref="Hero"/>
+/// aggregate: that one carries a Genome struct and a live EquipmentLoadout that have no business in a schema.
+/// The genome is stored as hex (it IS the hero — every trait derives from it) and the loadout as a JSON array
+/// of equipped item ids (the slot is derivable: each catalog item knows its slot, and a loadout holds at most
+/// one item per slot). The commit–reveal audit fields ride along so a rehydrated hero stays verifiable.
+///
+/// IDENTITY fields (owner, name, the immutables) are saved the moment they change — a hero must never
+/// vanish or mis-own across a restart. PROGRESSION (level/XP, equipment, cooldowns, breed count) is flushed
+/// periodically instead, so a crash loses at most one flush window of grinding, never the hero itself.
+/// </summary>
+public class PersistedHero
+{
+    public required string Id { get; set; }
+    public required string OwnerId { get; set; }
+    public required string Name { get; set; }
+    public required string GenomeHex { get; set; }
+    public required int Generation { get; set; }
+    public string? ParentAId { get; set; }
+    public string? ParentBId { get; set; }
+    public required int Level { get; set; }
+    public required long Xp { get; set; }
+    public required int BreedCount { get; set; }
+    public DateTimeOffset? BreedCooldownUntil { get; set; }
+    public DateTimeOffset? GauntletCooldownUntil { get; set; }
+    public required string EquipmentJson { get; set; }
+    public string? EntropyHex { get; set; }
+    public string? ServerSeedHex { get; set; }
+    public string? PlayerNonce { get; set; }
+    public string? AssetId { get; set; }
+    public string? MintArkTxId { get; set; }
+}
+
+/// <summary>
 /// SQLite store for the game state a restart must not lose. Most rows are here because losing one costs a
 /// player REAL SATS — an item they paid for but hadn't claimed, a tournament buy-in paid into a bracket that
 /// hadn't run. Fancy finds are the exception: they cost no sats, but they carry an irreplaceable scarcity
 /// claim ("first to breed this set, ever"), and losing the per-set count would let a restart mint a SECOND
-/// "#1" of a set — so the promise that #1 is forever needs disk, not just RAM. Heroes, offers and matches
-/// are deliberately absent: those are reconcilable from the chain and the signed receipt chain, so
-/// persisting them would duplicate a better source of truth.
+/// "#1" of a set — so the promise that #1 is forever needs disk, not just RAM. Heroes are here because the
+/// "reconcilable from the chain" story never materialized — IChainService can't enumerate a player's heroes
+/// back, so without a row a restart lost every character players own (and stranded every open bracket that
+/// named one). Offers and matches remain absent: offers ARE reconciled against on-chain truth, and a
+/// resolved match's replay is a receipt-signed public fact.
 /// </summary>
 public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : DbContext(options)
 {
@@ -86,6 +121,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedTournament> Tournaments => Set<PersistedTournament>();
     public DbSet<PersistedPlayer> Players => Set<PersistedPlayer>();
     public DbSet<PersistedFancyFind> FancyFinds => Set<PersistedFancyFind>();
+    public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -94,5 +130,6 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedTournament>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedPlayer>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedFancyFind>().HasKey(x => x.HeroId);
+        modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
     }
 }

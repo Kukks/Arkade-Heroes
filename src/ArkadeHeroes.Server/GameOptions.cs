@@ -78,6 +78,12 @@ public class GameOptions
     /// Set it in a deployment so a player who paid for an item can still claim it after a bounce.</summary>
     public string? StateDbPath { get; set; }
 
+    /// <summary>How often the hero flush persists DIRTY progression (level/XP, equipment, cooldowns, breed
+    /// count). Identity events — mint, burn, transfer, rename — persist inline regardless, so a crash loses
+    /// at most this window of grinding, never a hero. Only meaningful when <see cref="StateDbPath"/> is set
+    /// (the flush service isn't registered otherwise).</summary>
+    public TimeSpan HeroFlushInterval { get; set; } = TimeSpan.FromSeconds(15);
+
     /// <summary>Opt-in obligation reservation: when true, the daily faucet also holds back the current season pot
     /// (base + accrued) so emission can't drain the sats the upcoming season settlement owes. Default off.</summary>
     public bool ReserveSeasonPot { get; set; } = false;
