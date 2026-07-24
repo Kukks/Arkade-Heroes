@@ -1,7 +1,7 @@
 # Engineering handoff — Arkade Heroes autonomous build
 
 **Audience:** the next agent continuing this build autonomously via /loop.
-**Baseline:** current `main` (HEAD `e265fc3` as of 2026-07-23), clean tree. Gate: **400 unit** (`dotnet test tests/ArkadeHeroes.Tests`, ~7s) + **53 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+**Baseline:** current `main` (HEAD `af6ed6e` as of 2026-07-24), clean tree. Gate: **434 unit** (`dotnet test tests/ArkadeHeroes.Tests`, ~10s) + **53 regtest E2E** behind the live stack (E2E count last verified 2026-07-23; recent PRs added unit tests only). The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
 **Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → the auto-memory backlog (`arkade-heroes-backlog.md`, the live prioritized queue) → `docs/DESIGN.md`.
 
 ---
@@ -32,7 +32,7 @@ The bullets above are the ORIGINAL MVP proof, still live. Everything this sectio
 
 ## 3. World verification runbook — run this BEFORE any work
 
-Expected outputs as of `main`@`e265fc3`. If any check fails, fix the world first — do not code against a broken baseline.
+Expected outputs as of `main`@`af6ed6e`. If any check fails, fix the world first — do not code against a broken baseline.
 
 ```bash
 # 1. Repo state (clean tree; HEAD is bd901fa or a descendant — handoff-doc commits follow it)
@@ -44,7 +44,7 @@ docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 400/400, ~7s
+dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 434/434, ~10s
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~2 min)
 dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 53/53 (serial, ~2-3 min)
@@ -76,16 +76,22 @@ Research clones (read-only reference, shallow) at `C:/Git/Arkade-Heroes-research
 
 ### Durability (`src/ArkadeHeroes.Server/Persistence/`)
 
-`GameStore` is still dictionaries, but the state where losing a row costs a player **real sats** can be
-persisted to SQLite (EF Core, mirroring `Chain/NArk/GameArkDbContext`). It is **strictly opt-in**: with no
-`Game:StateDbPath` configured, `NullGameStatePersistence` is registered and the server behaves exactly as it
-always has — everything in memory, gone on restart. Set the path in a deployment.
+`GameStore` is still dictionaries, but the state where losing a row costs a player **real sats** (or an
+irreplaceable scarcity claim) can be persisted to SQLite (EF Core, `Persistence/GameStateDbContext`). It is
+**strictly opt-in**: with no `Game:StateDbPath` configured, `NullGameStatePersistence` is registered and the
+server behaves exactly as it always has — everything in memory, gone on restart. Set the path in a deployment.
+Boot applies **EF Core migrations** (`MigrateAsync`, not the old `EnsureCreated`), so adding a durable entity
+means adding a migration (`dotnet ef migrations add … --project src/ArkadeHeroes.Server --output-dir
+Persistence/Migrations`) — a schema change then reaches an already-created durable DB instead of silently
+missing (`EnsureCreated` is create-once and never evolves an existing file).
 
 | Durable today | Volatile today |
 |---|---|
-| Item purchases (paid → claimed) | Heroes, offers, matches, receipts |
+| Item purchases (paid → claimed) | Offers, matches, receipts |
 | Tournaments (unresolved; resolved rows kept as an audit marker but never rehydrated) | Paid custom hero **names** + pending renames (rename fee is default-ON) |
-| Player identity + `StarterClaimed` / `LastClaimDay` (the once-only flags — losing them re-grants free starters and re-pays the daily faucet) | Fancy discoveries, Trials personal-bests |
+| Player identity + `StarterClaimed` / `LastClaimDay` (the once-only flags — losing them re-grants free starters and re-pays the daily faucet) | Trials personal-bests |
+| **Heroes** — identity (owner/name/immutables) inline-saved at mint/burn/transfer/rename; progression (level/XP/equipment/cooldowns/breed count) flushed periodically by `HeroFlushService` | Open match/squad/death-match **sessions** (a resolved outcome is a receipt-signed public fact) |
+| **Fancy discoveries + editions** — append-only; a restart must not mint a second "#1" of a set | |
 
 Two rules the money-handling rows follow, both learned the hard way:
 - **A transient state is never persisted.** An item mid-`delivering` durably reads `pending`, so a crash
@@ -95,13 +101,23 @@ Two rules the money-handling rows follow, both learned the hard way:
   and that marker is written *before* any sat moves — otherwise a restart could re-resolve a paid-out
   bracket and pay the podium twice.
 
-**Known limit — heroes are not yet reconcilable.** A rehydrated tournament comes back with the right entrant
-and hero ids, but `store.Heroes` is empty, so it **cannot be auto-resolved**; the durable record is an audit
-and refund basis, not a resume. Heroes are on-chain assets whose mint metadata carries genome/generation/
-parents, so the intended fix is chain reconciliation at boot — which needs new `IChainService` surface
-(enumerate a player's hero assets; read a mint's metadata back). Today the interface only offers
-`VerifyHeroOwnershipAsync(playerId, assetId)`, which requires already knowing the asset id. That work needs
-the live regtest stack to verify.
+**Hero durability — the hybrid save model.** Heroes ARE persisted now (this closed the old "`store.Heroes` is
+empty on restart" limit). IDENTITY (owner, name, the on-chain immutables) is saved INLINE — awaited inside the
+mint/burn/transfer/rename request — so a hero can never vanish or mis-own across a restart. PROGRESSION
+(level/XP, equipment, cooldowns, breed count) rides a periodic background flush (`HeroFlushService`, every
+`GameOptions.HeroFlushInterval`, plus a final drain on graceful shutdown), so a crash loses at most one flush
+window of grinding, never the hero. The flush writes PROGRESSION COLUMNS ONLY, never owner/name
+(`SaveHeroProgressionAsync`): a full-surface flush racing an inline identity save could otherwise commit last
+and revert an ownership change — a hero mis-owned across a restart. A rehydrated roster loads at boot, so a
+full tournament CAN now resolve after a restart.
+
+**Residual (deliberate):** a tournament's fill-time `EntrantSnapshots` are NOT persisted, so a bracket whose
+lifetime crosses a restart can't be resolved from them and instead REFUNDS every paid buy-in
+(`POST /api/tournament/{id}/refund`, gated on genuine unresolvability — see `RefundTournamentAsync`); heroes
+being durable makes that refund the rare fallback, not the default. **One concurrency gap remains** (flagged
+in the backlog, not yet fixed): two concurrent INLINE identity saves of the SAME hero (e.g. a racing transfer
++ rename) can interleave on the shared aggregate — closing it needs a per-hero persistence lock and its
+lock-ordering analysis against the existing money-path locks.
 
 Covenant layer (`src/ArkadeHeroes.Chain/Covenants/`):
 - `ArkadeCovenants` — covenant bytecode builders (byte-for-byte coinflip ports): `PayTo`, `AtomicSweep`, `Sha256Gate`, `CheckSigFromStackGate`, `SettleAuthorized`, `RefundTo`, `SettleMessage`, `EncodeIndex`.
@@ -132,12 +148,12 @@ Covenant/protocol traps live in **`contracts/README.md`** (authoritative, incl. 
 
 ## 6. Shipped surface (the original MVP map is complete)
 
-The MVP completion map (`docs/plans/20-mvp-completion.md`) and the covenant rollout are DONE — every covenant flow (breeding, merge/fusion, item + hero offers, geared stakes, death-match) was rebuilt on **structural** covenant enforcement (the emulator checks transaction shape, not just an oracle signature). On top of the core loop, the game now has: covenant breeding + merge/fusion + hero **death-matches** (permadeath, winner absorbs a trait); a full item + hero **marketplace** with a treasury fee; **XP-as-assets** with a conserved anti-farm transfer; **VRF** entropy (replaced commit–reveal); **tournaments** (buy-in bracket → pot → podium split − house rake); **season prize pools**; a **daily** quest loop + streaks + faucet governor; **3v3 squad** matches; a PvE **gauntlet**; a unique-**name registry**; **achievements**; Fancy/rarity boards; a typed **Client.Sdk**; and a graphical **Blazor WASM frontend** for all of it. A money-path correctness pass then hardened all 8 covenant flows against concurrent double-execute (per-key locks), pinned pot solvency, and fixed a daily-faucet crash-restart double-pay. Gate: 400 unit + 53 E2E.
+The MVP completion map (`docs/plans/20-mvp-completion.md`) and the covenant rollout are DONE — every covenant flow (breeding, merge/fusion, item + hero offers, geared stakes, death-match) was rebuilt on **structural** covenant enforcement (the emulator checks transaction shape, not just an oracle signature). On top of the core loop, the game now has: covenant breeding + merge/fusion + hero **death-matches** (permadeath, winner absorbs a trait); a full item + hero **marketplace** with a treasury fee; **XP-as-assets** with a conserved anti-farm transfer; **VRF** entropy (replaced commit–reveal); **tournaments** (buy-in bracket → pot → podium split − house rake); **season prize pools**; a **daily** quest loop + streaks + faucet governor; **3v3 squad** matches; a PvE **gauntlet**; a unique-**name registry**; **achievements**; Fancy/rarity boards; a typed **Client.Sdk**; and a graphical **Blazor WASM frontend** for all of it. A money-path correctness pass then hardened all 8 covenant flows against concurrent double-execute (per-key locks), pinned pot solvency, and fixed a daily-faucet crash-restart double-pay. A durability pass then made the money-and-scarcity-bearing state survive a restart (opt-in SQLite via EF Core migrations): item purchases, tournaments, player once-only flags, **heroes** (hybrid — identity saved inline, progression flushed), and Fancy discoveries/editions; plus a client-side **VerifyTournament** UI so the real-sats bracket is player-verifiable. Gate: 434 unit + 53 E2E.
 
 ## 7. What's genuinely open (the live queue is `arkade-heroes-backlog.md` in auto-memory)
 
 - **User-owned decisions — do NOT decide these unilaterally, surface them:** combat balance (measured: ~41% of equal-level matches are pre-decided before the seed; the dominant lever is the `StatBlock` base-stat spread — a design call, not a bug); legal/regulatory review (permadeath wagering + real-BTC cash-out — see `arkade-heroes-legal-risk.md`); whether to flip the marketplace listing fee default-on; browser fee-flow verification (#212 — the server side is E2E-proven; the browser click-through needs a human watching the UI).
-- **Noted low-priority follow-ups:** idempotent memo-keyed `PayoutAsync` (would close the daily's rare in-process settled-then-threw retry — but touches the chain seam + needs a durable dedup ledger, so it's a design decision); season-settle durability is safe ONLY because receipts are volatile (re-audit if receipts ever become durable).
+- **Noted low-priority follow-ups:** the **inline-vs-inline hero identity-save race** — two concurrent identity ops on ONE hero (e.g. a racing transfer + rename) interleave on the shared aggregate; needs a per-hero persistence lock (narrow, and chain-backstopped for ownership); idempotent memo-keyed `PayoutAsync` (would close the daily's rare in-process settled-then-threw retry — but touches the chain seam + needs a durable dedup ledger, so it's a design decision); season-settle durability is safe ONLY because receipts are volatile (re-audit if receipts ever become durable).
 - **Standing insolvency guard:** keep `fee inflow + solvency-safe rake ≥ faucet outflow + reserve floor`. `EconomySolvencyTests` + `PotSolvencyTests` pin the structural invariants against config drift; the daily loop is treasury-positive because every quest is gated behind a costlier fee-paying action.
 
 ## 8. Working agreements recap
