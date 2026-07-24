@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Combat;
 using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Fairness;
@@ -133,10 +134,13 @@ public static class FairnessAudit
     /// <summary>
     /// Verifies a match outcome: seed matches the commitment, entropy is the
     /// documented derivation, and replaying <c>BattleEngine.Fight</c> over the
-    /// pre-fight snapshots reproduces the exact event log.
+    /// pre-fight snapshots reproduces the exact event log. The optional
+    /// <paramref name="config"/> is the combat config the fight was resolved under
+    /// (null → <c>GameConfig.Default</c>), so a client can re-run the SAME rules —
+    /// e.g. a match resolved with innate abilities on only replays under that config.
     /// </summary>
     public static (bool Ok, string Detail) VerifyMatch(
-        string matchId, string nonce, string commitmentHex, FightResponse fight)
+        string matchId, string nonce, string commitmentHex, FightResponse fight, GameConfig? config = null)
     {
         var seed = Convert.FromHexString(fight.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -148,7 +152,7 @@ public static class FairnessAudit
             return (false, "entropy does not match DeriveEntropy(seed, matchId, challenger, defender, nonce)");
 
         var replay = BattleEngine.Fight(
-            RebuildHero(fight.ChallengerSnapshot), RebuildHero(fight.DefenderSnapshot), entropy);
+            RebuildHero(fight.ChallengerSnapshot), RebuildHero(fight.DefenderSnapshot), entropy, config);
 
         if (replay.WinnerId != fight.Result.WinnerId)
             return (false, "replayed winner differs from the reported winner");

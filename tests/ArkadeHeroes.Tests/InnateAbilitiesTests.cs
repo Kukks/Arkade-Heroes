@@ -1,8 +1,11 @@
 using System.Security.Cryptography;
 using ArkadeHeroes.Core;
+using ArkadeHeroes.Core.Fairness;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Core.Combat;
+using ArkadeHeroes.Server;   // DtoMapper ToDto extensions
+using ArkadeHeroes.Shared;   // FairnessAudit + FightResponse
 
 namespace ArkadeHeroes.Tests;
 
@@ -298,5 +301,50 @@ public class InnateAbilitiesTests
         Assert.NotNull(events);
         Assert.Contains(events!, e => e.Kind == BattleEventKind.Burned
             && e.ActorId == "atk" && e.TargetId == "def" && e.Damage > 0);
+    }
+
+    [Fact]
+    public void VerifyMatch_OnConfigReproducesPassives_ButADefaultOffClientCannot()
+    {
+        // The keystone: a match resolved with InnateAbilities ON is faithfully re-derivable ONLY by a client that
+        // replays under the same config — the shield/regen/thorns/burn beats are part of the event stream a
+        // default-off client can never reproduce. This proves VerifyMatch is config-matched AND that the new
+        // events are inside the check (VerifyMatch compares the event log field-by-field).
+        var challenger = HeroWith("chal", 20, GenomeWith(180, (TraitCategory.Aura, 255), (TraitCategory.Sigil, 255)));
+        var defender = HeroWith("def", 20, GenomeWith(160, (TraitCategory.Crest, 255)));
+        const string matchId = "innate-m";
+        const string nonce = "innate-n";
+
+        // Pick a seed whose ON fight actually fires a passive beat (guaranteed for these genomes over the sweep) —
+        // its presence is exactly what a default-off replay cannot reproduce. Derive entropy the way VerifyMatch
+        // does: DeriveEntropy(seed, matchId, challengerId, defenderId, nonce).
+        byte[] seed = null!;
+        BattleResult onResult = null!;
+        for (var i = 0; i < 200 && seed is null; i++)
+        {
+            var s = SHA256.HashData(BitConverter.GetBytes(i));
+            var e = CommitReveal.DeriveEntropy(s, matchId, challenger.Id, defender.Id, nonce);
+            var r = BattleEngine.Fight(challenger, defender, e, Innate);
+            if (r.Events.Any(ev => ev.Kind is BattleEventKind.ShieldAbsorbed or BattleEventKind.Regenerated
+                                          or BattleEventKind.Thorns or BattleEventKind.Burned))
+            {
+                seed = s;
+                onResult = r;
+            }
+        }
+        Assert.NotNull(seed);   // a passive fired under the on-config
+
+        var commitmentHex = CommitReveal.Commit(seed);
+        var entropyHex = Convert.ToHexString(CommitReveal.DeriveEntropy(seed, matchId, challenger.Id, defender.Id, nonce));
+        var chalSnap = challenger.ToDto();
+        var defSnap = defender.ToDto();
+        var fr = new FightResponse(onResult.ToDto(), Convert.ToHexString(seed), entropyHex, 0, 0,
+            chalSnap, defSnap, chalSnap, defSnap);
+
+        // A client running the SAME on-config reproduces the fight, passive beats and all.
+        var onVerdict = FairnessAudit.VerifyMatch(matchId, nonce, commitmentHex, fr, Innate);
+        Assert.True(onVerdict.Ok, onVerdict.Detail);
+        // A default-off client (config: null → GameConfig.Default) cannot reproduce an on-config fight — it diverges.
+        Assert.False(FairnessAudit.VerifyMatch(matchId, nonce, commitmentHex, fr, config: null).Ok);
     }
 }
