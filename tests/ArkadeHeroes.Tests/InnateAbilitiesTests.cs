@@ -191,7 +191,9 @@ public class InnateAbilitiesTests
             var rf = BattleEngine.Fight(fancy, foe, s);   // Default → flag off
             var rp = BattleEngine.Fight(plainA, foe, s);
             Assert.Equal(rp.WinnerId, rf.WinnerId);
-            Assert.Equal(rp.Events.Count, rf.Events.Count);   // identical event stream: passives inert when off
+            Assert.Equal(rp.WinnerRemainingHp, rf.WinnerRemainingHp);   // exact remaining HP, not just the winner
+            Assert.Equal(rp.Events, rf.Events);   // FULL event stream, field-by-field (BattleEvent is a value record):
+                                                  // a cosmetic-laden genome is byte-identical to a plain one when off
         }
     }
 
