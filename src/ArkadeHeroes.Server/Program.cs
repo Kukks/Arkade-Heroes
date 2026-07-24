@@ -59,8 +59,11 @@ var app = builder.Build();
 // Rehydrate before serving: a purchase paid before the restart must be claimable after it.
 if (!string.IsNullOrWhiteSpace(stateDbPath))
 {
+    // Apply migrations, not EnsureCreated: this creates the DB + every table on a fresh path AND evolves an
+    // already-created durable DB (new tables/columns) — EnsureCreated is create-once and silently skips
+    // schema changes on an existing file, so a shipped entity (e.g. Heroes) would be missing in production.
     await app.Services.GetRequiredService<IDbContextFactory<GameStateDbContext>>()
-        .CreateDbContext().Database.EnsureCreatedAsync();
+        .CreateDbContext().Database.MigrateAsync();
     await app.Services.GetRequiredService<IGameStatePersistence>()
         .LoadIntoAsync(app.Services.GetRequiredService<GameStore>());
 }
