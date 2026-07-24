@@ -40,4 +40,22 @@ public class InnateAbilitiesTests
         Assert.True(ib is { Shield: 1.0, Accuracy: 1.0, Thorns: 1.0, Initiative: 1.0, Regen: 0.10, Brand: 0.10 });
         Assert.Same(InnateBonuses.Default, GameConfig.Default.Combat.InnateOrDefault); // null resolves to Default
     }
+
+    [Fact]
+    public void Initiative_HigherStanceActsFirstInANearTie()
+    {
+        // Two heroes with identical stats (same genome stat bytes → identical Speed). Without initiative,
+        // TurnOrder falls to the id tiebreak (CompareOrdinal), so "a" (< "b") acts first. Give "b" a Legendary
+        // Stance: its effective ordering speed edges ahead, so "b" acts — and lands the first SkillUsed event.
+        var plain = GenomeWith(200);                                   // high stats, no traits
+        var stanced = GenomeWith(200, (TraitCategory.Stance, 255));    // same stats + Legendary Stance
+        var a = HeroWith("a", 20, plain);
+        var b = HeroWith("b", 20, stanced);
+        var seed = new byte[32]; Array.Fill(seed, (byte)7);
+
+        var firstActor = BattleEngine.Fight(a, b, seed, Innate).Events
+            .First(e => e.Kind == BattleEventKind.SkillUsed || e.Kind == BattleEventKind.Missed || e.Kind == BattleEventKind.Dodged)
+            .ActorId;
+        Assert.Equal("b", firstActor);
+    }
 }

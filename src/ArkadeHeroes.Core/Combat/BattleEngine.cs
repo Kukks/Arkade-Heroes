@@ -24,8 +24,8 @@ public static class BattleEngine
 
         // advantageA/B default to 1.0 (a no-op) for every caller except SquadBattle with team synergy on — a
         // per-side whole-lineup damage multiplier applied like affinity below, so a plain fight is unchanged.
-        var fighterA = new FighterState(a, cfg.Combat, advantageA);
-        var fighterB = new FighterState(b, cfg.Combat, advantageB);
+        var fighterA = new FighterState(a, cfg, advantageA);
+        var fighterB = new FighterState(b, cfg, advantageB);
         var events = new List<BattleEvent>();
 
         for (var turn = 1; turn <= maxTurns; turn++)
@@ -61,9 +61,13 @@ public static class BattleEngine
 
     private static (FighterState, FighterState)[] TurnOrder(FighterState a, FighterState b)
     {
-        // Faster hero acts first; ties broken by luck, then by id so order is total.
-        var aFirst = a.Stats.Speed != b.Stats.Speed
-            ? a.Stats.Speed > b.Stats.Speed
+        // Faster hero acts first; ties broken by luck, then id. Stance's initiative passive scales the
+        // ordering speed only (never the stat) — a pure double comparison, no RNG. Flag off ⇒ both
+        // InitiativeFactor == 1.0, and int×1.0 is exact, so the order is byte-identical to before.
+        var aSpeed = a.Stats.Speed * a.InitiativeFactor;
+        var bSpeed = b.Stats.Speed * b.InitiativeFactor;
+        var aFirst = aSpeed != bSpeed
+            ? aSpeed > bSpeed
             : a.Stats.Luck != b.Stats.Luck
                 ? a.Stats.Luck > b.Stats.Luck
                 : string.CompareOrdinal(a.Hero.Id, b.Hero.Id) < 0;
@@ -196,19 +200,44 @@ public static class BattleEngine
         public int Hp { get; set; }
         public int DefenseBreakStacks { get; set; }
         public int FocusStacks { get; set; }
+
+        // ── innate-v2 passives — all inert (0 / 1.0) unless CombatConfig.InnateAbilities is on ──
+        public int ShieldHp { get; set; }          // Aura: one-time absorb pool, consumed before HP
+        public int RegenPerTurn { get; }           // Marking: heal at the start of each own turn
+        public int AccuracyBonus { get; }          // Eyes: +points to the hit-roll threshold
+        public double ThornsFraction { get; }      // Crest: fraction of a blow reflected at the attacker
+        public double BrandStrength { get; }       // Sigil: fraction of the TARGET's MaxHp per burn tick
+        public double InitiativeFactor { get; }    // Stance: turn-order speed multiplier (>= 1.0)
+        public int BurnPerTurn { get; set; }       // active brand ON this fighter (set by an attacker's Sigil)
+        public int BurnTurnsLeft { get; set; }
+
         /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy.</summary>
         public double Advantage { get; }
         private readonly CombatConfig _cfg;
         private readonly Dictionary<string, int> _cooldowns = [];
 
-        public FighterState(Hero hero, CombatConfig cfg, double advantage = 1.0)
+        public FighterState(Hero hero, GameConfig game, double advantage = 1.0)
         {
             Hero = hero;
-            _cfg = cfg;
+            _cfg = game.Combat;
             Advantage = advantage;
             Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
-            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, cfg);
+            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, game.Combat);
             Hp = Stats.MaxHp;
+            InitiativeFactor = 1.0;
+
+            if (game.Combat.InnateAbilities)
+            {
+                var ib = game.Combat.InnateOrDefault;
+                var g = hero.Genome;
+                double S(TraitCategory c) => Traits.InnateStrength(g, c, game);
+                ShieldHp = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Aura) * ib.Shield);
+                RegenPerTurn = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Marking) * ib.Regen);
+                AccuracyBonus = (int)Math.Round(S(TraitCategory.Eyes) * ib.Accuracy * 100);
+                ThornsFraction = S(TraitCategory.Crest) * ib.Thorns;
+                BrandStrength = S(TraitCategory.Sigil) * ib.Brand;
+                InitiativeFactor = 1.0 + S(TraitCategory.Stance) * ib.Initiative;
+            }
         }
 
         public int EffectiveAttack => (int)(Stats.Attack * (1 + _cfg.FocusPerStack * FocusStacks));
