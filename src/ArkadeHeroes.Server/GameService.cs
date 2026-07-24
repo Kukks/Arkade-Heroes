@@ -222,6 +222,9 @@ public class GameService(
 
         hero.Name = pending.NewName;
         store.Renames.TryRemove(heroId, out _);
+        // RENAME is an identity event: the name was bought (a real-sats fee) and is globally unique —
+        // losing it to a crash would both refund nothing and free the name for someone else to claim.
+        await persistence.SaveHeroAsync(hero, ct);
         return hero;
     }
 
@@ -468,11 +471,12 @@ public class GameService(
         finally { store.TournamentLock.Release(); }
     }
 
-    /// <summary>Refunds an UNRESOLVABLE bracket — one whose entrants can never all fight again because at least
-    /// one entrant hero is gone from the store (lost to a restart while heroes aren't persisted, or burned /
-    /// merged away between join and resolve). Every buy-in that actually CLEARED goes back to its entrant and
-    /// the bracket lands terminally <c>refunded</c>; a bracket whose heroes are all present is refused, so this
-    /// is safe for anyone to trigger — it can't unwind a pot that can still be played. Single-shot + double-refund-safe.</summary>
+    /// <summary>Refunds an UNRESOLVABLE bracket — one that can never run again: a FULL bracket whose
+    /// fill-time entrant snapshots are gone (never persisted, so a restart drops them and resolve refuses
+    /// without them), or an OPEN bracket that can never fill because an entrant hero was burned away. Every
+    /// buy-in that actually CLEARED goes back to its entrant and the bracket lands terminally <c>refunded</c>;
+    /// a bracket that can still be played is refused, so this is safe for anyone to trigger — it can't
+    /// unwind a live pot. Single-shot + double-refund-safe.</summary>
     public async Task<(TournamentSession Session, int EntrantsRefunded, long RefundedSats)>
         RefundTournamentAsync(string tournamentId, CancellationToken ct)
     {
@@ -484,9 +488,17 @@ public class GameService(
         {
             if (session.Status == "refunded") throw new GameRuleException("This tournament is already refunded.");
             if (session.Status == "resolved") throw new GameRuleException("This tournament is already resolved.");
-            // The unresolvable gate: with every entrant hero still present the bracket can still run, so the
-            // refund is refused — the pot stays live and nobody can use this path to duck a likely loss.
-            if (session.Entrants.All(e => store.Heroes.ContainsKey(e.HeroId)))
+            // The unresolvable gate, split by phase because resolvability is phase-dependent post-#104:
+            // a FULL bracket fights from its fill-time locked EntrantSnapshots, NOT the live store — a
+            // hero burned or transferred after fill still fights as its snapshot, so hero presence has no
+            // bearing; the ONLY dead state is the snapshots being gone (never persisted; a restart drops
+            // them). An OPEN bracket has no snapshots yet and lives on its heroes: it can still fill and
+            // resolve unless an entrant hero was burned away — and heroes are persisted, so a restart no
+            // longer strands it (nor may a stranger refund a forming pot out from under its entrants).
+            var unresolvable = session.Status == "full"
+                ? session.EntrantSnapshots is not { Count: > 0 }
+                : session.Entrants.Any(e => !store.Heroes.ContainsKey(e.HeroId));
+            if (!unresolvable)
                 throw new GameRuleException("This tournament can still be resolved — refunds are only for a stranded bracket.");
 
             session.Status = "refunded";   // commit BEFORE paying → no double-refund (mirrors the resolve marker)
@@ -607,6 +619,11 @@ public class GameService(
         if (FancySets.TitleFor(hero.Genome, _config) is { } fancy
             && store.RecordFancyFind(fancy, hero.Id, hero.Name, player.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds()) is { } find)
             await persistence.SaveFancyFindAsync(find, ct);
+        // MINT is an identity event: durable NOW, not at the next flush — the chain can't enumerate a
+        // player's heroes back, so an unsaved hero is unrecoverable if the process dies. Saved AFTER the
+        // on-chain mint (this isn't a payout latch; the asset exists whether or not the row lands, and a
+        // faulted save re-throws into a retryable flow). (No-op unless persistence is configured.)
+        await persistence.SaveHeroAsync(hero, ct);
         return hero;
     }
 
@@ -743,6 +760,10 @@ public class GameService(
         parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
         parentB.BreedCount++;
         parentB.BreedCooldownUntil = now + outcome.ParentBCooldown;
+        // Parent breed-counts + cooldowns are progression — flushed, not saved inline (the CHILD's mint
+        // above already saved durably). Worst case a crash re-opens a cooldown and re-prices one breed fee.
+        store.MarkHeroDirty(parentA.Id);
+        store.MarkHeroDirty(parentB.Id);
         session.ChildHeroId = child.Id;
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
@@ -821,6 +842,7 @@ public class GameService(
         session.Completed = true;
         ApplyXp(hero, xpAward);
         hero.GauntletCooldownUntil = DateTimeOffset.UtcNow + _options.GauntletCooldown;
+        store.MarkHeroDirty(hero.Id);   // the cooldown too — its own mutation, not coupled to ApplyXp's mark
 
         var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
@@ -984,11 +1006,17 @@ public class GameService(
         // level is attested by the merge receipt below so ReplayLevel stays consistent.
         fused.Level = baseHero.Level;
         session.FusedHeroId = fused.Id;
+        // Re-save: the inherited level is BIRTH state, not grind — losing it to a crash inside the flush
+        // window would rehydrate the fused hero at level 1. Still inside the identity event, so save now.
+        await persistence.SaveHeroAsync(fused, ct);
 
         // Both inputs are consumed: drop their server-side records (their assets are
-        // on-chain-retired to the treasury by ExecuteMergeAsync).
+        // on-chain-retired to the treasury by ExecuteMergeAsync) — and their durable rows with them,
+        // or a restart resurrects two heroes whose assets no longer exist.
         store.Heroes.TryRemove(session.BaseId, out _);
         store.Heroes.TryRemove(session.SacrificeId, out _);
+        await persistence.DeleteHeroAsync(session.BaseId, ct);
+        await persistence.DeleteHeroAsync(session.SacrificeId, ct);
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "merge", session.Id, session.BaseId, session.SacrificeId, fused.Id,
@@ -1166,9 +1194,14 @@ public class GameService(
                     winner.Id, loser.Id, serverSeedHex, nonce, entropyHex, ct);
                 absorbed.Level = winner.Level;   // the winner keeps its progression (absorb receipt attests it)
                 absorbed.Name = winner.Name;     // the same hero, evolved — keep its name
-                // BOTH input heroes are burned on-chain — drop their server records.
+                // Re-save: inherited level + kept name are BIRTH state (the merge-reveal pattern) — save
+                // inside the identity event rather than let a crash rehydrate the evolution nameless at level 1.
+                await persistence.SaveHeroAsync(absorbed, ct);
+                // BOTH input heroes are burned on-chain — drop their server records and their durable rows.
                 store.Heroes.TryRemove(winner.Id, out _);
                 store.Heroes.TryRemove(loser.Id, out _);
+                await persistence.DeleteHeroAsync(winner.Id, ct);
+                await persistence.DeleteHeroAsync(loser.Id, ct);
 
                 var absorbReceipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                         "absorb", session.Id, session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id,
@@ -1191,6 +1224,8 @@ public class GameService(
         session.Completed = true;
         session.WinnerHeroId = result.WinnerId;
         store.Heroes.TryRemove(loser.Id, out _);
+        // The loser is burned on-chain — erase its durable row too, or a restart resurrects it.
+        await persistence.DeleteHeroAsync(loser.Id, ct);
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "deathmatch", session.Id, session.ChallengerHeroId, session.DefenderHeroId, result.WinnerId,
@@ -1905,6 +1940,10 @@ public class GameService(
         var (level, xp, _) = Leveling.Apply(hero.Level, hero.Xp, award, _config);
         hero.Level = level;
         hero.Xp = xp;
+        // Every level/XP change funnels through here (gauntlet, duels, squads) — one mark covers them all.
+        // PROGRESSION rides the periodic flush, not an inline save: XP moves on every fight, and grinding
+        // is re-earnable in a way identity is not, so the bounded flush window is an accepted loss.
+        store.MarkHeroDirty(hero.Id);
     }
 
     // ── Hero transfer: the player's wallet moves the asset; we verify ──
@@ -1930,6 +1969,10 @@ public class GameService(
             hero.Equipment.Unequip(slot);
 
         hero.OwnerId = toPlayerId;
+        // TRANSFER is an identity event: a crash inside the flush window must not rehydrate the hero back
+        // to the sender — the chain already shows the recipient holding the asset. (Captures the stripped
+        // loadout in the same write.)
+        await persistence.SaveHeroAsync(hero, ct);
         return hero;
     }
 
@@ -2032,6 +2075,7 @@ public class GameService(
                 $"You hold {unitsHeld} unit(s) of {item.Name} and {unitsAllocated} are already equipped — buy another with 'buy {item.Id}'.");
 
         hero.Equipment.Equip(item);
+        store.MarkHeroDirty(hero.Id);   // the loadout is progression — the flush persists it
         return hero;
     }
 
@@ -2042,6 +2086,7 @@ public class GameService(
             throw new GameRuleException($"Unknown slot '{slotName}' (Weapon/Armor/Trinket).");
         if (!hero.Equipment.Unequip(slot))
             throw new GameRuleException($"{hero.Name} has nothing equipped in {slot}.");
+        store.MarkHeroDirty(hero.Id);   // the loadout is progression — the flush persists it
         return hero;
     }
 
@@ -2205,6 +2250,9 @@ public class GameService(
         foreach (var slot in hero.Equipment.Slots.Keys.ToList())
             hero.Equipment.Unequip(slot);
         hero.OwnerId = buyer.Id;
+        // The marketplace's transfer moment — same identity event as ConfirmTransferAsync, same rule:
+        // the buyer's ownership goes durable now, not at the next flush.
+        await persistence.SaveHeroAsync(hero, ct);
         offer.Status = "closed";
         return hero;
     }

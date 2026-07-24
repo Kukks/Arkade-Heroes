@@ -38,12 +38,16 @@ else
 
 // Durability seam (OPT-IN). With no Game:StateDbPath configured the null implementation is registered and
 // the server behaves exactly as it always has — all state in memory, gone on restart. With a path set, the
-// money-bearing state (a paid-but-unclaimed item purchase) survives a bounce.
+// money-bearing state (a paid-but-unclaimed item purchase) and the hero roster survive a bounce.
 var stateDbPath = builder.Configuration["Game:StateDbPath"];
 if (!string.IsNullOrWhiteSpace(stateDbPath))
 {
     builder.Services.AddDbContextFactory<GameStateDbContext>(o => o.UseSqlite($"Data Source={stateDbPath}"));
     builder.Services.AddSingleton<IGameStatePersistence, SqliteGameStatePersistence>();
+    // Hero-progression flush: identity events save inline, grinding rides this loop. Registered as a
+    // resolvable singleton too so a test can force a deterministic flush instead of racing the timer.
+    builder.Services.AddSingleton<HeroFlushService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<HeroFlushService>());
 }
 else
 {

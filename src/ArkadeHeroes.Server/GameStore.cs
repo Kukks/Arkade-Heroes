@@ -321,6 +321,26 @@ public class GameStore
     public long HeroesMinted => Interlocked.Read(ref _heroesMinted);
     public void RecordMint() => Interlocked.Increment(ref _heroesMinted);
 
+    // ── Hero durability: the dirty set the periodic flush drains ──
+    private readonly ConcurrentDictionary<string, byte> _dirtyHeroes = new();
+
+    /// <summary>Marks a hero's PROGRESSION (level/XP, equipment, cooldowns, breed count) as changed since
+    /// the last flush. Called at every progression mutation point; identity events (mint, burn, transfer,
+    /// rename) persist inline instead and never pass through here. Cheap and idempotent — a hero mutated
+    /// ten times between flushes is still one save.</summary>
+    public void MarkHeroDirty(string heroId) => _dirtyHeroes.TryAdd(heroId, 0);
+
+    /// <summary>Drains the dirty set for one flush pass. A mark that lands DURING the drain either makes
+    /// this pass's list or stays in the set for the next one — never lost, at worst deferred one interval.</summary>
+    public IReadOnlyList<string> DrainDirtyHeroes()
+    {
+        var drained = new List<string>();
+        foreach (var heroId in _dirtyHeroes.Keys)
+            if (_dirtyHeroes.TryRemove(heroId, out _))
+                drained.Add(heroId);
+        return drained;
+    }
+
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
     // The Fancy discovery race: who FIRST bred a hero expressing each named Fancy set, plus how many have
     // ever been found. Pure bookkeeping — it never gates or changes an outcome, it just records the race.

@@ -124,6 +124,10 @@ public class DailyDurabilityGuardTests
             => processDied() ? Task.CompletedTask : inner.SavePlayerAsync(player, ct);
         public Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveFancyFindAsync(find, ct);
+        public Task SaveHeroAsync(ArkadeHeroes.Core.Heroes.Hero hero, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroAsync(hero, ct);
+        public Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.DeleteHeroAsync(heroId, ct);
     }
 
     /// <summary>Delegates to the real InMemory sim but counts SETTLED daily-faucet payouts (memo tag

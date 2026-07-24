@@ -178,9 +178,10 @@ public class TournamentServerTests
         Assert.Equal(10, info.Config?.TournamentRakePct);   // GameOptions.TournamentRakePct default
     }
 
-    // ── The strand-refund safety valve: a bracket whose entrant hero is GONE (heroes aren't persisted, so a
-    // durable-mode restart loses them; a burn/merge loses one live) can never resolve — its paid buy-ins
-    // would sit in the treasury forever. The refund returns them, exactly once. ──
+    // ── The strand-refund safety valve: a bracket that can never resolve again — FULL but its fill-time
+    // entrant snapshots are gone (never persisted, so a durable-mode restart drops them; resolve refuses
+    // without them), or OPEN with an entrant hero burned away so it can never fill — would sit on its paid
+    // buy-ins forever. The refund returns them, exactly once. ──
 
     /// <summary>Fills a paid 4-player bracket and returns (players, tournamentId) — the shared refund setup.</summary>
     static async Task<(List<(ArkadeHeroesClient Client, string HeroId)> Players, string Tid)> PaidBracketAsync(
@@ -207,8 +208,9 @@ public class TournamentServerTests
         var (players, tid) = await PaidBracketAsync(factory);
         Assert.Equal(treasuryStart + BuyIn * 4, await chain.TreasuryBalanceAsync());   // 4 paid buy-ins, treasury-held
 
-        // The strand: one entrant hero vanishes from the store — this bracket can never resolve again.
-        store.Heroes.TryRemove(players[1].HeroId, out _);
+        // The strand: the fill-time locked snapshots are gone (what a restart does to a full bracket —
+        // they're never persisted) — post-#104 resolve fights from THEM, so this bracket is dead.
+        store.Tournaments[tid].EntrantSnapshots = null;
 
         var refund = await players[0].Client.Tournament.RefundAsync(tid);
         Assert.Equal("refunded", refund.Tournament.Status);
@@ -240,6 +242,31 @@ public class TournamentServerTests
     }
 
     [Fact]
+    public async Task Refund_OpenBracket_RefusedWhileFillable_RefundsOnceAnEntrantHeroBurns()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var players = await FourPlayersAsync(factory);
+        var open = await players[0].Client.Tournament.OpenAsync(new OpenTournamentRequest(players[0].HeroId, BuyIn, 4));
+        var tid = open.Tournament.Id;
+        await players[0].Client.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        var join = await players[1].Client.Tournament.JoinAsync(tid, new JoinTournamentRequest(players[1].HeroId));
+        await players[1].Client.Dev.PayInvoiceAsync(new { join.BuyIn.InvoiceId });
+
+        // Still OPEN (2 of 4): no snapshots exist yet, but the bracket can still fill and resolve — the
+        // refund must refuse, or any stranger could kill every forming pot out from under its entrants.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => players[2].Client.Tournament.RefundAsync(tid));
+
+        // An entrant hero burns (what merge / death-match do to the store) — now the bracket can never
+        // fill: the fill-time snapshot would refuse the 4th join forever. Stranded, so the buy-ins return.
+        store.Heroes.TryRemove(players[1].HeroId, out _);
+        var refund = await players[2].Client.Tournament.RefundAsync(tid);
+        Assert.Equal("refunded", refund.Tournament.Status);
+        Assert.Equal(2, refund.EntrantsRefunded);
+        Assert.Equal(BuyIn * 2, refund.RefundedSats);
+    }
+
+    [Fact]
     public async Task Refund_OnlyRefundsPaidBuyIns()
     {
         using var factory = new WebApplicationFactory<Program>();
@@ -247,7 +274,7 @@ public class TournamentServerTests
         var store = factory.Services.GetRequiredService<GameStore>();
         var treasuryStart = await chain.TreasuryBalanceAsync();
         var (players, tid) = await PaidBracketAsync(factory, unpaidSeats: 1);   // full bracket, last seat unpaid
-        store.Heroes.TryRemove(players[1].HeroId, out _);                      // strand it
+        store.Tournaments[tid].EntrantSnapshots = null;                        // strand it (the restart condition)
 
         // Only the three CLEARED buy-ins come back — the unpaid seat put nothing into the treasury, and
         // "refunding" it would pay out sats the treasury never received.
@@ -303,7 +330,7 @@ public class TournamentServerTests
                     var join = await players[i].Client.Tournament.JoinAsync(tid, new JoinTournamentRequest(players[i].HeroId));
                     chain.Inner.PayInvoiceFromPlayer(players[i].PlayerId, join.BuyIn.InvoiceId);
                 }
-                first.Services.GetRequiredService<GameStore>().Heroes.TryRemove(players[1].HeroId, out _);   // strand it
+                first.Services.GetRequiredService<GameStore>().Tournaments[tid].EntrantSnapshots = null;   // strand it (the restart condition)
 
                 var refund = await players[0].Client.Tournament.RefundAsync(tid);
                 Assert.Equal(4, refund.EntrantsRefunded);   // all four refunds settled — the crash window is live
@@ -321,8 +348,8 @@ public class TournamentServerTests
             var svc = restarted.Services.GetRequiredService<GameService>();
 
             // The `refunded` marker went durable BEFORE the first sat moved, so the restarted store must not
-            // hold a live, stranded, refundable copy — heroes are never persisted, so a rehydrated bracket
-            // WOULD pass the unresolvable gate and pay every buy-in back a second time.
+            // hold a live, stranded, refundable copy — snapshots are never persisted, so a rehydrated FULL
+            // bracket WOULD pass the unresolvable gate and pay every buy-in back a second time.
             try { await svc.RefundTournamentAsync(tid, CancellationToken.None); }
             catch (GameRuleException) { /* expected: the bracket is terminal (filtered at load) */ }
             Assert.Equal(4, chain.RefundPayoutsPaid);   // the re-refund paid NOTHING — each buy-in came back exactly once
@@ -352,6 +379,10 @@ public class TournamentServerTests
             => processDied() ? Task.CompletedTask : inner.SavePlayerAsync(player, ct);
         public Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveFancyFindAsync(find, ct);
+        public Task SaveHeroAsync(ArkadeHeroes.Core.Heroes.Hero hero, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroAsync(hero, ct);
+        public Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.DeleteHeroAsync(heroId, ct);
     }
 
     /// <summary>Delegates to the real InMemory sim but counts SETTLED tournament-refund payouts (memo tag

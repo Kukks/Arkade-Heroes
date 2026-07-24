@@ -1,3 +1,5 @@
+using ArkadeHeroes.Core.Genetics;
+using ArkadeHeroes.Core.Heroes;
 using Microsoft.EntityFrameworkCore;
 
 namespace ArkadeHeroes.Server.Persistence;
@@ -26,6 +28,16 @@ public interface IGameStatePersistence
     /// <summary>Durably record a Fancy find — a hero's set, edition and finder — so "first to breed this set,
     /// forever" survives a restart. Called once per stamped hero; the row is append-only.</summary>
     Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default);
+
+    /// <summary>Durably record a hero's current state. Awaited inline at every IDENTITY event — mint, burn's
+    /// surviving output, transfer, rename — so a hero can never vanish or mis-own across a restart; called
+    /// again by the periodic flush for dirty PROGRESSION (level/XP, equipment, cooldowns, breed count),
+    /// which accepts losing at most one flush window.</summary>
+    Task SaveHeroAsync(Hero hero, CancellationToken ct = default);
+
+    /// <summary>Durably erase a burned hero (a merge's inputs, a death-match loser) right where it leaves the
+    /// live store — a rehydrated ghost would be a fightable, listable hero whose on-chain asset is retired.</summary>
+    Task DeleteHeroAsync(string heroId, CancellationToken ct = default);
 }
 
 /// <summary>No durability — the historical behaviour, where all state lives and dies with the process.</summary>
@@ -36,6 +48,8 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task SavePlayerAsync(Player player, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveHeroAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -74,6 +88,39 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             };
             store.Players[player.Id] = player;
             store.PlayersByToken[player.Token] = player;
+        }
+
+        // Heroes next — the brackets below name entrant hero ids, and the tournament strand gate reads the
+        // live roster, so heroes must be in place before any session that references one. Identity is exact;
+        // progression rehydrates at its last flushed value (the bounded loss the hybrid save accepts).
+        foreach (var row in await db.Heroes.AsNoTracking().ToListAsync(ct))
+        {
+            var hero = new Hero
+            {
+                Id = row.Id,
+                OwnerId = row.OwnerId,
+                Name = row.Name,
+                Genome = Genome.FromHex(row.GenomeHex),
+                Generation = row.Generation,
+                ParentAId = row.ParentAId,
+                ParentBId = row.ParentBId,
+                Level = row.Level,
+                Xp = row.Xp,
+                BreedCount = row.BreedCount,
+                BreedCooldownUntil = row.BreedCooldownUntil,
+                GauntletCooldownUntil = row.GauntletCooldownUntil,
+                EntropyHex = row.EntropyHex,
+                ServerSeedHex = row.ServerSeedHex,
+                PlayerNonce = row.PlayerNonce,
+                AssetId = row.AssetId,
+                MintArkTxId = row.MintArkTxId,
+            };
+            // Rebuild the loadout from the stored item ids — each catalog item knows its slot. An id the
+            // catalog no longer carries is skipped, exactly as EquipmentLoadout.ResolveItems treats it live.
+            foreach (var itemId in System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.EquipmentJson) ?? [])
+                if (Core.Equipment.ItemCatalog.Find(itemId) is { } item)
+                    hero.Equipment.Equip(item);
+            store.Heroes[hero.Id] = hero;
         }
 
         // Resolved and refunded brackets are NEVER rehydrated — both are TERMINAL. Their rows survive as
@@ -214,6 +261,67 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.StreakCount = player.StreakCount;
             row.LastClaimDay = player.LastClaimDay;
         }
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>The loadout as a SORTED JSON array of equipped item ids — sorted so the same loadout always
+    /// serializes to the same bytes regardless of equip order (dictionary enumeration is unordered).</summary>
+    private static string EquipmentJson(Hero hero) => System.Text.Json.JsonSerializer.Serialize(
+        hero.Equipment.Slots.Values.OrderBy(id => id, StringComparer.Ordinal));
+
+    public async Task SaveHeroAsync(Hero hero, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.Heroes.FindAsync([hero.Id], ct);
+        if (row is null)
+        {
+            db.Heroes.Add(new PersistedHero
+            {
+                Id = hero.Id,
+                OwnerId = hero.OwnerId,
+                Name = hero.Name,
+                GenomeHex = hero.Genome.ToHex(),
+                Generation = hero.Generation,
+                ParentAId = hero.ParentAId,
+                ParentBId = hero.ParentBId,
+                Level = hero.Level,
+                Xp = hero.Xp,
+                BreedCount = hero.BreedCount,
+                BreedCooldownUntil = hero.BreedCooldownUntil,
+                GauntletCooldownUntil = hero.GauntletCooldownUntil,
+                EquipmentJson = EquipmentJson(hero),
+                EntropyHex = hero.EntropyHex,
+                ServerSeedHex = hero.ServerSeedHex,
+                PlayerNonce = hero.PlayerNonce,
+                AssetId = hero.AssetId,
+                MintArkTxId = hero.MintArkTxId,
+            });
+        }
+        else
+        {
+            // Only the mutable surface updates — the genome, lineage and commit–reveal audit trail are
+            // written once at mint and never change (they're init-only on the aggregate for the same reason).
+            row.OwnerId = hero.OwnerId;
+            row.Name = hero.Name;
+            row.Level = hero.Level;
+            row.Xp = hero.Xp;
+            row.BreedCount = hero.BreedCount;
+            row.BreedCooldownUntil = hero.BreedCooldownUntil;
+            row.GauntletCooldownUntil = hero.GauntletCooldownUntil;
+            row.EquipmentJson = EquipmentJson(hero);
+            row.AssetId = hero.AssetId;
+            row.MintArkTxId = hero.MintArkTxId;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        // Already gone = done: burns sit on retryable flows (merge/death-match settle), so the erase must
+        // be idempotent under a retry that re-runs the settle's in-memory tail.
+        if (await db.Heroes.FindAsync([heroId], ct) is not { } row) return;
+        db.Heroes.Remove(row);
         await db.SaveChangesAsync(ct);
     }
 }
