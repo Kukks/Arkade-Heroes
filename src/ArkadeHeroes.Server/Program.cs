@@ -164,11 +164,8 @@ api.MapPost("/heroes/starter", async (HttpContext http, GameService game, Cancel
 // full set (Home's featured strip + Market's portrait lookup rely on that); capped at 200 when set.
 api.MapGet("/heroes", (string? owner, int? skip, int? take, GameStore store) =>
 {
-    var heroes = store.Heroes.Values
-        .Where(h => owner is null || h.OwnerId == owner)
-        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
-        .ThenByDescending(h => h.Level)
-        .ThenBy(h => h.Name)
+    var heroes = ArkadeHeroes.Core.Progression.HeroRanking
+        .ByRarity(store.Heroes.Values.Where(h => owner is null || h.OwnerId == owner))
         .Skip(skip ?? 0)
         .Take(take is int t ? Math.Min(t, 200) : int.MaxValue)
         .Select(h => h.ToDto())
@@ -179,11 +176,8 @@ api.MapGet("/heroes", (string? owner, int? skip, int? take, GameStore store) =>
 api.MapGet("/heroes/mine", (HttpContext http, int? skip, int? take, GameService game, GameStore store) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    return Results.Ok(store.Heroes.Values
-        .Where(h => h.OwnerId == player.Id)
-        .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
-        .ThenByDescending(h => h.Level)
-        .ThenBy(h => h.Name)
+    return Results.Ok(ArkadeHeroes.Core.Progression.HeroRanking
+        .ByRarity(store.Heroes.Values.Where(h => h.OwnerId == player.Id))
         .Skip(skip ?? 0)
         .Take(take is int t ? Math.Min(t, 200) : int.MaxValue)
         .Select(h => h.ToDto())
@@ -543,6 +537,7 @@ api.MapGet("/rarest", (GameStore store) =>
     Results.Ok(store.Heroes.Values
         .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
         .ThenByDescending(h => h.Generation)
+        .ThenBy(h => h.Id, StringComparer.Ordinal)   // unique id last → a TOTAL order, so the board is stable
         .Take(20)
         .Select(h => h.ToDto())
         .ToList()));
@@ -554,6 +549,7 @@ api.MapGet("/fancies", (GameStore store) =>
         .Where(h => ArkadeHeroes.Core.Progression.FancySets.TitleFor(h.Genome) is not null)
         .OrderByDescending(h => ArkadeHeroes.Core.Progression.Rarity.Of(h.Genome).Score)
         .ThenByDescending(h => h.Generation)
+        .ThenBy(h => h.Id, StringComparer.Ordinal)   // unique id last → a TOTAL order, so the board is stable
         .Take(30)
         .Select(h => h.ToDto())
         .ToList()));
