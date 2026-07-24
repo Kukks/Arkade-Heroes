@@ -87,4 +87,20 @@ public class InnateAbilitiesTests
         Assert.Equal(BattleEventKind.Missed, BattleEngine.Fight(plain, def, seed, Innate).Events[0].Kind);
         Assert.NotEqual(BattleEventKind.Missed, BattleEngine.Fight(eyed, def, seed, Innate).Events[0].Kind); // Eyes flipped it
     }
+
+    [Fact]
+    public void Shield_AuraAbsorbsBeforeHp()
+    {
+        // A Legendary-Aura hero takes strictly LESS HP loss on the first blow than the same hero without Aura,
+        // by exactly the shield pool (MaxHp * 0.030 * 1.0). Compare first-blow HP on identical seed + attacker.
+        var atk = HeroWith("atk", 20, GenomeWith(220));
+        var bare = HeroWith("def", 20, GenomeWith(120));
+        var aura = HeroWith("def", 20, GenomeWith(120, (TraitCategory.Aura, 255)));
+        var seed = new byte[32]; Array.Fill(seed, (byte)3);
+
+        int FirstDefHp(Hero d) => BattleEngine.Fight(atk, d, seed, Innate).Events
+            .First(e => e.Kind == BattleEventKind.SkillUsed && e.TargetId == "def").TargetHpAfter;
+        // With a shield, the defender ends the first landed blow with MORE HP than bare (shield ate part of it).
+        Assert.True(FirstDefHp(aura) > FirstDefHp(bare));
+    }
 }

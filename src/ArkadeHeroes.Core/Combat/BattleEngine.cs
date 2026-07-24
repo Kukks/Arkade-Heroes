@@ -169,7 +169,7 @@ public static class BattleEngine
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
         var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * innate * actor.Advantage));
 
-        target.Hp = Math.Max(0, target.Hp - damage);
+        target.TakeAttackDamage(damage);
 
         var healed = 0;
         switch (skill.Effect)
@@ -238,6 +238,15 @@ public static class BattleEngine
                 BrandStrength = S(TraitCategory.Sigil) * ib.Brand;
                 InitiativeFactor = 1.0 + S(TraitCategory.Stance) * ib.Initiative;
             }
+        }
+
+        /// <summary>Apply an incoming ATTACK's damage: Aura's shield absorbs first, the remainder hits HP.
+        /// (DoT/thorns bypass the shield and hit HP directly — the shield is armour against blows, not a life buffer.)</summary>
+        public void TakeAttackDamage(int dealt)
+        {
+            var absorbed = Math.Min(ShieldHp, dealt);
+            ShieldHp -= absorbed;
+            Hp = Math.Max(0, Hp - (dealt - absorbed));
         }
 
         public int EffectiveAttack => (int)(Stats.Attack * (1 + _cfg.FocusPerStack * FocusStacks));
