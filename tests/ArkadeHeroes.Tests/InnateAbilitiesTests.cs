@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
@@ -57,5 +58,33 @@ public class InnateAbilitiesTests
             .First(e => e.Kind == BattleEventKind.SkillUsed || e.Kind == BattleEventKind.Missed || e.Kind == BattleEventKind.Dodged)
             .ActorId;
         Assert.Equal("b", firstActor);
+    }
+
+    [Fact]
+    public void Accuracy_EyesRaisesTheHitThresholdWithoutMovingTheRngStream()
+    {
+        // Accuracy is threshold-only: DeterministicRng.Chance is Next(100) < clamp(percent), so it draws once
+        // regardless of the threshold. Eyes raises the threshold by AccuracyBonus (+3 at Legendary), so a seed
+        // whose opening draw lands in [skill.Accuracy, skill.Accuracy + bonus) is a MISS for the plain hero but a
+        // HIT for the Eyed hero on the SAME draw. Search deterministically for such a flip seed — its existence
+        // proves the bonus moves the compare, not the stream (the identical Next(100) is consumed either way).
+        var plain = HeroWith("atk", 20, GenomeWith(140));
+        var eyed  = HeroWith("atk", 20, GenomeWith(140, (TraitCategory.Eyes, 255)));
+        var def   = HeroWith("def", 20, GenomeWith(140));
+        // NOTE: seeds are SHA256-derived (not s[0]=i, s[1]=i>>8). DeterministicRng is xoshiro256** whose FIRST
+        // output is a function of the _s1 seed word (bytes 8..15) only; a seed that leaves those bytes zero makes
+        // the opening Next(100) draw always 0, so the turn-1 accuracy roll would never miss. A hashed seed varies
+        // the opening draw, which is exactly the roll this test needs to land in the flip window.
+        byte[] seed = null!;
+        for (var i = 0; i < 5000 && seed is null; i++)
+        {
+            var s = SHA256.HashData(BitConverter.GetBytes(i));
+            var plainFirst = BattleEngine.Fight(plain, def, s, Innate).Events[0];
+            var eyedFirst  = BattleEngine.Fight(eyed,  def, s, Innate).Events[0];
+            if (plainFirst.Kind == BattleEventKind.Missed && eyedFirst.Kind != BattleEventKind.Missed) seed = s;
+        }
+        Assert.NotNull(seed);                                                            // the lever is real
+        Assert.Equal(BattleEventKind.Missed, BattleEngine.Fight(plain, def, seed, Innate).Events[0].Kind);
+        Assert.NotEqual(BattleEventKind.Missed, BattleEngine.Fight(eyed, def, seed, Innate).Events[0].Kind); // Eyes flipped it
     }
 }

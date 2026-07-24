@@ -140,7 +140,7 @@ public static class BattleEngine
     {
         actor.StartCooldown(skill);
 
-        if (!rng.Chance(skill.Accuracy))
+        if (!rng.Chance(skill.Accuracy + actor.AccuracyBonus))   // Eyes: +points; Chance clamps to [0,100], draws once
         {
             events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
                 BattleEventKind.Missed, skill.Id, 0, false, 0, target.Hp));
