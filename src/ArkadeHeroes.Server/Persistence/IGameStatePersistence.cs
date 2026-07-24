@@ -29,11 +29,18 @@ public interface IGameStatePersistence
     /// forever" survives a restart. Called once per stamped hero; the row is append-only.</summary>
     Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default);
 
-    /// <summary>Durably record a hero's current state. Awaited inline at every IDENTITY event — mint, burn's
-    /// surviving output, transfer, rename — so a hero can never vanish or mis-own across a restart; called
-    /// again by the periodic flush for dirty PROGRESSION (level/XP, equipment, cooldowns, breed count),
-    /// which accepts losing at most one flush window.</summary>
+    /// <summary>Durably record a hero's current state — the FULL surface. Awaited inline at every IDENTITY
+    /// event — mint, burn's surviving output, transfer, rename — so a hero can never vanish or mis-own
+    /// across a restart.</summary>
     Task SaveHeroAsync(Hero hero, CancellationToken ct = default);
+
+    /// <summary>Durably record ONLY a hero's PROGRESSION (level/XP, equipment, cooldowns, breed count) —
+    /// the periodic flush's save path, which accepts losing at most one flush window. Identity columns are
+    /// deliberately NEVER written here: the flush snapshots a live hero it does not lock, so a full-surface
+    /// flush write racing the inline saves above could commit LAST and revert an ownership or name change
+    /// that was already durable — a hero mis-owned across a restart. A write that never carries identity
+    /// cannot, whatever the interleaving.</summary>
+    Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default);
 
     /// <summary>Durably erase a burned hero (a merge's inputs, a death-match loser) right where it leaves the
     /// live store — a rehydrated ghost would be a fightable, listable hero whose on-chain asset is retired.</summary>
@@ -49,6 +56,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SavePlayerAsync(Player player, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
 }
 
@@ -269,33 +277,37 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
     private static string EquipmentJson(Hero hero) => System.Text.Json.JsonSerializer.Serialize(
         hero.Equipment.Slots.Values.OrderBy(id => id, StringComparer.Ordinal));
 
+    /// <summary>A fresh row carrying the hero's FULL surface — used by the insert side of BOTH save paths,
+    /// so a field added to the schema can't reach one and silently miss the other.</summary>
+    private static PersistedHero NewRow(Hero hero) => new()
+    {
+        Id = hero.Id,
+        OwnerId = hero.OwnerId,
+        Name = hero.Name,
+        GenomeHex = hero.Genome.ToHex(),
+        Generation = hero.Generation,
+        ParentAId = hero.ParentAId,
+        ParentBId = hero.ParentBId,
+        Level = hero.Level,
+        Xp = hero.Xp,
+        BreedCount = hero.BreedCount,
+        BreedCooldownUntil = hero.BreedCooldownUntil,
+        GauntletCooldownUntil = hero.GauntletCooldownUntil,
+        EquipmentJson = EquipmentJson(hero),
+        EntropyHex = hero.EntropyHex,
+        ServerSeedHex = hero.ServerSeedHex,
+        PlayerNonce = hero.PlayerNonce,
+        AssetId = hero.AssetId,
+        MintArkTxId = hero.MintArkTxId,
+    };
+
     public async Task SaveHeroAsync(Hero hero, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.Heroes.FindAsync([hero.Id], ct);
         if (row is null)
         {
-            db.Heroes.Add(new PersistedHero
-            {
-                Id = hero.Id,
-                OwnerId = hero.OwnerId,
-                Name = hero.Name,
-                GenomeHex = hero.Genome.ToHex(),
-                Generation = hero.Generation,
-                ParentAId = hero.ParentAId,
-                ParentBId = hero.ParentBId,
-                Level = hero.Level,
-                Xp = hero.Xp,
-                BreedCount = hero.BreedCount,
-                BreedCooldownUntil = hero.BreedCooldownUntil,
-                GauntletCooldownUntil = hero.GauntletCooldownUntil,
-                EquipmentJson = EquipmentJson(hero),
-                EntropyHex = hero.EntropyHex,
-                ServerSeedHex = hero.ServerSeedHex,
-                PlayerNonce = hero.PlayerNonce,
-                AssetId = hero.AssetId,
-                MintArkTxId = hero.MintArkTxId,
-            });
+            db.Heroes.Add(NewRow(hero));
         }
         else
         {
@@ -311,6 +323,34 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.EquipmentJson = EquipmentJson(hero);
             row.AssetId = hero.AssetId;
             row.MintArkTxId = hero.MintArkTxId;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.Heroes.FindAsync([hero.Id], ct);
+        if (row is null)
+        {
+            // Shouldn't happen — every hero is inline-saved at mint before any progression path can mark
+            // it dirty. If a row is missing anyway (a concurrent burn's delete, or a mint save that never
+            // landed), insert the full snapshot rather than drop a live hero's only durable record: the
+            // flush's burn compensation still gets the last word on a concurrently burned hero, and a
+            // clashing concurrent insert simply faults this save into the flush's retry.
+            db.Heroes.Add(NewRow(hero));
+        }
+        else
+        {
+            // ONLY the progression the dirty set tracks — never owner, name, or the mint identifiers.
+            // Those belong to the inline identity saves, and a flush write that carried them could land
+            // after one and revert it (see the interface doc-comment: the mis-own race).
+            row.Level = hero.Level;
+            row.Xp = hero.Xp;
+            row.BreedCount = hero.BreedCount;
+            row.BreedCooldownUntil = hero.BreedCooldownUntil;
+            row.GauntletCooldownUntil = hero.GauntletCooldownUntil;
+            row.EquipmentJson = EquipmentJson(hero);
         }
         await db.SaveChangesAsync(ct);
     }
