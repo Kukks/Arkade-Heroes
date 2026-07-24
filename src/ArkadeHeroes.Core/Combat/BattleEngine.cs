@@ -24,8 +24,8 @@ public static class BattleEngine
 
         // advantageA/B default to 1.0 (a no-op) for every caller except SquadBattle with team synergy on — a
         // per-side whole-lineup damage multiplier applied like affinity below, so a plain fight is unchanged.
-        var fighterA = new FighterState(a, cfg.Combat, advantageA);
-        var fighterB = new FighterState(b, cfg.Combat, advantageB);
+        var fighterA = new FighterState(a, cfg, advantageA);
+        var fighterB = new FighterState(b, cfg, advantageB);
         var events = new List<BattleEvent>();
 
         for (var turn = 1; turn <= maxTurns; turn++)
@@ -33,15 +33,33 @@ public static class BattleEngine
             foreach (var (actor, target) in TurnOrder(fighterA, fighterB))
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
+
+                // innate ticks (Marking regen, then Sigil burn) — deterministic, RNG-free, own-turn start.
+                if (actor.RegenPerTurn > 0) actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.RegenPerTurn);
+                if (actor.BurnTurnsLeft > 0)
+                {
+                    actor.Hp = Math.Max(0, actor.Hp - actor.BurnPerTurn);   // DoT hits HP directly
+                    actor.BurnTurnsLeft--;
+                    if (actor.Hp <= 0)   // burned down on its own turn — the opponent wins
+                    {
+                        events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,
+                            BattleEventKind.Defeated, "", 0, false, 0, 0));
+                        return new BattleResult(target.Hero.Id, actor.Hero.Id, turn, events, target.Hp, target.Stats.MaxHp);
+                    }
+                }
+
                 actor.TickCooldowns();
                 var skill = ChooseSkill(actor, target, cfg);
                 Execute(turn, actor, target, skill, rng, events, cfg);
 
-                if (target.Hp <= 0)
+                if (target.Hp <= 0 || actor.Hp <= 0)   // actor can die to the target's thorns this swing
                 {
-                    events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
+                    // If both hit 0 the same swing, the target died to the attack first, so the attacker wins
+                    // (the target.Hp <= 0 branch is checked first, matching that ordering).
+                    var (win, lose) = target.Hp <= 0 ? (actor, target) : (target, actor);
+                    events.Add(new BattleEvent(turn, win.Hero.Id, lose.Hero.Id,
                         BattleEventKind.Defeated, skill.Id, 0, false, 0, 0));
-                    return new BattleResult(actor.Hero.Id, target.Hero.Id, turn, events, actor.Hp, actor.Stats.MaxHp);
+                    return new BattleResult(win.Hero.Id, lose.Hero.Id, turn, events, win.Hp, win.Stats.MaxHp);
                 }
             }
         }
@@ -61,9 +79,13 @@ public static class BattleEngine
 
     private static (FighterState, FighterState)[] TurnOrder(FighterState a, FighterState b)
     {
-        // Faster hero acts first; ties broken by luck, then by id so order is total.
-        var aFirst = a.Stats.Speed != b.Stats.Speed
-            ? a.Stats.Speed > b.Stats.Speed
+        // Faster hero acts first; ties broken by luck, then id. Stance's initiative passive scales the
+        // ordering speed only (never the stat) — a pure double comparison, no RNG. Flag off ⇒ both
+        // InitiativeFactor == 1.0, and int×1.0 is exact, so the order is byte-identical to before.
+        var aSpeed = a.Stats.Speed * a.InitiativeFactor;
+        var bSpeed = b.Stats.Speed * b.InitiativeFactor;
+        var aFirst = aSpeed != bSpeed
+            ? aSpeed > bSpeed
             : a.Stats.Luck != b.Stats.Luck
                 ? a.Stats.Luck > b.Stats.Luck
                 : string.CompareOrdinal(a.Hero.Id, b.Hero.Id) < 0;
@@ -136,7 +158,7 @@ public static class BattleEngine
     {
         actor.StartCooldown(skill);
 
-        if (!rng.Chance(skill.Accuracy))
+        if (!rng.Chance(skill.Accuracy + actor.AccuracyBonus))   // Eyes: +points; Chance clamps to [0,100], draws once
         {
             events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
                 BattleEventKind.Missed, skill.Id, 0, false, 0, target.Hp));
@@ -160,12 +182,24 @@ public static class BattleEngine
         // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
         // so replays stay verifiable.
         var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
-        // Genome-derived innate nudge from cosmetic traits — off by default, so replays stay byte-identical.
-        var innate = cfg.Combat.InnateAbilities ? Traits.InnateModifier(actor.Hero.Genome, cfg) : 1.0;
+        // (innate-v2 replaces the old single Traits.InnateModifier damage nudge with the six per-category
+        //  passives resolved on FighterState; there is no flat innate damage factor here anymore.)
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * innate * actor.Advantage));
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
 
-        target.Hp = Math.Max(0, target.Hp - damage);
+        target.TakeAttackDamage(damage);
+
+        if (target.ThornsFraction > 0 && actor.Hp > 0)
+        {
+            var reflected = (int)Math.Round(damage * target.ThornsFraction);   // pre-shield blow — the crest bites back
+            if (reflected > 0) actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+        }
+
+        if (actor.BrandStrength > 0 && target.Hp > 0)
+        {
+            var per = (int)Math.Round(target.Stats.MaxHp * actor.BrandStrength);   // fraction of the TARGET's MaxHp
+            if (per > 0) { target.BurnPerTurn = per; target.BurnTurnsLeft = cfg.Combat.InnateOrDefault.BrandTurns; }  // refresh, never stack
+        }
 
         var healed = 0;
         switch (skill.Effect)
@@ -196,19 +230,53 @@ public static class BattleEngine
         public int Hp { get; set; }
         public int DefenseBreakStacks { get; set; }
         public int FocusStacks { get; set; }
+
+        // ── innate-v2 passives — all inert (0 / 1.0) unless CombatConfig.InnateAbilities is on ──
+        public int ShieldHp { get; set; }          // Aura: one-time absorb pool, consumed before HP
+        public int RegenPerTurn { get; }           // Marking: heal at the start of each own turn
+        public int AccuracyBonus { get; }          // Eyes: +points to the hit-roll threshold
+        public double ThornsFraction { get; }      // Crest: fraction of a blow reflected at the attacker
+        public double BrandStrength { get; }       // Sigil: fraction of the TARGET's MaxHp per burn tick
+        public double InitiativeFactor { get; }    // Stance: turn-order speed multiplier (>= 1.0)
+        public int BurnPerTurn { get; set; }       // active brand ON this fighter (set by an attacker's Sigil)
+        public int BurnTurnsLeft { get; set; }
+
         /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy.</summary>
         public double Advantage { get; }
         private readonly CombatConfig _cfg;
         private readonly Dictionary<string, int> _cooldowns = [];
 
-        public FighterState(Hero hero, CombatConfig cfg, double advantage = 1.0)
+        public FighterState(Hero hero, GameConfig game, double advantage = 1.0)
         {
             Hero = hero;
-            _cfg = cfg;
+            _cfg = game.Combat;
             Advantage = advantage;
             Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
-            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, cfg);
+            Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, game.Combat);
             Hp = Stats.MaxHp;
+            InitiativeFactor = 1.0;
+
+            if (game.Combat.InnateAbilities)
+            {
+                var ib = game.Combat.InnateOrDefault;
+                var g = hero.Genome;
+                double S(TraitCategory c) => Traits.InnateStrength(g, c, game);
+                ShieldHp = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Aura) * ib.Shield);
+                RegenPerTurn = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Marking) * ib.Regen);
+                AccuracyBonus = (int)Math.Round(S(TraitCategory.Eyes) * ib.Accuracy * 100);
+                ThornsFraction = S(TraitCategory.Crest) * ib.Thorns;
+                BrandStrength = S(TraitCategory.Sigil) * ib.Brand;
+                InitiativeFactor = 1.0 + S(TraitCategory.Stance) * ib.Initiative;
+            }
+        }
+
+        /// <summary>Apply an incoming ATTACK's damage: Aura's shield absorbs first, the remainder hits HP.
+        /// (DoT/thorns bypass the shield and hit HP directly — the shield is armour against blows, not a life buffer.)</summary>
+        public void TakeAttackDamage(int dealt)
+        {
+            var absorbed = Math.Min(ShieldHp, dealt);
+            ShieldHp -= absorbed;
+            Hp = Math.Max(0, Hp - (dealt - absorbed));
         }
 
         public int EffectiveAttack => (int)(Stats.Attack * (1 + _cfg.FocusPerStack * FocusStacks));

@@ -119,4 +119,27 @@ public static class Traits
         }
         return 1.0 + Math.Min(bonus, a.Cap);
     }
+
+    /// <summary>
+    /// The capped combat STRENGTH of a hero's EXPRESSED (dominant) trait in ONE cosmetic category — the shared
+    /// 0..<see cref="AffinityBonuses.Cap"/> magnitude each innate-v2 passive spends in its own units. Same
+    /// per-tier ladder as <see cref="AffinityModifier"/>; 0 if the gene is plain (value 0) or the category is an
+    /// affinity. Deterministic — a pure function of the immutable genome.
+    /// </summary>
+    public static double InnateStrength(Genome genome, TraitCategory category, GameConfig? config = null)
+    {
+        if (IsAffinity(category)) return 0;
+        var value = genome.DominantGene(category);
+        if (value == 0) return 0;
+        var a = (config ?? GameConfig.Default).Affinity;
+        var bonus = TierOf(value, config) switch
+        {
+            RarityTier.Legendary => a.Legendary,
+            RarityTier.Epic => a.Epic,
+            RarityTier.Rare => a.Rare,
+            RarityTier.Uncommon => a.Uncommon,
+            _ => a.Common,
+        };
+        return Math.Min(bonus, a.Cap);
+    }
 }
