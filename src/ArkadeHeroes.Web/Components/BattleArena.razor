@@ -189,6 +189,9 @@
         _turn = ev.Turn;
         var actor = ev.ActorId == A!.Id ? "a" : "b";
         var target = actor == "a" ? "b" : "a";
+        // The innate-v2 beats set ActorId = the passive's source and TargetId = the HP-affected hero (equal for a
+        // self-effect), so the affected side is read from TargetId — not the attack's "opposite of actor".
+        var hpSide = ev.TargetId == A!.Id ? "a" : "b";
         _actorSide = actor;
 
         switch (ev.Kind)
@@ -231,6 +234,37 @@
             case "TimeoutDecision":
                 _banner = "TIME"; _bannerKind = "skill";
                 break;
+
+            // ── innate-v2 passive beats (present only flag-on, so naturally gated). None is an attack, so the
+            //    source's lunge is suppressed; each reuses the existing hit/heal/damage flash primitives. ──
+            case "ShieldAbsorbed":
+                _actorSide = null;
+                _hitSide = hpSide;                                  // the aura catches the blow — a flash; the SkillUsed beat moves HP
+                _banner = "AURA"; _bannerKind = "dodge";
+                break;
+
+            case "Regenerated":
+                _actorSide = null;
+                _healSide = hpSide; _healAmt = ev.Healed;          // the green "+N" heal float
+                SetHp(hpSide, ev.TargetHpAfter);
+                _banner = "REGEN"; _bannerKind = "skill";
+                break;
+
+            case "Thorns":
+                _actorSide = null;
+                _hitSide = hpSide;
+                _floatDmg = ev.Damage; _floatSide = hpSide;        // the red "-N" reflect at the attacker
+                SetHp(hpSide, ev.TargetHpAfter);
+                _banner = "THORNS"; _bannerKind = "crit";
+                break;
+
+            case "Burned":
+                _actorSide = null;
+                _hitSide = hpSide;
+                _floatDmg = ev.Damage; _floatSide = hpSide; _floatEff = "super";   // an orange "-N" fire tick
+                SetHp(hpSide, ev.TargetHpAfter);
+                _banner = "BURN"; _bannerKind = "crit";
+                break;
         }
 
         _log.Add(LogFor(ev, actor == "a" ? A!.Name : B!.Name, target == "a" ? A!.Name : B!.Name));
@@ -258,6 +292,15 @@
                 line = $"{targetName} faints!"; kind = "ko"; break;
             case "TimeoutDecision":
                 line = "Time! — decided on remaining HP"; kind = "hit"; break;
+            // ── innate-v2 passive beats: actorName is the passive's source; for Burned, targetName is the branded hero ──
+            case "ShieldAbsorbed":
+                line = $"{actorName}'s Aura absorbs {ev.Damage}!"; kind = "dodge"; break;
+            case "Regenerated":
+                line = $"{actorName} regenerates {ev.Healed}"; kind = "hit"; break;
+            case "Thorns":
+                line = $"{actorName}'s Crest reflects {ev.Damage}!"; kind = "crit"; break;
+            case "Burned":
+                line = $"{targetName} is burned for {ev.Damage}"; kind = "super"; break;
             default:
                 line = ""; kind = "hit"; break;
         }
@@ -296,6 +339,8 @@
         "Defeated" => 1500,
         "TimeoutDecision" => 1400,
         "SkillUsed" => ev.Crit ? 1000 : ev.Damage > 0 ? 760 : 700,
+        "Thorns" or "Burned" => 720,             // a short beat for the innate-v2 passives
+        "ShieldAbsorbed" or "Regenerated" => 660,
         _ => 640,
     };
 

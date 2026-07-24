@@ -435,7 +435,11 @@ public record GameConfigDto(
     int MatchmakingTake,
     long OfferListingFeeSats,
     long HeroRenameFeeSats,
-    int TournamentRakePct)
+    int TournamentRakePct,
+    // Whether innate-v2 combat passives are live (default off, same discipline as the CombatConfig flag).
+    // The frontend reads this to decide whether to surface a hero's granted passives; with it off there is
+    // no player-visible change. An older server that omits it deserializes to false — the safe default.
+    bool InnateAbilities)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -449,7 +453,8 @@ public record GameConfigDto(
         c.MatchmakingTake,
         c.OfferListingFeeSats,
         c.HeroRenameFeeSats,
-        c.TournamentRakePct);
+        c.TournamentRakePct,
+        c.Combat.InnateAbilities);
 }
 
 public record ChainInfoDto(
