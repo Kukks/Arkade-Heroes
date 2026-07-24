@@ -108,6 +108,22 @@ else
             <div class="status-line" style="margin-top:.8rem"><span class="dot ok"></span>
                 <span>Prizes: @string.Join(" · ", _result.Prizes.Select((p, i) => $"#{i + 1} {p:N0} sat"))</span>
             </div>
+            <div class="match-row" style="margin-top:.9rem">
+                <span class="hud">Don't trust the pot — recompute it</span>
+                <span class="spacer"></span>
+                <button class="btn ghost sm" @onclick="() => DoVerify(_result!.Tournament.Id)" disabled="@_verifying">
+                    @(_verifying ? "Verifying…" : "Verify in my browser")
+                </button>
+            </div>
+            @if (_verify is { } v)
+            {
+                <div class="status-line" style="margin-top:.5rem">
+                    <span class="dot @(v.Ok ? "ok" : "bad")"></span>
+                    <span>@(v.Ok
+                        ? "Verified in your browser: the champion matches the committed seed and the entrant set locked at fill — the pot was fair, and you trusted nothing the server said."
+                        : $"Verification FAILED — {v.Detail}. This result does not match the committed seed; do not trust it.")</span>
+                </div>
+            }
         </div>
     }
 }
@@ -120,9 +136,10 @@ else
     private long _buyIn = 1000;
     private int _size = 4;
     private int _rakePct;
-    private bool _loading = true, _busy, _heroesLoaded;
+    private bool _loading = true, _busy, _heroesLoaded, _verifying;
     private string? _status, _error;
     private TournamentResolveResponse? _result;
+    private (bool Ok, string Detail)? _verify;
 
     private string? MyId => _mine.FirstOrDefault()?.OwnerId;
     private IEnumerable<TournamentDto> Joinable => _tournaments.Where(t => t.Status == "open" && !t.Entrants.Any(e => e.PlayerId == MyId));
@@ -158,7 +175,20 @@ else
         await Session.JoinTournamentAsync(id, _heroId, s => { _status = s; StateHasChanged(); }));
 
     async Task DoResolve(string id) => await RunAction(async () =>
-        _result = await Session.ResolveTournamentAsync(id, s => { _status = s; StateHasChanged(); }));
+    {
+        _result = await Session.ResolveTournamentAsync(id, s => { _status = s; StateHasChanged(); });
+        await DoVerify(id);   // recompute the just-run bracket in the browser so the trust badge is immediate
+    });
+
+    // A pure read + client-side recompute — no wallet, no fee — so a verify failure surfaces as a red
+    // badge, never a page error. Works for any resolved bracket the player can see.
+    async Task DoVerify(string id)
+    {
+        _verifying = true; _verify = null; StateHasChanged();
+        try { _verify = await Session.VerifyTournamentAsync(id); }
+        catch (Exception ex) { _verify = (false, ex.Message); }
+        finally { _verifying = false; }
+    }
 
     async Task RunAction(Func<Task> action)
     {
