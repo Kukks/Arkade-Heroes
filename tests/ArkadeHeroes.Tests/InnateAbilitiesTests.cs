@@ -206,4 +206,28 @@ public class InnateAbilitiesTests
         Assert.Equal(r1.WinnerId, r2.WinnerId);
         Assert.Equal(r1.Events.Count, r2.Events.Count);   // same config + seed → identical replay (verifiable)
     }
+
+    [Fact]
+    public void BalanceProbe_EachPassiveIsANudgeNotASwing()
+    {
+        // For each passive, 200 equal-level mirror-ish matches (same stat genes, the passive the only difference)
+        // must not swing the win rate past a ceiling — a max-roll cosmetic trait is an edge, never a trump.
+        var cats = new[] { TraitCategory.Aura, TraitCategory.Marking, TraitCategory.Eyes,
+                           TraitCategory.Crest, TraitCategory.Sigil, TraitCategory.Stance };
+        foreach (var cat in cats)
+        {
+            var wins = 0; const int n = 200;
+            for (var i = 0; i < n; i++)
+            {
+                var s = new byte[32]; s[0] = (byte)i; s[1] = (byte)(i >> 8);
+                var withTrait = HeroWith("a", 20, GenomeWith(170, (cat, 255)));
+                var without   = HeroWith("b", 20, GenomeWith(170));
+                if (BattleEngine.Fight(withTrait, without, s, Innate).WinnerId == "a") wins++;
+            }
+            var rate = wins / (double)n;
+            // A single Legendary passive should tilt, not dominate: within [0.50, 0.70]. If a passive exceeds
+            // this, lower its InnateBonuses.Default knob and re-run. (id tiebreak gives "a" a hair over 0.5 base.)
+            Assert.InRange(rate, 0.50, 0.70);
+        }
+    }
 }
