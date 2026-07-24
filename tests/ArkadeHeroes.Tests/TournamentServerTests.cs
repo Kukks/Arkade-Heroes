@@ -381,6 +381,8 @@ public class TournamentServerTests
             => processDied() ? Task.CompletedTask : inner.SaveFancyFindAsync(find, ct);
         public Task SaveHeroAsync(ArkadeHeroes.Core.Heroes.Hero hero, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveHeroAsync(hero, ct);
+        public Task SaveHeroProgressionAsync(ArkadeHeroes.Core.Heroes.Hero hero, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroProgressionAsync(hero, ct);
         public Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.DeleteHeroAsync(heroId, ct);
     }

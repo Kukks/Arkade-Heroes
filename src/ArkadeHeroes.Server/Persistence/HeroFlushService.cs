@@ -37,7 +37,10 @@ public sealed class HeroFlushService(
             if (!store.Heroes.TryGetValue(heroId, out var hero)) continue;
             try
             {
-                await persistence.SaveHeroAsync(hero, ct);
+                // Progression-scoped on purpose: this loop races the inline identity saves over a hero it
+                // doesn't lock, so a full-surface write from here could commit last and revert a transfer
+                // or rename that already went durable. A save that never carries identity can't.
+                await persistence.SaveHeroProgressionAsync(hero, ct);
                 // Present at the read above but burned DURING the save: the burn's delete may have landed
                 // between our read and our write, leaving the row re-inserted. Re-check and compensate so
                 // the last durable word on a burned hero is always the delete.
