@@ -307,6 +307,21 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return api.Tournament.ResolveAsync(tournamentId, new FightRequest(Guid.NewGuid().ToString("N")));
     }
 
+    /// <summary>
+    /// Trustlessly verify a RESOLVED tournament in the browser — recompute the whole bracket from the
+    /// revealed seed and check the champion who took the real-sats pot. The fill-time entrant-set commitment
+    /// is taken from the tournament's OWN DTO, never the server-supplied replay, so a server that substituted
+    /// an entrant's genome/level/gear (with a self-consistent replay) is still caught (mirrors #104). Purely
+    /// a read + client-side recompute: no wallet, no fee — anyone can run it on anyone's bracket.
+    /// </summary>
+    public async Task<(bool Ok, string Detail)> VerifyTournamentAsync(string tournamentId)
+    {
+        var dto = await api.Tournament.GetAsync(tournamentId);
+        var replay = await api.Tournament.ReplayAsync(tournamentId);
+        return FairnessAudit.VerifyTournament(
+            tournamentId, replay.Nonce, replay.CommitmentHex, dto.EntrantsCommitmentHex ?? "", replay);
+    }
+
     private async Task PayTournamentBuyInAsync(FeeInvoiceDto buyIn, Action<string>? onProgress)
     {
         if (buyIn is not { AmountSats: > 0 }) return;
