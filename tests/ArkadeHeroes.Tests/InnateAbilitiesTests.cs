@@ -232,4 +232,71 @@ public class InnateAbilitiesTests
             Assert.InRange(rate, 0.50, 0.70);
         }
     }
+
+    // ── rung 2: each passive, when it fires, surfaces as its own beat in the event log (flag on) ──
+
+    // Deterministically returns the event stream of the first fight in a fixed seed sweep that logs `kind`
+    // (resolved with InnateAbilities on), or null if none did. These passives fire only in a subset of seeds, so a
+    // sweep is the robust way to land one; the search is pure in the seed, so the test stays deterministic. Reusing
+    // the Hero instances across seeds is safe — BattleEngine.Fight never mutates its Hero arguments.
+    private static IReadOnlyList<BattleEvent>? FirstFightWith(BattleEventKind kind, Hero a, Hero b)
+    {
+        for (var i = 0; i < 120; i++)
+        {
+            var s = SHA256.HashData(BitConverter.GetBytes(i));
+            var r = BattleEngine.Fight(a, b, s, Innate);
+            if (r.Events.Any(e => e.Kind == kind)) return r.Events;
+        }
+        return null;
+    }
+
+    [Fact]
+    public void ShieldAbsorbed_LogsAShieldBeatWhenAuraEatsPartOfABlow()
+    {
+        // Same setup as Shield_AuraAbsorbsBeforeHp: a Legendary-Aura defender under attack. The first landed blow is
+        // partly soaked by the shield, which now logs a ShieldAbsorbed beat on the defender (source == target).
+        var atk = HeroWith("atk", 20, GenomeWith(220));
+        var aura = HeroWith("def", 20, GenomeWith(120, (TraitCategory.Aura, 255)));
+        var seed = new byte[32]; Array.Fill(seed, (byte)3);
+        var events = BattleEngine.Fight(atk, aura, seed, Innate).Events;
+        Assert.Contains(events, e => e.Kind == BattleEventKind.ShieldAbsorbed
+            && e.ActorId == "def" && e.TargetId == "def" && e.Damage > 0);
+    }
+
+    [Fact]
+    public void Regenerated_LogsAHealBeatWhenMarkingTicks()
+    {
+        // A Legendary-Marking hero self-heals at the start of its turn once it has taken damage (a full-HP tick
+        // heals 0 and logs nothing), so sweep the Rung-1 regen setup for a fight where the tick actually heals.
+        var events = FirstFightWith(BattleEventKind.Regenerated,
+            HeroWith("a", 10, GenomeWith(100, (TraitCategory.Marking, 255))), HeroWith("b", 10, GenomeWith(100)));
+        Assert.NotNull(events);
+        Assert.Contains(events!, e => e.Kind == BattleEventKind.Regenerated
+            && e.ActorId == "a" && e.TargetId == "a" && e.Healed > 0);
+    }
+
+    [Fact]
+    public void Thorns_LogsAReflectBeatAtTheAttacker()
+    {
+        // A Legendary-Crest defender reflects part of each landed blow; the reflect now logs a Thorns beat whose
+        // source is the crest-bearer (def) and whose target is the attacker (atk) that took it.
+        var events = FirstFightWith(BattleEventKind.Thorns,
+            HeroWith("atk", 20, GenomeWith(160)), HeroWith("def", 20, GenomeWith(160, (TraitCategory.Crest, 255))));
+        Assert.NotNull(events);
+        Assert.Contains(events!, e => e.Kind == BattleEventKind.Thorns
+            && e.ActorId == "def" && e.TargetId == "atk" && e.Damage > 0);
+    }
+
+    [Fact]
+    public void Burned_LogsABrandTickOnTheBurningHero()
+    {
+        // A Legendary-Sigil attacker brands its target on a landing hit; the brand ticks at the start of the
+        // target's turn, logging a Burned beat whose source is the brander (atk) and whose target is the burning
+        // hero (def). A strong defender survives to take at least one tick.
+        var events = FirstFightWith(BattleEventKind.Burned,
+            HeroWith("atk", 20, GenomeWith(140, (TraitCategory.Sigil, 255))), HeroWith("def", 20, GenomeWith(200)));
+        Assert.NotNull(events);
+        Assert.Contains(events!, e => e.Kind == BattleEventKind.Burned
+            && e.ActorId == "atk" && e.TargetId == "def" && e.Damage > 0);
+    }
 }

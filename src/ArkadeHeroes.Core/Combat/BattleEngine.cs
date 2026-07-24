@@ -34,12 +34,26 @@ public static class BattleEngine
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
 
-                // innate ticks (Marking regen, then Sigil burn) — deterministic, RNG-free, own-turn start.
-                if (actor.RegenPerTurn > 0) actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.RegenPerTurn);
+                // innate ticks (Marking regen, then Sigil burn) — deterministic, RNG-free, own-turn start. Each logs
+                // a beat only when it actually moves HP, so a flag-off fight (both inert) logs nothing.
+                if (actor.RegenPerTurn > 0)
+                {
+                    var before = actor.Hp;
+                    actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.RegenPerTurn);
+                    var healed = actor.Hp - before;   // actual gain — 0 at full HP, which logs nothing
+                    if (healed > 0)   // Marking self-heal: source == target (the regenerating hero)
+                        events.Add(new BattleEvent(turn, actor.Hero.Id, actor.Hero.Id,
+                            BattleEventKind.Regenerated, "", 0, false, healed, actor.Hp));
+                }
                 if (actor.BurnTurnsLeft > 0)
                 {
+                    var before = actor.Hp;
                     actor.Hp = Math.Max(0, actor.Hp - actor.BurnPerTurn);   // DoT hits HP directly
                     actor.BurnTurnsLeft--;
+                    var burned = before - actor.Hp;   // actual HP lost (clamped at 0)
+                    if (burned > 0)   // Sigil brand tick: source is the opponent (target) that branded this hero
+                        events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,
+                            BattleEventKind.Burned, "", burned, false, 0, actor.Hp));
                     if (actor.Hp <= 0)   // burned down on its own turn — the opponent wins
                     {
                         events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,
@@ -187,12 +201,20 @@ public static class BattleEngine
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
         var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
 
-        target.TakeAttackDamage(damage);
+        var absorbed = target.TakeAttackDamage(damage);
+        if (absorbed > 0)   // Aura: the defender's shield ate part of the blow (source == target)
+            events.Add(new BattleEvent(turn, target.Hero.Id, target.Hero.Id,
+                BattleEventKind.ShieldAbsorbed, "", absorbed, false, 0, target.Hp));
 
         if (target.ThornsFraction > 0 && actor.Hp > 0)
         {
             var reflected = (int)Math.Round(damage * target.ThornsFraction);   // pre-shield blow — the crest bites back
-            if (reflected > 0) actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+            if (reflected > 0)
+            {
+                actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+                events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,   // Crest: reflected at the attacker
+                    BattleEventKind.Thorns, "", reflected, false, 0, actor.Hp));
+            }
         }
 
         if (actor.BrandStrength > 0 && target.Hp > 0)
@@ -270,13 +292,15 @@ public static class BattleEngine
             }
         }
 
-        /// <summary>Apply an incoming ATTACK's damage: Aura's shield absorbs first, the remainder hits HP.
+        /// <summary>Apply an incoming ATTACK's damage: Aura's shield absorbs first, the remainder hits HP; returns the
+        /// amount the shield soaked (0 with no shield) so the caller can log a ShieldAbsorbed beat.
         /// (DoT/thorns bypass the shield and hit HP directly — the shield is armour against blows, not a life buffer.)</summary>
-        public void TakeAttackDamage(int dealt)
+        public int TakeAttackDamage(int dealt)
         {
             var absorbed = Math.Min(ShieldHp, dealt);
             ShieldHp -= absorbed;
             Hp = Math.Max(0, Hp - (dealt - absorbed));
+            return absorbed;
         }
 
         public int EffectiveAttack => (int)(Stats.Attack * (1 + _cfg.FocusPerStack * FocusStacks));
