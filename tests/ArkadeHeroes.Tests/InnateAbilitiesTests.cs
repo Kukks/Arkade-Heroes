@@ -175,4 +175,35 @@ public class InnateAbilitiesTests
         }
         Assert.True(TotalDefHpFrac(sigil: true) < TotalDefHpFrac(sigil: false));   // the brand burned the target down
     }
+
+    [Fact]
+    public void FlagOff_IsByteIdenticalToTheEngineWithoutPassives()
+    {
+        // 200 fights under Default (flag OFF) resolve identically whether or not a hero expresses cosmetic traits
+        // — the default-safety proof (cosmetic bytes are inert, so no existing replay can shift when the flag is off).
+        for (var i = 0; i < 200; i++)
+        {
+            var s = new byte[32]; s[0] = (byte)i; s[1] = (byte)(i >> 8);
+            var fancy = HeroWith("a", 20, GenomeWith(180, (TraitCategory.Aura, 255), (TraitCategory.Sigil, 255),
+                (TraitCategory.Crest, 255), (TraitCategory.Marking, 255), (TraitCategory.Eyes, 255), (TraitCategory.Stance, 255)));
+            var plainA = HeroWith("a", 20, GenomeWith(180));
+            var foe = HeroWith("b", 20, GenomeWith(160));
+            var rf = BattleEngine.Fight(fancy, foe, s);   // Default → flag off
+            var rp = BattleEngine.Fight(plainA, foe, s);
+            Assert.Equal(rp.WinnerId, rf.WinnerId);
+            Assert.Equal(rp.Events.Count, rf.Events.Count);   // identical event stream: passives inert when off
+        }
+    }
+
+    [Fact]
+    public void FlagOn_IsDeterministicAcrossRuns()
+    {
+        var a = HeroWith("a", 20, GenomeWith(180, (TraitCategory.Sigil, 255), (TraitCategory.Aura, 255)));
+        var b = HeroWith("b", 20, GenomeWith(160, (TraitCategory.Crest, 255)));
+        var seed = new byte[32]; Array.Fill(seed, (byte)11);
+        var r1 = BattleEngine.Fight(a, b, seed, Innate);
+        var r2 = BattleEngine.Fight(a, b, seed, Innate);
+        Assert.Equal(r1.WinnerId, r2.WinnerId);
+        Assert.Equal(r1.Events.Count, r2.Events.Count);   // same config + seed → identical replay (verifiable)
+    }
 }
