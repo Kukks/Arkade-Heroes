@@ -142,4 +142,25 @@ public static class Traits
         };
         return Math.Min(bonus, a.Cap);
     }
+
+    /// <summary>
+    /// The innate-v2 combat passives a hero actually GRANTS: for each of the six COSMETIC categories whose
+    /// expressed (dominant) trait carries non-zero <see cref="InnateStrength"/>, its category + rarity tier.
+    /// Affinity categories never appear (they grant no innate passive), and a plain gene (value 0, strength 0)
+    /// is omitted. The category→passive naming (Aura→Shield, Marking→Regen, Eyes→Accuracy, Crest→Thorns,
+    /// Sigil→Brand, Stance→Initiative) is a display concern left to the caller. Deterministic — a pure function
+    /// of the immutable genome; the frontend surfaces these only when <see cref="CombatConfig.InnateAbilities"/>
+    /// is published on (default off).
+    /// </summary>
+    public static IReadOnlyList<(TraitCategory Category, RarityTier Tier)> InnatePassives(Genome genome, GameConfig? config = null)
+    {
+        var list = new List<(TraitCategory, RarityTier)>();
+        for (var c = 0; c < CategoryCount; c++)
+        {
+            var cat = (TraitCategory)c;
+            if (InnateStrength(genome, cat, config) <= 0) continue;   // skips affinities and plain (0) genes
+            list.Add((cat, TierOf(genome.DominantGene(cat), config)));
+        }
+        return list;
+    }
 }

@@ -347,4 +347,33 @@ public class InnateAbilitiesTests
         // A default-off client (config: null → GameConfig.Default) cannot reproduce an on-config fight — it diverges.
         Assert.False(FairnessAudit.VerifyMatch(matchId, nonce, commitmentHex, fr, config: null).Ok);
     }
+
+    // ── rung 3: frontend-facing surfacing — the propagated flag + the passive-derivation helper ──
+
+    [Fact]
+    public void GameConfigDto_PropagatesInnateAbilitiesFlag()
+    {
+        // How the frontend learns whether innate passives are live. Default is OFF (so the badges stay hidden and
+        // today's UI is unchanged); flipping the CombatConfig flag on is reflected on the wire DTO the client reads.
+        Assert.False(GameConfigDto.From(GameConfig.Default).InnateAbilities);
+        var on = GameConfig.Default with { Combat = GameConfig.Default.Combat with { InnateAbilities = true } };
+        Assert.True(GameConfigDto.From(on).InnateAbilities);
+    }
+
+    [Fact]
+    public void InnatePassives_ListsExpressedCosmeticTiers_NeverAffinities()
+    {
+        // Aura-Legendary (255) + Sigil-Rare (245), plus a Legendary ElementAffinity that must NOT surface: the
+        // helper returns exactly the two COSMETIC passives the hero grants, each at its expressed rarity tier.
+        var genome = GenomeWith(128, (TraitCategory.Aura, 255), (TraitCategory.Sigil, 245),
+            (TraitCategory.ElementAffinity, 255));
+        var passives = Traits.InnatePassives(genome);
+        Assert.Equal(2, passives.Count);
+        Assert.Contains((TraitCategory.Aura, RarityTier.Legendary), passives);
+        Assert.Contains((TraitCategory.Sigil, RarityTier.Rare), passives);
+        Assert.DoesNotContain(passives, p => Traits.IsAffinity(p.Category));   // affinities never grant an innate passive
+
+        // A plain genome (no expressed cosmetic traits) grants none.
+        Assert.Empty(Traits.InnatePassives(GenomeWith(128)));
+    }
 }
