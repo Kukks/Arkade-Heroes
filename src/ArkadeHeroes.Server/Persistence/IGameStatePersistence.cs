@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
 using Microsoft.EntityFrameworkCore;
@@ -301,8 +302,37 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         MintArkTxId = hero.MintArkTxId,
     };
 
+    /// <summary>
+    /// Serializes every write of ONE hero's row. All three writers below are load → copy-the-live-hero →
+    /// commit with awaits between each step, so two that overlap can commit in the opposite order to the one
+    /// they read in, and the loser's stale copy becomes the durable word: a hero transferred twice inside one
+    /// save's window ends up durably owned by the intermediate holder while memory holds the final one. Column
+    /// narrowing alone can't fix that — it settled the flush-vs-identity case only because the flush stopped
+    /// writing identity at all; two IDENTITY saves racing each other both legitimately carry owner and name.
+    ///
+    /// Safe to take here because this is a leaf: nothing in this class calls back into GameService or
+    /// GameStore, so a request already holding a GameStore money-path lock only ever acquires this one INSIDE
+    /// it, never the reverse, and each method holds exactly one hero's gate at a time — no cycle to deadlock
+    /// on. Semaphores accrue one per hero id and are never removed, mirroring GameStore's keyed locks;
+    /// evicting one a waiter is still parked on is the riskier trade.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _heroLocks = new();
+
+    private async Task<IDisposable> LockHeroAsync(string heroId, CancellationToken ct)
+    {
+        var gate = _heroLocks.GetOrAdd(heroId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        return new HeroLockReleaser(gate);
+    }
+
+    private sealed class HeroLockReleaser(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
+
     public async Task SaveHeroAsync(Hero hero, CancellationToken ct = default)
     {
+        using var heroGate = await LockHeroAsync(hero.Id, ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.Heroes.FindAsync([hero.Id], ct);
         if (row is null)
@@ -329,6 +359,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
 
     public async Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default)
     {
+        using var heroGate = await LockHeroAsync(hero.Id, ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var row = await db.Heroes.FindAsync([hero.Id], ct);
         if (row is null)
@@ -357,6 +388,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
 
     public async Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
     {
+        using var heroGate = await LockHeroAsync(heroId, ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         // Already gone = done: burns sit on retryable flows (merge/death-match settle), so the erase must
         // be idempotent under a retry that re-runs the settle's in-memory tail.
