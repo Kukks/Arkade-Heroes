@@ -14,7 +14,33 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
     <PackageReference Include="Bit.Besql" Version="10.4.3" />
-    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <!--
+    Keep MSBuild out of the browser bundle.
+
+    Cel 0.3.2, reached through NArk.Core, declares Antlr4BuildTasks as an ordinary dependency, but that
+    package is an MSBuild task that only runs while Cel itself is built: Cel.dll's assembly references
+    are Antlr4.Runtime.Standard 4.13.1 and no other ANTLR assembly. Because the dependency is not marked
+    private it flows downstream and brings MSBuild with it, which the IL trimmer will not remove — it
+    trims inside assemblies, it does not drop one the closure declares. That is also why the WASM SDK
+    warned (WASM0001) about a p/invoke for Microsoft.Build.Framework's GetModuleFileName, a Win32 entry
+    point, on a browser target.
+
+    Consuming nothing from them here drops them and their tail from the published bundle. All three need
+    naming: ExcludeAssets only drops the assets of the package it is written on, not that package's own
+    dependencies, so excluding Antlr4BuildTasks alone leaves MSBuild behind. Pruning the subtree in one
+    stroke is something only Cel, as the declaring package, can do.
+
+    Deliberately scoped to this project rather than a root Directory.Build.props: this is the only
+    project that publishes to a browser, and ArkadeHeroes.Server legitimately needs a NEWER
+    Microsoft.Build.Framework for Microsoft.EntityFrameworkCore.Design's design-time tooling — pinning
+    it repo-wide is an NU1605 downgrade there.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Antlr4BuildTasks" Version="12.10.0" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.8.3" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.9.5" ExcludeAssets="all" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
