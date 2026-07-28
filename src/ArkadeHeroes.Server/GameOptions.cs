@@ -63,14 +63,19 @@ public class GameOptions
     public long SeasonPotBaseSats { get; set; } = 25_000;
     public int SeasonFeeAccrualPct { get; set; } = 20;
 
-    /// <summary>Marketplace listing fee: flat sats the seller pays the treasury to list an offer (item or
-    /// hero) — treasury capture on secondary trades, the counterweight to the daily + season faucets.
-    /// LIVE at 1000, matching the breed and merge fee scale. It was held at 0 until EVERY sell path paid it,
-    /// which is now true: the browser prompts (/sell states "A 1000 sat listing fee is paid to the treasury
-    /// when you list") and was verified end-to-end on regtest — paid from the seller's own wallet, treasury
-    /// booked it as inflowByTag {"listing": 1000}, hero escrowed at a live covenant offer — and the console
-    /// client pays it on sell/sellhero too. Note this taxes LISTING, not selling — a seller pays even if
-    /// nobody buys — so it is the knob to lower first if the market looks thin.</summary>
+    /// <summary>Marketplace fee: flat sats the treasury takes from each completed sale (item or hero) —
+    /// treasury capture on secondary trades, the counterweight to the daily + season faucets. LIVE at 1000,
+    /// matching the breed and merge fee scale.
+    /// It is enforced by the offer's own COVENANT, not billed at listing: a buyer pays the ask, and the
+    /// fulfil leaf splits it — seller gets ask − fee, treasury gets fee. So the SELLER absorbs it, listing
+    /// costs nothing up front, an offer that never sells is never charged, and neither the seller nor the
+    /// server can skip the cut. Raising this reduces what a seller nets at a given ask; it does not deter
+    /// listing, because listing is free. An ask at or below this value is refused outright (the seller's
+    /// payout would be non-positive and the covenant could not be built).
+    /// Booked as inflowByTag {"listing": n} when a HERO sale is claimed; item sales reach the treasury but
+    /// are untagged, because a fungible asset gives no way to tell a sale from a seller reclaim without
+    /// risking an over-count. Changing this affects only NEW offers — a resting one keeps the fee baked
+    /// into the covenant it was created with.</summary>
     public long OfferListingFeeSats { get; set; } = 1_000;
 
     /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),

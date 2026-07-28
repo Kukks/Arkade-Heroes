@@ -2114,8 +2114,8 @@ public class GameService(
 
         // The seller must hold a FREE unit — not one already equipped, nor one reserved in an offer
         // still awaiting its deposit (that item is in their wallet, so it is counted in `held`). An
-        // offer whose asset has landed no longer reserves anything, whether or not its listing fee has
-        // cleared — gate on the deposit itself, since a fee-gated offer stays `pending` past deposit.
+        // offer whose asset has landed no longer reserves anything — gate on the deposit itself rather
+        // than on Status, so this stays correct however the status vocabulary evolves.
         var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
         var equipped = (ulong)store.Heroes.Values.Count(h =>
             h.OwnerId == player.Id && h.Equipment.Slots.Values.Contains(item.Id));
