@@ -2199,6 +2199,55 @@ public class GameService(
             offer.Status = "closed";
     }
 
+    /// <summary>
+    /// This player's covenant escrows that may still hold their assets with no path forward: a listing
+    /// whose asset is deposited but has not closed, and breed/merge deposits that were never revealed.
+    /// The timelocked reclaim leaf recovers each one from the player's OWN wallet, so this is DISCOVERY
+    /// ONLY — someone who knows the id can always reclaim whether or not this endpoint lists it.
+    /// Breed and merge are listed whenever the session is unfinished, NOT only when the escrow reads
+    /// fully funded: a run that died between the two parent deposits leaves assets escrowed while
+    /// IsBreedEscrowFundedAsync still reports false, and that is precisely the case worth surfacing.
+    /// Reclaiming an escrow that turns out to be empty is harmless; hiding one that holds a hero is not.
+    /// </summary>
+    public async Task<IReadOnlyList<Shared.ReclaimableDto>> ListReclaimableAsync(Player player, CancellationToken ct)
+    {
+        var items = new List<Shared.ReclaimableDto>();
+
+        foreach (var offer in store.Offers.Values
+                     .Where(o => o.SellerId == player.Id && o.Status != "closed").ToList())
+        {
+            await ReconcileOfferAsync(offer, ct);
+            // Only a DEPOSITED asset is at stake; an offer still awaiting its deposit holds nothing.
+            if (offer.Status == "closed" || !offer.AssetDeposited) continue;
+            var what = offer.Kind == "hero"
+                ? store.Heroes.TryGetValue(offer.HeroId ?? "", out var hero) ? hero.Name : "A hero"
+                : Core.Equipment.ItemCatalog.Find(offer.ItemId)?.Name ?? offer.ItemId;
+            items.Add(new Shared.ReclaimableDto("offer", offer.Id,
+                offer.Status == "pending"
+                    ? $"{what} is escrowed in a listing that never went live — its {offer.ListingFeeSats}-sat fee has not cleared."
+                    : $"{what} is resting on the market at {offer.AskSats} sats.",
+                offer.RefundAfterUnixSeconds));
+        }
+
+        foreach (var breed in store.Breedings.Values
+                     .Where(b => b.PlayerId == player.Id && !b.Completed && b.Mode == "covenant").ToList())
+            if (await chain.GetBreedEscrowParamsAsync(breed.Id, ct) is { } p)
+                items.Add(new Shared.ReclaimableDto("breed", breed.Id,
+                    $"An unfinished breeding — both parents and the {breed.FeeSats}-sat fee may be escrowed.",
+                    p.RefundAfterUnixSeconds));
+
+        foreach (var merge in store.Merges.Values
+                     .Where(m => m.PlayerId == player.Id && !m.Completed && m.Mode == "covenant").ToList())
+            if (await chain.GetMergeEscrowParamsAsync(merge.Id, ct) is { } p)
+                items.Add(new Shared.ReclaimableDto("merge", merge.Id,
+                    $"An unfinished fusion — the base and sacrifice heroes and the {merge.FeeSats}-sat fee may be escrowed.",
+                    p.RefundAfterUnixSeconds));
+
+        // Soonest-unlockable first, tie-broken on the unique id so the order is total (see #113).
+        return items.OrderBy(i => i.ReclaimAfterUnixSeconds)
+            .ThenBy(i => i.Id, StringComparer.Ordinal).ToList();
+    }
+
     // ── Marketplace: hero sales (unique-asset offers) ──────────────────
 
     /// <summary>
