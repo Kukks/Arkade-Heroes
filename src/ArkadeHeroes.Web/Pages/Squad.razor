@@ -243,9 +243,12 @@ else
     async Task RunAction(string initial, Func<Task> action)
     {
         _busy = true; _error = null; _status = initial;
-        try { await action(); _status = null; await LoadAsync(); }
+        try { await action(); _status = null; }
         catch (Exception ex) { _error = ex.Message; _status = null; }
-        finally { _busy = false; }
+        // Reload even when the action threw: open/accept create the match on the SERVER first and pay the
+        // wager second, so a failed payment still leaves a real match behind — reloading only on success
+        // hid it behind an error message, which is the state the player most needs to see.
+        finally { await LoadAsync(); _busy = false; }
     }
 
     async Task Reload()

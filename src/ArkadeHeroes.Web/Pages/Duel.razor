@@ -285,15 +285,18 @@ else
         {
             await action();
             _status = null;
-            await LoadAsync();
         }
         catch (Exception ex)
         {
             _error = ex.Message;
             _status = null;
         }
+        // Reload even when the action threw: open/accept create the match on the SERVER first and pay the
+        // stake + fee second, so a failed payment still leaves a real match behind — reloading only on
+        // success hid it behind an error message, which is the state the player most needs to see.
         finally
         {
+            await LoadAsync();
             _busy = false;
         }
     }
