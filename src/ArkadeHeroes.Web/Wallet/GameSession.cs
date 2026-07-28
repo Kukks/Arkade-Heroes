@@ -238,16 +238,21 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         onProgress?.Invoke("Drafting the sale covenant…");
         var offer = await api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, askSats));
 
-        // 2. Deposit the hero (one asset unit) into the offer address, waiting for the spend to settle.
-        onProgress?.Invoke("Escrowing your hero into the offer…");
-        await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
-
-        // 2b. Pay the listing fee (if one is charged) — the server holds the offer pending until it clears.
+        // 2. Pay the listing fee FIRST (if one is charged) — the server holds the offer pending until it
+        // clears. This must precede the deposit: the fee is small and failing it costs nothing, while the
+        // deposit is an irreversible send into the offer covenant, recoverable only through the timelocked
+        // reclaim leaf. Paying first means a seller who can't cover the fee still has their hero, instead of
+        // one escrowed in an offer that can never go live. The server checks fee-paid and deposited
+        // independently, so this order is equivalent to it.
         if (offer.ListingFee is { AmountSats: > 0 } fee)
         {
             onProgress?.Invoke($"Paying the {fee.AmountSats}-sat listing fee…");
             await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
         }
+
+        // 3. Deposit the hero (one asset unit) into the offer address, waiting for the spend to settle.
+        onProgress?.Invoke("Escrowing your hero into the offer…");
+        await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
 
         // 3. Poll until the server observes the funded offer resting active on the market.
         onProgress?.Invoke("Waiting for the offer to rest on the market…");

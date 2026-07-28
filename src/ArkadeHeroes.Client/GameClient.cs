@@ -1306,8 +1306,8 @@ public class GameClient : IAsyncDisposable
             throw new GameClientException("ask must be a positive number of sats");
         var offer = await _api.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for one {itemId}");
-        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         if (!await PayListingFeeAsync(offer.ListingFee)) return;
+        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         Console.WriteLine($"    listed — buyers run 'offers' then 'buyoffer {offer.OfferId}'");
     }
 
@@ -1334,24 +1334,26 @@ public class GameClient : IAsyncDisposable
         var hero = ResolveHero(heroRef);
         var offer = await _api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for {hero.Name}");
-        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         if (!await PayListingFeeAsync(offer.ListingFee)) return;
+        await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
         Console.WriteLine($"    {hero.Name} listed — buyers run 'offers' then 'buyhero {offer.OfferId}'");
     }
 
     /// <summary>
     /// Pays the marketplace listing fee, if one is charged. The server holds the offer PENDING until this
-    /// clears, so skipping it leaves the deposited asset sitting in an offer that never rests on the market
-    /// — which is exactly what happened here before: the browser paid this (GameSession sell flow) and the
-    /// console client did not, so the fee could not be switched on without breaking console selling.
-    /// Returns false when the fee is owed but could not be paid, so the caller stops claiming it is listed.
+    /// clears, so an unpaid fee means the offer never rests on the market.
+    /// CALL THIS BEFORE DEPOSITING THE ASSET. The fee is small and its failure costs nothing, whereas the
+    /// deposit is an irreversible send into the offer covenant — recoverable only via the timelocked reclaim
+    /// leaf (canceloffer, after RefundAfterUnixSeconds). Paying first means a seller who cannot cover the fee
+    /// keeps their hero in their own wallet instead of stranding it in an offer that can never go live.
+    /// Returns false when the fee is owed but could not be paid, so the caller stops before escrowing.
     /// </summary>
     private async Task<bool> PayListingFeeAsync(FeeInvoiceDto? fee)
     {
         if (fee is not { AmountSats: > 0 }) return true;
         Console.WriteLine($"    listing fee {fee.AmountSats} sats → treasury");
         if (await SettleInvoiceAsync(fee)) return true;
-        Console.WriteLine("    couldn't pay the listing fee — the offer stays pending until it clears.");
+        Console.WriteLine("    couldn't pay the listing fee — nothing was escrowed, your asset is untouched.");
         return false;
     }
 
