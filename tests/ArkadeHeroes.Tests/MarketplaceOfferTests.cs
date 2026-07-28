@@ -18,16 +18,10 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
 
     public MarketplaceOfferTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    /// <summary>Lists a spare unit and clears the listing fee, so these lifecycle tests drive the real
-    /// default path — a fee IS charged, and an offer stays pending until it clears. Tests that want an
-    /// offer to stay pending, or that expect listing to be refused, call the SDK directly instead.</summary>
-    private static async Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
-    {
-        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
-        if (offer.ListingFee is { AmountSats: > 0 } fee)
-            await seller.Dev.PayInvoiceAsync(new { fee.InvoiceId });
-        return offer;
-    }
+    /// <summary>Lists a spare unit. Nothing is paid at listing — the marketplace fee is enforced by the
+    /// offer's covenant and taken from the sale — so listing is a single call again.</summary>
+    private static Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
+        => seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
 
     [Fact]
     public async Task Offer_ListFundFulfil_ItemMovesAndSellerPaid()
@@ -58,8 +52,10 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         // Buyer fulfils: pays the seller, takes the item.
         await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
 
+        // The buyer paid the sticker ask; the covenant routed the marketplace fee to the treasury, so the
+        // seller nets ask − fee. Read the fee off the offer rather than hardcoding the shipped default.
         var sellerAfter = (await seller.Players.MeAsync()).BalanceSats;
-        Assert.Equal(sellerBefore + ask, sellerAfter);
+        Assert.Equal(sellerBefore + ask - offer.ListingFeeSats, sellerAfter);
 
         // Offer closed — no longer discoverable.
         var afterSale = await buyer.Offers.ListAsync();
@@ -111,11 +107,13 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
     {
         var (seller, _) = await _factory.RegisterAsync("M-Double");
         await seller.BuyItemAsync("rusty-blade");
-        await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 1_000));
+        // Asks comfortably above the marketplace fee — an ask that doesn't clear the fee is refused for
+        // its own reason, which would mask the double-listing rule under test here.
+        await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000));
 
         // The single unit is already reserved by the first (pending) offer.
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(
-            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 2_000)));
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 4_000)));
     }
 
     [Fact]

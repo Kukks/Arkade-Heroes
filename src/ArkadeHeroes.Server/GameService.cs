@@ -2098,7 +2098,7 @@ public class GameService(
     /// covenant pins the seller as payee and enforces the ask, so fulfilment is
     /// trustless — the server is only the discovery index.
     /// </summary>
-    public async Task<(OfferListing Listing, OfferInfo Info, FeeInvoice? ListingFee)> CreateOfferAsync(
+    public async Task<(OfferListing Listing, OfferInfo Info)> CreateOfferAsync(
         Player player, string itemId, long askSats, CancellationToken ct)
     {
         var item = Core.Equipment.ItemCatalog.Find(itemId)
@@ -2125,27 +2125,37 @@ public class GameService(
             throw new GameRuleException(
                 $"You hold {held} unit(s) of {item.Name}; {equipped} equipped and {reserved} awaiting deposit — none free to sell.");
 
+        var fee = MarketplaceFeeFor(askSats, item.Name);
         var offerId = NewId("offer");
         var info = await chain.CreateOfferAsync(offerId, player.Id, item.Id, askSats,
-            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
-        var fee = await CreateListingFeeAsync(offerId, ct);
+            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), fee, ct);
         var listing = new OfferListing
         {
             Id = offerId, SellerId = player.Id, ItemId = item.Id, AskSats = askSats,
             OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
             OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
-            ListingFeeInvoiceId = fee?.InvoiceId, ListingFeeSats = fee?.AmountSats ?? 0, ListingFeePaid = fee is null,
+            ListingFeeSats = fee,
         };
         store.Offers[offerId] = listing;
-        return (listing, info, fee);
+        return (listing, info);
     }
 
-    /// <summary>Bills the seller a flat treasury listing fee when one is configured; returns the invoice
-    /// to pay, or null when the fee is disabled (in which case the offer is immediately fee-clear).</summary>
-    private async Task<FeeInvoice?> CreateListingFeeAsync(string offerId, CancellationToken ct)
-        => _options.OfferListingFeeSats > 0
-            ? await chain.CreateFeeInvoiceAsync($"offer-list:{offerId}", _options.OfferListingFeeSats, ct)
-            : null;
+    /// <summary>
+    /// The marketplace fee this listing's covenant will enforce — taken from the SALE, not billed at
+    /// listing: the buyer pays the ask, and the fulfil leaf routes <c>ask − fee</c> to the seller and the
+    /// fee to the treasury. Nothing is owed if the item never sells, and a sale cannot skip the cut.
+    /// The ask must clear the fee, or the seller's payout would be zero or negative and the covenant
+    /// could not be built at all — refused here with a message the seller can act on.
+    /// </summary>
+    private long MarketplaceFeeFor(long askSats, string what)
+    {
+        var fee = _options.OfferListingFeeSats;
+        if (fee <= 0) return 0;
+        if (askSats <= fee)
+            throw new GameRuleException(
+                $"The ask for {what} must be more than the {fee}-sat marketplace fee (it is taken from the sale).");
+        return fee;
+    }
 
     /// <summary>Active (funded, buyable) offers, each reconciled against on-chain truth first.</summary>
     public async Task<IReadOnlyList<OfferListing>> ListOffersAsync(CancellationToken ct)
@@ -2183,19 +2193,17 @@ public class GameService(
     private async Task ReconcileOfferAsync(OfferListing offer, CancellationToken ct)
     {
         if (offer.Status == "closed") return;
-        // A listing goes live only once its fee clears; latch the check so a paid fee is queried once.
-        if (!offer.ListingFeePaid && offer.ListingFeeInvoiceId is not null)
-        {
-            offer.ListingFeePaid = await chain.IsInvoicePaidAsync(offer.ListingFeeInvoiceId, ct);
-            if (offer.ListingFeePaid)
-                store.RecordInflow(offer.ListingFeeInvoiceId, "listing", offer.ListingFeeSats);
-        }
-        // Record the deposit in its own right: the fee gate means `pending` no longer implies the asset
-        // is still in the seller's wallet, and the free-to-sell check needs that fact separately.
+        // `pending` means exactly one thing again: the asset has not landed yet. The marketplace fee is
+        // enforced by the covenant at fulfil, so there is no invoice to wait on and a listing goes live
+        // the moment its asset is observed. AssetDeposited is kept as the explicit fact the free-to-sell
+        // check reads, rather than re-deriving it from a status that once meant two things.
         offer.AssetDeposited = await chain.IsOfferFundedAsync(offer.Id, ct);
-        if (offer.ListingFeePaid && offer.AssetDeposited)
+        if (offer.AssetDeposited)
             offer.Status = "active";
         else if (offer.Status == "active")
+            // The asset left a live listing — it sold, OR the seller reclaimed it. Those are
+            // indistinguishable from here, and the fee is only actually paid on a SALE, so nothing is
+            // booked as income at this point. See ClaimPurchasedHeroAsync for where a confirmed sale is.
             offer.Status = "closed";
     }
 
@@ -2223,9 +2231,7 @@ public class GameService(
                 ? store.Heroes.TryGetValue(offer.HeroId ?? "", out var hero) ? hero.Name : "A hero"
                 : Core.Equipment.ItemCatalog.Find(offer.ItemId)?.Name ?? offer.ItemId;
             items.Add(new Shared.ReclaimableDto("offer", offer.Id,
-                offer.Status == "pending"
-                    ? $"{what} is escrowed in a listing that never went live — its {offer.ListingFeeSats}-sat fee has not cleared."
-                    : $"{what} is resting on the market at {offer.AskSats} sats.",
+                $"{what} is resting on the market at {offer.AskSats} sats.",
                 offer.RefundAfterUnixSeconds));
         }
 
@@ -2256,7 +2262,7 @@ public class GameService(
     /// hero asset into the offer address, any buyer pays the ask to take it. The
     /// buyer then claims game-side ownership via <see cref="ClaimPurchasedHeroAsync"/>.
     /// </summary>
-    public async Task<(OfferListing Listing, OfferInfo Info, FeeInvoice? ListingFee)> CreateHeroOfferAsync(
+    public async Task<(OfferListing Listing, OfferInfo Info)> CreateHeroOfferAsync(
         Player player, string heroId, long askSats, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId); // verifies the seller owns it
@@ -2266,19 +2272,19 @@ public class GameService(
         if (store.Offers.Values.Any(o => o.Kind == "hero" && o.HeroId == heroId && o.Status is "pending" or "active"))
             throw new GameRuleException($"{hero.Name} is already listed for sale.");
 
+        var fee = MarketplaceFeeFor(askSats, hero.Name);
         var offerId = NewId("offer");
         var info = await chain.CreateHeroOfferAsync(offerId, player.Id, hero.AssetId!, askSats,
-            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), ct);
-        var fee = await CreateListingFeeAsync(offerId, ct);
+            DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds(), fee, ct);
         var listing = new OfferListing
         {
             Id = offerId, SellerId = player.Id, Kind = "hero", ItemId = "", HeroId = heroId,
             AskSats = askSats, OfferAddress = info.OfferAddress, ItemAssetId = info.ItemAssetId,
             OfferValueSats = info.OfferValueSats, RefundAfterUnixSeconds = info.RefundAfterUnixSeconds,
-            ListingFeeInvoiceId = fee?.InvoiceId, ListingFeeSats = fee?.AmountSats ?? 0, ListingFeePaid = fee is null,
+            ListingFeeSats = fee,
         };
         store.Offers[offerId] = listing;
-        return (listing, info, fee);
+        return (listing, info);
     }
 
     /// <summary>
@@ -2307,6 +2313,13 @@ public class GameService(
         // the buyer's ownership goes durable now, not at the next flush.
         await persistence.SaveHeroAsync(hero, ct);
         offer.Status = "closed";
+        // A CONFIRMED sale — the chain shows the buyer holding the hero, so the fulfil ran and its
+        // covenant paid the treasury its cut. This is the only place a sale is provable: ReconcileOffer
+        // sees a closing offer but cannot tell a sale from a seller reclaim, and booking there would
+        // OVERSTATE treasury income, which is the dangerous direction for an insolvency-sensitive game.
+        // Keyed on the offer so the store's inflow dedup makes it once-only however often claim runs.
+        if (offer.ListingFeeSats > 0)
+            store.RecordInflow($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats);
         return hero;
     }
 }

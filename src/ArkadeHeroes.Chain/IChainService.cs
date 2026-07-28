@@ -267,9 +267,14 @@ public interface IChainService
     /// from their own wallet. ANYONE may then fulfil it by paying the seller the
     /// ask in the same transaction — the emulator refuses underpayment.
     /// </summary>
+    /// <param name="feeSats">Marketplace fee the COVENANT routes to the treasury out of the sale
+    /// proceeds — the seller absorbs it, so a buyer pays exactly <paramref name="askSats"/> and the
+    /// seller receives <c>askSats − feeSats</c>. 0 disables the fee leg, and an offer built with 0
+    /// derives the address it always did. There is no invoice: an unsold offer is never charged, and
+    /// a sale cannot skip the cut.</param>
     Task<OfferInfo> CreateOfferAsync(
         string offerId, string sellerPlayerId, string itemId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default);
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default);
 
     /// <summary>
     /// Builds a resting-offer covenant for a specific HERO asset (a unique
@@ -277,9 +282,11 @@ public interface IChainService
     /// asset-agnostic, so this shares the fulfil/reclaim machinery with item
     /// offers — only the asset id (the hero's own mint asset) differs.
     /// </summary>
+    /// <param name="feeSats">As <see cref="CreateOfferAsync"/>: the covenant-enforced treasury cut,
+    /// absorbed by the seller out of the ask.</param>
     Task<OfferInfo> CreateHeroOfferAsync(
         string offerId, string sellerPlayerId, string heroAssetId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default);
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default);
 
     /// <summary>True once the offered asset (plus carrier dust) sits at the offer address.</summary>
     Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default);

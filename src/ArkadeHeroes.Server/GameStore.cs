@@ -223,13 +223,10 @@ public class OfferListing
     public required long RefundAfterUnixSeconds { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string Status { get; set; } = "pending";
-    /// <summary>The treasury fee-invoice the seller pays to list; null when no listing fee is charged.</summary>
-    public string? ListingFeeInvoiceId { get; init; }
-    /// <summary>Flat listing fee charged to the treasury at open (0 when disabled).</summary>
+    /// <summary>The marketplace fee this offer's COVENANT routes to the treasury when it sells (0 when
+    /// disabled). Nothing is billed at listing — the seller absorbs it out of the ask, so an offer that
+    /// never sells costs nothing and a sale cannot skip the cut.</summary>
     public long ListingFeeSats { get; init; }
-    /// <summary>Latched once the listing fee is observed paid — an offer stays <c>pending</c> until then
-    /// (true immediately when no fee is due, so a disabled fee is a no-op).</summary>
-    public bool ListingFeePaid { get; set; }
     /// <summary>Whether the asset is currently observed resting at the offer address, refreshed on each
     /// reconcile. Tracked apart from <see cref="Status"/> because a fee-gated offer stays <c>pending</c>
     /// even after its asset has LEFT the seller's wallet — so <c>pending</c> alone cannot answer "is the

@@ -18,16 +18,10 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
 
     public HeroSaleTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    /// <summary>Lists a hero and clears the listing fee, so these lifecycle tests drive the real default
-    /// path — a fee IS charged, and an offer stays pending until it clears. Tests that expect listing
-    /// itself to be refused call the SDK directly instead.</summary>
-    private static async Task<CreateOfferResponse> ListHeroAsync(ArkadeHeroesClient seller, string heroId, long ask)
-    {
-        var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, ask));
-        if (offer.ListingFee is { AmountSats: > 0 } fee)
-            await seller.Dev.PayInvoiceAsync(new { fee.InvoiceId });
-        return offer;
-    }
+    /// <summary>Lists a hero. Nothing is paid at listing — the marketplace fee is enforced by the offer's
+    /// covenant and taken from the sale — so listing is a single call again.</summary>
+    private static Task<CreateOfferResponse> ListHeroAsync(ArkadeHeroesClient seller, string heroId, long ask)
+        => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, ask));
 
     [Fact]
     public async Task HeroSale_ListFundFulfilClaim_MovesOwnershipAndStripsEquipment()
@@ -61,8 +55,10 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
         // The hero is the buyer's now, with no equipment; the seller was paid.
         Assert.Equal(buyerPlayer.PlayerId, claim.Hero.OwnerId);
         Assert.Empty(claim.Hero.Equipment);
+        // The buyer paid the sticker ask; the covenant routed the marketplace fee to the treasury, so the
+        // seller nets ask − fee. Read the fee off the offer rather than hardcoding the shipped default.
         var sellerAfter = (await seller.Players.MeAsync()).BalanceSats;
-        Assert.Equal(sellerBefore + ask, sellerAfter);
+        Assert.Equal(sellerBefore + ask - offer.ListingFeeSats, sellerAfter);
 
         // The buyer controls the hero; the seller no longer does.
         Assert.Contains(await buyer.Heroes.MineAsync(), h => h.Id == hero.Id);
@@ -86,9 +82,11 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
         var (seller, _) = await _factory.RegisterAsync("H-Double");
         var heroes = await seller.ClaimStartersAsync();
 
-        await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 1_000));
+        // Asks comfortably above the marketplace fee — an ask that doesn't clear the fee is refused for
+        // its own reason, which would mask the double-listing rule under test here.
+        await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 3_000));
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(
-            () => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 2_000)));
+            () => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 4_000)));
     }
 
     [Fact]

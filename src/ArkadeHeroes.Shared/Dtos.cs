@@ -400,9 +400,10 @@ public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, l
 public record CreateOfferResponse(
     string OfferId, string OfferAddress, string ItemAssetId,
     long AskSats, long OfferValueSats, long RefundAfterUnixSeconds,
-    // Marketplace listing fee (0 = disabled). When set, the seller pays this treasury
-    // fee-invoice; the offer stays pending (not buyable) until it clears.
-    long ListingFeeSats = 0, FeeInvoiceDto? ListingFee = null);
+    // Marketplace fee (0 = disabled) the offer's COVENANT routes to the treasury when it sells. There is
+    // nothing to pay at listing: the seller absorbs it out of the ask, so a buyer pays AskSats and the
+    // seller receives AskSats − ListingFeeSats. An offer that never sells is never charged. Display only.
+    long ListingFeeSats = 0);
 
 /// <summary>
 /// One of this player's covenant escrows that may still hold their assets with no path forward — a

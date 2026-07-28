@@ -9,95 +9,112 @@ using Microsoft.Extensions.DependencyInjection;
 namespace ArkadeHeroes.Tests;
 
 /// <summary>
-/// The marketplace listing fee: a flat treasury charge the seller pays to list an offer — treasury
-/// capture on secondary trades (the counterweight to the daily + season faucets). The fee GATES the
-/// listing: an offer stays pending (not buyable) until the fee invoice clears, even once the asset is
-/// deposited. Both factories pin the fee explicitly rather than leaning on the shipped default, so these
-/// keep testing the gate and the no-op path whatever that default is set to.
+/// The marketplace fee: a treasury cut on secondary trades, the counterweight to the daily + season
+/// faucets. It is enforced by the offer's own COVENANT and taken from the SALE — the buyer pays the
+/// listed ask and the fulfil leaf splits it, seller <c>ask − fee</c> and treasury the rest.
+///
+/// That shape is the point. Nothing is billed at listing, so an offer that never sells costs its seller
+/// nothing, there is no fee payment that can fail and strand a deposited hero, and the server cannot
+/// skip or misdirect a cut the covenant pins. These tests pin the fee explicitly rather than leaning on
+/// the shipped default, so they keep meaning whatever that default is set to.
 /// </summary>
 public class MarketplaceListingFeeTests
 {
     const long Fee = 500;
-
-    static WebApplicationFactory<Program> FeeFactory() => FactoryWithFee(Fee);
+    const long Ask = 3_000;
 
     static WebApplicationFactory<Program> FactoryWithFee(long fee) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
             b.ConfigureServices(s => s.Configure<GameOptions>(o => o.OfferListingFeeSats = fee)));
 
     [Fact]
-    public async Task Listing_StaysPendingUntilFeePaid_ThenTreasuryCaptured()
+    public async Task Listing_CostsNothingUpFront_AndGoesLiveOnTheDepositAlone()
     {
-        using var factory = FeeFactory();
+        using var factory = FactoryWithFee(Fee);
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
-        var (seller, _) = await factory.RegisterAsync("LF-Seller");
+        var (seller, _) = await factory.RegisterAsync("MF-Seller");
         await seller.BuyItemAsync("rusty-blade");
 
+        var balanceBefore = (await seller.Players.MeAsync()).BalanceSats;
         var treasuryBefore = await chain.TreasuryBalanceAsync();
 
-        // Listing bills a fee invoice for the flat amount.
-        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000));
+        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", Ask));
         Assert.Equal(Fee, offer.ListingFeeSats);
-        Assert.NotNull(offer.ListingFee);
-        Assert.Equal(Fee, offer.ListingFee!.AmountSats);
 
-        // Even after the asset is deposited, the offer is NOT live — the fee hasn't cleared.
+        // Depositing is all it takes — no invoice, no second step.
         await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
-        Assert.DoesNotContain(await seller.Offers.ListAsync(), o => o.OfferId == offer.OfferId);
-
-        // Seller pays the listing fee → the offer goes active and the treasury is credited.
-        await seller.Dev.PayInvoiceAsync(new { offer.ListingFee!.InvoiceId });
         Assert.Contains(await seller.Offers.ListAsync(), o => o.OfferId == offer.OfferId && o.Status == "active");
+
+        // And listing moved no money at all: the seller is untouched and the treasury has earned nothing
+        // yet, because nothing has SOLD. This is what makes an unsold listing free.
+        Assert.Equal(balanceBefore, (await seller.Players.MeAsync()).BalanceSats);
+        Assert.Equal(treasuryBefore, await chain.TreasuryBalanceAsync());
+    }
+
+    [Fact]
+    public async Task Sale_PaysTheSellerTheAskMinusTheFee_AndTheTreasuryTheRest()
+    {
+        using var factory = FactoryWithFee(Fee);
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        var (seller, _) = await factory.RegisterAsync("MF-Paid");
+        var (buyer, _) = await factory.RegisterAsync("MF-Buyer");
+        await seller.BuyItemAsync("rusty-blade");
+
+        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", Ask));
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+
+        var sellerBefore = (await seller.Players.MeAsync()).BalanceSats;
+        var buyerBefore = (await buyer.Players.MeAsync()).BalanceSats;
+        var treasuryBefore = await chain.TreasuryBalanceAsync();
+
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
+
+        // The buyer pays the sticker ask; the covenant splits it. The seller absorbs the fee.
+        Assert.Equal(buyerBefore - Ask, (await buyer.Players.MeAsync()).BalanceSats);
+        Assert.Equal(sellerBefore + Ask - Fee, (await seller.Players.MeAsync()).BalanceSats);
         Assert.Equal(treasuryBefore + Fee, await chain.TreasuryBalanceAsync());
     }
 
     [Fact]
-    public async Task Listing_FeePending_DoesNotReserveTheAlreadyDepositedUnit()
+    public async Task AnAskAtOrBelowTheFee_IsRefusedWithAnActionableMessage()
     {
-        // A funded-but-fee-unpaid offer stays `pending`, yet its unit has ALREADY left the seller's
-        // wallet. The free-unit check counts a pending offer as "awaiting deposit" — true only while
-        // the item is still held — so reading `pending` alone double-counts this unit and wrongly
-        // refuses a second listing the seller genuinely holds free.
-        using var factory = FeeFactory();
-        var (seller, _) = await factory.RegisterAsync("LF-TwoUnits");
-        await seller.BuyItemAsync("swift-anklet");
-        await seller.BuyItemAsync("swift-anklet"); // now holds 2
-
-        var first = await seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 3_000));
-        await seller.Dev.FundOfferAsync(new { OfferId = first.OfferId });
-
-        // The fee is deliberately left unpaid: `first` is still pending, but its unit is gone.
-        Assert.DoesNotContain(await seller.Offers.ListAsync(), o => o.OfferId == first.OfferId);
-
-        // The second unit is free, so listing it must be allowed.
-        await seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 4_000));
-
-        // But not a third — both units are committed now.
-        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
-            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 5_000)));
-    }
-
-    [Fact]
-    public async Task Listing_FeeDisabled_ActiveOnFund_NoInvoice()
-    {
-        // The fee-disabled path: no fee invoice, the offer is live as soon as the asset lands.
-        using var factory = FactoryWithFee(0);
-        var (seller, _) = await factory.RegisterAsync("LF-Free");
+        // The seller's payout would be zero or negative, and PayTo cannot pin a non-positive amount, so
+        // the covenant could not be built at all. Refusing at listing beats failing at fulfil.
+        using var factory = FactoryWithFee(Fee);
+        var (seller, _) = await factory.RegisterAsync("MF-TooCheap");
         await seller.BuyItemAsync("rusty-blade");
 
-        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000));
-        Assert.Equal(0, offer.ListingFeeSats);
-        Assert.Null(offer.ListingFee);
-
-        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
-        Assert.Contains(await seller.Offers.ListAsync(), o => o.OfferId == offer.OfferId && o.Status == "active");
+        var refused = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", Fee)));
+        Assert.Contains("marketplace fee", refused.Message);
     }
 
     [Fact]
-    public async Task Config_PublishesListingFee_ForPreListingDisplay()
+    public async Task FeeDisabled_SellerKeepsTheWholeAsk()
     {
-        // The sell page previews the fee from GET /api/chain/info before the seller lists.
-        using var factory = FeeFactory();
+        using var factory = FactoryWithFee(0);
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        var (seller, _) = await factory.RegisterAsync("MF-Free");
+        var (buyer, _) = await factory.RegisterAsync("MF-FreeBuyer");
+        await seller.BuyItemAsync("rusty-blade");
+
+        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", Ask));
+        Assert.Equal(0, offer.ListingFeeSats);
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+
+        var sellerBefore = (await seller.Players.MeAsync()).BalanceSats;
+        var treasuryBefore = await chain.TreasuryBalanceAsync();
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
+
+        Assert.Equal(sellerBefore + Ask, (await seller.Players.MeAsync()).BalanceSats);
+        Assert.Equal(treasuryBefore, await chain.TreasuryBalanceAsync());
+    }
+
+    [Fact]
+    public async Task Config_PublishesTheFee_ForPreListingDisplay()
+    {
+        // The sell page previews the fee from GET /api/chain/info so a seller sees what a sale will pay.
+        using var factory = FactoryWithFee(Fee);
         var client = new ArkadeHeroesClient(factory.CreateClient());
         var info = await client.Chain.InfoAsync();
         Assert.Equal(Fee, info.Config?.OfferListingFeeSats);

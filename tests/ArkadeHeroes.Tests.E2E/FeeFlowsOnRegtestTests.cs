@@ -95,38 +95,30 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         throw new TimeoutException($"Timed out waiting for {what}.");
     }
 
-    // The listing fee is what makes secondary trading pay for the faucets. If an unpaid offer
-    // still went live, sellers would list for free and the treasury capture would be fictional.
+    // The marketplace fee is what makes secondary trading pay for the faucets — but it is taken from
+    // the SALE by the offer's own covenant, not billed at listing. So listing costs the seller nothing
+    // up front, an offer that never sells is never charged, and there is no fee payment that can fail
+    // and strand a deposited hero. What must hold is that the cut is baked into the covenant the buyer
+    // will be forced to satisfy, rather than left to a payment anyone could skip.
     [Fact]
-    public async Task ListingFee_HoldsTheOfferPending_UntilPaidFromTheSellersWallet()
+    public async Task MarketplaceFee_IsBakedIntoTheOfferCovenant_AndListingCostsNothingUpFront()
     {
         var (seller, wallet, heroes) = await FundedPlayerAsync("FeeSeller");
         var hero = heroes[0];
 
         var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, 5_000));
         Assert.Equal(ListingFee, offer.ListingFeeSats);
-        Assert.NotNull(offer.ListingFee);
-        Assert.Equal(ListingFee, offer.ListingFee!.AmountSats);
 
-        // Escrow the hero itself — funded, but the fee is still outstanding.
+        // The fee rides the PUBLIC offer params, so the buyer rebuilds the same fee-bearing contract and
+        // the fulfil leaf enforces the treasury's cut. This is the fee becoming structural.
+        var parameters = await seller.Offers.ParamsAsync(offer.OfferId);
+        Assert.Equal(ListingFee, parameters.FeeSats);
+        Assert.False(string.IsNullOrEmpty(parameters.TreasuryFeeAddress));
+
+        // Escrow the hero — and pay NOTHING else. The offer must go live on the deposit alone.
         await wallet.SendAssetAsync(offer.OfferAddress, offer.ItemAssetId, 1);
-
-        // The hero is deposited and yet the offer must NOT be buyable: the fee gates it.
-        await Task.Delay(4000);
-        var pending = await seller.Offers.GetAsync(offer.OfferId);
-        Assert.NotEqual("active", pending.Status);
-
-        // Pay the fee from the seller's own wallet — non-custodial, the server never holds keys.
-        await wallet.SendAsync(offer.ListingFee.PayToAddress, offer.ListingFee.AmountSats);
-
         await PollUntilAsync(async () => (await seller.Offers.GetAsync(offer.OfferId)).Status == "active",
-            TimeSpan.FromSeconds(90), "the offer to go active once the listing fee cleared");
-
-        // And the treasury actually booked it under its own tag.
-        var health = await seller.Economy.HealthAsync();
-        Assert.True(health.InflowByTag.TryGetValue("listing", out var booked),
-            $"no 'listing' inflow recorded; tags seen: {string.Join(",", health.InflowByTag.Keys)}");
-        Assert.Equal(ListingFee, booked);
+            TimeSpan.FromSeconds(90), "the offer to go active on its deposit alone, with no fee to pay");
     }
 
     [Fact]
