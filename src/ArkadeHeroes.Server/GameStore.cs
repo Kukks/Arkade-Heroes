@@ -230,6 +230,11 @@ public class OfferListing
     /// <summary>Latched once the listing fee is observed paid — an offer stays <c>pending</c> until then
     /// (true immediately when no fee is due, so a disabled fee is a no-op).</summary>
     public bool ListingFeePaid { get; set; }
+    /// <summary>Whether the asset is currently observed resting at the offer address, refreshed on each
+    /// reconcile. Tracked apart from <see cref="Status"/> because a fee-gated offer stays <c>pending</c>
+    /// even after its asset has LEFT the seller's wallet — so <c>pending</c> alone cannot answer "is the
+    /// item still held?", which is what the free-to-sell check needs.</summary>
+    public bool AssetDeposited { get; set; }
 }
 
 /// <summary>A pending/resolved 3v3 squad match: two 3-hero lineups sharing one wager escrow (reused from the

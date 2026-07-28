@@ -65,8 +65,13 @@ public class GameOptions
 
     /// <summary>Marketplace listing fee: flat sats the seller pays the treasury to list an offer (item or
     /// hero) — treasury capture on secondary trades, the counterweight to the daily + season faucets.
-    /// DEFAULT 0 (disabled) until the sell-flow UI prompts payment; flip on in a coordinated release.</summary>
-    public long OfferListingFeeSats { get; set; } = 0;
+    /// LIVE at 1000, matching the breed and merge fee scale. It was held at 0 until EVERY sell path paid it,
+    /// which is now true: the browser prompts (/sell states "A 1000 sat listing fee is paid to the treasury
+    /// when you list") and was verified end-to-end on regtest — paid from the seller's own wallet, treasury
+    /// booked it as inflowByTag {"listing": 1000}, hero escrowed at a live covenant offer — and the console
+    /// client pays it on sell/sellhero too. Note this taxes LISTING, not selling — a seller pays even if
+    /// nobody buys — so it is the knob to lower first if the market looks thin.</summary>
+    public long OfferListingFeeSats { get; set; } = 1_000;
 
     /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),
     /// so it can never drain the treasury below this permanent reserve. 0 = no floor (clamp to full balance).

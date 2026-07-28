@@ -18,8 +18,16 @@ public class HeroSaleTests : IClassFixture<WebApplicationFactory<Program>>
 
     public HeroSaleTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private static Task<CreateOfferResponse> ListHeroAsync(ArkadeHeroesClient seller, string heroId, long ask)
-        => seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, ask));
+    /// <summary>Lists a hero and clears the listing fee, so these lifecycle tests drive the real default
+    /// path — a fee IS charged, and an offer stays pending until it clears. Tests that expect listing
+    /// itself to be refused call the SDK directly instead.</summary>
+    private static async Task<CreateOfferResponse> ListHeroAsync(ArkadeHeroesClient seller, string heroId, long ask)
+    {
+        var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, ask));
+        if (offer.ListingFee is { AmountSats: > 0 } fee)
+            await seller.Dev.PayInvoiceAsync(new { fee.InvoiceId });
+        return offer;
+    }
 
     [Fact]
     public async Task HeroSale_ListFundFulfilClaim_MovesOwnershipAndStripsEquipment()

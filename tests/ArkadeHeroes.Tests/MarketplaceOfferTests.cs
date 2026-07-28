@@ -18,8 +18,16 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
 
     public MarketplaceOfferTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private static Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
-        => seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
+    /// <summary>Lists a spare unit and clears the listing fee, so these lifecycle tests drive the real
+    /// default path — a fee IS charged, and an offer stays pending until it clears. Tests that want an
+    /// offer to stay pending, or that expect listing to be refused, call the SDK directly instead.</summary>
+    private static async Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
+    {
+        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
+        if (offer.ListingFee is { AmountSats: > 0 } fee)
+            await seller.Dev.PayInvoiceAsync(new { fee.InvoiceId });
+        return offer;
+    }
 
     [Fact]
     public async Task Offer_ListFundFulfil_ItemMovesAndSellerPaid()
