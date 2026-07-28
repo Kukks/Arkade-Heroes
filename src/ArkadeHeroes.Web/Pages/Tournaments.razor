@@ -62,12 +62,20 @@ else
         <span class="spacer"></span>
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
-    @if (!Joinable.Any() && !Resolvable.Any())
+    @if (!Joinable.Any() && !Resolvable.Any() && !Waiting.Any())
     {
         <div class="card muted">No open brackets — host one above.</div>
     }
     else
     {
+        @foreach (var t in Waiting)
+        {
+            <div class="card"><div class="match-row">
+                <span>Your bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Joined / @t.Size joined</span>
+                <span class="spacer"></span>
+                <span class="chip">waiting for entrants</span>
+            </div></div>
+        }
         @foreach (var t in Joinable)
         {
             <div class="card"><div class="match-row">
@@ -144,6 +152,12 @@ else
     private string? MyId => _mine.FirstOrDefault()?.OwnerId;
     private IEnumerable<TournamentDto> Joinable => _tournaments.Where(t => t.Status == "open" && !t.Entrants.Any(e => e.PlayerId == MyId));
     private IEnumerable<TournamentDto> Resolvable => _tournaments.Where(t => t.Status == "full" && t.Entrants.Any(e => e.PlayerId == MyId));
+
+    // The fourth combination of (open|full × mine|not-mine), and the one every bracket sits in the moment
+    // you host it: still filling, and you are already an entrant. Joinable excludes it (you cannot join
+    // twice) and Resolvable excludes it (not full yet), so without this it renders NOWHERE — you pay a
+    // real-sats buy-in and your bracket vanishes, under a message inviting you to host another one.
+    private IEnumerable<TournamentDto> Waiting => _tournaments.Where(t => t.Status == "open" && t.Entrants.Any(e => e.PlayerId == MyId));
     private string Name(string? heroId) => heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "—";
 
     protected override async Task OnInitializedAsync()
@@ -193,9 +207,13 @@ else
     async Task RunAction(Func<Task> action)
     {
         _busy = true; _error = null;
-        try { await action(); _status = null; await LoadAsync(); }
+        try { await action(); _status = null; }
         catch (Exception ex) { _error = ex.Message; _status = null; }
-        finally { _busy = false; }
+        // Reload even when the action threw. Open and join create the bracket on the server FIRST and pay
+        // the buy-in second, so a payment that fails still leaves a real bracket behind — reloading only on
+        // success left the page insisting "No open brackets" while the player's half-finished (and possibly
+        // unpaid) bracket sat there unseen, which is exactly the state they most need to see.
+        finally { await LoadAsync(); _busy = false; }
     }
 
     async Task Reload()
