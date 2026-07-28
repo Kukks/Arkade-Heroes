@@ -151,8 +151,10 @@ public sealed record CombatConfig(
     // separate coordinated client+server release. Optional param → no positional ctor breaks.
     bool ElementAwareSelection = false,
     // Genome-derived innate abilities: when true, a hero's EXPRESSED COSMETIC traits (the six
-    // non-affinity categories, otherwise combat-inert) grant a small capped damage nudge via
-    // Traits.InnateModifier — so rarity/breeding start to matter in the fight, not just on the card.
+    // non-affinity categories, otherwise combat-inert) each grant one capped combat passive —
+    // Aura→shield, Marking→regen, Eyes→accuracy, Crest→thorns, Sigil→brand, Stance→initiative,
+    // scaled by Traits.InnateStrength and the Innate knobs below — so rarity/breeding start to
+    // matter in the fight, not just on the card.
     // DEFAULT FALSE (same discipline as ElementAwareSelection): Default stays byte-identical and every
     // existing replay verifies unchanged; flipping it on is a coordinated client+server release.
     bool InnateAbilities = false,

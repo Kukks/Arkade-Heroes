@@ -66,9 +66,6 @@ public static class Traits
         return list;
     }
 
-    /// <summary>Total affinity contribution cap: a hero's expressed affinities can raise its damage by at most 5%.</summary>
-    public const double AffinityCap = 0.05;
-
     /// <summary>
     /// The capped combat multiplier from a hero's EXPRESSED AFFINITY traits (1.0..1.05).
     /// Each affinity tier adds a small share; the sum is clamped to the cap so a
@@ -81,33 +78,6 @@ public static class Traits
         foreach (var trait in Expressed(genome))
         {
             if (!IsAffinity(trait.Category)) continue;
-            bonus += TierOf(trait.Value, config) switch
-            {
-                RarityTier.Legendary => a.Legendary,
-                RarityTier.Epic => a.Epic,
-                RarityTier.Rare => a.Rare,
-                RarityTier.Uncommon => a.Uncommon,
-                _ => a.Common,
-            };
-        }
-        return 1.0 + Math.Min(bonus, a.Cap);
-    }
-
-    /// <summary>
-    /// The capped combat multiplier from a hero's EXPRESSED COSMETIC traits (1.0..1.05) — the six
-    /// non-affinity categories (Aura, Marking, Eyes, Crest, Sigil, Stance) that are otherwise combat-inert.
-    /// Same shape + cap as <see cref="AffinityModifier"/> (reusing the affinity bonus scale), so a
-    /// cosmetic-rich genome is a nudge, never a trump. Deterministic — a pure genome function. Combat only
-    /// folds this in when <see cref="CombatConfig.InnateAbilities"/> is enabled (default off), so replays
-    /// under <see cref="GameConfig.Default"/> stay byte-identical.
-    /// </summary>
-    public static double InnateModifier(Genome genome, GameConfig? config = null)
-    {
-        var a = (config ?? GameConfig.Default).Affinity;
-        double bonus = 0;
-        foreach (var trait in Expressed(genome))
-        {
-            if (IsAffinity(trait.Category)) continue;   // cosmetic categories only (the inverse of AffinityModifier)
             bonus += TierOf(trait.Value, config) switch
             {
                 RarityTier.Legendary => a.Legendary,
