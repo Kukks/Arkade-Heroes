@@ -62,15 +62,51 @@ public static class OfferFulfillFlow
             throw new InvalidOperationException(
                 $"Insufficient funds to fulfil offer {offer.OfferId}: need {offer.AskSats} sats, have {fundedSats}.");
 
-        // Outputs: [0] seller gets the ask; [1] buyer gets the item carrier +
-        // change (offer dust + funding − ask). The fulfill covenant pins output 0.
+        // The buyer always pays the sticker ask; when a marketplace fee is in force the covenant
+        // SPLITS it — the seller absorbs the cut, so their payout is ask − fee and the treasury is
+        // paid the rest at its own pinned output. Buyer change is identical either way.
         var offerDust = (long)offerVtxo.Amount;
         var buyerChange = offerDust + fundedSats - offer.AskSats;
+        var fee = string.IsNullOrEmpty(offer.TreasuryFeeAddress) ? 0 : offer.FeeSats;
+
+        byte[][] witness;
+        TxOut[] outputs;
+        ushort itemVout;
+        if (fee > 0)
+        {
+            // Witness (bottom→top): [itemOutIdx=2, feeOutIdx=1, sellerOutIdx=0] — each PayTo's DUP
+            // consumes the top index in script order (seller first, then treasury), and
+            // AssetAtWitnessOutput consumes the item index beneath both.
+            itemVout = 2;
+            witness =
+            [
+                ArkadeCovenants.EncodeIndex(2), ArkadeCovenants.EncodeIndex(1), ArkadeCovenants.EncodeIndex(0),
+            ];
+            outputs =
+            [
+                new TxOut(Money.Satoshis(offer.AskSats - fee), sellerScript),                        // vout 0
+                new TxOut(Money.Satoshis(fee), ArkAddress.Parse(offer.TreasuryFeeAddress!).ScriptPubKey), // vout 1
+                new TxOut(Money.Satoshis(buyerChange), buyerScript),                                 // vout 2
+            ];
+        }
+        else
+        {
+            // Witness (bottom→top): [itemOutIdx=1, payToOutIdx=0] — the item rides the
+            // buyer's output 1; the seller is paid at output 0 (PayTo consumes the top).
+            itemVout = 1;
+            witness = [ArkadeCovenants.EncodeIndex(1), ArkadeCovenants.EncodeIndex(0)];
+            outputs =
+            [
+                new TxOut(Money.Satoshis(offer.AskSats), sellerScript),  // seller paid (vout 0)
+                new TxOut(Money.Satoshis(buyerChange), buyerScript),     // item carrier + change (vout 1)
+            ];
+        }
+
         // The item rides the buyer's output (group input at the offer vin 0).
         var packet = Packet.Create(
         [
             AssetGroup.Create(item, null,
-                [AssetInput.Create(0, 1)], [AssetOutput.Create(1, 1)], []),
+                [AssetInput.Create(0, 1)], [AssetOutput.Create(itemVout, 1)], []),
         ]);
 
         return await CovenantSpender.SpendManyCoreAsync(
@@ -79,14 +115,8 @@ public static class OfferFulfillFlow
             services.GetRequiredService<IWalletProvider>(),
             services.GetRequiredService<IIntentStorage>(),
             walletId, emulatorUri,
-            // Witness (bottom→top): [itemOutIdx=1, payToOutIdx=0] — the item rides the
-            // buyer's output 1; the seller is paid at output 0 (PayTo consumes the top).
-            [new CovenantSpender.CovenantInput(contract, "fulfill",
-                [ArkadeCovenants.EncodeIndex(1), ArkadeCovenants.EncodeIndex(0)], offerVtxo)],
-            [
-                new TxOut(Money.Satoshis(offer.AskSats), sellerScript),  // seller paid (vout 0)
-                new TxOut(Money.Satoshis(buyerChange), buyerScript),     // item carrier + change (vout 1)
-            ],
+            [new CovenantSpender.CovenantInput(contract, "fulfill", witness, offerVtxo)],
+            outputs,
             extraPackets: [packet],
             fundingCoins: funding,
             ct: ct);

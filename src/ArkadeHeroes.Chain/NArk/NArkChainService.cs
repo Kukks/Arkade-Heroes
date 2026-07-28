@@ -1144,17 +1144,17 @@ public class NArkChainService(
 
     public async Task<OfferInfo> CreateOfferAsync(
         string offerId, string sellerPlayerId, string itemId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default)
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)
     {
         var assetId = await GetKvAsync($"itemAsset:{itemId}", ct)
             ?? throw new InvalidOperationException($"Item '{itemId}' has never been issued — nothing to sell.");
-        return await CreateOfferForAssetAsync(offerId, sellerPlayerId, assetId, askSats, refundAfterUnixSeconds, ct);
+        return await CreateOfferForAssetAsync(offerId, sellerPlayerId, assetId, askSats, refundAfterUnixSeconds, feeSats, ct);
     }
 
     public Task<OfferInfo> CreateHeroOfferAsync(
         string offerId, string sellerPlayerId, string heroAssetId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default)
-        => CreateOfferForAssetAsync(offerId, sellerPlayerId, heroAssetId, askSats, refundAfterUnixSeconds, ct);
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)
+        => CreateOfferForAssetAsync(offerId, sellerPlayerId, heroAssetId, askSats, refundAfterUnixSeconds, feeSats, ct);
 
     /// <summary>
     /// The asset-agnostic core: rest an offer for a specific asset id (a fungible
@@ -1163,9 +1163,12 @@ public class NArkChainService(
     /// </summary>
     private async Task<OfferInfo> CreateOfferForAssetAsync(
         string offerId, string sellerPlayerId, string assetId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct)
+        long refundAfterUnixSeconds, long feeSats, CancellationToken ct)
     {
         if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
+        if (feeSats < 0 || feeSats >= askSats)
+            throw new InvalidOperationException(
+                $"The marketplace fee ({feeSats}) must be non-negative and below the ask ({askSats}).");
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var sellerAddress = await GetPlayerAddressAsync(sellerPlayerId, ct);
         // The carrier dust the seller deposits with the asset is exactly what the
@@ -1173,8 +1176,13 @@ public class NArkChainService(
         // SendAssetAsync deposits).
         var offerValue = serverInfo.Dust.Satoshi;
 
+        // Bake the treasury cut into the offer's own params so the fulfil leaf enforces it and no invoice
+        // is needed: an unsold offer is never charged, and a sale cannot skip the cut. Fee 0 omits the
+        // leg and derives the address every pre-fee offer already has.
+        if (feeSats > 0) await EnsureTreasuryAsync(ct);
         var parameters = new Covenants.OfferParams(
-            sellerAddress, assetId, askSats, offerValue, offerId, refundAfterUnixSeconds);
+            sellerAddress, assetId, askSats, offerValue, offerId, refundAfterUnixSeconds,
+            feeSats, feeSats > 0 ? _treasuryAddress : null);
         await SetKvAsync($"offer:{offerId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
 
         var (contract, _) = await BuildOfferContractAsync(parameters, ct);

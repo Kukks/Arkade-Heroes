@@ -652,18 +652,18 @@ api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, 
 api.MapPost("/offers", async (CreateOfferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (_, info, fee) = await game.CreateOfferAsync(player, request.ItemId, request.AskSats, ct);
+    var (listing, info) = await game.CreateOfferAsync(player, request.ItemId, request.AskSats, ct);
     return Results.Ok(new CreateOfferResponse(info.OfferId, info.OfferAddress, info.ItemAssetId,
-        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds, fee?.AmountSats ?? 0, fee?.ToDto()));
+        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds, listing.ListingFeeSats));
 });
 
 // Hero sales reuse the same offer covenant (a hero is a unique asset).
 api.MapPost("/offers/hero", async (CreateHeroOfferRequest request, HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (_, info, fee) = await game.CreateHeroOfferAsync(player, request.HeroId, request.AskSats, ct);
+    var (listing, info) = await game.CreateHeroOfferAsync(player, request.HeroId, request.AskSats, ct);
     return Results.Ok(new CreateOfferResponse(info.OfferId, info.OfferAddress, info.ItemAssetId,
-        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds, fee?.AmountSats ?? 0, fee?.ToDto()));
+        info.AskSats, info.OfferValueSats, info.RefundAfterUnixSeconds, listing.ListingFeeSats));
 });
 
 // The buyer claims game-side ownership after fulfilling a hero offer from their

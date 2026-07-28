@@ -1306,8 +1306,8 @@ public class GameClient : IAsyncDisposable
             throw new GameClientException("ask must be a positive number of sats");
         var offer = await _api.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for one {itemId}");
-        if (!await PayListingFeeAsync(offer.ListingFee)) return;
         await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
+        ReportMarketplaceFee(offer.ListingFeeSats, offer.AskSats);
         Console.WriteLine($"    listed — buyers run 'offers' then 'buyoffer {offer.OfferId}'");
     }
 
@@ -1334,27 +1334,21 @@ public class GameClient : IAsyncDisposable
         var hero = ResolveHero(heroRef);
         var offer = await _api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, ask));
         Console.WriteLine($"  ✓ offer {ShortId(offer.OfferId)} created — ask {offer.AskSats} sats for {hero.Name}");
-        if (!await PayListingFeeAsync(offer.ListingFee)) return;
         await DepositOfferAsync(offer.OfferId, offer.OfferAddress, offer.ItemAssetId);
+        ReportMarketplaceFee(offer.ListingFeeSats, offer.AskSats);
         Console.WriteLine($"    {hero.Name} listed — buyers run 'offers' then 'buyhero {offer.OfferId}'");
     }
 
     /// <summary>
-    /// Pays the marketplace listing fee, if one is charged. The server holds the offer PENDING until this
-    /// clears, so an unpaid fee means the offer never rests on the market.
-    /// CALL THIS BEFORE DEPOSITING THE ASSET. The fee is small and its failure costs nothing, whereas the
-    /// deposit is an irreversible send into the offer covenant — recoverable only via the timelocked reclaim
-    /// leaf (canceloffer, after RefundAfterUnixSeconds). Paying first means a seller who cannot cover the fee
-    /// keeps their hero in their own wallet instead of stranding it in an offer that can never go live.
-    /// Returns false when the fee is owed but could not be paid, so the caller stops before escrowing.
+    /// Tells the seller what the sale will actually pay them. There is nothing to pay at listing: the
+    /// marketplace fee is baked into the offer's covenant and taken FROM the sale, so an offer that never
+    /// sells costs nothing, a sale cannot skip the cut, and no failed fee payment can strand the asset.
     /// </summary>
-    private async Task<bool> PayListingFeeAsync(FeeInvoiceDto? fee)
+    private static void ReportMarketplaceFee(long feeSats, long askSats)
     {
-        if (fee is not { AmountSats: > 0 }) return true;
-        Console.WriteLine($"    listing fee {fee.AmountSats} sats → treasury");
-        if (await SettleInvoiceAsync(fee)) return true;
-        Console.WriteLine("    couldn't pay the listing fee — nothing was escrowed, your asset is untouched.");
-        return false;
+        if (feeSats <= 0) return;
+        Console.WriteLine(
+            $"    marketplace fee {feeSats} sats is taken from the sale — you receive {askSats - feeSats} sats when it sells");
     }
 
     /// <summary>

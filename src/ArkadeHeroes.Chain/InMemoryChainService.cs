@@ -652,7 +652,7 @@ public class InMemoryChainService : IChainService
     /// <summary>Kind "item" (fungible, keyed by ItemId) or "hero" (unique, keyed by HeroAssetId).</summary>
     private sealed record SimOffer(
         string SellerId, string Kind, string ItemId, string HeroAssetId,
-        long AskSats, long OfferValueSats, long RefundAfterUnixSeconds)
+        long AskSats, long OfferValueSats, long RefundAfterUnixSeconds, long FeeSats = 0)
     {
         public bool Funded;
         public bool Closed; // fulfilled or reclaimed
@@ -663,23 +663,34 @@ public class InMemoryChainService : IChainService
 
     public async Task<OfferInfo> CreateOfferAsync(
         string offerId, string sellerPlayerId, string itemId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default)
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)
     {
         if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
+        RequireFeeBelowAsk(askSats, feeSats);
         await GetPlayerAddressAsync(sellerPlayerId, ct);
         var assetId = _itemAssets.GetOrAdd(itemId, _ => NewId("sim-item"));
-        _offers[offerId] = new SimOffer(sellerPlayerId, "item", itemId, "", askSats, SimOfferDust, refundAfterUnixSeconds);
+        _offers[offerId] = new SimOffer(sellerPlayerId, "item", itemId, "", askSats, SimOfferDust, refundAfterUnixSeconds, feeSats);
         return new OfferInfo(offerId, $"sim-offer-{offerId}", assetId, askSats, SimOfferDust, refundAfterUnixSeconds);
     }
 
     public async Task<OfferInfo> CreateHeroOfferAsync(
         string offerId, string sellerPlayerId, string heroAssetId, long askSats,
-        long refundAfterUnixSeconds, CancellationToken ct = default)
+        long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)
     {
         if (askSats <= 0) throw new InvalidOperationException("The ask must be positive.");
+        RequireFeeBelowAsk(askSats, feeSats);
         await GetPlayerAddressAsync(sellerPlayerId, ct);
-        _offers[offerId] = new SimOffer(sellerPlayerId, "hero", "", heroAssetId, askSats, SimOfferDust, refundAfterUnixSeconds);
+        _offers[offerId] = new SimOffer(sellerPlayerId, "hero", "", heroAssetId, askSats, SimOfferDust, refundAfterUnixSeconds, feeSats);
         return new OfferInfo(offerId, $"sim-offer-{offerId}", heroAssetId, askSats, SimOfferDust, refundAfterUnixSeconds);
+    }
+
+    /// <summary>The covenant's own guard, mirrored so the sim refuses what the chain would: a fee at or
+    /// above the ask leaves the seller nothing, and PayTo rejects a non-positive amount outright.</summary>
+    private static void RequireFeeBelowAsk(long askSats, long feeSats)
+    {
+        if (feeSats < 0 || feeSats >= askSats)
+            throw new InvalidOperationException(
+                $"The marketplace fee ({feeSats}) must be non-negative and below the ask ({askSats}).");
     }
 
     public Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default)
@@ -690,7 +701,8 @@ public class InMemoryChainService : IChainService
         if (!_offers.TryGetValue(offerId, out var o)) return Task.FromResult<Covenants.OfferParams?>(null);
         var assetId = o.IsHero ? o.HeroAssetId : _itemAssets.GetValueOrDefault(o.ItemId, $"sim-item-{o.ItemId}");
         return Task.FromResult<Covenants.OfferParams?>(new Covenants.OfferParams(
-            $"sim-player-{o.SellerId}", assetId, o.AskSats, o.OfferValueSats, offerId, o.RefundAfterUnixSeconds));
+            $"sim-player-{o.SellerId}", assetId, o.AskSats, o.OfferValueSats, offerId, o.RefundAfterUnixSeconds,
+            o.FeeSats, o.FeeSats > 0 ? "sim-treasury" : null));
     }
 
     /// <summary>Simulated seller-wallet deposit of the offered asset (+ carrier dust) into the offer.</summary>
@@ -726,7 +738,13 @@ public class InMemoryChainService : IChainService
         _playerBalances.AddOrUpdate(buyerPlayerId, _ => throw new InvalidOperationException("Buyer has no wallet."),
             (_, bal) => { if (bal < offer.AskSats) return bal; paid = true; return bal - offer.AskSats; });
         if (!paid) throw new InvalidOperationException($"Insufficient balance for the {offer.AskSats}-sat ask.");
-        _playerBalances.AddOrUpdate(offer.SellerId, offer.AskSats, (_, bal) => bal + offer.AskSats);
+        // The buyer paid the full ask; the covenant SPLITS it. The seller absorbs the marketplace fee, so
+        // they receive ask − fee and the treasury takes the rest. Mirrored here because the sim is what
+        // every InMemory marketplace test measures — without the split those tests would assert a payout
+        // the real chain never makes.
+        _playerBalances.AddOrUpdate(offer.SellerId, offer.AskSats - offer.FeeSats,
+            (_, bal) => bal + offer.AskSats - offer.FeeSats);
+        if (offer.FeeSats > 0) Interlocked.Add(ref _treasuryBalance, offer.FeeSats);
         if (offer.IsHero) _assetHolders[offer.HeroAssetId] = buyerPlayerId;
         else _itemHoldings.AddOrUpdate((buyerPlayerId, offer.ItemId), 1UL, (_, count) => count + 1);
         offer.Closed = true;

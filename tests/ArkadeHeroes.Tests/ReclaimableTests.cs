@@ -23,20 +23,22 @@ public class ReclaimableTests
             b.ConfigureServices(s => s.Configure<GameOptions>(o => o.OfferListingFeeSats = Fee)));
 
     [Fact]
-    public async Task Listing_StuckOnAnUnpaidFee_IsReclaimable()
+    public async Task DepositedListing_IsReclaimable()
     {
+        // The seller's asset is escrowed in a resting offer. Whether it sells or not, that asset is
+        // recoverable through the covenant's timelocked reclaim leaf, and the browser needs to SEE it —
+        // it has no other way to find a listing it wants back.
         using var factory = FeeFactory();
-        var (seller, _) = await factory.RegisterAsync("RC-Stuck");
+        var (seller, _) = await factory.RegisterAsync("RC-Resting");
         await seller.BuyItemAsync("rusty-blade");
 
-        // Asset escrowed, fee deliberately left unpaid — the offer can never go live.
         var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000));
         await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
 
-        var stuck = Assert.Single(await seller.Players.ReclaimableAsync());
-        Assert.Equal("offer", stuck.Kind);
-        Assert.Equal(offer.OfferId, stuck.Id);
-        Assert.Contains("never went live", stuck.Summary);
+        var resting = Assert.Single(await seller.Players.ReclaimableAsync());
+        Assert.Equal("offer", resting.Kind);
+        Assert.Equal(offer.OfferId, resting.Id);
+        Assert.Contains("resting on the market", resting.Summary);
     }
 
     [Fact]
