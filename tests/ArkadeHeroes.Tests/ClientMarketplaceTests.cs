@@ -1,7 +1,12 @@
+using System.Net.Http.Json;
+using ArkadeHeroes.Chain;
 using ArkadeHeroes.Client;
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ArkadeHeroes.Tests;
 
@@ -102,5 +107,33 @@ public class ClientMarketplaceTests : IClassFixture<WebApplicationFactory<Progra
         Assert.Contains(
             await observer.Offers.ListAsync(),
             o => o.ItemName == "Steel Saber" && o.AskSats == 4000);
+    }
+
+    [Fact]
+    public async Task Sell_WhenTheListingFeeCannotBePaid_NeverEscrowsTheItem()
+    {
+        // Ordering invariant: the fee is paid BEFORE the asset is deposited. The deposit is an
+        // irreversible send into the offer covenant — undoable only through the timelocked reclaim leaf —
+        // whereas failing the fee costs nothing. Depositing first would strand the item in an offer that
+        // can never go live. A fee above the simulated faucet balance makes payment impossible.
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureServices(s => s.Configure<GameOptions>(
+                o => o.OfferListingFeeSats = InMemoryChainService.FaucetSats + 1)));
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+
+        await using var seller = new GameClient("http://localhost", factory.CreateClient(), FreshHome());
+        await seller.ExecuteAsync(["register", "CliBrokeLister"]);
+        await seller.ExecuteAsync(["starter"]);
+        await seller.ExecuteAsync(["buy", "rusty-blade"]);
+        // The command cannot succeed — the point is the state it leaves behind, not how it reports failure.
+        try { await seller.ExecuteAsync(["sell", "rusty-blade", "3000"]); } catch { /* expected */ }
+
+        // The seller is the only registered player here, so any hero's owner is them.
+        var http = factory.CreateClient();
+        var heroes = await http.GetFromJsonAsync<List<HeroDto>>("/api/heroes");
+        var sellerId = heroes!.First().OwnerId;
+
+        // The unit is still in the seller's own wallet — nothing was escrowed behind an unpayable fee.
+        Assert.Equal(1ul, await chain.GetItemAssetBalanceAsync(sellerId, "rusty-blade", default));
     }
 }
