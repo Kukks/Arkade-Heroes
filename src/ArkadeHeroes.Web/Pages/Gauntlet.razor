@@ -66,7 +66,7 @@ else
             var w = _outcome.Run.Waves[_waveIndex];
             <div class="status-line" style="justify-content:center;gap:.7rem;margin-bottom:.5rem">
                 <span class="chip mono">Wave @w.Wave / 5</span>
-                <span class="muted">ghost L@w.GhostLevel</span>
+                <span class="muted">ghost L@(w.GhostLevel)</span>
                 <button class="btn ghost sm" @onclick="SkipReplay">Skip ▶▶</button>
             </div>
             <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
@@ -78,7 +78,7 @@ else
                 {
                     <div class="card" style="text-align:center">
                         <div class="chip mono">Wave @wv.Wave</div>
-                        <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
+                        <div style="margin:.45rem 0 .3rem">ghost L@(wv.GhostLevel)</div>
                         <div class="status-line" style="justify-content:center">
                             <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
                         </div>

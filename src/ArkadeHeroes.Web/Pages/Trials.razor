@@ -99,7 +99,7 @@ else
         {
             <div class="status-line" style="justify-content:center;gap:.7rem;margin:1.2rem 0 .5rem">
                 <span class="chip mono">Wave @_watching.Wave</span>
-                <span class="muted">ghost L@_watching.GhostLevel</span>
+                <span class="muted">ghost L@(_watching.GhostLevel)</span>
                 <button class="btn ghost sm" @onclick="StopWatching">Close ✕</button>
             </div>
             <BattleArena A="_outcome.Run.HeroSnapshot" B="_watching.Ghost" Fight="_watching.Result" />
@@ -114,7 +114,7 @@ else
             {
                 <div class="card" style="text-align:center">
                     <div class="chip mono">Wave @wv.Wave</div>
-                    <div style="margin:.45rem 0 .3rem">ghost L@wv.GhostLevel</div>
+                    <div style="margin:.45rem 0 .3rem">ghost L@(wv.GhostLevel)</div>
                     <div class="status-line" style="justify-content:center">
                         <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "survived" : "fell here")
                     </div>
