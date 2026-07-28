@@ -48,7 +48,8 @@ public sealed record GameConfig(
     long SeasonPotBaseSats = 25_000,  // guaranteed base pot each season (treasury-funded)
     int SeasonFeeAccrualPct = 20,     // % of each staked match's fees added to the season pot
     // ── Marketplace listing fee (treasury capture on secondary trades) ──
-    long OfferListingFeeSats = 0,     // flat sats the seller pays the treasury to list an offer; 0 = disabled
+    long OfferListingFeeSats = 0,     // flat sats the offer covenant routes to the treasury ON A SALE (the
+                                      // seller absorbs it out of the ask; listing is free); 0 = disabled
     // ── Unique-name registry (treasury sats sink: claim a custom hero name) ──
     long HeroRenameFeeSats = 0,       // flat sats to claim a unique hero name; 0 = free
     // ── Tournaments (house rake on the buy-in pot → treasury) ──
