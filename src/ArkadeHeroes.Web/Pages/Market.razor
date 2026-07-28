@@ -111,9 +111,11 @@ else
         _error = false;
         try
         {
-            // A live market shows what a buyer can act on (resting / funding); a short
-            // "recently sold" strip carries the SOLD flourish for what just changed hands.
-            _active = (await Api.Offers.ListAsync()).Where(o => o.Status is "active" or "pending").ToList();
+            // A live market shows what a buyer can act on; a short "recently sold" strip carries the
+            // SOLD flourish for what just changed hands. No client-side status filter: /api/offers
+            // returns ONLY active offers (GameService.ListOffersAsync), so filtering here for "pending"
+            // as well was dead — and worse, it implied undeposited offers reach the market. They do not.
+            _active = (await Api.Offers.ListAsync()).ToList();
             try { _sold = await Api.Offers.SoldAsync(4); }
             catch { _sold = new(); }
 
