@@ -119,19 +119,23 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(commit.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
-        // 2. Deposit both parents + the fee into the escrow (plain sends to one opaque address),
+        // 2. Deposit the fee + both parents into the escrow (plain sends to one opaque address),
         //    each waiting for its spend to settle before the next so they don't contend for one coin.
+        //    THE FEE GOES FIRST: it is small and failing it costs nothing, while each parent deposit is
+        //    an irreversible send recoverable only through the timelocked reclaim leaf. Paying first means
+        //    a player who cannot cover the fee still holds both parents. Order is inert to the server —
+        //    IsBreedEscrowFundedAsync is a conjunction over FINAL state (both parents AND the fee present).
         var heroA = await api.Heroes.GetAsync(parentAId);
         var heroB = await api.Heroes.GetAsync(parentBId);
-        onProgress?.Invoke("Escrowing the first parent…");
-        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 0);
-        onProgress?.Invoke("Escrowing the second parent…");
-        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 0);
         if (commit.EscrowFeeSats > 0)
         {
             onProgress?.Invoke("Paying the breeding fee…");
             await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.EscrowFeeSats);
         }
+        onProgress?.Invoke("Escrowing the first parent…");
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroA.AssetId ?? heroA.Id, 0);
+        onProgress?.Invoke("Escrowing the second parent…");
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroB.AssetId ?? heroB.Id, 0);
 
         // 3. Reveal — retry while the deposits settle into arkd's indexer (the funding gate).
         //    Isolated so a timed-out reveal can be retried alone (the parents are already escrowed).
@@ -181,17 +185,20 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(commit.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
+        // Fee first, then the heroes — failing the fee costs nothing, while each hero deposit is
+        // irreversible until the timelocked reclaim leaf opens. IsMergeEscrowFundedAsync is a conjunction
+        // over final state (base AND sacrifice AND fee), so the order is inert to the server.
         var heroBase = await api.Heroes.GetAsync(baseId);
         var heroSac = await api.Heroes.GetAsync(sacrificeId);
-        onProgress?.Invoke("Escrowing the base hero…");
-        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 0);
-        onProgress?.Invoke("Escrowing the sacrifice…");
-        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 0);
         if (commit.FeeSats > 0)
         {
             onProgress?.Invoke("Paying the fusion fee…");
             await DepositAndSettleAsync(w.Id, commit.EscrowAddress, null, commit.FeeSats);
         }
+        onProgress?.Invoke("Escrowing the base hero…");
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroBase.AssetId ?? heroBase.Id, 0);
+        onProgress?.Invoke("Escrowing the sacrifice…");
+        await DepositAndSettleAsync(w.Id, commit.EscrowAddress, heroSac.AssetId ?? heroSac.Id, 0);
 
         onProgress?.Invoke("Forging the fused hero…");
         return await RevealMergedHeroAsync(commit.MergeId, onProgress);
@@ -526,15 +533,18 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(open.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
-        if (open.EscrowStakeSats > 0)
-        {
-            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
-            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
-        }
+        // Fee first, stake second. The fee is a fixed treasury send; the stake is player-chosen and can be
+        // far larger. Failing the fee after staking would leave the wager sitting in the escrow until the
+        // timelocked refund opens, so pay the cheap half before committing the expensive one.
         if (open.MatchFeeInvoice is { AmountSats: > 0 } fee)
         {
             onProgress?.Invoke("Paying your match fee…");
             await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        if (open.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
         }
         return open.MatchId;
     }
@@ -554,15 +564,16 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(accept.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
-        if (accept.EscrowStakeSats > 0)
-        {
-            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
-            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
-        }
+        // Fee before stake — same reasoning as the challenger's side.
         if (accept.MatchFeeInvoice is { AmountSats: > 0 } fee)
         {
             onProgress?.Invoke("Paying your match fee…");
             await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        if (accept.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
         }
     }
 
@@ -612,15 +623,16 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var open = await api.Squad.OpenAsync(new OpenSquadMatchRequest(myLineup, opponentLineup, wagerSats, "covenant"));
         if (string.IsNullOrEmpty(open.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
-        if (open.EscrowStakeSats > 0)
-        {
-            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
-            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
-        }
+        // Fee before stake — same reasoning as the duel flow.
         if (open.MatchFeeInvoice is { AmountSats: > 0 } fee)
         {
             onProgress?.Invoke("Paying your match fee…");
             await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        if (open.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {open.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, open.EscrowAddress, null, open.EscrowStakeSats);
         }
         return open.MatchId;
     }
@@ -632,15 +644,16 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var accept = await api.Squad.AcceptAsync(matchId);
         if (string.IsNullOrEmpty(accept.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
-        if (accept.EscrowStakeSats > 0)
-        {
-            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
-            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
-        }
+        // Fee before stake — same reasoning as the duel flow.
         if (accept.MatchFeeInvoice is { AmountSats: > 0 } fee)
         {
             onProgress?.Invoke("Paying your match fee…");
             await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        if (accept.EscrowStakeSats > 0)
+        {
+            onProgress?.Invoke($"Staking your {accept.EscrowStakeSats:N0} sats…");
+            await DepositAndSettleAsync(w.Id, accept.EscrowAddress, null, accept.EscrowStakeSats);
         }
     }
 
@@ -688,18 +701,21 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(open.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
+        // Fee first, stakes second. The fee is a small send to the treasury and failing it costs nothing,
+        // whereas the hero and gear go into the joint escrow irreversibly — recoverable only through the
+        // reclaim leaf. Paying first means a challenger who cannot cover the fee keeps their hero.
         var myHero = await api.Heroes.GetAsync(myHeroId);
+        if (open.FeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying the death-match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
         onProgress?.Invoke("Staking your hero into the death-match…");
         await DepositAndSettleAsync(w.Id, open.EscrowAddress, myHero.AssetId ?? myHero.Id, 0);
         foreach (var g in open.ChallengerGear)
         {
             onProgress?.Invoke($"Staking your {g.ItemId}…");
             await DepositAndSettleAsync(w.Id, open.EscrowAddress, g.AssetId, 0, (ulong)g.Amount);
-        }
-        if (open.FeeInvoice is { AmountSats: > 0 } fee)
-        {
-            onProgress?.Invoke("Paying the death-match fee…");
-            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
         }
         return open.DeathMatchId;
     }
@@ -719,17 +735,19 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         if (string.IsNullOrEmpty(accept.EscrowAddress))
             throw new GameWalletException("This arena isn't in covenant mode (no escrow address returned).");
 
+        // Fee first, stakes second — same reasoning as the challenger's side: a defender who cannot cover
+        // the fee keeps their hero rather than having it sit in an escrow they must wait out to reclaim.
+        if (accept.FeeInvoice is { AmountSats: > 0 } fee)
+        {
+            onProgress?.Invoke("Paying the death-match fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
         onProgress?.Invoke("Staking your hero into the death-match…");
         await DepositAndSettleAsync(w.Id, accept.EscrowAddress, accept.DefenderHero.AssetId ?? accept.DefenderHero.Id, 0);
         foreach (var g in accept.DefenderGear)
         {
             onProgress?.Invoke($"Staking your {g.ItemId}…");
             await DepositAndSettleAsync(w.Id, accept.EscrowAddress, g.AssetId, 0, (ulong)g.Amount);
-        }
-        if (accept.FeeInvoice is { AmountSats: > 0 } fee)
-        {
-            onProgress?.Invoke("Paying the death-match fee…");
-            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
         }
     }
 
