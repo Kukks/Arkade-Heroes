@@ -202,14 +202,9 @@ public class CovenantBytecodeVectorTests
             Message32(), OraclePk32(), Commitment32(), Winner(), PotSats, StakeSats));
     }
 
-    [Fact]
-    public void SettleAuthorizedNoPot_PinsTheDeathMatchSettleBranch()
-    {
-        // Guards: the death-match settle leaf, where the stakes are HEROES, not sats — permadeath is
-        // routed by the asset packet, so there is no sweep and the script must still leave exactly
-        // one truthy item.
-        Pin("20101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f20505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6fcc69a820909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf8851", ArkadeCovenants.SettleAuthorizedNoPot(Message32(), OraclePk32(), Commitment32()));
-    }
+    // (SettleAuthorizedNoPot's vector was dropped with the builder itself: nothing constructed it — the
+    //  death-match settle leaf is built by DeathMatchEscrowContracts from SettleAuthorized + the asset
+    //  packet. A vector pinning a script no covenant can emit guards nothing.)
 
     [Fact]
     public void SettleMessage_PinsBothWagerBranchTags()

@@ -137,24 +137,10 @@ public class BattleEngineTests
         Assert.Equal("frost-bite", FirstCast(BattleEngine.Fight(actor, defender, seed, aware)));
     }
 
-    [Fact]
-    public void InnateModifier_NudgesFromCosmeticTraitsOnly()
-    {
-        static Genome G(params (TraitCategory Cat, byte Val)[] traits)
-        {
-            var b = new byte[32];
-            foreach (var (cat, val) in traits) b[16 + (int)cat * 2] = val;
-            return new Genome(b);
-        }
-
-        Assert.Equal(1.0, Traits.InnateModifier(G()));                                        // blank → neutral
-        Assert.True(Traits.InnateModifier(G((TraitCategory.Aura, 255))) > 1.0);               // a cosmetic trait nudges up
-        Assert.True(Traits.InnateModifier(G((TraitCategory.Aura, 255))) <= 1.0 + Traits.AffinityCap); // capped
-        Assert.Equal(1.0, Traits.InnateModifier(G((TraitCategory.ElementAffinity, 255))));    // affinity ≠ cosmetic
-    }
-
     // (Innate cosmetic combat effect moved from a single damage multiplier to six per-category passives in
-    //  innate v2 — see InnateAbilitiesTests. The flag-gating is proven there, incl. FlagOff byte-identicality.)
+    //  innate v2 — see InnateAbilitiesTests. The flag-gating is proven there, incl. FlagOff byte-identicality.
+    //  Traits.InnateModifier itself was removed once nothing called it: the six passives derive from
+    //  Traits.InnateStrength per category, and the hero card reads Traits.InnatePassives.)
 
     // A hero whose gene-A skill is a specific catalog entry (SkillGeneA = Bytes[6] → GeneSkills[byte % 16]).
     private static Hero HeroWithGeneSkill(string id, byte geneAByte, int level = 5, byte statGenes = 128)

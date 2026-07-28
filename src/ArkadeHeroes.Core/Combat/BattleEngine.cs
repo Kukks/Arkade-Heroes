@@ -196,7 +196,7 @@ public static class BattleEngine
         // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
         // so replays stay verifiable.
         var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
-        // (innate-v2 replaces the old single Traits.InnateModifier damage nudge with the six per-category
+        // (innate-v2 replaced the old single flat cosmetic-trait damage nudge with the six per-category
         //  passives resolved on FighterState; there is no flat innate damage factor here anymore.)
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
         var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
