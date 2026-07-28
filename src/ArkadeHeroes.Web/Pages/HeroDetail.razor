@@ -65,7 +65,11 @@ else
                     else
                     {
                         <div class="sell-picks">
-                            <input class="ask-input" placeholder="new name" maxlength="24" @bind="_newName" />
+                            @* Bind per keystroke, not on blur: Claim below is disabled while the name is empty,
+                               and @bind's default onchange only fires when the field LOSES focus — so a player
+                               who types a name and goes straight for Claim hits a dead button, and only that
+                               click's blur enables it. They have to click twice. *@
+                            <input class="ask-input" placeholder="new name" maxlength="24" @bind="_newName" @bind:event="oninput" />
                             <button class="btn primary" @onclick="DoRename" disabled="@(_busy || string.IsNullOrWhiteSpace(_newName))">@(_busy ? "…" : "Claim")</button>
                             <button class="btn ghost" @onclick="CancelRename" disabled="@_busy">Cancel</button>
                         </div>
