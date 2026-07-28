@@ -405,6 +405,22 @@ public record CreateOfferResponse(
     long ListingFeeSats = 0, FeeInvoiceDto? ListingFee = null);
 
 /// <summary>
+/// One of this player's covenant escrows that may still hold their assets with no path forward — a
+/// listing whose fee never cleared or that rests unsold, or a breed/merge deposit that was never
+/// revealed. Each is recovered by spending the covenant's own timelocked reclaim leaf once
+/// <see cref="ReclaimAfterUnixSeconds"/> passes (CHAIN time, not wall clock). The client rebuilds the
+/// contract from the public escrow params, so this list is a CONVENIENCE FOR DISCOVERY, never a
+/// permission: a player who knows the id can always reclaim without the server agreeing it is stuck.
+/// </summary>
+public record ReclaimableDto(
+    /// <summary>"offer" | "breed" | "merge" — which covenant, and so which reclaim flow recovers it.</summary>
+    string Kind,
+    string Id,
+    /// <summary>A player-facing line naming what is escrowed and why it has no way forward.</summary>
+    string Summary,
+    long ReclaimAfterUnixSeconds);
+
+/// <summary>
 /// A resting offer in the discovery index (an item unit or a hero). Status:
 /// pending → active → closed. <see cref="ItemName"/> carries the display name for
 /// either kind (the item name, or the hero name for <c>Kind == "hero"</c>).

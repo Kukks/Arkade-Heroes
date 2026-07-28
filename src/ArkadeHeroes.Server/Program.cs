@@ -123,6 +123,15 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed));
 });
 
+// This player's covenant escrows that may still hold their assets with no path forward — what the
+// recovery UI lists. DISCOVERY ONLY: the reclaim itself is a covenant spend from the player's own
+// wallet against the public escrow params, so it never needs this endpoint's agreement.
+api.MapGet("/players/me/reclaimable", async (HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(await game.ListReclaimableAsync(player, ct));
+});
+
 // Public profile: players are addresses, and addresses are public — this is
 // what a sender needs to transfer a hero to another player wallet-to-wallet.
 // A player's derived accomplishments + unlocked badges (from their roster + tournament wins).
