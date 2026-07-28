@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -36,7 +37,12 @@ public static class CommitReveal
         {
             var bytes = Encoding.UTF8.GetBytes(part);
             Span<byte> len = stackalloc byte[4];
-            BitConverter.TryWriteBytes(len, bytes.Length);
+            // Write the length prefix LITTLE-ENDIAN explicitly (not platform-dependent BitConverter): this
+            // preimage IS the consensus artifact — every verifier re-derives it (FairnessAudit.VerifyMatch
+            // and friends) — so its bytes must not depend on the machine that hashed them. Same discipline as
+            // the tournament shuffle's endian-independent read. Byte-identical on every little-endian
+            // platform we ship (x64, ARM64, WASM), so no existing commitment or replay changes.
+            BinaryPrimitives.WriteInt32LittleEndian(len, bytes.Length);
             buffer.Write(len);
             buffer.Write(bytes);
         }

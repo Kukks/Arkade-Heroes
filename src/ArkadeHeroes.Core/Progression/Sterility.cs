@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using ArkadeHeroes.Core.Genetics;
 
@@ -36,6 +37,9 @@ public static class Sterility
         preimage[^1] = 0x53; // 'S' — domain-separate from other genome-derived rolls
         Span<byte> hash = stackalloc byte[32];
         SHA256.HashData(preimage, hash);
-        return BitConverter.ToUInt32(hash[..4]) % 100 < (uint)chance;
+        // Read the roll LITTLE-ENDIAN explicitly (not platform-dependent BitConverter): this verdict is meant
+        // to be re-derivable by anyone from the committed genome, so it must not depend on the machine that
+        // computed it. Byte-identical on every little-endian platform we ship, so no hero's fertility changes.
+        return BinaryPrimitives.ReadUInt32LittleEndian(hash[..4]) % 100 < (uint)chance;
     }
 }
