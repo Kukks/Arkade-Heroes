@@ -64,7 +64,9 @@ else
                                 <b>@o.Hero.Name</b>
                                 <span class="chip @(o.Favor == "favored" ? "ok" : o.Favor == "underdog" ? "" : "")">@o.Favor</span>
                             </div>
-                            <div class="mono oppcard-stats">L@o.Hero.Level · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)</div>
+                            @* Parens are load-bearing: a bare L@o.Hero.Level trips Razor's email-address
+                               heuristic (letter, @, dotted chain) and renders VERBATIM. *@
+                            <div class="mono oppcard-stats">L@(o.Hero.Level) · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)</div>
                         </button>
                     }
                 </div>

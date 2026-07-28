@@ -65,7 +65,9 @@ else
                                 <span class="chip @(freeShot ? "ok" : "")">@(freeShot ? "free shot" : o.Favor)</span>
                             </div>
                             <div class="mono oppcard-stats">
-                                L@o.Hero.Level · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)
+                                @* Parens are load-bearing: a bare L@o.Hero.Level trips Razor's email-address
+                                   heuristic (letter, @, dotted chain) and renders VERBATIM. *@
+                                L@(o.Hero.Level) · pow @o.PowerScore (Δ@(o.PowerGapPercent)%)
                             </div>
                             <div class="mono oppcard-xp">win <b class="pos">+@o.XpIfYouWin</b> / lose <b class="neg">-@o.XpIfYouLose</b> xp</div>
                         </button>
