@@ -12,16 +12,18 @@ namespace ArkadeHeroes.Tests;
 /// The marketplace listing fee: a flat treasury charge the seller pays to list an offer — treasury
 /// capture on secondary trades (the counterweight to the daily + season faucets). The fee GATES the
 /// listing: an offer stays pending (not buyable) until the fee invoice clears, even once the asset is
-/// deposited. The default is 0 (disabled), so every other offer test is unaffected; these use a
-/// fee-enabled factory to exercise the gate, and a plain factory to prove the disabled path is a no-op.
+/// deposited. Both factories pin the fee explicitly rather than leaning on the shipped default, so these
+/// keep testing the gate and the no-op path whatever that default is set to.
 /// </summary>
 public class MarketplaceListingFeeTests
 {
     const long Fee = 500;
 
-    static WebApplicationFactory<Program> FeeFactory() =>
+    static WebApplicationFactory<Program> FeeFactory() => FactoryWithFee(Fee);
+
+    static WebApplicationFactory<Program> FactoryWithFee(long fee) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-            b.ConfigureServices(s => s.Configure<GameOptions>(o => o.OfferListingFeeSats = Fee)));
+            b.ConfigureServices(s => s.Configure<GameOptions>(o => o.OfferListingFeeSats = fee)));
 
     [Fact]
     public async Task Listing_StaysPendingUntilFeePaid_ThenTreasuryCaptured()
@@ -50,10 +52,36 @@ public class MarketplaceListingFeeTests
     }
 
     [Fact]
+    public async Task Listing_FeePending_DoesNotReserveTheAlreadyDepositedUnit()
+    {
+        // A funded-but-fee-unpaid offer stays `pending`, yet its unit has ALREADY left the seller's
+        // wallet. The free-unit check counts a pending offer as "awaiting deposit" — true only while
+        // the item is still held — so reading `pending` alone double-counts this unit and wrongly
+        // refuses a second listing the seller genuinely holds free.
+        using var factory = FeeFactory();
+        var (seller, _) = await factory.RegisterAsync("LF-TwoUnits");
+        await seller.BuyItemAsync("swift-anklet");
+        await seller.BuyItemAsync("swift-anklet"); // now holds 2
+
+        var first = await seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 3_000));
+        await seller.Dev.FundOfferAsync(new { OfferId = first.OfferId });
+
+        // The fee is deliberately left unpaid: `first` is still pending, but its unit is gone.
+        Assert.DoesNotContain(await seller.Offers.ListAsync(), o => o.OfferId == first.OfferId);
+
+        // The second unit is free, so listing it must be allowed.
+        await seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 4_000));
+
+        // But not a third — both units are committed now.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => seller.Offers.CreateItemAsync(new CreateOfferRequest("swift-anklet", 5_000)));
+    }
+
+    [Fact]
     public async Task Listing_FeeDisabled_ActiveOnFund_NoInvoice()
     {
-        // The shared default (0) path: no fee invoice, the offer is live as soon as the asset lands.
-        using var factory = new WebApplicationFactory<Program>();
+        // The fee-disabled path: no fee invoice, the offer is live as soon as the asset lands.
+        using var factory = FactoryWithFee(0);
         var (seller, _) = await factory.RegisterAsync("LF-Free");
         await seller.BuyItemAsync("rusty-blade");
 

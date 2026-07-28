@@ -2112,14 +2112,15 @@ public class GameService(
                      .Where(o => o.SellerId == player.Id && o.ItemId == item.Id && o.Status != "closed").ToList())
             await ReconcileOfferAsync(existing, ct);
 
-        // The seller must hold a FREE unit — not one already equipped, nor one
-        // reserved in a PENDING offer (its item is still in their wallet, so it
-        // is counted in `held`; a funded/active offer's item already left).
+        // The seller must hold a FREE unit — not one already equipped, nor one reserved in an offer
+        // still awaiting its deposit (that item is in their wallet, so it is counted in `held`). An
+        // offer whose asset has landed no longer reserves anything, whether or not its listing fee has
+        // cleared — gate on the deposit itself, since a fee-gated offer stays `pending` past deposit.
         var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
         var equipped = (ulong)store.Heroes.Values.Count(h =>
             h.OwnerId == player.Id && h.Equipment.Slots.Values.Contains(item.Id));
         var reserved = (ulong)store.Offers.Values.Count(o =>
-            o.SellerId == player.Id && o.ItemId == item.Id && o.Status == "pending");
+            o.SellerId == player.Id && o.ItemId == item.Id && o.Status == "pending" && !o.AssetDeposited);
         if (held <= equipped + reserved)
             throw new GameRuleException(
                 $"You hold {held} unit(s) of {item.Name}; {equipped} equipped and {reserved} awaiting deposit — none free to sell.");
@@ -2189,7 +2190,10 @@ public class GameService(
             if (offer.ListingFeePaid)
                 store.RecordInflow(offer.ListingFeeInvoiceId, "listing", offer.ListingFeeSats);
         }
-        if (offer.ListingFeePaid && await chain.IsOfferFundedAsync(offer.Id, ct))
+        // Record the deposit in its own right: the fee gate means `pending` no longer implies the asset
+        // is still in the seller's wallet, and the free-to-sell check needs that fact separately.
+        offer.AssetDeposited = await chain.IsOfferFundedAsync(offer.Id, ct);
+        if (offer.ListingFeePaid && offer.AssetDeposited)
             offer.Status = "active";
         else if (offer.Status == "active")
             offer.Status = "closed";
