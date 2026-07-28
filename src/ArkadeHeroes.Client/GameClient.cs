@@ -1396,7 +1396,7 @@ public class GameClient : IAsyncDisposable
             var tier = o.RarityTier is { } t ? $"  [{t}]" : "";
             Console.WriteLine($"  {ShortId(o.OfferId),-18} {o.Kind,-5} {o.ItemName,-16} {o.AskSats,6} sats  {ShortId(o.SellerId)}{tier}");
         }
-        Console.WriteLine("  buy with 'buyoffer <id>' (item) or 'buyhero <id>' (hero) — you pay the seller directly; the covenant enforces the ask");
+        Console.WriteLine("  buy with 'buyoffer <id>' (item) or 'buyhero <id>' (hero) — you pay the ask from your own wallet; the covenant enforces where it lands");
     }
 
     /// <summary>
