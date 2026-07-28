@@ -151,21 +151,10 @@ public class CovenantOfferFeeLegProbeTests : IAsyncLifetime
             fundingCoins: funding));
         Assert.Contains("Emulator rejected", redirected.Message);
 
-        // ── Honest: seller ask−fee, treasury fee, item conserved to the buyer → co-signed.
-        //    Built by hand because OfferFulfillFlow still emits the single-payout witness (that is T3).
-        var honest = await CovenantSpender.SpendManyAsync(
-            _buyer, EmulatorUri,
-            [new CovenantSpender.CovenantInput(contract, "fulfill",
-                [ArkadeCovenants.EncodeIndex(2), ArkadeCovenants.EncodeIndex(1), ArkadeCovenants.EncodeIndex(0)],
-                offerVtxo)],
-            [
-                new TxOut(Money.Satoshis(SellerProceeds), sellerScript),  // vout 0
-                new TxOut(Money.Satoshis(Fee), treasuryScript),           // vout 1 — the enforced cut
-                new TxOut(Money.Satoshis(buyerChange), buyerScript),      // vout 2 — change + item
-            ],
-            extraPackets: [Packet.Create(
-                [AssetGroup.Create(item, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(2, 1)], [])])],
-            fundingCoins: funding);
+        // ── Honest: through the REAL buyer flow, not a hand-built spend. OfferFulfillFlow reads the
+        //    fee off the params and emits the 3-element witness itself, so this co-signing is also the
+        //    proof that the shipped flow and the covenant agree on the split and the output order.
+        var honest = await OfferFulfillFlow.FulfillAsync(_buyer, EmulatorUri, offer);
         Assert.False(string.IsNullOrEmpty(honest.SignedArkTx));
 
         // The item really moved, and the treasury really got paid — the point of the whole exercise.
