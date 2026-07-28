@@ -42,17 +42,28 @@ else
                 </select>
             </label>
             <label>Ask <span class="mini">sats</span>
-                <input type="number" min="1" step="1000" class="ask-input" @bind="_ask" />
+                @* oninput, not the default onchange: the List button is gated on the ask clearing the
+                   fee, and a blur-only bind would leave it dead while a valid number is on screen (#121). *@
+                <input type="number" min="1" step="1000" class="ask-input" @bind="_ask" @bind:event="oninput" />
             </label>
         </div>
-        @if (_listingFeeSats > 0)
+        @if (_listingFeeSats > 0 && _ask > _listingFeeSats)
         {
             <p class="muted" style="margin:.6rem 0 0;font-size:.85rem">
-                A <b>@_listingFeeSats sat</b> listing fee is paid to the treasury when you list, on top of escrowing the hero.
+                A <b>@_listingFeeSats sat</b> marketplace fee comes out of the sale — you receive
+                <b>@((_ask - _listingFeeSats).ToString("N0")) sats</b> when it sells. Listing costs nothing,
+                and a hero that never sells is never charged.
             </p>
         }
+        else if (_listingFeeSats > 0 && _ask > 0)
+        {
+            <div class="status-line" style="margin-top:.6rem">
+                <span class="dot bad"></span>
+                <span>The ask must be more than the <b>@_listingFeeSats sat</b> marketplace fee — it is taken from the sale.</span>
+            </div>
+        }
         <button class="btn primary" style="margin-top:1.1rem" @onclick="DoList"
-                disabled="@(_listing || string.IsNullOrEmpty(_heroId) || _ask <= 0)">
+                disabled="@(_listing || string.IsNullOrEmpty(_heroId) || _ask <= 0 || _ask <= _listingFeeSats)">
             @(_listing ? "Listing…" : "List for sale")
         </button>
         @if (_status is not null)
