@@ -11,7 +11,7 @@ namespace ArkadeHeroes.Web.Wallet;
 /// a player — the server never holds a key. Scoped so it can use the request-scoped SDK client
 /// (whose bearer token, set on register/login, persists for the app in WASM's single scope).
 /// </summary>
-public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state, IServiceProvider services)
+public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state, TermsState terms, IServiceProvider services)
 {
     /// <summary>
     /// Silently resume the player this wallet is registered as (sign a fresh challenge and log in).
@@ -34,7 +34,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
     /// <summary>
     /// Register a new player: bind this wallet's receive address + login key (with proof-of-possession)
-    /// to the chosen name, and sign in.
+    /// to the chosen name, and sign in. The Terms version the player accepted at the gate rides along, so
+    /// the acceptance is recorded server-side in the SAME call that creates the player — there is never a
+    /// player row with no acceptance on file when one was actually given.
     /// </summary>
     public async Task<PlayerDto> RegisterAsync(string name)
     {
@@ -45,7 +47,8 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var signed = await wallet.SignLoginAsync(w.Id, challenge.NonceHex)
             ?? throw new GameWalletException("This wallet can't sign in (no recovery phrase).");
         var player = await api.Players.RegisterAsync(new RegisterPlayerRequest(
-            name.Trim(), address, signed.PubKeyHex, challenge.NonceHex, signed.SignatureHex));
+            name.Trim(), address, signed.PubKeyHex, challenge.NonceHex, signed.SignatureHex,
+            terms.VersionToRecord));
         state.SetPlayer(player);
         return player;
     }
@@ -76,6 +79,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             state.SetActiveWallet(created.Id, address);
             state.UpdateBalance(await wallet.GetBalanceAsync(created.Id));
             state.SetBackupPending(true);
+            // The terms were accepted a moment ago, before this wallet existed — there was no key to cache
+            // the answer under at the time. Attach it now so this wallet isn't re-asked on the next load.
+            terms.AttachToWallet(created.Id);
         }
 
         // 2. Sign in: resume this wallet if it's already a registered player, else register the name.
@@ -86,11 +92,38 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
                 await RegisterAsync(name);
         }
 
-        // 3. Claim starters so the player lands already owning a roster (idempotent; a returning
+        // 3. Now that a player record exists, the SERVER's acceptance is knowable — and it overrules the
+        //    local cache the Home gate had to fall back on while signed out. A returning player whose
+        //    recorded acceptance predates the current terms is asked again HERE, before the starter claim.
+        await EnsureTermsAcceptedAsync();
+
+        // 4. Claim starters so the player lands already owning a roster (idempotent; a returning
         //    player who already claimed just gets their current roster back).
         if (state.Player is { StarterClaimed: false })
             return await ClaimStartersAsync();
         return await api.Heroes.MineAsync();
+    }
+
+    /// <summary>
+    /// For a SIGNED-IN player: if the server's recorded acceptance doesn't cover the current terms, open the
+    /// gate and record the answer server-side before returning. Throws if the player declines — the caller's
+    /// flow (which is about to mint or stake) must not continue.
+    /// </summary>
+    private async Task EnsureTermsAcceptedAsync()
+    {
+        if (!terms.MustAccept(state.Player)) return;   // the server already holds a current acceptance
+
+        // The no-argument overload: it asks unless THIS session already collected an answer. Deliberately
+        // not the cache-consulting one — the server has just told us this player's acceptance is missing or
+        // stale, and a cached "somebody using this browser once agreed" must not be allowed to answer on
+        // their behalf and produce a durable record of a disclosure nobody saw.
+        if (!await terms.RequestAcceptanceAsync())
+            throw new GameWalletException("You need to accept the Terms of Use before you can play.");
+
+        // Recording a version already on file is a server-side no-op, so this is safe even when the gate's
+        // own Accept (which posts whenever a player IS signed in) has just done it.
+        await api.Players.AcceptTermsAsync(Terms.CurrentVersion);
+        state.SetPlayer(await api.Players.MeAsync());
     }
 
     private async Task<PlayerDto> LoginAsync(string walletId)

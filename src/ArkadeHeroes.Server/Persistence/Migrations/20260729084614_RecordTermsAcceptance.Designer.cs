@@ -3,6 +3,7 @@ using System;
 using ArkadeHeroes.Server.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ArkadeHeroes.Server.Persistence.Migrations
 {
     [DbContext(typeof(GameStateDbContext))]
-    partial class GameStateDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260729084614_RecordTermsAcceptance")]
+    partial class RecordTermsAcceptance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
@@ -204,26 +207,6 @@ namespace ArkadeHeroes.Server.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Tournaments");
-                });
-
-            modelBuilder.Entity("ArkadeHeroes.Server.Persistence.PersistedTreasuryFlow", b =>
-                {
-                    b.Property<string>("Direction")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("Sats")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Tag")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Direction", "Id");
-
-                    b.ToTable("TreasuryFlows");
                 });
 #pragma warning restore 612, 618
         }

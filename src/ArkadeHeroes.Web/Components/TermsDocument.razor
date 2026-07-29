@@ -1,0 +1,76 @@
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+@* The Terms of Use, rendered from the copy of docs/TERMS.md the build bundles into wwwroot. Used BOTH
+   inside the acceptance modal (so the terms are readable without navigating away and losing progress) and
+   on the standalone /terms page, so a player reads exactly the same text before and after accepting. *@
+
+@if (_state == Load.Loading)
+{
+    <div class="status-line"><span class="dot wait"></span> loading the terms…</div>
+}
+else if (_state == Load.Missing)
+{
+    @* Honest about it rather than showing a blank box: a build without the document must not look like a
+       build whose terms happen to be empty. *@
+    <div class="status-line"><span class="dot bad"></span> The Terms of Use document isn't bundled with this build.</div>
+    <p class="muted">
+        Read it in the repository at <span class="mono">@Terms.DocumentPath</span> before you accept.
+        You are being asked to accept <b>version @Terms.CurrentVersion</b>.
+    </p>
+}
+else
+{
+    <div class="terms-doc">@((MarkupString)_html)</div>
+}
+
+@code {
+    enum Load { Loading, Ready, Missing }
+    Load _state = Load.Loading;
+    string _html = "";
+
+    /// <summary>
+    /// Raised with true once the terms are actually on screen, false while they are loading or couldn't be
+    /// loaded at all. The acceptance gate binds its Accept button to this: a player cannot agree to a
+    /// document they were never shown, so "we couldn't display the terms" has to mean "you can't accept
+    /// them", not "accept them anyway".
+    /// </summary>
+    [Parameter] public EventCallback<bool> OnLoadStateChanged { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Absolute against the APP's own origin: the injected HttpClient points at the game API, and the
+            // bundled document is served next to index.html, not by the API.
+            var url = new Uri(new Uri(Nav.BaseUri), Terms.BundledDocumentPath);
+            var text = await Http.GetStringAsync(url);
+
+            // The dev server answers a missing static file with index.html rather than a 404, so an HTML
+            // body here means "not bundled", not "these are your terms".
+            var head = text.TrimStart();
+            if (head.Length == 0 ||
+                head.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+                head.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+            {
+                _state = Load.Missing;
+                return;
+            }
+
+            _html = MarkdownLite.ToHtml(text);
+            _state = Load.Ready;
+        }
+        catch (Exception)
+        {
+            // Deliberately every exception, not just HttpRequestException: a request timeout
+            // (TaskCanceledException) or any other fault must land in Missing rather than escape and strand
+            // the component on "loading…" — which, before the gate consulted this state, left a player able
+            // to accept a document that was still in flight.
+            _state = Load.Missing;
+        }
+        finally
+        {
+            await OnLoadStateChanged.InvokeAsync(_state == Load.Ready);
+        }
+    }
+}

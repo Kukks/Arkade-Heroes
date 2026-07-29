@@ -98,6 +98,14 @@ public class GameOptions
     /// (base + accrued) so emission can't drain the sats the upcoming season settlement owes. Default off.</summary>
     public bool ReserveSeasonPot { get; set; } = false;
 
+    /// <summary>Opt-in server-side Terms enforcement: when true, claiming starter heroes — the first
+    /// irreversible step, where assets are minted — is refused until the player's RECORDED acceptance covers
+    /// <see cref="Shared.Terms.CurrentVersion"/>. Default OFF, because the browser already gates entry and
+    /// every existing API client (the console client, the test suite) predates any terms screen; a deployment
+    /// that stakes real bitcoin turns it on so the gate is not merely cosmetic. Acceptance is RECORDED
+    /// either way — this switch only decides whether its absence blocks.</summary>
+    public bool RequireTermsAcceptance { get; set; } = false;
+
     /// <summary>Projects these options into the Core <see cref="GameConfig"/> the game logic reads (current version).</summary>
     public GameConfig ToGameConfig() => new(
         Absorb: new AbsorbOdds(AbsorbChance, AbsorbContinueChance),

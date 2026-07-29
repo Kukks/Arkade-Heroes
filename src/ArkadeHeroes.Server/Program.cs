@@ -97,9 +97,10 @@ var api = app.MapGroup("/api");
 api.MapPost("/players", async (RegisterPlayerRequest request, GameService game, CancellationToken ct) =>
 {
     var (player, address, balance) = await game.RegisterPlayerAsync(
-        request.Name, request.ArkadeAddress, request.LoginPubKeyHex, request.NonceHex, request.SignatureHex, ct);
+        request.Name, request.ArkadeAddress, request.LoginPubKeyHex, request.NonceHex, request.SignatureHex, ct,
+        request.AcceptedTermsVersion);
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance,
-        player.StarterClaimed, player.Token));
+        player.StarterClaimed, player.Token, player.TermsAcceptedVersion, player.TermsAcceptedAtUtc));
 });
 
 // "Sign in with your wallet" — resume an existing player after a restore: fetch a
@@ -112,7 +113,8 @@ api.MapPost("/players/login", async (LoginRequest request, GameService game, ICh
     var player = game.Login(request.LoginPubKeyHex, request.NonceHex, request.SignatureHex);
     var address = await chain.GetPlayerAddressAsync(player.Id, ct);
     var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
-    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, player.Token));
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, player.Token,
+        player.TermsAcceptedVersion, player.TermsAcceptedAtUtc));
 });
 
 api.MapGet("/players/me", async (HttpContext http, GameService game, IChainService chain, CancellationToken ct) =>
@@ -120,7 +122,26 @@ api.MapGet("/players/me", async (HttpContext http, GameService game, IChainServi
     var player = game.Authenticate(BearerToken(http));
     var address = await chain.GetPlayerAddressAsync(player.Id, ct);
     var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
-    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed));
+    return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, null,
+        player.TermsAcceptedVersion, player.TermsAcceptedAtUtc));
+});
+
+// ── Terms of Use ───────────────────────────────────────────────────────────
+// The acceptance is the player's deliberate act, recorded HERE — not in their browser, which is one cache
+// clear from gone and is their own machine anyway. What is stored is the VERSION they accepted plus a UTC
+// timestamp, so a later change to docs/TERMS.md (a bump of Terms.CurrentVersion) re-asks the question.
+
+api.MapGet("/players/me/terms", (HttpContext http, GameService game) =>
+    Results.Ok(game.TermsFor(game.Authenticate(BearerToken(http)))));
+
+// A nullable body so an EMPTY post is a readable 400 from our own rules rather than a binding failure —
+// "missing version" must be refused as loudly as a malformed one, never recorded as a zero.
+api.MapPost("/players/me/terms", async (AcceptTermsRequest? request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    if (request is null) throw new GameRuleException("A Terms of Use version is required to record an acceptance.");
+    await game.AcceptTermsAsync(player, request.Version, ct);
+    return Results.Ok(game.TermsFor(player));
 });
 
 // This player's covenant escrows that may still hold their assets with no path forward — what the

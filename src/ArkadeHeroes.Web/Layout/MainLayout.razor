@@ -2,6 +2,7 @@
 @inject WalletState Wallet
 @inject GameWallet GameWallet
 @inject GameSession Session
+@inject TermsState Acceptance
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -54,7 +55,17 @@
     <div class="content">
         @Body
     </div>
+
+    <footer class="footer">
+        <span class="muted">Real bitcoin. Permanent losses. Non-custodial — your keys, your risk.</span>
+        <span class="spacer"></span>
+        <a href="terms">Terms of Use</a>
+    </footer>
 </div>
+
+@* Lives in the layout so it covers every route: a signed-in player whose recorded acceptance predates the
+   current terms is asked again wherever they are, not only if they happen to pass through the home page. *@
+<TermsGate />
 
 @code {
     private string _path = "";
@@ -87,6 +98,10 @@
                 var address = await GameWallet.GetReceiveAddressAsync(wallet.Id);
                 Wallet.SetActiveWallet(wallet.Id, address);
                 Wallet.HydrateBackupPending();   // re-light the backup nudge if this wallet's phrase is still unsaved
+                // Read back what THIS wallet accepted, so a returning player isn't re-asked on every page
+                // load — and, just as importantly, so a different wallet in the same browser doesn't inherit
+                // the previous one's answer. The SERVER record still overrules once they're signed in.
+                Acceptance.HydrateFor(wallet.Id);
                 Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id));
                 // Resume the game session (sign in with the wallet) if it's a registered player.
                 await Session.ResumeAsync();
