@@ -27,8 +27,24 @@ public class GameService(
     private readonly GameOptions _options = options.Value;
 
     // The game-balance config the server runs under (economy from GameOptions; the rest from
-    // GameConfig.Default, which the client shares at compile time — so verification matches).
+    // GameConfig.Default unless retuned here).
     private readonly GameConfig _config = options.Value.ToGameConfig();
+
+    // The version id of _config — STAMPED onto every outcome this server resolves, so a client verifies a
+    // replay under the rules it actually ran on instead of guessing at its own compiled-in GameConfig.Default.
+    // Derived from the SAME _config instance the resolvers fight under (never recomputed from options), so
+    // the stamp and the rules can never name different things. Cached on first use; a benign race recomputes
+    // the same value.
+    private string? _configVersion;
+
+    /// <summary>The version id of the rules this server resolves under — the stamp for an outcome whose
+    /// response is built in the SAME request that resolved it (gauntlet, trials, death-match, fight). A
+    /// replay served later must read the stamp RECORDED on its own session at resolve time instead, so it
+    /// stays true to the fight even if the running config ever becomes reloadable.</summary>
+    public string ConfigVersion => _configVersion ??= GameConfigVersion.Compute(_config);
+
+    /// <summary>The rules this server resolves under, for <c>GET /api/config/{version}</c>.</summary>
+    public GameConfig Config => _config;
 
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
@@ -523,6 +539,7 @@ public class GameService(
             session.Result = result;
             session.Nonce = nonce;
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+            session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
 
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
             // PrizePool clamps the rake to 0..100% so a misconfigured rake can never pay the podium above the pot.
@@ -1245,6 +1262,7 @@ public class GameService(
         session.DefenderSnapshot = defenderSnapshot;
         session.EntropyHex = entropyHex;
         session.Nonce = nonce;
+        session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
 
         // ── ABSORB MODE: a seed-driven roll may RE-MINT the winner absorbing the loser's better
         // traits — BOTH heroes burn and a new hero mints under species to the winner. A failed roll
@@ -1791,6 +1809,7 @@ public class GameService(
         session.DefenderSnapshot = defenderSnapshot;
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+        session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         // Friendly (unstaked) fights are practice: they carry no XP and must NOT feed the
@@ -2018,6 +2037,7 @@ public class GameService(
         session.DefenderSnapshots = defenderSnapshots;
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+        session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
 
         return (session, result, serverSeedHexOut, session.EntropyHex, challengerSnapshots, defenderSnapshots, winnerPayout, duelReceipts);
     }

@@ -151,7 +151,9 @@ public record DeathMatchSettleResponse(
     HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot,
     string ServerSeedHex, string EntropyHex, ProgressionReceiptDto? Receipt,
     // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
-    bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null);
+    bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null,
+    // The rules this death-match was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 /// <summary>One death-match on the discovery list, derived from its session. Status = open (awaiting the defender's stake) | accepted (ready to settle) | resolved.</summary>
 public record DeathMatchDto(
@@ -174,7 +176,9 @@ public record GauntletWaveDto(int Wave, int GhostLevel, bool Won, HeroDto Ghost,
 public record GauntletRunResponse(
     int WavesCleared, IReadOnlyList<GauntletWaveDto> Waves, long XpAwarded, int NewLevel,
     string? ItemAwarded, string? ItemAssetId, HeroDto HeroSnapshot,
-    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
+    string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt,
+    // The rules this run was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 /// <summary>One line of the Fancy discovery race. Every catalog title is listed, claimed or not, so players
 /// can see what's still up for grabs — <see cref="HeroId"/> is null while a set is undiscovered.
@@ -201,7 +205,9 @@ public record TrialsWaveDto(int Wave, int GhostLevel, bool Won, HeroDto Ghost, B
 /// hero's personal best waves-cleared to date (this run included) — the leaderboard basis.</summary>
 public record TrialsRunResponse(
     int WavesCleared, IReadOnlyList<TrialsWaveDto> Waves, string? Title, int BestScore, string Affix,
-    HeroDto HeroSnapshot, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt);
+    HeroDto HeroSnapshot, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt,
+    // The rules this run was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
@@ -250,7 +256,9 @@ public record FightResponse(
     long WagerSats = 0,
     long WinnerPayoutSats = 0,
     // Signed, player-held progression fact for this match.
-    ProgressionReceiptDto? Receipt = null);
+    ProgressionReceiptDto? Receipt = null,
+    // The rules this fight was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 public record MatchDto(
     string MatchId,
@@ -267,7 +275,10 @@ public record MatchDto(
 /// so a match is a shareable, trustlessly-watchable artifact.</summary>
 public record MatchReplayDto(
     HeroDto ChallengerSnapshot, HeroDto DefenderSnapshot, BattleResultDto Result,
-    string WinnerHeroId, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
+    string WinnerHeroId, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
+    // The rules this match was RESOLVED under (GameConfigVersion). Trailing optional: every match resolved
+    // before stamping existed carries "" and verifies under GameConfig.Default, which is what it ran on.
+    string ConfigVersion = "");
 
 // ── Team 3v3 squad matches: a positional best-of-3 relay of 1v1 duels ──
 public record SquadDuelDto(int Slot, HeroDto Challenger, HeroDto Defender, BattleResultDto Result);
@@ -283,7 +294,9 @@ public record SquadMatchDto(
 /// <summary>Everything a spectator needs to REPLAY + verify a resolved squad match (FairnessAudit.VerifySquad).</summary>
 public record SquadReplayDto(
     IReadOnlyList<HeroDto> ChallengerLineup, IReadOnlyList<HeroDto> DefenderLineup,
-    SquadResultDto Result, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce);
+    SquadResultDto Result, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
+    // The rules this squad match was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 public record SquadOpenResponse(string MatchId, string CommitmentHex, long WagerSats, string Status,
     FeeInvoiceDto? StakeInvoice, string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
@@ -367,7 +380,9 @@ public record TournamentRefundResponse(TournamentDto Tournament, int EntrantsRef
 public record TournamentReplayDto(
     IReadOnlyList<HeroDto> Entrants, IReadOnlyList<TournamentMatchDto> Bracket, string ChampionHeroId,
     string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
-    string? EntrantsCommitmentHex = null);
+    string? EntrantsCommitmentHex = null,
+    // The rules this bracket was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
+    string ConfigVersion = "");
 
 /// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
@@ -486,7 +501,11 @@ public record GameConfigDto(
     // Whether innate-v2 combat passives are live (default off, same discipline as the CombatConfig flag).
     // The frontend reads this to decide whether to surface a hero's granted passives; with it off there is
     // no player-visible change. An older server that omits it deserializes to false — the safe default.
-    bool InnateAbilities)
+    bool InnateAbilities,
+    // The server's CURRENT rules version — the stamp every outcome it resolves from now on carries.
+    // Trailing optional: an older server that omits it deserializes to "" and clients treat that as
+    // "unstamped" (GameConfig.Default), exactly as they treat a pre-stamp replay.
+    string Version = "")
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -501,7 +520,111 @@ public record GameConfigDto(
         c.OfferListingFeeSats,
         c.HeroRenameFeeSats,
         c.TournamentRakePct,
-        c.Combat.InnateAbilities);
+        c.Combat.InnateAbilities,
+        ArkadeHeroes.Core.GameConfigVersion.Compute(c));
+}
+
+/// <summary>
+/// The VERIFICATION-CRITICAL rules of one <see cref="ArkadeHeroes.Core.GameConfig"/>, served by
+/// <c>GET /api/config/{version}</c> so a client holding a stamped replay can replay it under the rules it was
+/// actually resolved under. Flat by design: every value a deterministic replay reads is present, so
+/// <see cref="ToGameConfig"/> rebuilds a config whose <see cref="ArkadeHeroes.Core.GameConfigVersion"/> is the
+/// <see cref="Version"/> that was asked for — and the client MUST recompute and check that, which is what
+/// makes the fetch trustless: a server that serves rules other than the ones it stamped is caught by the
+/// client's own recompute, not trusted on its word.
+///
+/// The economy values are absent on purpose (they are not part of the version id and no replay reads them);
+/// <see cref="ToGameConfig"/> therefore overlays these rules onto <c>GameConfig.Default</c>'s economy, which
+/// the replay never touches.
+/// </summary>
+public record GameRulesDto(
+    string Version,
+    // Absorb odds (VerifyAbsorb)
+    byte AbsorbChance, byte AbsorbContinueChance,
+    // GeneMixer thresholds (VerifyBreeding) + Fusion threshold (VerifyMerge)
+    byte GeneRegionMutationThreshold, byte GeneTraitMutationThreshold, byte FusionConcentrateThreshold,
+    // Sterility (rarity-derived breeding cap)
+    int SterileLegendary, int SterileEpic, int SterileRare, int SterileUncommon,
+    // Rarity bands: tier cutoffs + weights
+    byte RarityLegendaryCutoff, byte RarityEpicCutoff, byte RarityRareCutoff, byte RarityUncommonCutoff,
+    int RarityLegendaryWeight, int RarityEpicWeight, int RarityRareWeight, int RarityUncommonWeight,
+    int RarityCommonWeight,
+    // Affinity bonuses per tier + cap
+    double AffinityLegendary, double AffinityEpic, double AffinityRare, double AffinityUncommon,
+    double AffinityCommon, double AffinityCap,
+    // XP curve
+    long CurveBase, double CurveCoefficient, double CurveExponent, int CurveMaxLevel,
+    // Combat
+    int MaxTurns, double ElementStrong, double ElementWeak, double CritMultiplier, double ArmorConstant,
+    int GeneSkillALevel, int GeneSkillBLevel, int BurstLevel,
+    double FocusPerStack, double DefenseBreakPerStack, int MaxEffectStacks, double DrainFraction,
+    string SelectionPolicy, int HealHpThresholdPercent,
+    bool ElementAwareSelection, bool InnateAbilities, bool SquadSynergy,
+    // Innate-v2 proc knobs (always sent resolved — a null Innate means InnateBonuses.Default)
+    double ShieldChance, double Ward, double RegenChance, double Mend, double TrueStrikeChance,
+    double ThornsChance, double Reflect, double BrandChance, double Tick, int BrandTurns,
+    double InitiativeChance)
+{
+    public static GameRulesDto From(ArkadeHeroes.Core.GameConfig c)
+    {
+        var i = c.Combat.InnateOrDefault;
+        return new GameRulesDto(
+            ArkadeHeroes.Core.GameConfigVersion.Compute(c),
+            c.Absorb.AbsorbChance, c.Absorb.ContinueChance,
+            c.Gene.RegionMutationThreshold, c.Gene.TraitMutationThreshold, c.FusionConcentrateThreshold,
+            c.Sterility.Legendary, c.Sterility.Epic, c.Sterility.Rare, c.Sterility.Uncommon,
+            c.Rarity.LegendaryCutoff, c.Rarity.EpicCutoff, c.Rarity.RareCutoff, c.Rarity.UncommonCutoff,
+            c.Rarity.LegendaryWeight, c.Rarity.EpicWeight, c.Rarity.RareWeight, c.Rarity.UncommonWeight,
+            c.Rarity.CommonWeight,
+            c.Affinity.Legendary, c.Affinity.Epic, c.Affinity.Rare, c.Affinity.Uncommon,
+            c.Affinity.Common, c.Affinity.Cap,
+            c.Curve.Base, c.Curve.Coefficient, c.Curve.Exponent, c.Curve.MaxLevel,
+            c.Combat.MaxTurns, c.Combat.ElementStrong, c.Combat.ElementWeak, c.Combat.CritMultiplier,
+            c.Combat.ArmorConstant,
+            c.Combat.GeneSkillALevel, c.Combat.GeneSkillBLevel, c.Combat.BurstLevel,
+            c.Combat.FocusPerStack, c.Combat.DefenseBreakPerStack, c.Combat.MaxEffectStacks,
+            c.Combat.DrainFraction,
+            c.Combat.SelectionPolicy.ToString(), c.Combat.HealHpThresholdPercent,
+            c.Combat.ElementAwareSelection, c.Combat.InnateAbilities, c.Combat.SquadSynergy,
+            i.ShieldChance, i.Ward, i.RegenChance, i.Mend, i.TrueStrikeChance,
+            i.ThornsChance, i.Reflect, i.BrandChance, i.Tick, i.BrandTurns, i.InitiativeChance);
+    }
+
+    /// <summary>
+    /// Rebuilds the config these rules describe, overlaid on <c>GameConfig.Default</c>'s (replay-inert)
+    /// economy. Returns null if <see cref="SelectionPolicy"/> is not a policy this client knows — an
+    /// EXPLICIT failure rather than a quiet substitution, since a wrong policy would replay a different fight.
+    /// </summary>
+    public ArkadeHeroes.Core.GameConfig? ToGameConfig()
+    {
+        if (!Enum.TryParse<ArkadeHeroes.Core.CombatSelectionPolicy>(SelectionPolicy, out var policy))
+            return null;
+        var d = ArkadeHeroes.Core.GameConfig.Default;
+        return d with
+        {
+            Absorb = new ArkadeHeroes.Core.Genetics.AbsorbOdds(AbsorbChance, AbsorbContinueChance),
+            Gene = new ArkadeHeroes.Core.GeneConfig(GeneRegionMutationThreshold, GeneTraitMutationThreshold),
+            FusionConcentrateThreshold = FusionConcentrateThreshold,
+            Sterility = new ArkadeHeroes.Core.SterilityChances(
+                SterileLegendary, SterileEpic, SterileRare, SterileUncommon),
+            Rarity = new ArkadeHeroes.Core.RarityBands(
+                RarityLegendaryCutoff, RarityEpicCutoff, RarityRareCutoff, RarityUncommonCutoff,
+                RarityLegendaryWeight, RarityEpicWeight, RarityRareWeight, RarityUncommonWeight,
+                RarityCommonWeight),
+            Affinity = new ArkadeHeroes.Core.AffinityBonuses(
+                AffinityLegendary, AffinityEpic, AffinityRare, AffinityUncommon, AffinityCommon, AffinityCap),
+            Curve = new ArkadeHeroes.Core.XpCurve(CurveBase, CurveCoefficient, CurveExponent, CurveMaxLevel),
+            Combat = new ArkadeHeroes.Core.CombatConfig(
+                MaxTurns, ElementStrong, ElementWeak, CritMultiplier, ArmorConstant,
+                GeneSkillALevel, GeneSkillBLevel, BurstLevel,
+                FocusPerStack, DefenseBreakPerStack, MaxEffectStacks, DrainFraction,
+                policy, HealHpThresholdPercent,
+                ElementAwareSelection, InnateAbilities, SquadSynergy,
+                new ArkadeHeroes.Core.InnateBonuses(
+                    ShieldChance, Ward, RegenChance, Mend, TrueStrikeChance,
+                    ThornsChance, Reflect, BrandChance, Tick, BrandTurns, InitiativeChance)),
+        };
+    }
 }
 
 public record ChainInfoDto(

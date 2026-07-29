@@ -39,6 +39,7 @@ public sealed class ArkadeHeroesClient
         Daily = new DailyApi(this);
         Tournament = new TournamentApi(this);
         Economy = new EconomyApi(this);
+        Config = new ConfigApi(this);
     }
 
     public PlayersApi Players { get; }
@@ -59,6 +60,8 @@ public sealed class ArkadeHeroesClient
     public TournamentApi Tournament { get; }
     public DailyApi Daily { get; }
     public EconomyApi Economy { get; }
+    /// <summary>Resolves a replay's stamped rules version — see <see cref="ConfigApi.ResolveAsync"/>.</summary>
+    public ConfigApi Config { get; }
 
     /// <summary>Sets the bearer token used for all subsequent requests (Register/Login call this on success).</summary>
     public void SetAuthToken(string token) =>

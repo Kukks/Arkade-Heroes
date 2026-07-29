@@ -60,7 +60,12 @@ else
             // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
             var fr = new FightResponse(_replay.Result, _replay.ServerSeedHex, _replay.EntropyHex, 0, 0,
                 _replay.ChallengerSnapshot, _replay.DefenderSnapshot, _replay.ChallengerSnapshot, _replay.DefenderSnapshot);
-            (_verifyOk, _verifyDetail) = FairnessAudit.VerifyMatch(MatchId, _replay.Nonce, _replay.CommitmentHex, fr);
+            // Replay under the rules the match was RESOLVED under, resolved from its stamp. An unresolvable
+            // stamp reads as "cannot verify" — never as a silent replay under this build's own defaults.
+            var (cfg, cfgError) = await Api.Config.ResolveAsync(_replay.ConfigVersion);
+            (_verifyOk, _verifyDetail) = cfg is null
+                ? (false, cfgError!)
+                : FairnessAudit.VerifyMatch(MatchId, _replay.Nonce, _replay.CommitmentHex, fr, cfg);
         }
         catch
         {
