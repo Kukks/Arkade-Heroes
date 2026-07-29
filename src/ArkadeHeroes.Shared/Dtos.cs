@@ -481,9 +481,11 @@ public record OfferDto(
 
 /// <summary>
 /// The published game-balance config (current version). Flat wire mirror of
-/// <see cref="ArkadeHeroes.Core.GameConfig"/> — carries the HOT (economy) values for
-/// display plus the current <see cref="Version"/>; the PINNED subset grows here as those
-/// paths are threaded, and clients resolve a stamped version via GET /api/config/{version}.
+/// <see cref="ArkadeHeroes.Core.GameConfig"/> — carries the HOT (economy) values for display plus the
+/// running server's <see cref="Version"/>. The verification-critical values are NOT here: a client that
+/// needs those asks for a specific stamped version via <c>GET /api/config/{version}</c> and gets a
+/// <see cref="GameRulesDto"/>, so it replays under the rules a given match ran on rather than under
+/// whatever this server happens to run now.
 /// </summary>
 public record GameConfigDto(
     byte AbsorbChance,
