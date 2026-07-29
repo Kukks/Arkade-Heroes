@@ -828,16 +828,18 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             ? (false, cfgError!)
             : FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr, cfg);
 
-        // Absorb mode: if the winner re-minted, verify the absorbed genome against the seed + published odds.
+        // Absorb mode: if the winner re-minted, verify the absorbed genome against the seed under the odds
+        // the SETTLEMENT ran on — the same stamped config the fight resolved through, not /api/chain/info's
+        // current odds (those are whatever is in force now, so a retune would fail honest history).
         if (settle.Minted)
         {
-            var info = await api.Chain.InfoAsync();
             var challengerWon = settle.WinnerHeroId == settle.ChallengerSnapshot.Id;
-            var (aok, adetail) = FairnessAudit.VerifyAbsorb(
-                deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
-                nonce, settle.Receipt!.CommitmentHex,
-                new ArkadeHeroes.Core.Genetics.AbsorbOdds(info.AbsorbChance, info.AbsorbContinueChance),
-                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+            var (aok, adetail) = cfg is null
+                ? (false, cfgError!)
+                : FairnessAudit.VerifyAbsorb(
+                    deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
+                    nonce, settle.Receipt!.CommitmentHex,
+                    settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex, cfg);
             return new DeathMatchOutcome(settle, ok, detail, aok, adetail);
         }
         return new DeathMatchOutcome(settle, ok, detail);
