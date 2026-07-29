@@ -453,6 +453,12 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
         await PersistFlowAsync(invoiceId, Persistence.PersistedTreasuryFlow.In, tag, sats, ct);
     }
 
+    /// <summary>Whether this invoice's fee has already been counted — the same already-counted set the
+    /// inflow dedup reads, exposed so a caller can ask "was anything ever booked for this?" without
+    /// re-deriving it from the by-tag totals (which group many invoices under one tag and cannot answer
+    /// per-invoice). A pure read: it never records, and never changes what the dedup will do.</summary>
+    public bool WasInflowTallied(string invoiceId) => _talliedInflowInvoices.ContainsKey(invoiceId);
+
     /// <summary>Rehydrate one durable treasury movement at boot, folding it into the by-tag total it belongs
     /// to. An INFLOW row also restores its invoice id to the already-counted set — the half that makes the
     /// totals safe to keep. Without it a durable total plus a re-delivered purchase (item purchases persist,
@@ -487,10 +493,22 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref _ledgerWriteFailures);
             logger?.LogWarning(ex, "Treasury {Direction} of {Sats} sat tagged {Tag} was tallied but not persisted; "
                                    + "the durable total will under-report it after a restart.", direction, sats, tag);
         }
     }
+
+    private long _ledgerWriteFailures;
+    /// <summary>How many durable treasury-flow writes have been swallowed since this server started. The
+    /// swallow above is deliberate and cannot be removed — throwing there would unwind a daily claim that
+    /// has already paid, or re-deliver a durably claimed item — so the failure has no other way to surface.
+    /// A warning nobody greps is not observability: this is the number that separates "a database that
+    /// stopped accepting the ledger's rows" from "a quiet period", which are otherwise identical from the
+    /// outside. NOT persisted, for the obvious reason that persistence is the thing that is failing.
+    /// Any non-zero value means the durable totals are now behind the in-memory ones and a restart will
+    /// lose the difference; it never means a sat moved wrongly.</summary>
+    public long LedgerWriteFailures => Interlocked.Read(ref _ledgerWriteFailures);
 
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
 

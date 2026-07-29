@@ -22,7 +22,7 @@ public class GameRuleException(string message) : Exception(message);
 /// </summary>
 public class GameService(
     GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options,
-    Persistence.IGameStatePersistence persistence)
+    Persistence.IGameStatePersistence persistence, ILogger<GameService>? logger = null)
 {
     private readonly GameOptions _options = options.Value;
 
@@ -407,8 +407,17 @@ public class GameService(
         // reconciles against the chain, so a just-sold offer may still read active until the next list call.
         var activeOffers = store.Offers.Values.Count(o => o.Status == "active");
         var closedOffers = store.Offers.Values.Count(o => o.Status == "closed");
+        // The sale-attribution tripwire. DERIVED at read time from the same booking key the two booking
+        // paths write, never accumulated: a counter incremented at the close would keep a false positive
+        // forever when a hero offer reconciles closed before its buyer claims (the claim books it a moment
+        // later), and could not be made idempotent against a reconcile that runs on every list call. Read
+        // as a TREND against booked `listing` income — most of these are genuine reclaims, which book
+        // nothing correctly, so the level means little and the slope means everything.
+        var unbookedClosedFeeOffers = store.Offers.Values.Count(
+            o => o.Status == "closed" && o.ListingFeeSats > 0 && !store.WasInflowTallied(OfferSaleInflowId(o.Id)));
         return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow,
-            seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned, activeOffers, closedOffers);
+            seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned, activeOffers, closedOffers,
+            unbookedClosedFeeOffers, store.LedgerWriteFailures);
     }
 
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
@@ -2297,10 +2306,30 @@ public class GameService(
             // over-stating the income of a treasury holding real bitcoin is not.
             // Keyed on the offer, so this and ClaimPurchasedHeroAsync can never book the same sale twice.
             offer.Status = "closed";
-            if (offer.ListingFeeSats > 0 && await chain.WasOfferSoldAsync(offer.Id, ct))
-                await store.RecordInflowAsync($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats, ct);
+            if (offer.ListingFeeSats > 0)
+            {
+                if (await chain.WasOfferSoldAsync(offer.Id, ct))
+                    await store.RecordInflowAsync(OfferSaleInflowId(offer.Id), "listing", offer.ListingFeeSats, ct);
+                else
+                    // The tripwire. This is the EXPECTED path for a reclaim, so it is not an error — but it
+                    // is also exactly what a broken detector looks like, and the two are indistinguishable
+                    // from here. Named at warning so a persistent fault leaves a greppable trail per offer;
+                    // EconomyHealthDto.UnbookedClosedFeeOffers is the same fact as a countable trend.
+                    logger?.LogWarning(
+                        "Offer {OfferId} closed holding a {FeeSats}-sat listing fee, but no sale could be "
+                        + "attributed on-chain, so nothing was booked. Either the seller reclaimed it (normal, "
+                        + "and the common case) or the sale detector has stopped matching the treasury's fee "
+                        + "output. A count of these climbing against flat booked listing income is the latter.",
+                        offer.Id, offer.ListingFeeSats);
+            }
         }
     }
+
+    /// <summary>The once-only key a listing fee is booked under. ReconcileOfferAsync and
+    /// ClaimPurchasedHeroAsync both prove the same sale by different means and both book under this, so the
+    /// store's inflow dedup makes it count once — and the unbooked-close tripwire asks about the same key,
+    /// which is the only reason it can tell "nothing was booked for this offer" from "nothing was booked".</summary>
+    private static string OfferSaleInflowId(string offerId) => $"offer-sale:{offerId}";
 
     /// <summary>
     /// This player's covenant escrows that may still hold their assets with no path forward: a listing
@@ -2414,7 +2443,7 @@ public class GameService(
         // way (the treasury leg of the spending transaction), and both book under this one key, so the
         // store's inflow dedup makes the sale once-only however often either path runs.
         if (offer.ListingFeeSats > 0)
-            await store.RecordInflowAsync($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats, ct);
+            await store.RecordInflowAsync(OfferSaleInflowId(offer.Id), "listing", offer.ListingFeeSats, ct);
         return hero;
     }
 }
