@@ -106,6 +106,14 @@ public class CombatCompetitivenessProbe
         // The dominant lever is NOT the element ring: it is StatBlock.StatValue, where the base
         // term 10 + gene/4 spans 10..73 (7.3x) and the growth term 1 + growthGene/64 multiplies
         // 1..4 per level. Softening the ring alone moves pre-decided only 40.7% -> 34.0% (measured).
+        //
+        // Nor are gear and level the missing lever: letting them VARY makes this number WORSE, because they
+        // are asymmetries uncorrelated with breeding and therefore stack on top of it rather than cancelling
+        // it. Measured on one bred gen-3 population, 600 pairs x 120 seeds, factors switched on one at a time:
+        //   equal level + no gear 35.3%  ->  + gear U{none..tier-3} 42.8%  ->  + levels 8..12 47.5%
+        //   ->  levels 5..25 58.8%
+        // See CombatAttributionProbe, which splits the outcome across breeding / gear / level / entropy and
+        // guards that ordering; it also shows why this metric and that one MUST trade off against each other.
         Assert.True(preDecided <= 50.0, $"combat got MORE pre-determined (was 40.7%)\n{report}");
         Assert.True(competitive >= 3.0, $"combat lost competitive matchups (was 6.3%)\n{report}");
     }
