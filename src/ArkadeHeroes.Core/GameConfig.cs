@@ -147,6 +147,26 @@ public sealed record InnateBonuses(
         InitiativeChance: 3.0);                 // Legendary 9% per own turn; a second action that turn
 }
 
+/// <summary>
+/// Knobs for the gear COUNTER system (<see cref="CombatConfig.GearCounters"/>, default off). See
+/// <see cref="Combat.CombatShapes"/> for what these mean and the measurements that set them.
+/// </summary>
+public sealed record GearCounterRules(
+    // The damage swing a counter is worth: +Edge against the shape it counters, -Edge against the shape that
+    // answers it. Tuned to a TILT rather than a switch.
+    double Edge,
+    // PAR share of a hero's three-axis build budget per axis — the axis furthest ABOVE its par is the hero's
+    // shape. They sum to 1 by construction (they are the pool's own mean shares), so no axis is favoured.
+    double OffenseShare, double BulkShare, double TempoShare)
+{
+    /// <summary>Edge 0.20 measured as the tilt/switch boundary: on the same pairs the right counter wins
+    /// 60.9% and the answered one 37.3% — a 23.6-point swing that still loses four times in ten — and it
+    /// lifts the endgame gear TOTAL-effect share from 0.0% to 9.3%. The three shares are the bred gen-3
+    /// pool's own mean normalized axis shares at level 10, which is what makes the split come out
+    /// 34.5% / 32.7% / 32.9%.</summary>
+    public static GearCounterRules Default { get; } = new(0.20, 0.305, 0.359, 0.336);
+}
+
 /// <summary>The XP-to-next-level curve — XpToNext(level) = Base + Coefficient·level^Exponent — and the level ceiling.</summary>
 public sealed record XpCurve(long Base, double Coefficient, double Exponent, int MaxLevel)
 {
@@ -201,10 +221,27 @@ public sealed record CombatConfig(
     // client+server release.
     bool SquadSynergy = false,
     // innate-v2 per-passive proc knobs; null = InnateBonuses.Default (a record type can't be a const param default).
-    InnateBonuses? Innate = null)
+    InnateBonuses? Innate = null,
+    // Gear counters + wildcard variance: when true, an item may COUNTER a build shape (worth +Edge damage
+    // against that shape and -Edge against the shape that answers it — see Combat.CombatShapes) and may widen
+    // its wearer's own damage roll (Item.VarianceBonus). Together they turn the endgame gear decision from
+    // "buy the one best set" into "bring the right one", which is what stops a played-out roster converging.
+    // DEFAULT FALSE (same discipline as the flags above): Default stays byte-identical and every existing
+    // replay verifies unchanged; the flip is a coordinated client+server release. Off, Multiplier is exactly
+    // 1.0 and VarianceSpan is exactly BaseVarianceSpan, so the engine draws the rolls it always drew.
+    bool GearCounters = false,
+    // Gear-counter knobs; null = GearCounterRules.Default (a record type can't be a const param default).
+    GearCounterRules? Counters = null)
 {
+    /// <summary>The engine's stock damage roll half-width, in whole percent: ±10% around 1.0. Named here so
+    /// <c>Item.VarianceBonus</c> is legibly an ADDITION to it rather than a magic number in the resolver.</summary>
+    public const int BaseVarianceSpan = 10;
+
     /// <summary>The innate proc knobs, resolving the null default.</summary>
     public InnateBonuses InnateOrDefault => Innate ?? InnateBonuses.Default;
+
+    /// <summary>The gear-counter knobs, resolving the null default.</summary>
+    public GearCounterRules CountersOrDefault => Counters ?? GearCounterRules.Default;
 
     public static CombatConfig Default { get; } = new(
         MaxTurns: 60, ElementStrong: 1.3, ElementWeak: 0.75, CritMultiplier: 1.5, ArmorConstant: 25.0,

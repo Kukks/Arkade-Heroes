@@ -115,6 +115,19 @@ public class GameOptions
     /// with genes[16..] cleared, express nothing, and fight identically either way.</summary>
     public bool InnateAbilities { get; set; } = true;
 
+    /// <summary>Gear COUNTERS: an item may be worth more or less depending on the opponent's build shape, and
+    /// a WILDCARD item may widen its wearer's damage roll (see <see cref="Core.Combat.CombatShapes"/>). This
+    /// is what stops a played-out roster converging on one tier-3 set — measured, it lifts gear's total-effect
+    /// share of a fully-geared roster's outcome variance from 0.0% to 9.3%.
+    /// DEFAULT OFF, deliberately, and NOT because the mechanism is unproven: flipping it changes live combat
+    /// for everyone, and a counter the player cannot SEE reads as randomness. The flip wants the hero card to
+    /// show a hero's shape first, so counter-picking is a decision rather than a surprise. The same stamp
+    /// argument as InnateAbilities makes the flip itself safe whenever it happens: the resulting config hashes
+    /// to a non-default <see cref="GameConfigVersion"/>, every outcome carries it, and a verifier resolves it.
+    /// The level GATE on the item catalog is independent of this switch and is live either way — it is an
+    /// equip rule, not a combat rule.</summary>
+    public bool GearCounters { get; set; } = false;
+
     /// <summary>Opt-in server-side Terms enforcement: when true, claiming starter heroes — the first
     /// irreversible step, where assets are minted — is refused until the player's RECORDED acceptance covers
     /// <see cref="Shared.Terms.CurrentVersion"/>. Default OFF, because the browser already gates entry and
@@ -132,7 +145,7 @@ public class GameOptions
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
         Curve: XpCurve.Default,
-        Combat: CombatConfig.Default with { InnateAbilities = InnateAbilities },
+        Combat: CombatConfig.Default with { InnateAbilities = InnateAbilities, GearCounters = GearCounters },
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

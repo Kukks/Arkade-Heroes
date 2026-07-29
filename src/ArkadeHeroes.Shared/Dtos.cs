@@ -325,7 +325,9 @@ public record TransferResponse(HeroDto Hero);
 public record ItemDto(
     string Id, string Name, string Slot,
     int MaxHp, int Attack, int Magic, int Defense, int Speed, int CritPercent,
-    long PriceSats);
+    long PriceSats,
+    // Appended (defaulted) so an older client that has never seen these fields still deserializes the shop.
+    int MinLevel = 1, string? Counters = null, int VarianceBonus = 0);
 
 public record ItemInvoiceResponse(FeeInvoiceDto Invoice);
 
@@ -584,11 +586,18 @@ public record GameRulesDto(
     // Innate-v2 proc knobs (always sent resolved — a null Innate means InnateBonuses.Default)
     double ShieldChance, double Ward, double RegenChance, double Mend, double TrueStrikeChance,
     double ThornsChance, double Reflect, double BrandChance, double Tick, int BrandTurns,
-    double InitiativeChance)
+    double InitiativeChance,
+    // Gear counters. Trailing optional so an older server that omits them deserializes to the flag OFF and
+    // the default knobs — which is exactly the rules such a server was resolving under. Always sent
+    // RESOLVED (a null Counters means GearCounterRules.Default), same rule as the innate knobs above.
+    bool GearCounters = false,
+    double CounterEdge = 0.20, double ShapeOffenseShare = 0.305,
+    double ShapeBulkShare = 0.359, double ShapeTempoShare = 0.336)
 {
     public static GameRulesDto From(ArkadeHeroes.Core.GameConfig c)
     {
         var i = c.Combat.InnateOrDefault;
+        var gc = c.Combat.CountersOrDefault;
         return new GameRulesDto(
             ArkadeHeroes.Core.GameConfigVersion.Compute(c),
             c.Absorb.AbsorbChance, c.Absorb.ContinueChance,
@@ -608,7 +617,8 @@ public record GameRulesDto(
             c.Combat.SelectionPolicy.ToString(), c.Combat.HealHpThresholdPercent,
             c.Combat.ElementAwareSelection, c.Combat.InnateAbilities, c.Combat.SquadSynergy,
             i.ShieldChance, i.Ward, i.RegenChance, i.Mend, i.TrueStrikeChance,
-            i.ThornsChance, i.Reflect, i.BrandChance, i.Tick, i.BrandTurns, i.InitiativeChance);
+            i.ThornsChance, i.Reflect, i.BrandChance, i.Tick, i.BrandTurns, i.InitiativeChance,
+            c.Combat.GearCounters, gc.Edge, gc.OffenseShare, gc.BulkShare, gc.TempoShare);
     }
 
     /// <summary>
@@ -643,7 +653,10 @@ public record GameRulesDto(
                 ElementAwareSelection, InnateAbilities, SquadSynergy,
                 new ArkadeHeroes.Core.InnateBonuses(
                     ShieldChance, Ward, RegenChance, Mend, TrueStrikeChance,
-                    ThornsChance, Reflect, BrandChance, Tick, BrandTurns, InitiativeChance)),
+                    ThornsChance, Reflect, BrandChance, Tick, BrandTurns, InitiativeChance),
+                GearCounters,
+                new ArkadeHeroes.Core.GearCounterRules(
+                    CounterEdge, ShapeOffenseShare, ShapeBulkShare, ShapeTempoShare)),
         };
     }
 }
