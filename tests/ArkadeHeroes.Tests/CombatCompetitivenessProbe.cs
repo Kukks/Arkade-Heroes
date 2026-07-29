@@ -112,6 +112,9 @@ public class CombatCompetitivenessProbe
         // it. Measured on one bred gen-3 population, 600 pairs x 120 seeds, factors switched on one at a time:
         //   equal level + no gear 35.3%  ->  + gear U{none..tier-3} 42.8%  ->  + levels 8..12 47.5%
         //   ->  levels 5..25 58.8%
+        // Read those four ACROSS each other, not against the numbers above: that sweep samples pairs from a
+        // fixed genome pool and randomises which side is "a", so its no-gear/equal-level row (35.3%) is the
+        // same population under a different harness, not a second reading of this test's 39.7%.
         // See CombatAttributionProbe, which splits the outcome across breeding / gear / level / entropy and
         // guards that ordering; it also shows why this metric and that one MUST trade off against each other.
         Assert.True(preDecided <= 50.0, $"combat got MORE pre-determined (was 40.7%)\n{report}");

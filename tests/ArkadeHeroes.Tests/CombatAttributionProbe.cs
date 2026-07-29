@@ -64,6 +64,8 @@ namespace ArkadeHeroes.Tests;
 ///        equal level, gear U{none..tier-3}   42.8%
 ///        levels 8..12, gear U{none..tier-3}  47.5%
 ///        levels 5..25, gear U{none..tier-3}  58.8%
+///    (Those four are comparable to EACH OTHER — one harness, one pool, sides randomised. The first row is
+///    not a second reading of that probe's own 39.7%, which samples pairs differently and fixes the sides.)
 ///    So the two goals pull in opposite directions, and the algebra says they must: E[Y] = 1/2 by
 ///    symmetry, so Var(Y) = 1/4 identically, the entropy share is exactly 4*E[p(1-p)], and fewer
 ///    pre-decided matchups means a LARGER entropy share, never a smaller one. "Gear and level above
