@@ -379,6 +379,8 @@ public record PlayerProfileDto(string PlayerId, string Name,
 /// <see cref="HeroesMinted"/>/<see cref="HeroesBurned"/> are the CHURN behind a flat supply: a stable
 /// HeroSupply hides whether nothing happened or a thousand mints and burns netted out. Read as a RATE — the
 /// mint rate outrunning the burn rate is the exact smoke alarm that fired late for CryptoKitties and Axie.
+/// Both are counted at the source — mints at the mint, burns at each burn — rather than one being inferred
+/// from the other, so a durable hero surviving a restart cannot mask a burn.
 /// Counted since the server started (not persisted), so treat them as deltas over an uptime, not lifetime
 /// totals. Burned is derived (minted − supply): a burn is the only thing that removes a hero.
 ///

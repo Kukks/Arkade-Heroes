@@ -70,10 +70,10 @@ public class EconomyHealthTests
     }
 
     // A flat HeroSupply can't tell "nothing happened" from "mints and burns netted out" — the churn is what
-    // the mint/burn counts surface. Mints are counted at the choke point; burns are derived, since a removed
-    // hero (only burns remove one) drops supply below the mint count.
+    // the mint/burn counts surface. BOTH are counted at their own choke point: mints at the mint, burns at
+    // each burn site (what the merge/absorb/death-match flows do alongside removing the hero).
     [Fact]
-    public async Task Health_CountsMints_AndDerivesBurnsFromTheSupplyDrop()
+    public async Task Health_CountsMints_AndCountsBurns()
     {
         using var factory = new WebApplicationFactory<Program>();
         var (player, _) = await factory.RegisterAsync("Econ-Churn");
@@ -83,17 +83,52 @@ public class EconomyHealthTests
         var starters = await player.ClaimStartersAsync();   // two mints
         var afterMint = await player.Economy.HealthAsync();
         Assert.Equal(2, afterMint.HeroesMinted);
-        Assert.Equal(0, afterMint.HeroesBurned);   // nothing burned yet: minted == supply
+        Assert.Equal(0, afterMint.HeroesBurned);   // nothing burned yet
 
-        // Burning one hero (any of the burn flows does exactly this — TryRemove from the store) leaves the mint
-        // count untouched while supply drops, so the derived burn count reflects it.
+        // Exactly what a burn flow does: drop the hero and record the burn.
         var store = factory.Services.GetRequiredService<GameStore>();
         store.Heroes.TryRemove(starters[0].Id, out _);
+        store.RecordBurn();
 
         var afterBurn = await player.Economy.HealthAsync();
         Assert.Equal(2, afterBurn.HeroesMinted);   // mints never decrement
-        Assert.Equal(1, afterBurn.HeroesBurned);   // derived: minted(2) − supply(1)
+        Assert.Equal(1, afterBurn.HeroesBurned);
         Assert.Equal(1, afterBurn.HeroSupply);
+    }
+
+    /// <summary>
+    /// The regression that made counting necessary. Heroes are durable (they survive a restart), while the
+    /// churn counters are per-uptime — so a fresh process starts with minted = 0 against a full surviving
+    /// supply. While burns were DERIVED as minted − supply, that difference was negative and clamped to zero,
+    /// hiding every real burn until mints overtook the entire population. The mint half kept counting, so the
+    /// treasury card showed mints and no burns: the exact alarm shape, from a perfectly healthy game.
+    /// </summary>
+    [Fact]
+    public async Task Health_CountsABurn_EvenWhenHeroesOutliveTheProcessThatMintedThem()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, playerDto) = await factory.RegisterAsync("Econ-Restart");
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        // Stand in for rehydration: heroes present with nothing minted this process, as after a restart.
+        foreach (var id in new[] { "rehydrated-1", "rehydrated-2", "rehydrated-3" })
+            store.Heroes[id] = new Hero
+            {
+                Id = id, OwnerId = playerDto.PlayerId, Name = id, Level = 1,
+                Genome = new Genome(new byte[32]), Generation = 1,
+            };
+
+        var afterRestart = await player.Economy.HealthAsync();
+        Assert.Equal(0, afterRestart.HeroesMinted);   // this process minted nothing
+        Assert.Equal(3, afterRestart.HeroSupply);     // but the heroes are here
+
+        store.Heroes.TryRemove("rehydrated-1", out _);
+        store.RecordBurn();
+
+        // Derived, this read max(0, 0 − 2) = 0 and the burn vanished.
+        var afterBurn = await player.Economy.HealthAsync();
+        Assert.Equal(1, afterBurn.HeroesBurned);
+        Assert.Equal(2, afterBurn.HeroSupply);
     }
 
     // Market liquidity: resting inventory (active) vs cleared (closed). Active outrunning closed is the
