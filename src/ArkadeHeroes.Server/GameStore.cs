@@ -148,6 +148,11 @@ public class DeathMatchSession
     /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
     /// stamping existed, which ran on GameConfig.Default).</summary>
     public string? ConfigVersion { get; set; }
+    /// <summary>The ContentPackVersion of the gear and dungeons this was RESOLVED under, recorded at the
+    /// same moment and for the same reason: item stats are combat inputs, so a replay rebuilt from
+    /// different content is a different fight. Null on anything resolved before content stamping existed,
+    /// which ran on the gear its binary compiled in.</summary>
+    public string? ContentVersion { get; set; }
     public Shared.HeroDto? ChallengerSnapshot { get; set; }
     public Shared.HeroDto? DefenderSnapshot { get; set; }
 }
@@ -205,6 +210,11 @@ public class MatchSession
     /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
     /// stamping existed, which ran on GameConfig.Default).</summary>
     public string? ConfigVersion { get; set; }
+    /// <summary>The ContentPackVersion of the gear and dungeons this was RESOLVED under, recorded at the
+    /// same moment and for the same reason: item stats are combat inputs, so a replay rebuilt from
+    /// different content is a different fight. Null on anything resolved before content stamping existed,
+    /// which ran on the gear its binary compiled in.</summary>
+    public string? ContentVersion { get; set; }
     public string? Nonce { get; set; }
 
     /// <summary>Fight-time hero snapshots (level + equipment as actually fought) — persisted so ANY
@@ -279,6 +289,11 @@ public class SquadMatchSession
     /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
     /// stamping existed, which ran on GameConfig.Default).</summary>
     public string? ConfigVersion { get; set; }
+    /// <summary>The ContentPackVersion of the gear and dungeons this was RESOLVED under, recorded at the
+    /// same moment and for the same reason: item stats are combat inputs, so a replay rebuilt from
+    /// different content is a different fight. Null on anything resolved before content stamping existed,
+    /// which ran on the gear its binary compiled in.</summary>
+    public string? ContentVersion { get; set; }
 }
 
 /// <summary>A pending hero rename in the unique-name registry: the player pays the treasury fee, then
@@ -320,6 +335,11 @@ public sealed class TournamentSession
     /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
     /// stamping existed, which ran on GameConfig.Default).</summary>
     public string? ConfigVersion { get; set; }
+    /// <summary>The ContentPackVersion of the gear and dungeons this was RESOLVED under, recorded at the
+    /// same moment and for the same reason: item stats are combat inputs, so a replay rebuilt from
+    /// different content is a different fight. Null on anything resolved before content stamping existed,
+    /// which ran on the gear its binary compiled in.</summary>
+    public string? ContentVersion { get; set; }
     /// <summary>Entrant hero snapshots captured the moment the bracket FILLS — the locked fighting state
     /// the resolver runs over and any client re-runs (FairnessAudit.VerifyTournament), even after the
     /// heroes later change. NOT persisted: a restart-rehydrated bracket has none, can't honor its

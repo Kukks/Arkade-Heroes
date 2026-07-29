@@ -131,7 +131,13 @@ public sealed record Dungeon(
 public sealed record ContentPack(
     string PackId,
     IReadOnlyList<Item> Items,
-    IReadOnlyList<Dungeon> Dungeons)
+    IReadOnlyList<Dungeon> Dungeons,
+    /// <summary>The authored bytes this pack was parsed from, kept so a server can serve a version it
+    /// stamped back to a verifier VERBATIM (see <c>ContentPackDto</c>). Deliberately NOT part of
+    /// <see cref="ContentPackVersion"/>: reformatting a file must not mint a new version, because the
+    /// content it describes has not changed. Empty for a pack built in memory.</summary>
+    string ItemsJson = "",
+    string DungeonsJson = "")
 {
     /// <summary>The pack compiled into this build, parsed and VALIDATED from the embedded JSON. A pack
     /// that fails validation throws here rather than loading — bad content must not resolve a single

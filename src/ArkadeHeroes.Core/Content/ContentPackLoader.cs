@@ -92,7 +92,13 @@ public static class ContentPackLoader
         // it under the cascade of "unknown drop item" it would cause.
         if (errors.Count > 0) throw new ContentValidationException(errors);
 
-        var pack = new ContentPack(packId, items, dungeons);
+        var pack = new ContentPack(packId, items, dungeons, itemsJson, dungeonsJson);
+
+        // Validated against GameConfig.Default rather than a caller-supplied economy on purpose. Every pack
+        // in play is one embedded in some build, and every build validates its own pack here at load — so a
+        // client re-parsing content a server served will reach the same verdict this server did. A server
+        // that RETUNES its fees must re-check separately against its live config, which is why
+        // ContentValidation.Validate takes one; see the server's startup check.
         ContentValidation.ThrowIfInvalid(pack, GameConfig.Default, seals);
         return pack;
     }
