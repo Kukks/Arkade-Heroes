@@ -1,0 +1,102 @@
+# Builds the server + frontend container images and publishes them to GHCR.
+name: Docker images
+
+# Deliberately a SEPARATE workflow from ci.yml. The "Build + unit tests" and
+# "E2E (regtest)" jobs there are the correctness gate and are left untouched; this one
+# only packages. A red image build must not be confused with a red test run.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # the only privilege needed to push to GHCR
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: server
+            image: arkade-heroes-server
+            dockerfile: src/ArkadeHeroes.Server/Dockerfile
+          - name: web
+            image: arkade-heroes-web
+            dockerfile: src/ArkadeHeroes.Web/Dockerfile
+
+    steps:
+      # submodules: recursive is LOAD-BEARING. Both images build against
+      # external/dotnet-sdk (the NArk SDK submodule); without it the restore inside the
+      # container dies with MSB3202 and the Dockerfile's own guard tells you why.
+      - name: Checkout (with submodules — brings the NArk SDK the images build against)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Skipped on pull_request: a PR from a fork has a read-only GITHUB_TOKEN, and we
+      # do not publish PR builds anyway — they are built to prove the Dockerfile works.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # no new secrets required
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=sha,format=long          # every build: immutable, by commit SHA
+            type=ref,event=branch         # main
+            type=ref,event=pr             # pr-123 (built, not pushed)
+            type=ref,event=tag            # v1.2.3
+            type=raw,value=latest,enable={{is_default_branch}}
+
+        # Quoted: the "PR - no push" branch contains a colon-space, which YAML would
+        # otherwise read as a nested mapping.
+      - name: "Build${{ github.event_name != 'pull_request' && ' and push' || ' (PR - no push)' }}"
+        uses: docker/build-push-action@v6
+        with:
+          # Repository ROOT, not the Dockerfile's directory — both images reference
+          # projects under external/dotnet-sdk.
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # linux/amd64 only. The frontend image installs the wasm-tools workload and
+          # relinks the .NET runtime natively, which is slow enough already; adding an
+          # emulated arm64 leg would multiply that. Add platforms here when arm64 is needed.
+          platforms: linux/amd64
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.image }}"
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo "Built (not pushed — pull_request)."
+            else
+              echo "Pushed to \`${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}\`:"
+            fi
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

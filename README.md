@@ -51,6 +51,34 @@ dotnet run --project src/ArkadeHeroes.Web    # browser UI at http://localhost:51
 
 Open http://localhost:5132 and create a wallet. The frontend calls the game API at `http://localhost:5210` by default (set `ApiBaseUrl` to change it), so start the server bound there — InMemory to explore offline, or `Chain__Mode=NArk` for live regtest (below), where you fund your in-browser wallet the same way as the treasury.
 
+### In Docker
+
+Server and frontend ship as two images — the server does **not** host the WASM bundle, so
+they stay on separate origins (the server's CORS policy already allows this).
+
+```bash
+# The submodule is REQUIRED: both images build against external/dotnet-sdk, and without it
+# the restore inside the container fails with MSB3202. Docker cannot fetch it for you.
+git submodule update --init external/dotnet-sdk
+
+cp .env.example .env      # then edit — see the treasury note below
+docker compose up --build # frontend :5132, game API :5210
+```
+
+Every knob is an environment variable in `docker-compose.yml`, each commented with what it
+does and its default. Two things worth knowing before a real deployment:
+
+- **`Game__StateDbPath` must stay on the `arkade-state` volume.** It holds players, the hero
+  roster and paid-but-unclaimed purchases. Off the volume, every container restart destroys
+  them — and heroes are money-bearing assets, not cache.
+- **`Chain__NArk__TreasuryMnemonic` is the treasury seed phrase — real bitcoin on mainnet.**
+  It has no default and is never baked into an image; it is read from `.env`, which is
+  gitignored and excluded from the Docker build context. Leave it empty unless restoring an
+  existing treasury (empty = generate one on first boot and persist it to the volume).
+
+Images are published to GHCR by `.github/workflows/docker-publish.yml`, tagged by commit SHA
+and by branch/tag.
+
 ## Playing on regtest with real Arkade assets
 
 Heroes become real Arkade assets (amount 1, genome sealed in genesis metadata, controlled by the game's species asset); fees are real Arkade transactions.
