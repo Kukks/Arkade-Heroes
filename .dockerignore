@@ -1,0 +1,64 @@
+# Build context for BOTH images is the REPOSITORY ROOT — the server and the frontend
+# both reference projects under external/dotnet-sdk (the NArk SDK submodule), so a
+# context narrowed to src/ would restore-fail with MSB3202. Keep external/ included.
+
+# ── Secrets: never let these reach a build layer ────────────────────────────
+# .env holds Chain__NArk__TreasuryMnemonic — the seed phrase controlling the treasury
+# wallet, which holds REAL bitcoin on mainnet. docker compose reads .env from the HOST
+# and injects it as an environment variable at RUN time; the build must never see it.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+
+# ── Build output ────────────────────────────────────────────────────────────
+**/bin/
+**/obj/
+**/TestResults/
+artifacts/
+
+# ── VCS / tooling ───────────────────────────────────────────────────────────
+# .git is excluded deliberately. It is unusable here anyway: in a git worktree and in a
+# submodule, .git is a FILE pointing outside the context. Nerdbank.GitVersioning (used by
+# the NArk SDK projects) falls back to its version.json base version without it, which is
+# fine for a container build — the image is tagged from the CI commit SHA, not from NBGV.
+.git
+.gitignore
+.github
+.vs/
+.idea/
+.vscode/
+.claude/
+.playwright-mcp/
+
+# ── Not needed to build or run the game ─────────────────────────────────────
+docs/
+# …EXCEPT the Terms of Use. ArkadeHeroes.Web.csproj bundles docs/TERMS.md into the WASM
+# bundle as wwwroot/terms.md so the browser can render the acceptance gate and /terms
+# without leaving the app. Excluding it builds fine (the Content item is Condition'd on
+# the file existing) but silently ships a frontend whose terms screen has no prose —
+# which matters precisely when Game__RequireTermsAcceptance is on.
+!docs/TERMS.md
+# Superpowers specs/plans are working-tree-only and must never be published anywhere.
+docs/superpowers/
+regtest/
+contracts/
+tests/
+external/dotnet-sdk/docs/
+external/dotnet-sdk/samples/
+external/dotnet-sdk/api/
+**/node_modules/
+
+# ── Local state that must never be baked into an image ──────────────────────
+*.db
+*.db-shm
+*.db-wal
+arkade-heroes-chain*.db*
+arkade-design-time.db*
+
+# ── Docker's own files ──────────────────────────────────────────────────────
+docker-compose*.yml
+**/Dockerfile
+.dockerignore

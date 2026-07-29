@@ -1,0 +1,215 @@
+# Arkade Heroes — game API server + Blazor WASM frontend.
+#
+#   git submodule update --init external/dotnet-sdk   # ← REQUIRED before any build
+#   cp .env.example .env                              # then edit .env (see SECRETS below)
+#   docker compose up --build
+#
+#   frontend  → http://localhost:5132
+#   game API  → http://localhost:5210
+#
+# TWO ORIGINS, ON PURPOSE. The server does not host the WASM bundle. The browser loads
+# the app from :5132 and calls the API on :5210 cross-origin; the server's CORS policy
+# already allows any localhost/127.0.0.1 origin. Collapsing them into one container would
+# quietly drop that property.
+#
+# ── SECRETS ─────────────────────────────────────────────────────────────────
+# Chain__NArk__TreasuryMnemonic is the BIP-39 seed phrase controlling the treasury
+# wallet. On mainnet that wallet holds REAL BITCOIN. It is deliberately NOT given a value
+# here: it is read from a gitignored .env (see .env.example), so it never enters a
+# Dockerfile, an image layer, or this repository. Never paste a live mnemonic into a file
+# that git can see, and never bake one in with ENV or ARG — every image layer is readable
+# by anyone who can pull the image.
+
+services:
+  # ── Game API server ───────────────────────────────────────────────────────
+  server:
+    build:
+      context: .                                 # repo ROOT: the build needs external/dotnet-sdk
+      dockerfile: src/ArkadeHeroes.Server/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-arkade-heroes}/arkade-heroes-server:${TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-5210}:8080"
+    volumes:
+      # DURABILITY. Game__StateDbPath below points into this named volume. Without it the
+      # SQLite file lives in the container's writable layer and is destroyed on every
+      # `docker compose down`, every image update, every container replacement — taking
+      # player records, the hero roster, paid-but-unclaimed item purchases and treasury
+      # bookkeeping with it. Heroes are money-bearing assets; losing them is not a cache miss.
+      - arkade-state:/data
+    environment:
+      # ── Hosting ───────────────────────────────────────────────────────────
+      # Bind address inside the container. Default (image): http://0.0.0.0:8080.
+      # NOTE: the image ALSO sets the unprefixed `Urls` variable, and that is what actually
+      # takes effect — src/ArkadeHeroes.Server/appsettings.json ships
+      # "Urls": "http://localhost:5210", which outranks ASPNETCORE_URLS in the ASP.NET
+      # configuration chain. Verified: with only ASPNETCORE_URLS set, Kestrel bound
+      # localhost:5210 and the container was unreachable. Change both together, or neither.
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      Urls: http://0.0.0.0:8080
+      # "Production" or "Development". Default: Production. Development additionally loads
+      # appsettings.Development.json and returns developer exception pages.
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      # Minimum log level. Default: Information.
+      Logging__LogLevel__Default: ${LOG_LEVEL:-Information}
+
+      # ── Chain backend ─────────────────────────────────────────────────────
+      # "InMemory" (default) = simulated chain, no bitcoin, no wallet — safe for demos and
+      # the whole unit suite. "NArk" = the real Arkade stack (arkd + esplora + emulator).
+      # InMemory also EXPOSES the /api/dev/* endpoints (fund-treasury, pay-invoice,
+      # mint-hero, …) which mint assets and sats for free. Never run InMemory in public.
+      Chain__Mode: ${CHAIN_MODE:-InMemory}
+      # arkd endpoint. Default: http://localhost:7070 (denigiri regtest).
+      Chain__NArk__ArkUri: ${ARK_URI:-http://host.docker.internal:7070}
+      # Esplora-compatible REST API. Default: http://localhost:3000/api. The denigiri stack
+      # serves it under mempool's /api path, unlike older nigiri layouts.
+      Chain__NArk__EsploraUri: ${ESPLORA_URI:-http://host.docker.internal:3000/api}
+      # Arkade Script emulator (covenant co-signing). Default: http://localhost:7073.
+      # Optional for server-enforced play; REQUIRED for every covenant path (escrows,
+      # marketplace offers, death-match stakes).
+      Chain__NArk__EmulatorUri: ${EMULATOR_URI:-http://host.docker.internal:7073}
+      # SQLite file for NArk wallet storage + chain bookkeeping. Default (app):
+      # arkade-heroes-chain.db in the working directory — i.e. the EPHEMERAL container
+      # layer. Pointed into the volume here: it holds the treasury wallet's derived keys.
+      Chain__NArk__DbPath: /data/arkade-heroes-chain.db
+      #
+      # *** TREASURY SEED PHRASE — REAL MONEY. NEVER GIVE THIS A DEFAULT. ***
+      # Fixed BIP-39 mnemonic for the treasury wallet. Default: EMPTY, and empty is the
+      # safe value — the app generates a mnemonic on first boot and persists it in the
+      # wallet storage above. Set it only to RESTORE an existing treasury.
+      # Supplied from .env, which is gitignored. If .env is absent this resolves to an
+      # empty string, which is exactly the default behaviour.
+      # Anyone who reads this value can spend the treasury.
+      Chain__NArk__TreasuryMnemonic: ${TREASURY_MNEMONIC:-}
+
+      # ── Durability ────────────────────────────────────────────────────────
+      # SQLite file holding state a restart must not lose: players, the hero roster,
+      # paid-but-unclaimed purchases, treasury flows. Default (app): UNSET = no persistence
+      # at all, everything in memory, gone on restart. Set here, on the named volume above.
+      Game__StateDbPath: /data/game.db
+      # How often DIRTY hero progression (level/XP, equipment, cooldowns, breed count) is
+      # flushed. Default: 00:00:15. Identity events — mint, burn, transfer, rename — persist
+      # inline regardless, so a crash loses at most this much grinding, never a hero.
+      Game__HeroFlushInterval: ${HERO_FLUSH_INTERVAL:-00:00:15}
+
+      # ── Policy switches ───────────────────────────────────────────────────
+      # Refuse the starter-hero claim (the first irreversible step, where assets are minted)
+      # until the player has accepted the current Terms version. Default: false.
+      # A deployment staking real bitcoin turns this ON — otherwise the browser gate is
+      # cosmetic and any API client walks straight past it.
+      Game__RequireTermsAcceptance: ${REQUIRE_TERMS_ACCEPTANCE:-false}
+      # Genome-derived innate combat passives (innate-v2). Default: true.
+      # Flipping this changes the published game-config hash, so outcomes resolved under it
+      # carry a different version stamp; clients resolve it via GET /api/config/{version}.
+      Game__InnateAbilities: ${INNATE_ABILITIES:-true}
+
+      # ── Fees (treasury income — sats sinks) ───────────────────────────────
+      # Flat sats to breed two heroes. Default: 1000.
+      Game__BreedingFeeSats: ${BREEDING_FEE_SATS:-1000}
+      # Flat sats to merge two heroes into one, on top of the hero burn. Default: 1000.
+      Game__MergeFeeSats: ${MERGE_FEE_SATS:-1000}
+      # Flat sats to claim a globally-unique hero name. Default: 500. 0 = renaming is free.
+      Game__HeroRenameFeeSats: ${HERO_RENAME_FEE_SATS:-500}
+      # Marketplace fee: flat sats the treasury takes from each completed sale. Default: 1000.
+      # Enforced by the offer's COVENANT, not billed at listing — the SELLER absorbs it, and
+      # an ask at or below this value is refused outright. Changing it affects only NEW
+      # offers; a resting one keeps the fee baked into the covenant it was created with.
+      Game__OfferListingFeeSats: ${OFFER_LISTING_FEE_SATS:-1000}
+      # Tournament house rake: % of the buy-in pot the treasury keeps, the rest to the
+      # podium. Default: 10.
+      Game__TournamentRakePct: ${TOURNAMENT_RAKE_PCT:-10}
+      # Base staked-match fee, plus a per-level surcharge. Defaults: 500 and 20.
+      Game__MatchFeeBaseSats: ${MATCH_FEE_BASE_SATS:-500}
+      Game__MatchFeePerLevel: ${MATCH_FEE_PER_LEVEL:-20}
+      # Death-match and absorb fees, as multiples of the match fee. Defaults: 2 and 3.
+      Game__DeathMatchFeeMultiplier: ${DEATH_MATCH_FEE_MULTIPLIER:-2}
+      Game__AbsorbFeeMultiplier: ${ABSORB_FEE_MULTIPLIER:-3}
+      # How many times the breeding fee may double with breed count. Default: 3.
+      Game__BreedFeeDoublingCap: ${BREED_FEE_DOUBLING_CAP:-3}
+
+      # ── Treasury solvency (faucet governor) ───────────────────────────────
+      # Reserve floor: the daily faucet clamps its payout to (treasury balance − this), so
+      # emission can never drain below it. Default: 0 = no floor. Sats are REAL BITCOIN;
+      # raise this to protect scheduled obligations from the daily drain.
+      Game__TreasuryReserveFloorSats: ${TREASURY_RESERVE_FLOOR_SATS:-0}
+      # Also hold back the current season pot (base + accrued) when paying the faucet.
+      # Default: false.
+      Game__ReserveSeasonPot: ${RESERVE_SEASON_POT:-false}
+
+      # ── Emission (sats faucet — treasury outflow) ─────────────────────────
+      # Daily claim: flat base + per-quest bonus, scaled by streak. Defaults: 50, 150, 3.
+      Game__DailyBaseSats: ${DAILY_BASE_SATS:-50}
+      Game__DailyQuestBonusSats: ${DAILY_QUEST_BONUS_SATS:-150}
+      Game__DailyQuestsPerDay: ${DAILY_QUESTS_PER_DAY:-3}
+      # Streak bonus: +N% per consecutive day, capped. Defaults: 10 and 100.
+      Game__DailyStreakStepPct: ${DAILY_STREAK_STEP_PCT:-10}
+      Game__DailyStreakCapPct: ${DAILY_STREAK_CAP_PCT:-100}
+      # Season prize pool: house-funded base, plus a % of each staked match's fees.
+      # Defaults: 25000 and 20.
+      Game__SeasonPotBaseSats: ${SEASON_POT_BASE_SATS:-25000}
+      Game__SeasonFeeAccrualPct: ${SEASON_FEE_ACCRUAL_PCT:-20}
+      # Ranked-ladder season length in days. Default: 14.
+      Game__SeasonLengthDays: ${SEASON_LENGTH_DAYS:-14}
+
+      # ── Pacing ────────────────────────────────────────────────────────────
+      # Base unit for breeding cooldowns. Default: 00:00:30 (short, for fast regtest loops).
+      Game__BreedingCooldownBaseUnit: ${BREEDING_COOLDOWN_BASE_UNIT:-00:00:30}
+      # Per-hero cooldown between PvE gauntlet runs — rate-limits the capped XP faucet.
+      # Default: 00:00:30. A real deployment raises this (~10 min).
+      Game__GauntletCooldown: ${GAUNTLET_COOLDOWN:-00:00:30}
+      # How long after a covenant match opens before refund leaves unlock. Default: 24:00:00.
+      Game__WagerEscrowRefundAfter: ${WAGER_ESCROW_REFUND_AFTER:-24:00:00}
+      # Opponents returned by XP-weighted matchmaking. Default: 10.
+      Game__MatchmakingTake: ${MATCHMAKING_TAKE:-10}
+
+      # ── Combat odds (PUBLISHED on /api/chain/info so clients re-verify) ───
+      # P(absorb happens) ≈ AbsorbChance/256; each further trait ≈ AbsorbContinueChance/256.
+      # Defaults: 102 (≈40%) and 90 (≈35%). Changing either changes the game-config hash.
+      Game__AbsorbChance: ${ABSORB_CHANCE:-102}
+      Game__AbsorbContinueChance: ${ABSORB_CONTINUE_CHANCE:-90}
+
+      # ── Receipts ──────────────────────────────────────────────────────────
+      # Fixed 32-byte hex key signing progression receipts. Default: EMPTY = a new ephemeral
+      # key per process, so receipts signed before a restart no longer verify against the
+      # advertised public key. Set it (from .env — it is a private key) for a stable
+      # deployment. Not treasury-spending, but forgeable receipts mean forgeable progression.
+      Game__ReceiptKeyHex: ${RECEIPT_KEY_HEX:-}
+    healthcheck:
+      # /api/chain/info rather than /healthz: it proves the chain service resolved and the
+      # game config is actually being served, not merely that the process is up.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/chain/info || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Blazor WebAssembly frontend (static files behind nginx) ───────────────
+  web:
+    build:
+      context: .
+      dockerfile: src/ArkadeHeroes.Web/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-arkade-heroes}/arkade-heroes-web:${TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5132}:8080"
+    environment:
+      # Where the BROWSER should reach the game API. Default: http://localhost:5210.
+      # This is fetched from the user's machine, so it must be the PUBLISHED address —
+      # "http://server:8080" is a compose-internal name that resolves to nothing in a
+      # browser. Injected into wwwroot/appsettings.json at container start, so one built
+      # image can serve regtest, signet or mainnet without a rebuild.
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:5210}
+    depends_on:
+      # Ordering only — the WASM bundle is static and loads fine before the API is up; the
+      # browser just gets failed fetches until it is.
+      - server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  # Named, so it survives `docker compose down` (only `down -v` destroys it).
+  arkade-state:
