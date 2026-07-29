@@ -51,6 +51,37 @@ public class MarketplaceListingFeeTests
         Assert.Equal(treasuryBefore, await chain.TreasuryBalanceAsync());
     }
 
+    /// <summary>
+    /// The other half of "listing is free": taking an unsold item back must ALSO cost nothing. The
+    /// covenant gets this right by construction — the fee lives in the fulfil leaf, and reclaim spends a
+    /// different leaf that moves no sats — but /sell promises the seller "a hero that never sells is
+    /// never charged", and nothing pinned the reclaim end of that promise. A fee quietly taken here
+    /// would turn an unsold listing into a loss, which is the opposite of what the page says.
+    /// </summary>
+    [Fact]
+    public async Task Reclaiming_AnUnsoldOffer_ChargesNothing_AndReturnsTheItem()
+    {
+        using var factory = FactoryWithFee(Fee);
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        var (seller, sellerDto) = await factory.RegisterAsync("MF-Reclaim");
+        await seller.BuyItemAsync("rusty-blade");
+
+        var offer = await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", Ask));
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+
+        // Baselines AFTER the deposit: the item has left the seller and nothing has been charged yet.
+        var balanceBefore = (await seller.Players.MeAsync()).BalanceSats;
+        var treasuryBefore = await chain.TreasuryBalanceAsync();
+        Assert.Equal(0UL, await chain.GetItemAssetBalanceAsync(sellerDto.PlayerId, "rusty-blade"));
+
+        await seller.Dev.ReclaimOfferAsync(new { OfferId = offer.OfferId });
+
+        Assert.Equal(treasuryBefore, await chain.TreasuryBalanceAsync());                       // the house took nothing
+        Assert.Equal(balanceBefore, (await seller.Players.MeAsync()).BalanceSats);              // and the seller paid nothing
+        Assert.Equal(1UL, await chain.GetItemAssetBalanceAsync(sellerDto.PlayerId, "rusty-blade"));  // item is back
+        Assert.DoesNotContain(await seller.Offers.ListAsync(), o => o.OfferId == offer.OfferId && o.Status == "active");
+    }
+
     [Fact]
     public async Task Sale_PaysTheSellerTheAskMinusTheFee_AndTheTreasuryTheRest()
     {
