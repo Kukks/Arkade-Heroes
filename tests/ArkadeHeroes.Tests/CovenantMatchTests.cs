@@ -55,7 +55,9 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("covenant-duel"));
         Assert.Equal(wager * 2, fight.WinnerPayoutSats);
 
-        var (ok, detail) = FairnessAudit.VerifyMatch(open.MatchId, "covenant-duel", open.CommitmentHex, fight);
+        var (cfg, cfgError) = await alice.Config.ResolveAsync(fight.ConfigVersion);
+        Assert.Null(cfgError);
+        var (ok, detail) = FairnessAudit.VerifyMatch(open.MatchId, "covenant-duel", open.CommitmentHex, fight, cfg);
         Assert.True(ok, detail);
 
         var aliceFinal = await alice.Players.MeAsync();

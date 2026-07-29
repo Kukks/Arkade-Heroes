@@ -99,6 +99,22 @@ public class GameOptions
     /// (base + accrued) so emission can't drain the sats the upcoming season settlement owes. Default off.</summary>
     public bool ReserveSeasonPot { get; set; } = false;
 
+    /// <summary>Genome-derived innate combat passives (innate-v2): each of a hero's EXPRESSED cosmetic
+    /// traits grants one rare, high-impact proc — Aura→ward, Marking→mend, Eyes→true strike, Crest→thorns,
+    /// Sigil→brand, Stance→initiative — so rarity and breeding start to matter in the fight rather than only
+    /// on the card. LIVE by default.
+    /// It is a CONFIG switch rather than a Core constant for two reasons. It can be turned back off without a
+    /// code change if the balance band moves. And <see cref="CombatConfig.Default"/> must STAY off regardless:
+    /// that constant is what every UNSTAMPED (pre-stamp) replay is reconstructed under, so flipping it there
+    /// would silently rewrite what historical outcomes are checked against.
+    /// Turning this on is safe for verification precisely because of the stamp: the resulting config hashes to
+    /// a <see cref="GameConfigVersion"/> that is NOT the default one, every outcome resolved under it carries
+    /// that stamp, and a client resolves the stamp via GET /api/config/{version} before replaying — so a
+    /// verifier follows the flip automatically instead of replaying under its own compiled-in default. Only
+    /// heroes that EXPRESS a cosmetic trait are affected at all: gen-0 starters come out of Genome.NewGen0
+    /// with genes[16..] cleared, express nothing, and fight identically either way.</summary>
+    public bool InnateAbilities { get; set; } = true;
+
     /// <summary>Opt-in server-side Terms enforcement: when true, claiming starter heroes — the first
     /// irreversible step, where assets are minted — is refused until the player's RECORDED acceptance covers
     /// <see cref="Shared.Terms.CurrentVersion"/>. Default OFF, because the browser already gates entry and
@@ -116,7 +132,7 @@ public class GameOptions
         Rarity: RarityBands.Default,
         Affinity: AffinityBonuses.Default,
         Curve: XpCurve.Default,
-        Combat: CombatConfig.Default,
+        Combat: CombatConfig.Default with { InnateAbilities = InnateAbilities },
         Breeding: new BreedingPolicy(BreedingCooldownBaseUnit),
         BreedingFeeSats: BreedingFeeSats,
         MergeFeeSats: MergeFeeSats,

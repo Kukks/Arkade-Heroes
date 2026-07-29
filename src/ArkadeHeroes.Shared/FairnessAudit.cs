@@ -100,15 +100,23 @@ public static class FairnessAudit
     /// <summary>
     /// Verifies a death-match ABSORB outcome: seed matches the commitment, entropy is the documented
     /// fight derivation, and <c>Absorb.Resolve(winner, loser, entropy, odds)</c> reproduces the
-    /// server's mint decision — on a mint, the new genome; on a keep, that nothing was minted. The
-    /// odds are the server-published <see cref="AbsorbOdds"/> the client fetched. This is the
+    /// server's mint decision — on a mint, the new genome; on a keep, that nothing was minted. This is the
     /// mandatory client-side gate: a server can't hand the winner a genome the seed didn't produce
     /// (or fabricate an absorb) without this recompute catching it.
     /// </summary>
+    /// <remarks>The odds come from the config the settlement was RESOLVED under — the optional
+    /// <paramref name="config"/>, resolved from the settle's <c>ConfigVersion</c> stamp (null →
+    /// <c>GameConfig.Default</c>, i.e. a pre-stamp settlement). They are deliberately NOT the odds the
+    /// client can read from <c>/api/chain/info</c>: those are whatever is in force NOW, so retuning them
+    /// would make every historical absorb disagree with the receipt it is checking. And they are not taken
+    /// from the settle response either — a server that could DECLARE its own odds could declare whichever
+    /// ones make a fabricated absorb recompute, which is the entire property this gate exists to hold.
+    /// An unresolvable stamp is a refusal to verify at the callsite, never a replay under current odds.</remarks>
     public static (bool Ok, string Detail) VerifyAbsorb(
         string deathMatchId, HeroDto challenger, HeroDto defender, bool challengerWon,
-        string nonce, string commitmentHex, AbsorbOdds odds,
-        bool minted, string? newGenomeHex, string serverSeedHex, string entropyHex)
+        string nonce, string commitmentHex,
+        bool minted, string? newGenomeHex, string serverSeedHex, string entropyHex,
+        GameConfig? config = null)
     {
         var seed = Convert.FromHexString(serverSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -122,7 +130,8 @@ public static class FairnessAudit
         var winner = challengerWon ? challenger : defender;
         var loser = challengerWon ? defender : challenger;
         var outcome = Absorb.Resolve(
-            Genome.FromHex(winner.GenomeHex), Genome.FromHex(loser.GenomeHex), entropy, odds);
+            Genome.FromHex(winner.GenomeHex), Genome.FromHex(loser.GenomeHex), entropy,
+            (config ?? GameConfig.Default).Absorb);
         if (outcome.Minted != minted)
             return (false, $"minted flag mismatch: recomputed {outcome.Minted}, server reported {minted}");
         if (minted && !string.Equals(outcome.Result.ToHex(), newGenomeHex, StringComparison.OrdinalIgnoreCase))

@@ -927,18 +927,20 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
 
         // Absorb mode: the winner may have RE-MINTED absorbing the loser's trait — verify the new
-        // genome too (mandatory hard gate: recompute the outcome from the revealed seed + the
-        // server-published odds, so a fabricated absorb or a wrong genome is caught).
+        // genome too (mandatory hard gate: recompute the outcome from the revealed seed under the odds
+        // the SETTLEMENT ran on, so a fabricated absorb or a wrong genome is caught). Same resolved
+        // config as the fight above: the odds are verification-critical, so they ride the stamp rather
+        // than being read from /api/chain/info, which reports whatever is in force now.
         if (settle.Minted)
         {
             Console.WriteLine($"  ✦ {winnerName} ABSORBED {settle.TraitsAbsorbed} trait(s) → re-minted as new hero {ShortId(settle.NewHero!.Id)}");
-            var info = await _api.Chain.InfoAsync();
             var challengerWon = settle.WinnerHeroId == settle.ChallengerSnapshot.Id;
-            var (aok, adetail) = FairnessAudit.VerifyAbsorb(
-                deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
-                nonce, settle.Receipt!.CommitmentHex,
-                new ArkadeHeroes.Core.Genetics.AbsorbOdds(info.AbsorbChance, info.AbsorbContinueChance),
-                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+            var (aok, adetail) = cfg is null
+                ? (false, cfgError!)
+                : FairnessAudit.VerifyAbsorb(
+                    deathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot, challengerWon,
+                    nonce, settle.Receipt!.CommitmentHex,
+                    settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex, cfg);
             Console.WriteLine(aok ? $"    absorb ✓ {adetail}" : $"    absorb ✗ SERVER CHEATED: {adetail}");
         }
     }

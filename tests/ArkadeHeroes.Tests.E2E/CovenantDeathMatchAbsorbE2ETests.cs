@@ -178,10 +178,14 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
                 await Task.Delay(1500);
             }
 
-            // Client-verifiable: recompute Absorb.Resolve from the revealed seed + published odds.
+            // Client-verifiable: recompute Absorb.Resolve from the revealed seed under the odds the
+            // SETTLEMENT ran on, resolved from its own stamp (this server is retuned to 255).
+            var (settledUnder, cfgError) = await alice.Config.ResolveAsync(settle.ConfigVersion);
+            Assert.Null(cfgError);
+            Assert.Equal(255, settledUnder!.Absorb.AbsorbChance);
             var verify = FairnessAudit.VerifyAbsorb(open.DeathMatchId, settle.ChallengerSnapshot, settle.DefenderSnapshot,
                 challengerWon: settle.WinnerHeroId == aliceHero.Id, "e2e-absorb", open.CommitmentHex,
-                new AbsorbOdds(255, 90), settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex, settledUnder);
             Assert.True(verify.Ok, verify.Detail);
             Assert.Equal("absorb", settle.Receipt!.Type);
             return;

@@ -196,8 +196,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         }, TimeSpan.FromSeconds(45), "both stakes to be observed and the duel to resolve");
 
         Assert.Equal(wager * 2, duel!.WinnerPayoutSats);
+        var (duelCfg, duelCfgError) = await alice.Config.ResolveAsync(duel.ConfigVersion);
+        Assert.Null(duelCfgError);
         var (duelOk, duelDetail) = FairnessAudit.VerifyMatch(
-            open.MatchId, "e2e-duel-nonce", open.CommitmentHex, duel);
+            open.MatchId, "e2e-duel-nonce", open.CommitmentHex, duel, duelCfg);
         Assert.True(duelOk, duelDetail);
 
         // Portable progression: the duel comes with a signed receipt that
@@ -246,8 +248,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         }, TimeSpan.FromSeconds(60), "escrow funding to be observed and the covenant duel to settle");
 
         Assert.Equal(covenantWager * 2, covenantDuel!.WinnerPayoutSats);
+        var (covCfg, covCfgError) = await alice.Config.ResolveAsync(covenantDuel.ConfigVersion);
+        Assert.Null(covCfgError);
         var (covOk, covDetail) = FairnessAudit.VerifyMatch(
-            covenantOpen.MatchId, "e2e-covenant-duel", covenantOpen.CommitmentHex, covenantDuel);
+            covenantOpen.MatchId, "e2e-covenant-duel", covenantOpen.CommitmentHex, covenantDuel, covCfg);
         Assert.True(covOk, covDetail);
 
         // The pot arrived at the WINNER'S own wallet, swept from the escrow by
@@ -294,8 +298,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id));
         var friendly = await alice.Matches.FightAsync(friendlyOpen.MatchId, new FightRequest("e2e-friendly"));
         Assert.False(string.IsNullOrEmpty(friendly.Result.WinnerId));
+        var (friendlyCfg, friendlyCfgError) = await alice.Config.ResolveAsync(friendly.ConfigVersion);
+        Assert.Null(friendlyCfgError);
         var (friendlyOk, friendlyDetail) = FairnessAudit.VerifyMatch(
-            friendlyOpen.MatchId, "e2e-friendly", friendlyOpen.CommitmentHex, friendly);
+            friendlyOpen.MatchId, "e2e-friendly", friendlyOpen.CommitmentHex, friendly, friendlyCfg);
         Assert.True(friendlyOk, friendlyDetail);
     }
 }

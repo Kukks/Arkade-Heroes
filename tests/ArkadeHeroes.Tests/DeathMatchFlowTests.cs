@@ -323,10 +323,15 @@ public class DeathMatchFlowTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.Equal(20, absorbed.Level);                                        // inherited the winner's level
             Assert.Equal(255, Genome.FromHex(absorbed.GenomeHex).DominantGene(TraitCategory.Aura)); // absorbed Bob's Aura
 
-            // Client-verifiable: recompute Absorb.Resolve from the revealed seed + published odds.
+            // Client-verifiable: recompute Absorb.Resolve from the revealed seed under the odds the
+            // SETTLEMENT ran on, resolved from its own stamp (this server is retuned to 255, so the stamp
+            // is not the default one and the odds cannot be assumed).
+            var (settledUnder, cfgError) = await alice.Config.ResolveAsync(settle.ConfigVersion);
+            Assert.Null(cfgError);
+            Assert.Equal(255, settledUnder!.Absorb.AbsorbChance);
             var verify = FairnessAudit.VerifyAbsorb(open.DeathMatchId, aliceBefore, bobBefore, challengerWon: true,
-                "absorb-nonce", open.CommitmentHex, new AbsorbOdds(255, 90),
-                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex);
+                "absorb-nonce", open.CommitmentHex,
+                settle.Minted, settle.NewGenomeHex, settle.ServerSeedHex, settle.EntropyHex, settledUnder);
             Assert.True(verify.Ok, verify.Detail);
 
             // The absorb receipt replays to the inherited level (progression preserved).
