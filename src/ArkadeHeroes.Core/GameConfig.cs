@@ -108,13 +108,41 @@ public sealed record AffinityBonuses(
     public static AffinityBonuses Default { get; } = new(0.030, 0.020, 0.012, 0.006, 0.002, 0.05);
 }
 
-/// <summary>Per-passive magnitude knobs for innate-v2 combat passives — each scales a cosmetic category's
-/// capped <see cref="Traits.InnateStrength"/> into that passive's own units. Applied ONLY when
-/// <see cref="CombatConfig.InnateAbilities"/> is on; conservative defaults, tuned by the balance probe.</summary>
+/// <summary>
+/// Per-passive PROC knobs for innate-v2 combat passives. A passive is a RARE, HIGH-IMPACT proc, not an
+/// always-on modifier: a hero's capped <see cref="Traits.InnateStrength"/> buys the CHANCE, and the paired
+/// magnitude is the chunky payload when it lands — a rare big shield reads as a moment, a constant small one
+/// reads as a stat. Each <c>*Chance</c> knob converts strength to a whole-percent per-event chance
+/// (strength × chance × 100 — Legendary 0.030 × 10 = 30%, Epic 20%, Rare 12%, Uncommon 6%, Common 2%).
+/// Applied ONLY when <see cref="CombatConfig.InnateAbilities"/> is on, and a category the hero does not
+/// express resolves to 0% — a 0% proc is never rolled, which is what keeps a flag-off fight draw-for-draw
+/// identical to the engine before passives existed. Tuned by <c>InnateAbilitiesTests.BalanceProbe</c>.
+/// </summary>
 public sealed record InnateBonuses(
-    double Shield, double Regen, double Accuracy, double Thorns, double Brand, int BrandTurns, double Initiative)
+    // Aura → Ward: chance per INCOMING blow to raise a shield that soaks up to Ward × the defender's MaxHp
+    // of THAT blow (nothing carries over — it is armour against one strike, not a life buffer).
+    double ShieldChance, double Ward,
+    // Marking → Mend: chance at the start of a HURT hero's own turn to heal Mend × its MaxHp.
+    double RegenChance, double Mend,
+    // Eyes → True Strike: chance per attack that the blow cannot miss, cannot be dodged, and lands critical.
+    double TrueStrikeChance,
+    // Crest → Thorns: chance per blow TAKEN to throw Reflect × the (pre-shield) blow back at the attacker.
+    double ThornsChance, double Reflect,
+    // Sigil → Brand: chance per LANDED hit to brand the target for BrandTurns ticks of Tick × its MaxHp.
+    double BrandChance, double Tick, int BrandTurns,
+    // Stance → Initiative: chance per own turn to seize a SECOND action in the same turn.
+    double InitiativeChance)
 {
-    public static InnateBonuses Default { get; } = new(1.0, 0.10, 1.0, 1.0, 0.10, 3, 1.0);
+    // Tuned so each passive alone lands near a 0.60 mirror win rate (see InnateAbilitiesTests.BalanceProbe):
+    // a Legendary trait — the top of the ladder — buys only a 6-12% per-event chance, but the payload it buys
+    // is a moment (a blow fully blocked, a quarter of the health bar back, a whole extra action).
+    public static InnateBonuses Default { get; } = new(
+        ShieldChance: 2.5, Ward: 0.25,          // Legendary 7% per incoming blow; soaks a whole typical strike
+        RegenChance: 2.0, Mend: 0.25,           // Legendary 6% per hurt turn; a quarter of the health bar
+        TrueStrikeChance: 3.0,                  // Legendary 9% per attack; unmissable + critical
+        ThornsChance: 4.0, Reflect: 0.60,       // Legendary 12% per blow taken; 60% of it thrown back
+        BrandChance: 3.0, Tick: 0.05, BrandTurns: 3,   // Legendary 9% per landed hit; 15% of MaxHp over 3 turns
+        InitiativeChance: 3.0);                 // Legendary 9% per own turn; a second action that turn
 }
 
 /// <summary>The XP-to-next-level curve — XpToNext(level) = Base + Coefficient·level^Exponent — and the level ceiling.</summary>
@@ -152,12 +180,14 @@ public sealed record CombatConfig(
     // separate coordinated client+server release. Optional param → no positional ctor breaks.
     bool ElementAwareSelection = false,
     // Genome-derived innate abilities: when true, a hero's EXPRESSED COSMETIC traits (the six
-    // non-affinity categories, otherwise combat-inert) each grant one capped combat passive —
-    // Aura→shield, Marking→regen, Eyes→accuracy, Crest→thorns, Sigil→brand, Stance→initiative,
-    // scaled by Traits.InnateStrength and the Innate knobs below — so rarity/breeding start to
-    // matter in the fight, not just on the card.
+    // non-affinity categories, otherwise combat-inert) each grant one RARE, HIGH-IMPACT combat PROC —
+    // Aura→ward, Marking→mend, Eyes→true strike, Crest→thorns, Sigil→brand, Stance→initiative —
+    // whose CHANCE is bought by Traits.InnateStrength and whose payload is set by the Innate knobs
+    // below, so rarity/breeding start to matter in the fight, not just on the card.
     // DEFAULT FALSE (same discipline as ElementAwareSelection): Default stays byte-identical and every
     // existing replay verifies unchanged; flipping it on is a coordinated client+server release.
+    // Off, every proc chance is 0 and is therefore NEVER ROLLED — the engine draws exactly the rolls it
+    // drew before passives existed, so no existing replay can shift.
     bool InnateAbilities = false,
     // 3v3 team synergy: when true, a squad's ELEMENTAL DIVERSITY grants each of its heroes a small capped
     // (<= SquadSynergy.MaxBonus) damage bonus in that squad match — a lineup spanning more of the element
@@ -167,10 +197,10 @@ public sealed record CombatConfig(
     // stays byte-identical and every existing replay verifies unchanged; the flip is a coordinated
     // client+server release.
     bool SquadSynergy = false,
-    // innate-v2 per-passive magnitudes; null = InnateBonuses.Default (a record type can't be a const param default).
+    // innate-v2 per-passive proc knobs; null = InnateBonuses.Default (a record type can't be a const param default).
     InnateBonuses? Innate = null)
 {
-    /// <summary>The innate magnitudes, resolving the null default.</summary>
+    /// <summary>The innate proc knobs, resolving the null default.</summary>
     public InnateBonuses InnateOrDefault => Innate ?? InnateBonuses.Default;
 
     public static CombatConfig Default { get; } = new(

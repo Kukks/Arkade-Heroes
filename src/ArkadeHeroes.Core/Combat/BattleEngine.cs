@@ -28,23 +28,40 @@ public static class BattleEngine
         var fighterB = new FighterState(b, cfg, advantageB);
         var events = new List<BattleEvent>();
 
+        // End-of-action check, shared by a hero's normal action and by a Stance follow-up: if either side is
+        // down, log the Defeated beat and hand back the finished match; otherwise null and the fight goes on.
+        BattleResult? Finish(int turn, FighterState actor, FighterState target, string skillId)
+        {
+            if (target.Hp > 0 && actor.Hp > 0) return null;   // actor can die to the target's thorns this swing
+            // If both hit 0 the same swing, the target died to the attack first, so the attacker wins
+            // (the target.Hp <= 0 branch is checked first, matching that ordering).
+            var (win, lose) = target.Hp <= 0 ? (actor, target) : (target, actor);
+            events.Add(new BattleEvent(turn, win.Hero.Id, lose.Hero.Id,
+                BattleEventKind.Defeated, skillId, 0, false, 0, 0));
+            return new BattleResult(win.Hero.Id, lose.Hero.Id, turn, events, win.Hp, win.Stats.MaxHp);
+        }
+
         for (var turn = 1; turn <= maxTurns; turn++)
         {
             foreach (var (actor, target) in TurnOrder(fighterA, fighterB))
             {
                 if (actor.Hp <= 0 || target.Hp <= 0) continue;
 
-                // innate ticks (Marking regen, then Sigil burn) — deterministic, RNG-free, own-turn start. Each logs
-                // a beat only when it actually moves HP, so a flag-off fight (both inert) logs nothing.
-                if (actor.RegenPerTurn > 0)
+                // Marking — Mend: a rare, chunky self-heal rolled at the start of the hero's own turn, and only
+                // while it is actually HURT (a full-HP hero would waste the proc, so it is not rolled there).
+                // Flag off ⇒ RegenChance is 0 ⇒ short-circuit ⇒ no draw.
+                if (actor.RegenChance > 0 && actor.Hp < actor.Stats.MaxHp && rng.Chance(actor.RegenChance))
                 {
                     var before = actor.Hp;
-                    actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.RegenPerTurn);
-                    var healed = actor.Hp - before;   // actual gain — 0 at full HP, which logs nothing
-                    if (healed > 0)   // Marking self-heal: source == target (the regenerating hero)
+                    actor.Hp = Math.Min(actor.Stats.MaxHp, actor.Hp + actor.MendHp);
+                    var healed = actor.Hp - before;   // actual gain — clamped at MaxHp
+                    if (healed > 0)   // Marking self-heal: source == target (the mending hero)
                         events.Add(new BattleEvent(turn, actor.Hero.Id, actor.Hero.Id,
                             BattleEventKind.Regenerated, "", 0, false, healed, actor.Hp));
                 }
+
+                // Sigil's brand ticks next — deterministic, RNG-free once applied (the ROLL happened on the
+                // attacker's landing hit); a flag-off fight is never branded, so this is inert and logs nothing.
                 if (actor.BurnTurnsLeft > 0)
                 {
                     var before = actor.Hp;
@@ -65,15 +82,17 @@ public static class BattleEngine
                 actor.TickCooldowns();
                 var skill = ChooseSkill(actor, target, cfg);
                 Execute(turn, actor, target, skill, rng, events, cfg);
+                if (Finish(turn, actor, target, skill.Id) is { } decided) return decided;
 
-                if (target.Hp <= 0 || actor.Hp <= 0)   // actor can die to the target's thorns this swing
+                // Stance — Initiative: a rare SECOND action in the same turn — the hero reads the fight and moves
+                // again before the opponent can answer. Cooldowns are NOT re-ticked, so the follow-up picks from
+                // what is still available after the first cast started its own cooldown (never the same big move
+                // twice). Flag off ⇒ InitiativeChance is 0 ⇒ short-circuit ⇒ no draw.
+                if (actor.InitiativeChance > 0 && rng.Chance(actor.InitiativeChance))
                 {
-                    // If both hit 0 the same swing, the target died to the attack first, so the attacker wins
-                    // (the target.Hp <= 0 branch is checked first, matching that ordering).
-                    var (win, lose) = target.Hp <= 0 ? (actor, target) : (target, actor);
-                    events.Add(new BattleEvent(turn, win.Hero.Id, lose.Hero.Id,
-                        BattleEventKind.Defeated, skill.Id, 0, false, 0, 0));
-                    return new BattleResult(win.Hero.Id, lose.Hero.Id, turn, events, win.Hp, win.Stats.MaxHp);
+                    var again = ChooseSkill(actor, target, cfg);
+                    Execute(turn, actor, target, again, rng, events, cfg);
+                    if (Finish(turn, actor, target, again.Id) is { } decidedAgain) return decidedAgain;
                 }
             }
         }
@@ -93,13 +112,10 @@ public static class BattleEngine
 
     private static (FighterState, FighterState)[] TurnOrder(FighterState a, FighterState b)
     {
-        // Faster hero acts first; ties broken by luck, then id. Stance's initiative passive scales the
-        // ordering speed only (never the stat) — a pure double comparison, no RNG. Flag off ⇒ both
-        // InitiativeFactor == 1.0, and int×1.0 is exact, so the order is byte-identical to before.
-        var aSpeed = a.Stats.Speed * a.InitiativeFactor;
-        var bSpeed = b.Stats.Speed * b.InitiativeFactor;
-        var aFirst = aSpeed != bSpeed
-            ? aSpeed > bSpeed
+        // Faster hero acts first; ties broken by luck, then id. RNG-free — Stance's initiative proc buys an EXTRA
+        // ACTION on the hero's own turn (see Fight), not a place in this queue, so ordering never draws.
+        var aFirst = a.Stats.Speed != b.Stats.Speed
+            ? a.Stats.Speed > b.Stats.Speed
             : a.Stats.Luck != b.Stats.Luck
                 ? a.Stats.Luck > b.Stats.Luck
                 : string.CompareOrdinal(a.Hero.Id, b.Hero.Id) < 0;
@@ -172,14 +188,19 @@ public static class BattleEngine
     {
         actor.StartCooldown(skill);
 
-        if (!rng.Chance(skill.Accuracy + actor.AccuracyBonus))   // Eyes: +points; Chance clamps to [0,100], draws once
+        // Eyes — True Strike: a rare blow that finds the weak point. It cannot miss, cannot be dodged, and lands
+        // as a critical. Rolled FIRST so it can pre-empt both whiff checks; flag off ⇒ TrueStrikeChance is 0 ⇒
+        // the && short-circuits ⇒ no draw, and the two rolls below then run exactly as they always have.
+        var trueStrike = actor.TrueStrikeChance > 0 && rng.Chance(actor.TrueStrikeChance);
+
+        if (!trueStrike && !rng.Chance(skill.Accuracy))
         {
             events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
                 BattleEventKind.Missed, skill.Id, 0, false, 0, target.Hp));
             return;
         }
 
-        if (rng.Chance(target.Stats.DodgePercent))
+        if (!trueStrike && rng.Chance(target.Stats.DodgePercent))
         {
             events.Add(new BattleEvent(turn, actor.Hero.Id, target.Hero.Id,
                 BattleEventKind.Dodged, skill.Id, 0, false, 0, target.Hp));
@@ -190,7 +211,9 @@ public static class BattleEngine
         var element = skill.Element ?? actor.Hero.Genome.Element;
         var elementMult = ElementMatrix.Multiplier(element, target.Hero.Genome.Element, cfg);
         var variance = (90 + rng.Next(21)) / 100.0; // 0.90 .. 1.10
-        var crit = rng.Chance(actor.Stats.CritPercent);
+        // `||` evaluates the Chance call first ALWAYS (it is the left operand), so the crit draw is taken on
+        // every landed blow exactly as before — True Strike only forces the outcome, it never skips the roll.
+        var crit = rng.Chance(actor.Stats.CritPercent) || trueStrike;
 
         var raw = skill.Power * scale / (target.EffectiveDefense + cfg.Combat.ArmorConstant);
         // The attacker's capped (<=5%) affinity nudge — deterministic (fixed genome),
@@ -201,26 +224,32 @@ public static class BattleEngine
         // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
         var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
 
-        var absorbed = target.TakeAttackDamage(damage);
-        if (absorbed > 0)   // Aura: the defender's shield ate part of the blow (source == target)
+        // Aura — Ward: a rare shield thrown up as the blow lands, soaking up to WardHp of THIS strike. Nothing
+        // carries to the next blow: it is armour against one strike, not a life buffer, so it reads as a moment.
+        // Flag off ⇒ ShieldChance is 0 ⇒ short-circuit ⇒ no draw and ward stays 0 (an unchanged full-damage hit).
+        var ward = target.ShieldChance > 0 && rng.Chance(target.ShieldChance) ? target.WardHp : 0;
+        var absorbed = target.TakeAttackDamage(damage, ward);
+        if (absorbed > 0)   // the defender's ward ate part of the blow (source == target)
             events.Add(new BattleEvent(turn, target.Hero.Id, target.Hero.Id,
                 BattleEventKind.ShieldAbsorbed, "", absorbed, false, 0, target.Hp));
 
-        if (target.ThornsFraction > 0 && actor.Hp > 0)
+        // Crest — Thorns: a rare counter that throws a big slice of the (pre-shield) blow back at the attacker.
+        if (target.ThornsChance > 0 && actor.Hp > 0 && rng.Chance(target.ThornsChance))
         {
-            var reflected = (int)Math.Round(damage * target.ThornsFraction);   // pre-shield blow — the crest bites back
+            var reflected = (int)Math.Round(damage * target.Reflect);   // pre-shield blow — the crest bites back
             if (reflected > 0)
             {
-                actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no shield
+                actor.Hp = Math.Max(0, actor.Hp - reflected);   // DoT/thorns hit HP directly, no ward
                 events.Add(new BattleEvent(turn, target.Hero.Id, actor.Hero.Id,   // Crest: reflected at the attacker
                     BattleEventKind.Thorns, "", reflected, false, 0, actor.Hp));
             }
         }
 
-        if (actor.BrandStrength > 0 && target.Hp > 0)
+        // Sigil — Brand: a rare DoT seared onto the target, refreshed (never stacked) each time it lands.
+        if (actor.BrandChance > 0 && target.Hp > 0 && rng.Chance(actor.BrandChance))
         {
-            var per = (int)Math.Round(target.Stats.MaxHp * actor.BrandStrength);   // fraction of the TARGET's MaxHp
-            if (per > 0) { target.BurnPerTurn = per; target.BurnTurnsLeft = cfg.Combat.InnateOrDefault.BrandTurns; }  // refresh, never stack
+            var per = (int)Math.Round(target.Stats.MaxHp * actor.BrandTick);   // fraction of the TARGET's MaxHp
+            if (per > 0) { target.BurnPerTurn = per; target.BurnTurnsLeft = cfg.Combat.InnateOrDefault.BrandTurns; }
         }
 
         var healed = 0;
@@ -253,13 +282,19 @@ public static class BattleEngine
         public int DefenseBreakStacks { get; set; }
         public int FocusStacks { get; set; }
 
-        // ── innate-v2 passives — all inert (0 / 1.0) unless CombatConfig.InnateAbilities is on ──
-        public int ShieldHp { get; set; }          // Aura: one-time absorb pool, consumed before HP
-        public int RegenPerTurn { get; }           // Marking: heal at the start of each own turn
-        public int AccuracyBonus { get; }          // Eyes: +points to the hit-roll threshold
-        public double ThornsFraction { get; }      // Crest: fraction of a blow reflected at the attacker
-        public double BrandStrength { get; }       // Sigil: fraction of the TARGET's MaxHp per burn tick
-        public double InitiativeFactor { get; }    // Stance: turn-order speed multiplier (>= 1.0)
+        // ── innate-v2 PROCS — every *Chance is a whole percent and is 0 unless CombatConfig.InnateAbilities is
+        //    on AND this hero expresses that category. 0 means the engine never even ROLLS it (each draw site
+        //    short-circuits on `Chance > 0`), which is what keeps a flag-off fight draw-for-draw identical. ──
+        public int ShieldChance { get; }           // Aura: % per incoming blow to raise a ward…
+        public int WardHp { get; }                 //   …soaking up to this much of that one blow
+        public int RegenChance { get; }            // Marking: % per own turn while hurt to mend…
+        public int MendHp { get; }                 //   …by this much
+        public int TrueStrikeChance { get; }       // Eyes: % per attack for an unmissable, undodgeable crit
+        public int ThornsChance { get; }           // Crest: % per blow taken to counter…
+        public double Reflect { get; }             //   …for this fraction of the blow
+        public int BrandChance { get; }            // Sigil: % per landed hit to brand the target…
+        public double BrandTick { get; }           //   …for this fraction of the TARGET's MaxHp per tick
+        public int InitiativeChance { get; }       // Stance: % per own turn for a second action that turn
         public int BurnPerTurn { get; set; }       // active brand ON this fighter (set by an attacker's Sigil)
         public int BurnTurnsLeft { get; set; }
 
@@ -276,29 +311,41 @@ public static class BattleEngine
             Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
             Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, game.Combat);
             Hp = Stats.MaxHp;
-            InitiativeFactor = 1.0;
 
             if (game.Combat.InnateAbilities)
             {
                 var ib = game.Combat.InnateOrDefault;
                 var g = hero.Genome;
-                double S(TraitCategory c) => Traits.InnateStrength(g, c, game);
-                ShieldHp = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Aura) * ib.Shield);
-                RegenPerTurn = (int)Math.Round(Stats.MaxHp * S(TraitCategory.Marking) * ib.Regen);
-                AccuracyBonus = (int)Math.Round(S(TraitCategory.Eyes) * ib.Accuracy * 100);
-                ThornsFraction = S(TraitCategory.Crest) * ib.Thorns;
-                BrandStrength = S(TraitCategory.Sigil) * ib.Brand;
-                InitiativeFactor = 1.0 + S(TraitCategory.Stance) * ib.Initiative;
+                // The hero's capped strength in a category buys the CHANCE; the knob's magnitude is the payload.
+                // A category the hero does not express (or one a config has switched off) resolves to 0% — and a
+                // 0% proc is never ROLLED, which is the whole flag-off safety argument. Anything the hero DOES
+                // express floors at 1%, so a Common trait is a long shot rather than a chip that lies.
+                int Pct(TraitCategory c, double chance)
+                {
+                    var strength = Traits.InnateStrength(g, c, game);
+                    if (strength <= 0 || chance <= 0) return 0;
+                    return (int)Math.Clamp(Math.Round(strength * chance * 100), 1, 100);
+                }
+                ShieldChance = Pct(TraitCategory.Aura, ib.ShieldChance);
+                WardHp = (int)Math.Round(Stats.MaxHp * ib.Ward);
+                RegenChance = Pct(TraitCategory.Marking, ib.RegenChance);
+                MendHp = (int)Math.Round(Stats.MaxHp * ib.Mend);
+                TrueStrikeChance = Pct(TraitCategory.Eyes, ib.TrueStrikeChance);
+                ThornsChance = Pct(TraitCategory.Crest, ib.ThornsChance);
+                Reflect = ib.Reflect;
+                BrandChance = Pct(TraitCategory.Sigil, ib.BrandChance);
+                BrandTick = ib.Tick;
+                InitiativeChance = Pct(TraitCategory.Stance, ib.InitiativeChance);
             }
         }
 
-        /// <summary>Apply an incoming ATTACK's damage: Aura's shield absorbs first, the remainder hits HP; returns the
-        /// amount the shield soaked (0 with no shield) so the caller can log a ShieldAbsorbed beat.
-        /// (DoT/thorns bypass the shield and hit HP directly — the shield is armour against blows, not a life buffer.)</summary>
-        public int TakeAttackDamage(int dealt)
+        /// <summary>Apply an incoming ATTACK's damage: Aura's <paramref name="ward"/> (0 when the proc did not fire)
+        /// soaks first, the remainder hits HP; returns the amount the ward ate so the caller can log a
+        /// ShieldAbsorbed beat. The ward is scoped to THIS blow — no pool survives it — and DoT/thorns bypass it
+        /// and hit HP directly, because it is armour against a strike, not a life buffer.</summary>
+        public int TakeAttackDamage(int dealt, int ward)
         {
-            var absorbed = Math.Min(ShieldHp, dealt);
-            ShieldHp -= absorbed;
+            var absorbed = Math.Min(ward, dealt);
             Hp = Math.Max(0, Hp - (dealt - absorbed));
             return absorbed;
         }
