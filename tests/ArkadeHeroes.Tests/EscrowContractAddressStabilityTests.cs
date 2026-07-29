@@ -136,4 +136,53 @@ public class EscrowContractAddressStabilityTests
     [Fact]
     public void EscrowSatsIsNotCovenantBound_SoTheAddressIsTheSameWhateverIsStaked()
         => Assert.Equal(AddressOf(Duel()), AddressOf(Duel() with { EscrowSats = 5_001 }));
+
+    // ── Wagered match (per-party escrows) ──────────────────────────────────
+    // The fifth builder, and the one both earlier greps missed: it returns a TUPLE of two contracts
+    // rather than a single ArkadeArtifactContract, so a search by return type never saw it. Same
+    // boundary as the rest — IChainService.GetWagerEscrowParamsAsync feeds EscrowRefundFlow, where
+    // the CLIENT rebuilds both contracts to reclaim a stranded stake.
+
+    private static WagerEscrowParams Wager() => new(
+        CommitmentHex, PlayerAddress, OtherAddress, StakeSats: 10_000,
+        OraclePkHex: OraclePkHex, MatchId: "match-roundtrip", RefundAfterUnixSeconds: RefundAfter);
+
+    private static (string Challenger, string Defender) AddressesOf(WagerEscrowParams p)
+    {
+        var (challenger, defender) = WagerEscrowContracts.Build(p, Operator(), EmulatorSignerHex);
+        return (challenger.GetArkAddress().ScriptPubKey.ToHex(), defender.GetArkAddress().ScriptPubKey.ToHex());
+    }
+
+    [Fact]
+    public void AWagerEscrow_RebuildsBothPartyAddresses_AfterASerializationRoundTrip()
+        => Assert.Equal(AddressesOf(Wager()), AddressesOf(RoundTrip(Wager())));
+
+    /// <summary>
+    /// The per-party model's load-bearing property: each side stakes into its OWN escrow, so each can
+    /// reclaim independently if the other never funds. If both derived the same address the timelocked
+    /// refund could pay either party from a pot the other funded.
+    /// </summary>
+    [Fact]
+    public void TheTwoPartyEscrowsAreDistinctAddresses()
+    {
+        var (challenger, defender) = AddressesOf(Wager());
+        Assert.NotEqual(challenger, defender);
+    }
+
+    [Fact]
+    public void AWagerEscrowAddress_MovesWhenItsPartiesOrStakeMove()
+    {
+        var baseline = AddressesOf(Wager());
+        Assert.NotEqual(baseline, AddressesOf(Wager() with { ChallengerAddress = OtherAddress }));
+        Assert.NotEqual(baseline, AddressesOf(Wager() with { MatchId = "match-other" }));
+    }
+
+    /// <summary>
+    /// Unlike a death match (which sweeps), the wager escrow pins the stake structurally — the refund
+    /// leaf pays back exactly StakeSats, so the amount is part of the address. Pinned because the two
+    /// escrow families make OPPOSITE choices here, and that split should be deliberate.
+    /// </summary>
+    [Fact]
+    public void AWagerStakeIsCovenantBound_UnlikeADeathMatchEscrow()
+        => Assert.NotEqual(AddressesOf(Wager()), AddressesOf(Wager() with { StakeSats = 10_001 }));
 }
