@@ -43,8 +43,19 @@
             </p>
 
             <div class="terms-scroll">
-                <TermsDocument />
+                <TermsDocument OnLoadStateChanged="OnTermsLoaded" />
             </div>
+
+            @if (!_termsOnScreen)
+            {
+                @* Fail CLOSED. A player cannot agree to a document they were never shown, so if the terms
+                   are still loading — or a build shipped without them — Accept stays disabled rather than
+                   recording an acceptance that is evidence of nothing. *@
+                <p class="muted terms-blocked">
+                    You can't accept the terms until they're on screen. If this build is missing the
+                    document, that's a packaging fault — report it rather than working around it.
+                </p>
+            }
 
             @if (_error is not null)
             {
@@ -52,12 +63,12 @@
             }
 
             <label class="terms-check">
-                <input type="checkbox" @bind="_read" @bind:event="onchange" disabled="@_busy" />
+                <input type="checkbox" @bind="_read" @bind:event="onchange" disabled="@(_busy || !_termsOnScreen)" />
                 <span>I have read and accept the Terms of Use, and I understand I can lose bitcoin and heroes permanently.</span>
             </label>
 
             <div class="btn-row terms-actions">
-                <button class="btn primary" @onclick="Accept" disabled="@(!_read || _busy)">
+                <button class="btn primary" @onclick="Accept" disabled="@(!_read || _busy || !_termsOnScreen)">
                     @(_busy ? "Recording…" : "Accept & continue")
                 </button>
                 <button class="btn ghost" @onclick="Decline" disabled="@_busy">Decline</button>
@@ -73,6 +84,16 @@
     bool _read;
     bool _busy;
     string? _error;
+
+    /// <summary>True once TermsDocument has the terms rendered. Until then there is nothing to accept.</summary>
+    bool _termsOnScreen;
+
+    void OnTermsLoaded(bool loaded)
+    {
+        _termsOnScreen = loaded;
+        if (!loaded) _read = false;   // a tick made before the load failed is not consent to anything
+        StateHasChanged();
+    }
 
     /// <summary>A signed-in player whose SERVER record predates the current terms — the document changed.</summary>
     bool IsReprompt => State.IsSignedIn && Acceptance.MustAccept(State.Player);

@@ -79,6 +79,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             state.SetActiveWallet(created.Id, address);
             state.UpdateBalance(await wallet.GetBalanceAsync(created.Id));
             state.SetBackupPending(true);
+            // The terms were accepted a moment ago, before this wallet existed — there was no key to cache
+            // the answer under at the time. Attach it now so this wallet isn't re-asked on the next load.
+            terms.AttachToWallet(created.Id);
         }
 
         // 2. Sign in: resume this wallet if it's already a registered player, else register the name.
@@ -110,12 +113,11 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     {
         if (!terms.MustAccept(state.Player)) return;   // the server already holds a current acceptance
 
-        // Don't ask twice. The Play gate had to judge against the local cache, because while signed out
-        // there is no player row to ask about — so a player who just accepted seconds ago would otherwise
-        // meet the same dialog again the moment their session came up. Their answer stands; all that's
-        // left is to make it durable.
-        if (!Terms.Satisfies(terms.CachedVersion) &&
-            !await terms.RequestAcceptanceAsync(null))
+        // The no-argument overload: it asks unless THIS session already collected an answer. Deliberately
+        // not the cache-consulting one — the server has just told us this player's acceptance is missing or
+        // stale, and a cached "somebody using this browser once agreed" must not be allowed to answer on
+        // their behalf and produce a durable record of a disclosure nobody saw.
+        if (!await terms.RequestAcceptanceAsync())
             throw new GameWalletException("You need to accept the Terms of Use before you can play.");
 
         // Recording a version already on file is a server-side no-op, so this is safe even when the gate's

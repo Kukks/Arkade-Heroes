@@ -247,6 +247,50 @@ public class TermsAcceptanceTests
     }
 
     [Fact]
+    public async Task WithEnforcementOn_TheIrreversibleActionsAreRefusedForAPlayerWhoAlreadyHasHeroes()
+    {
+        // The gap that makes a starter-claim-only gate almost worthless: every player registered before this
+        // feature already has StarterClaimed set, so they never meet that check. An API client can likewise
+        // just skip the claim. The gate has to sit on the operations that actually stake sats or burn heroes.
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.UseSetting("Game:RequireTermsAcceptance", "true"));
+
+        var (alice, _) = await factory.RegisterAsync("Already-Playing");
+        var (bob, _) = await factory.RegisterAsync("Bobs-Target");
+
+        // Stand in for a player who predates the terms: heroes in hand, nothing on file.
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var aliceP = store.Players.Values.Single(p => p.Name == "Already-Playing");
+        var bobP = store.Players.Values.Single(p => p.Name == "Bobs-Target");
+        aliceP.TermsAcceptedVersion = null;
+        await alice.Players.AcceptTermsAsync(Terms.CurrentVersion);
+        var mine = await alice.ClaimStartersAsync();
+        await bob.Players.AcceptTermsAsync(Terms.CurrentVersion);
+        var theirs = await bob.ClaimStartersAsync();
+        aliceP.TermsAcceptedVersion = null;   // now: has heroes, has NOT accepted
+
+        // Each of these stakes sats or destroys an asset, and each must refuse.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(mine[0].Id, theirs[0].Id, false)));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Matches.OpenAsync(new OpenMatchRequest(mine[0].Id, theirs[0].Id, 500, "covenant")));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Merge.CommitAsync(new MergeCommitRequest(mine[0].Id, mine[1].Id, "covenant")));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Breeding.CommitAsync(new BreedCommitRequest(mine[0].Id, mine[1].Id)));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Tournament.OpenAsync(new OpenTournamentRequest(mine[0].Id, 1000, 4)));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Items.BuyAsync("rusty-blade"));
+
+        // Accept, and the same calls get past the terms gate. Breeding is the cheap one to prove it on:
+        // it needs no opponent and no funded escrow to reach a commit.
+        await alice.Players.AcceptTermsAsync(Terms.CurrentVersion);
+        var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(mine[0].Id, mine[1].Id));
+        Assert.False(string.IsNullOrEmpty(commit.BreedingId));
+        _ = bobP;   // registered purely to own the opposing hero above
+    }
+
+    [Fact]
     public async Task WithEnforcementOff_TheDefault_StartersAreNotBlocked()
     {
         // The guard on the 522 tests that came before this feature: recording acceptance must not become a

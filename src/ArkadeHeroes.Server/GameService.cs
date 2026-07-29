@@ -220,6 +220,14 @@ public class GameService(
     /// OPT-IN (<c>Game:RequireTermsAcceptance</c>, default off) because the browser gate already stops a
     /// player reaching this, and turning it on unconditionally would break every API client that never
     /// showed a terms screen. A deployment that stakes real bitcoin turns it on.
+    ///
+    /// Called from every operation that STAKES SATS or DESTROYS/ESCROWS AN ASSET — death-match open+accept
+    /// (permadeath), duel and squad open+accept (wagers), merge (burns both inputs), breed, tournament
+    /// open+join (buy-ins), hero listing, gauntlet entry, item purchase — and from the starter claim, the
+    /// first mint. Guarding the starter claim ALONE would gate almost nothing: every player registered
+    /// before this feature already has StarterClaimed set, so they would sail past the only check and go
+    /// straight to burning a hero. Read-only and reversible paths (spar, trials, equip, profile) are
+    /// deliberately not gated — nothing there can cost a player anything.
     /// </summary>
     private void RequireAcceptedTerms(Player player)
     {
@@ -412,6 +420,7 @@ public class GameService(
     public async Task<(TournamentSession Session, FeeInvoice BuyIn)> OpenTournamentAsync(
         Player player, string heroId, long buyInSats, int size, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         GetOwnedHero(player, heroId);
         if (buyInSats <= 0) throw new GameRuleException("The buy-in must be a positive number of sats.");
         if (size < Tournament.MinEntrants || size > MaxTournamentSize)
@@ -434,6 +443,7 @@ public class GameService(
     public async Task<(TournamentSession Session, FeeInvoice BuyIn)> JoinTournamentAsync(
         Player player, string tournamentId, string heroId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         if (!store.Tournaments.TryGetValue(tournamentId, out var session))
             throw new GameRuleException($"Unknown tournament '{tournamentId}'.");
         GetOwnedHero(player, heroId);
@@ -697,6 +707,7 @@ public class GameService(
     public async Task<(BreedingSession Session, FeeInvoice? Invoice)> CommitBreedingAsync(
         Player player, string parentAId, string parentBId, string mode, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var parentA = GetOwnedHero(player, parentAId);
         var parentB = GetOwnedHero(player, parentBId);
         // The breed fee escalates with how much the parents have already been bred
@@ -846,6 +857,7 @@ public class GameService(
     public async Task<(GauntletSession Session, FeeInvoice Invoice)> OpenGauntletAsync(
         Player player, string heroId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var hero = GetOwnedHero(player, heroId);
         var now = DateTimeOffset.UtcNow;
         if (hero.GauntletCooldownUntil is { } until && until > now)
@@ -994,6 +1006,7 @@ public class GameService(
     public async Task<(MergeSession Session, string EscrowAddress)> CommitMergeAsync(
         Player player, string baseId, string sacrificeId, string mode, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         if (baseId == sacrificeId)
             throw new GameRuleException("The base and the sacrifice must be two different heroes.");
         var baseHero = GetOwnedHero(player, baseId);
@@ -1099,6 +1112,7 @@ public class GameService(
     public async Task<(DeathMatchSession Session, string EscrowAddress, Shared.FavorabilityDto Favorability, IReadOnlyList<Shared.GearStakeDto> ChallengerGear, IReadOnlyList<Shared.GearStakeDto> DefenderGear, FeeInvoice ChallengerFeeInvoice)> OpenDeathMatchAsync(
         Player player, string challengerHeroId, string defenderHeroId, bool absorb, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
         if (challenger.Id == defender.Id)
@@ -1162,6 +1176,7 @@ public class GameService(
     public async Task<(DeathMatchSession Session, string EscrowAddress, Hero Defender, IReadOnlyList<Shared.GearStakeDto> DefenderGear, FeeInvoice DefenderFeeInvoice)> AcceptDeathMatchAsync(
         Player player, string deathMatchId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
             throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
         if (session.DefenderPlayerId != player.Id)
@@ -1312,6 +1327,7 @@ public class GameService(
         Player player, string challengerHeroId, string defenderHeroId, long wagerSats,
         string mode, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
         if (challenger.Id == defender.Id)
@@ -1391,6 +1407,7 @@ public class GameService(
     public async Task<(MatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> AcceptMatchAsync(
         Player player, string matchId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         if (!store.Matches.TryGetValue(matchId, out var session))
             throw new GameRuleException($"Unknown match '{matchId}'.");
         if (session.WagerSats == 0)
@@ -1810,6 +1827,7 @@ public class GameService(
     public async Task<(SquadMatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> OpenSquadMatchAsync(
         Player player, Shared.OpenSquadMatchRequest req, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var challengerLineup = ValidateLineup(player, req.ChallengerLineup, owned: true);
         var defenderLineup = ValidateLineup(player, req.DefenderLineup, owned: false);
         if (req.ChallengerLineup.Intersect(req.DefenderLineup).Any())
@@ -1873,6 +1891,7 @@ public class GameService(
     public async Task<(SquadMatchSession Session, FeeInvoice? StakeInvoice, FeeInvoice? MatchFeeInvoice)> AcceptSquadMatchAsync(
         Player player, string matchId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         if (!store.SquadMatches.TryGetValue(matchId, out var session))
             throw new GameRuleException($"Unknown squad match '{matchId}'.");
         if (session.WagerSats == 0) throw new GameRuleException("Friendly squad matches don't need acceptance.");
@@ -2049,6 +2068,7 @@ public class GameService(
     public async Task<(ItemPurchase Purchase, FeeInvoice Invoice)> CreateItemInvoiceAsync(
         Player player, string itemId, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var item = Core.Equipment.ItemCatalog.Find(itemId)
             ?? throw new GameRuleException($"Unknown item '{itemId}'.");
 
@@ -2333,6 +2353,7 @@ public class GameService(
     public async Task<(OfferListing Listing, OfferInfo Info)> CreateHeroOfferAsync(
         Player player, string heroId, long askSats, CancellationToken ct)
     {
+        RequireAcceptedTerms(player);
         var hero = GetOwnedHero(player, heroId); // verifies the seller owns it
         if (askSats <= 0) throw new GameRuleException("The ask must be a positive number of sats.");
         if (string.IsNullOrEmpty(hero.AssetId))

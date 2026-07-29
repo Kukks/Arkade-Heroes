@@ -772,6 +772,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 }
 .terms-check input { width: auto; margin-top: .2rem; flex: none; }
 .terms-actions { margin-top: .8rem; }
+/* Shown when the terms couldn't be put on screen, which also disables Accept — you cannot agree to a
+   document you were never shown. */
+.terms-blocked {
+    margin: .8rem 0 0; font-size: .8rem; line-height: 1.5;
+    padding: .55rem .7rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--danger); background: rgba(255,77,109,.07);
+}
 .terms-foot { margin: .7rem 0 0; font-size: .78rem; }
 
 .terms-doc { font-size: .88rem; line-height: 1.6; }

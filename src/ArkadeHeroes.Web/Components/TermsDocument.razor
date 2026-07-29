@@ -29,6 +29,14 @@ else
     Load _state = Load.Loading;
     string _html = "";
 
+    /// <summary>
+    /// Raised with true once the terms are actually on screen, false while they are loading or couldn't be
+    /// loaded at all. The acceptance gate binds its Accept button to this: a player cannot agree to a
+    /// document they were never shown, so "we couldn't display the terms" has to mean "you can't accept
+    /// them", not "accept them anyway".
+    /// </summary>
+    [Parameter] public EventCallback<bool> OnLoadStateChanged { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         try
@@ -52,9 +60,17 @@ else
             _html = MarkdownLite.ToHtml(text);
             _state = Load.Ready;
         }
-        catch (HttpRequestException)
+        catch (Exception)
         {
+            // Deliberately every exception, not just HttpRequestException: a request timeout
+            // (TaskCanceledException) or any other fault must land in Missing rather than escape and strand
+            // the component on "loading…" — which, before the gate consulted this state, left a player able
+            // to accept a document that was still in flight.
             _state = Load.Missing;
+        }
+        finally
+        {
+            await OnLoadStateChanged.InvokeAsync(_state == Load.Ready);
         }
     }
 }

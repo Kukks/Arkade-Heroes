@@ -88,10 +88,6 @@
         Nav.LocationChanged += OnLocationChanged;
         UpdateSection();
 
-        // Re-read the cached acceptance before anything can ask about it, so a player who already accepted
-        // isn't asked again on every page load. The SERVER record still overrules it once they're signed in.
-        Acceptance.Hydrate();
-
         // Bootstrap the pill from any wallet already in the tab's SQLite store, so the
         // shell reflects the real wallet on every page (the Wallet page keeps it fresh).
         if (!Wallet.Connected)
@@ -102,6 +98,10 @@
                 var address = await GameWallet.GetReceiveAddressAsync(wallet.Id);
                 Wallet.SetActiveWallet(wallet.Id, address);
                 Wallet.HydrateBackupPending();   // re-light the backup nudge if this wallet's phrase is still unsaved
+                // Read back what THIS wallet accepted, so a returning player isn't re-asked on every page
+                // load — and, just as importantly, so a different wallet in the same browser doesn't inherit
+                // the previous one's answer. The SERVER record still overrules once they're signed in.
+                Acceptance.HydrateFor(wallet.Id);
                 Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id));
                 // Resume the game session (sign in with the wallet) if it's a registered player.
                 await Session.ResumeAsync();
