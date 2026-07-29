@@ -40,6 +40,7 @@ public sealed class ArkadeHeroesClient
         Tournament = new TournamentApi(this);
         Economy = new EconomyApi(this);
         Config = new ConfigApi(this);
+        Admin = new AdminApi(this);
     }
 
     public PlayersApi Players { get; }
@@ -62,6 +63,8 @@ public sealed class ArkadeHeroesClient
     public EconomyApi Economy { get; }
     /// <summary>Resolves a replay's stamped rules version — see <see cref="ConfigApi.ResolveAsync"/>.</summary>
     public ConfigApi Config { get; }
+    /// <summary>The operator console — every call takes the admin secret explicitly. See <see cref="AdminApi"/>.</summary>
+    public AdminApi Admin { get; }
 
     /// <summary>Sets the bearer token used for all subsequent requests (Register/Login call this on success).</summary>
     public void SetAuthToken(string token) =>
@@ -75,6 +78,19 @@ public sealed class ArkadeHeroesClient
         await ReadAsync<T>(body is null
             ? await _http.PostAsync(path, null)
             : await _http.PostAsJsonAsync(path, body));
+
+    /// <summary>Sends one operator-console request with the admin secret in its header.
+    ///
+    /// PER-REQUEST, deliberately: there is no SetAdminToken counterpart to <see cref="SetAuthToken"/>,
+    /// because a default header would attach the operator secret to every ordinary call this client makes
+    /// afterwards — including public ones — and leave it attached for the process lifetime. The token goes
+    /// on the ONE request that needs it, in a header rather than the URL, and is never held here.</summary>
+    internal async Task<T> SendWithAdminTokenAsync<T>(HttpMethod method, string path, string adminToken)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        request.Headers.Add(AdminApiContract.TokenHeader, adminToken);
+        return await ReadAsync<T>(await _http.SendAsync(request));
+    }
 
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response)
     {

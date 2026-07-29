@@ -1,0 +1,350 @@
+@page "/admin"
+@inject ArkadeHeroesClient Api
+
+@* The operator console. Deliberately NOT in the nav: it is an operator surface, not a game section, and
+   the only thing behind it is the token. The token lives in a field on this component and nowhere else —
+   never localStorage, never the URL — so closing the tab is the sign-out, and a shared machine keeps no
+   copy. It travels in a header on each admin call (see AdminApi). *@
+
+<PageTitle>Console · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Operator console</h2>
+    <span class="hud">what the server knows · read-only, except where marked</span>
+</div>
+
+@if (_overview is null)
+{
+    <div class="card" style="max-width:34rem">
+        <h3 style="margin-top:0">Sign in</h3>
+        <p class="muted" style="margin-top:0">
+            Paste the admin token. It is kept in this tab only — never saved, never in the address bar — so
+            you re-enter it after a refresh.
+        </p>
+        <input type="password" class="ask-input" style="width:100%" placeholder="admin token"
+               @bind="_token" @bind:event="oninput" @onkeydown="OnKey" />
+        <button class="btn primary" style="margin-top:1rem" @onclick="Load"
+                disabled="@(_busy || string.IsNullOrWhiteSpace(_token))">
+            @(_busy ? "Checking…" : "Open console")
+        </button>
+        @if (_error is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div> }
+    </div>
+}
+else
+{
+    var e = _overview.Economy;
+
+    @* TRIPWIRES FIRST. These are the "something has silently broken" signals — both failure modes
+       under-report quietly, so a persistent fault and a quiet week look identical without them. Read as a
+       TREND, not a level: the unbooked count is mostly genuine reclaims. *@
+    <div class="card" style="margin-bottom:1.6rem@(e.LedgerWriteFailures > 0 ? ";border-color:var(--danger)" : "")">
+        <div class="page-head" style="margin:0 0 .3rem">
+            <h3 style="margin:0">Tripwires</h3>
+            <span class="hud">silent-failure gauges · read as a trend, not a level</span>
+            <span class="spacer"></span>
+            <button class="btn ghost sm" @onclick="Load" disabled="@_busy">Refresh</button>
+        </div>
+        <div class="match-row">
+            <span>ledger writes refused <span class="hud">durable totals behind this uptime's</span></span>
+            <span class="spacer"></span>
+            <span class="chip mono">@e.LedgerWriteFailures.ToString("N0")</span>
+        </div>
+        <div class="match-row">
+            <span>closed with a fee, unbooked <span class="hud">reclaims, or a stalled sale detector</span></span>
+            <span class="spacer"></span>
+            <span class="chip mono">@e.UnbookedClosedFeeOffers.ToString("N0")</span>
+        </div>
+        <p class="muted" style="margin:.7rem 0 0">
+            Neither is an alarm on its own. A ledger count above zero means a restart loses the difference;
+            an unbooked count climbing against flat marketplace income means sales stopped being attributed.
+        </p>
+    </div>
+
+    <div class="card" style="margin-bottom:1.6rem">
+        <div class="page-head" style="margin:0 0 .3rem">
+            <h3 style="margin:0">Treasury</h3>
+            <span class="hud">chain-backed balance — the only figure authoritative on solvency</span>
+            <span class="spacer"></span>
+            <span class="chip mono">@e.TreasuryBalanceSats.ToString("N0") sat</span>
+        </div>
+        <p class="muted" style="margin:-.1rem 0 .7rem">
+            @e.SeasonAccrualSats.ToString("N0") sat accrued to season pots ·
+            booked @e.TotalInflowSats.ToString("N0") in / @e.TotalOutflowSats.ToString("N0") out
+        </p>
+        <div class="admin-cols">
+            <div>
+                <p class="muted" style="margin:0 0 .3rem">fees captured</p>
+                @if (e.InflowByTag.Count == 0) { <p class="muted" style="margin:0">Nothing captured yet.</p> }
+                @foreach (var kv in e.InflowByTag.OrderByDescending(k => k.Value))
+                {
+                    <div class="match-row">
+                        <span>@FlowLabel(kv.Key)</span>
+                        <span class="spacer"></span>
+                        <span class="chip">+@kv.Value.ToString("N0") sat</span>
+                    </div>
+                }
+            </div>
+            <div>
+                <p class="muted" style="margin:0 0 .3rem">paid out</p>
+                @if (e.OutflowByTag.Count == 0) { <p class="muted" style="margin:0">Nothing paid out yet.</p> }
+                @foreach (var kv in e.OutflowByTag.OrderByDescending(k => k.Value))
+                {
+                    <div class="match-row">
+                        <span>@FlowLabel(kv.Key)</span>
+                        <span class="spacer"></span>
+                        <span class="chip">−@kv.Value.ToString("N0") sat</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-cols" style="margin-bottom:1.6rem">
+        <div class="card">
+            <h3 style="margin-top:0">Players</h3>
+            <div class="match-row"><span>registered</span><span class="spacer"></span><span class="chip mono">@_overview.Players.Registered.ToString("N0")</span></div>
+            <div class="match-row"><span>holding heroes</span><span class="spacer"></span><span class="chip mono">@_overview.Players.WithHeroes.ToString("N0")</span></div>
+            <div class="match-row"><span>claimed the daily today</span><span class="spacer"></span><span class="chip mono">@_overview.Players.ClaimedDailyToday.ToString("N0")</span></div>
+            <div class="match-row"><span>on a live streak</span><span class="spacer"></span><span class="chip mono">@_overview.Players.WithLiveStreak.ToString("N0")</span></div>
+            <p class="muted" style="margin:.7rem 0 0">
+                Signups-per-day and DAU are absent on purpose: a player carries no registration or last-seen
+                timestamp, so they would need new bookkeeping rather than a new view.
+            </p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0">Market</h3>
+            <div class="match-row"><span>resting (buyable)</span><span class="spacer"></span><span class="chip mono">@_overview.Market.ActiveOffers.ToString("N0")</span></div>
+            <div class="match-row"><span>awaiting deposit</span><span class="spacer"></span><span class="chip mono">@_overview.Market.PendingOffers.ToString("N0")</span></div>
+            <div class="match-row"><span>cleared (sold or reclaimed)</span><span class="spacer"></span><span class="chip mono">@_overview.Market.ClosedOffers.ToString("N0")</span></div>
+            <div class="match-row"><span>asking, in total</span><span class="spacer"></span><span class="chip mono">@_overview.Market.RestingAskSats.ToString("N0") sat</span></div>
+            <div class="match-row"><span>listing fees captured</span><span class="spacer"></span><span class="chip">+@_overview.Market.ListingFeesCapturedSats.ToString("N0") sat</span></div>
+            <p class="muted" style="margin:.7rem 0 0">
+                Last-observed statuses. This read does not reconcile against the chain, because reconciling
+                books listing income — an analytics view must not write to the treasury ledger.
+            </p>
+        </div>
+    </div>
+
+    <div class="admin-cols" style="margin-bottom:1.6rem">
+        <div class="card">
+            <h3 style="margin-top:0">Hero supply</h3>
+            <p class="muted" style="margin:-.3rem 0 .6rem">
+                @e.HeroSupply.ToString("N0") in play · @e.Gen0Supply.ToString("N0") starter float ·
+                +@e.HeroesMinted.ToString("N0") / −@e.HeroesBurned.ToString("N0") churn this uptime
+            </p>
+            <p class="muted" style="margin:0 0 .3rem">by generation</p>
+            @foreach (var b in _overview.HeroesByGeneration)
+            {
+                <div class="match-row"><span>gen @b.Key</span><span class="spacer"></span><span class="chip mono">@b.Count.ToString("N0")</span></div>
+            }
+            <p class="muted" style="margin:.7rem 0 .3rem">by rarity</p>
+            @foreach (var b in _overview.HeroesByRarity)
+            {
+                <div class="match-row"><span>@b.Key</span><span class="spacer"></span><span class="chip mono">@b.Count.ToString("N0")</span></div>
+            }
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0">Sessions in play</h3>
+            <p class="muted" style="margin:-.3rem 0 .6rem">unsettled against everything this uptime has seen</p>
+            @foreach (var f in _overview.Flows)
+            {
+                <div class="match-row">
+                    <span>@f.Flow</span>
+                    <span class="spacer"></span>
+                    <span class="chip mono">@f.Open.ToString("N0") open / @f.Total.ToString("N0")</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1.6rem">
+        <div class="page-head" style="margin:0 0 .3rem">
+            <h3 style="margin:0">Season @_overview.Season.SeasonNumber</h3>
+            <span class="hud">projected without settling — opening this page moves no sats</span>
+            <span class="spacer"></span>
+            <span class="chip mono">pot @_overview.Season.PotSats.ToString("N0") sat</span>
+        </div>
+        @if (_overview.Season.Standings.Count == 0)
+        {
+            <p class="muted" style="margin:.4rem 0 0">No ranked wins yet this season.</p>
+        }
+        else
+        {
+            <table class="board">
+                <thead><tr><th>#</th><th>Hero</th><th class="num">Wins</th><th class="num">Lvl</th></tr></thead>
+                <tbody>
+                    @foreach (var s in _overview.Season.Standings.Take(10))
+                    {
+                        <tr><td class="rank">@s.Rank</td><td>@s.Name</td><td class="num">@s.Wins</td><td class="num">@s.Level</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+        @if (_overview.Season.LastSettlement is { } settled)
+        {
+            <p class="muted" style="margin:.8rem 0 .3rem">last settled — season @settled.SeasonNumber, @settled.PotSats.ToString("N0") sat</p>
+            @foreach (var w in settled.Winners)
+            {
+                <div class="match-row"><span><b>#@w.Rank</b> @w.Name</span><span class="spacer"></span><span class="chip">@w.AwardSats.ToString("N0") sat</span></div>
+            }
+        }
+    </div>
+
+    @* ── Management. Only operations that already existed and are already guarded server-side. ── *@
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Management</h3>
+        <span class="hud">every action is logged on the server with what was done and to what</span>
+    </div>
+
+    <div class="card" style="margin-bottom:1.6rem">
+        <div class="match-row">
+            <span>
+                <b>Expire abandoned matches</b>
+                <span class="hud">moves no money — flips a status so each wallet can reclaim its own stake</span>
+            </span>
+            <span class="spacer"></span>
+            <button class="btn ghost sm" @onclick="ReconcileMatches" disabled="@_busy">Run</button>
+        </div>
+        <div class="match-row">
+            <span>
+                <b>Settle ended seasons</b>
+                <span class="hud">pays real sats · the same idempotent settle a public board read already triggers</span>
+            </span>
+            <span class="spacer"></span>
+            <button class="btn ghost sm" @onclick="SettleSeasons" disabled="@_busy">Run</button>
+        </div>
+        @if (_actionResult is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot ok"></span> @_actionResult</div> }
+        @if (_error is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div> }
+    </div>
+
+    <div class="card">
+        <div class="page-head" style="margin:0 0 .3rem">
+            <h3 style="margin:0">Brackets</h3>
+            <span class="hud">a FULL bracket with no locked snapshots can never resolve — only a refund clears it</span>
+        </div>
+        @if (_overview.Tournaments.Count == 0)
+        {
+            <p class="muted" style="margin:.4rem 0 0">No brackets on this server.</p>
+        }
+        else
+        {
+            @foreach (var t in _overview.Tournaments)
+            {
+                <div class="match-row">
+                    <span class="mono">@t.Id</span>
+                    <span class="chip">@t.Status</span>
+                    <span class="hud">@t.Entrants/@t.Size · @t.BuyInSats.ToString("N0") sat buy-in</span>
+                    <span class="spacer"></span>
+                    @if (Stranded(t)) { <span class="chip">stranded</span> }
+                    @if (t.Status is "open" or "full")
+                    {
+                        <button class="btn ghost sm" @onclick="() => RefundTournament(t.Id)" disabled="@_busy">Refund entrants</button>
+                    }
+                </div>
+            }
+            <p class="muted" style="margin:.7rem 0 0">
+                A refund pays every CLEARED buy-in back to its entrant. The server refuses a bracket that can
+                still be played, marks it refunded durably before a sat moves, and will not refund it twice.
+            </p>
+        }
+    </div>
+}
+
+@code {
+    // In-memory for this component's lifetime only. Not localStorage (a shared machine would keep it), not
+    // the URL (history, proxy logs, Referer). A refresh asks again, which is the intended cost.
+    private string _token = "";
+    private AdminOverviewDto? _overview;
+    private string? _error;
+    private string? _actionResult;
+    private bool _busy;
+
+    private async Task OnKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !string.IsNullOrWhiteSpace(_token)) await Load();
+    }
+
+    private async Task Load()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            _overview = await Api.Admin.OverviewAsync(_token.Trim());
+        }
+        catch (ArkadeHeroesApiException ex)
+        {
+            // "server returned 404" is the console being switched OFF (no Game:AdminToken configured), not
+            // a wrong password — the routes do not exist in that state. Say which, or the operator hunts
+            // for a typo that isn't there.
+            _error = ex.Message.Contains("404")
+                ? "This server has no operator console: Game:AdminToken is not configured."
+                : "That token was refused.";
+            _overview = null;
+        }
+        catch
+        {
+            _error = "Couldn't reach the server.";
+            _overview = null;
+        }
+        finally { _busy = false; }
+    }
+
+    // A FULL bracket whose fill-time snapshots are gone is one of the two shapes the server's refund gate
+    // calls unresolvable, and the only one visible from here — the other (an OPEN bracket whose entrant
+    // hero was burned away) needs the live roster. So this is a HINT that labels the case it can prove,
+    // not the permission: the button is offered on any unfinished bracket and the SERVER decides, which
+    // keeps one copy of the rule instead of two that can drift.
+    private static bool Stranded(AdminTournamentDto t) => t.Status == "full" && !t.HasEntrantSnapshots;
+
+    private Task ReconcileMatches() => RunAction(t => Api.Admin.ReconcileMatchesAsync(t));
+
+    private Task SettleSeasons() => RunAction(t => Api.Admin.SettleSeasonsAsync(t));
+
+    private Task RefundTournament(string id) => RunAction(async t =>
+    {
+        var refund = await Api.Admin.RefundTournamentAsync(t, id);
+        return new AdminActionResultDto("refund-tournament",
+            $"Bracket {id} is {refund.Tournament.Status}; {refund.EntrantsRefunded} entrant(s) refunded "
+            + $"{refund.RefundedSats:N0} sat.");
+    });
+
+    private async Task RunAction(Func<string, Task<AdminActionResultDto>> action)
+    {
+        _busy = true;
+        _error = null;
+        _actionResult = null;
+        try
+        {
+            var result = await action(_token.Trim());
+            _actionResult = $"{result.Action}: {result.Detail}";
+            _overview = await Api.Admin.OverviewAsync(_token.Trim());   // re-read, so the page shows the effect
+        }
+        catch (ArkadeHeroesApiException ex) { _error = ex.Message; }
+        catch { _error = "Couldn't reach the server."; }
+        finally { _busy = false; }
+    }
+
+    // Friendly label for a treasury flow category tag (mirrors the Ranks page's map).
+    private static string FlowLabel(string tag) => tag switch
+    {
+        "daily" => "Daily rewards",
+        "season" => "Season prizes",
+        "tournament" => "Tournament prizes",
+        "tournament-refund" => "Tournament refunds",
+        "wager" => "Wager payouts",
+        "squad" => "Squad payouts",
+        "item" => "Item sales",
+        "rename" => "Hero renames",
+        "listing" => "Marketplace fees",
+        "gauntlet" => "Gauntlet entries",
+        "deathmatch" => "Death-match fees",
+        "match" => "Match fees",
+        "squad-fee" => "Squad fees",
+        "breed" => "Breeding fees",
+        "merge" => "Fusion fees",
+        _ => tag,
+    };
+}

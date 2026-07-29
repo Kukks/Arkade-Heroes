@@ -450,6 +450,85 @@ public class GameService(
             unbookedClosedFeeOffers, store.LedgerWriteFailures);
     }
 
+    /// <summary>
+    /// The operator console's one read: the economy-health picture plus the population, supply, market,
+    /// flow-backlog and season figures around it. PURE OBSERVATION — every number is composed from live
+    /// state, nothing is tracked that wasn't already tracked, and the read never reconciles, settles or pays.
+    ///
+    /// Two deliberate omissions, both because the alternative would have this read WRITE:
+    /// the offer counts are last-observed rather than reconciled (reconciling books listing income into the
+    /// treasury ledger), and the season is the un-settled snapshot (the player-facing board settles due
+    /// seasons as a side effect of being read). An analytics view must not be able to move a sat.
+    /// </summary>
+    public async Task<Shared.AdminOverviewDto> AdminOverviewAsync(CancellationToken ct = default)
+    {
+        var economy = await EconomyHealthAsync(ct);
+        var heroes = store.Heroes.Values.ToList();
+
+        // Population + activity. There is no registration timestamp on a Player and no last-seen field, so
+        // "signups today" and "DAU" are NOT answerable from existing state and are deliberately absent
+        // rather than approximated. What the daily loop already records IS real activity: the day a player
+        // last claimed, and whether their streak is alive.
+        var today = Daily.DayIndex(DateTimeOffset.UtcNow);
+        var players = new Shared.AdminPlayersDto(
+            store.Players.Count,
+            heroes.Select(h => h.OwnerId).Distinct().Count(),
+            store.Players.Values.Count(p => p.LastClaimDay == today),
+            store.Players.Values.Count(p => p.StreakCount > 0));
+
+        // Supply cut two ways. Generation is stored on the hero; the rarity tier is recomputed from the
+        // genome under THIS server's config — the same pure derivation /rarest and the hero cards use.
+        var byGeneration = heroes.GroupBy(h => h.Generation)
+            .OrderBy(g => g.Key)
+            .Select(g => new Shared.SupplyBucketDto(g.Key.ToString(), g.Count()))
+            .ToList();
+        var byRarity = heroes.GroupBy(h => Rarity.Of(h.Genome, _config).Tier)
+            .OrderByDescending(g => g.Key)
+            .Select(g => new Shared.SupplyBucketDto(g.Key.ToString(), g.Count()))
+            .ToList();
+
+        var offers = store.Offers.Values.ToList();
+        var market = new Shared.AdminMarketDto(
+            offers.Count(o => o.Status == "pending"),
+            offers.Count(o => o.Status == "active"),
+            offers.Count(o => o.Status == "closed"),
+            economy.InflowByTag.GetValueOrDefault("listing"),
+            offers.Where(o => o.Status == "active").Sum(o => o.AskSats));
+
+        // Session backlog per flow: how many are still in play against how many this server has seen.
+        // Each flow spells "still in play" its own way — a status string for the match-like flows, a
+        // Completed flag for the commit/reveal ones — so each is counted in its own vocabulary.
+        var flows = new List<Shared.FlowCountsDto>
+        {
+            new("duel", store.Matches.Values.Count(m => m.Status is "open" or "accepted"), store.Matches.Count),
+            new("death-match", store.DeathMatches.Values.Count(d => !d.Completed), store.DeathMatches.Count),
+            new("squad", store.SquadMatches.Values.Count(s => s.Status is "open" or "accepted"), store.SquadMatches.Count),
+            new("tournament", store.Tournaments.Values.Count(t => t.Status is "open" or "full"), store.Tournaments.Count),
+            new("trials", store.Trials.Values.Count(t => !t.Completed), store.Trials.Count),
+            new("gauntlet", store.Gauntlets.Values.Count(g => !g.Completed), store.Gauntlets.Count),
+            new("breeding", store.Breedings.Values.Count(b => !b.Completed), store.Breedings.Count),
+            new("merge", store.Merges.Values.Count(m => !m.Completed), store.Merges.Count),
+        };
+
+        // Brackets, unfinished ones first — those are the only ones a refund can ever apply to, and the
+        // list is capped, so a stranded bracket must not be able to fall off the end behind resolved ones.
+        // Ids are random rather than time-ordered, so the id tiebreak is for STABILITY, not chronology.
+        // HasEntrantSnapshots is exactly what the strand-refund gate reads for a FULL bracket, so an
+        // operator sees which brackets are stranded without this read re-deriving (and possibly
+        // disagreeing with) that rule.
+        var tournaments = store.Tournaments.Values
+            .OrderBy(t => t.Status is "open" or "full" ? 0 : 1)
+            .ThenBy(t => t.Id, StringComparer.Ordinal)
+            .Take(50)
+            .Select(t => new Shared.AdminTournamentDto(t.Id, t.Status, t.BuyInSats, t.Size, t.Entrants.Count,
+                t.EntrantSnapshots is { Count: > 0 }))
+            .ToList();
+
+        return new Shared.AdminOverviewDto(
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), economy, players, byGeneration, byRarity, market,
+            flows, SeasonSnapshotAt(DateTimeOffset.UtcNow), tournaments);
+    }
+
     // ── Tournaments: a buy-in bracket, treasury-mediated (buy-ins → treasury, prizes → podium minus the house rake) ──
 
     private const int MaxTournamentSize = 16;
@@ -1546,6 +1625,18 @@ public class GameService(
     public async Task<Shared.SeasonLeaderboardDto> SeasonLeaderboardAt(DateTimeOffset now, CancellationToken ct)
     {
         await SettleDueSeasonsAsync(now, ct);
+        return SeasonSnapshotAt(now);
+    }
+
+    /// <summary>The season board WITHOUT the settle — the same projection <see cref="SeasonLeaderboardAt"/>
+    /// returns, minus the lazy payout that runs first. A pure read over live state.
+    ///
+    /// It exists for the operator console, which must be able to look at the season without moving a sat:
+    /// reading the player-facing board triggers <see cref="SettleDueSeasonsAsync"/>, and an analytics view
+    /// that pays out prizes as a side effect of being opened is not an analytics view. The settle stays
+    /// exactly where it was for every existing caller.</summary>
+    public Shared.SeasonLeaderboardDto SeasonSnapshotAt(DateTimeOffset now)
+    {
         var season = Season.Current(now, _config.SeasonLengthDays);
         var standings = SeasonStandings(season);
         var pot = _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(season.Number);

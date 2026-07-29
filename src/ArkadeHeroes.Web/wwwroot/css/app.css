@@ -805,3 +805,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
     font-size: .78rem;
 }
 .footer a { color: var(--accent-2); }
+
+/* --- Operator console: paired panels that collapse to one column ---------- */
+.admin-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.1rem; }

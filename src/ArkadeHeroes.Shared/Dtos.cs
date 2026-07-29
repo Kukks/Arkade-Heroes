@@ -659,3 +659,66 @@ public record ChainInfoDto(
     GameConfigDto? Config = null);
 
 public record ErrorResponse(string Error);
+
+// ── Operator console (/api/admin/*) ────────────────────────────────────────
+// One authenticated surface over what the server ALREADY knows. Every number below is composed from live
+// state at read time — none of it adds a counter to a money path, and the read never reconciles, settles
+// or pays. The management actions are the deliberate exception and are listed on AdminOverviewDto.
+
+/// <summary>The contract both halves of the admin surface must agree on. The secret travels in a HEADER,
+/// never a query string — a URL lands in browser history, proxy logs and Referer headers, and this one
+/// secret is the whole of the console's authentication.</summary>
+public static class AdminApiContract
+{
+    public const string TokenHeader = "X-Admin-Token";
+}
+
+/// <summary>One slice of the hero population — a generation ("0", "1", …) or a rarity tier — and how many
+/// heroes are in it. Derived from the live roster's genomes at read time, never tracked.</summary>
+public record SupplyBucketDto(string Key, long Count);
+
+/// <summary>How many of one flow's sessions are still in play vs how many this server has seen at all.
+/// <paramref name="Open"/> counts the NON-terminal ones (unsettled, unresolved, unrevealed) — the backlog
+/// an operator would look at first. Both are point-in-time counts over in-memory sessions, so a restart
+/// resets <paramref name="Total"/> for every flow whose sessions aren't persisted.</summary>
+public record FlowCountsDto(string Flow, long Open, long Total);
+
+/// <summary>Player-population and activity counts, all read off state the server already keeps.
+/// There is NO registration timestamp on a player, so "new players per day" cannot be answered here —
+/// what activity is available is the daily loop's own markers: today's claims, and live streaks.</summary>
+public record AdminPlayersDto(long Registered, long WithHeroes, long ClaimedDailyToday, long WithLiveStreak);
+
+/// <summary>Market state. The three status counts are LAST-OBSERVED — the admin read deliberately does not
+/// reconcile offers against the chain, because reconciling books listing income, and an analytics read must
+/// not write to the treasury ledger. <paramref name="ListingFeesCapturedSats"/> is the booked
+/// <c>listing</c> inflow; <paramref name="RestingAskSats"/> is what the resting inventory is asking for.</summary>
+public record AdminMarketDto(long PendingOffers, long ActiveOffers, long ClosedOffers,
+    long ListingFeesCapturedSats, long RestingAskSats);
+
+/// <summary>A bracket as the operator console sees it. <paramref name="HasEntrantSnapshots"/> is the exact
+/// fact the strand-refund gate reads for a FULL bracket: fill-time snapshots are never persisted, so a
+/// bracket that came back <c>full</c> without them can never resolve and only a refund clears it.</summary>
+public record AdminTournamentDto(string Id, string Status, long BuyInSats, int Size, int Entrants,
+    bool HasEntrantSnapshots);
+
+/// <summary>Everything the operator console shows, in one authenticated read.
+///
+/// PURE OBSERVATION. <see cref="Economy"/> is the same read the public treasury card uses;
+/// <see cref="Season"/> is the current window PROJECTED without the lazy settle the player-facing season
+/// board triggers, so opening this page can never move a sat. The tripwires that say "something has
+/// silently broken" — <c>Economy.UnbookedClosedFeeOffers</c> and <c>Economy.LedgerWriteFailures</c> — live
+/// on the economy read and are surfaced first in the UI.</summary>
+public record AdminOverviewDto(
+    long GeneratedAtUnix,
+    EconomyHealthDto Economy,
+    AdminPlayersDto Players,
+    IReadOnlyList<SupplyBucketDto> HeroesByGeneration,
+    IReadOnlyList<SupplyBucketDto> HeroesByRarity,
+    AdminMarketDto Market,
+    IReadOnlyList<FlowCountsDto> Flows,
+    SeasonLeaderboardDto Season,
+    IReadOnlyList<AdminTournamentDto> Tournaments);
+
+/// <summary>What one management action did, in a line an operator can read back. The server logs the same
+/// fact — every admin action is logged with what was done and to what.</summary>
+public record AdminActionResultDto(string Action, string Detail);

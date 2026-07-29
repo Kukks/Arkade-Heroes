@@ -793,6 +793,96 @@ api.MapPost("/daily/claim", async (HttpContext http, GameService game, Cancellat
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
+// ── Operator console (/api/admin/*) ────────────────────────────────────────
+// One shared secret in the X-Admin-Token header, compared in constant time (AdminGate), required on EVERY
+// route here — the check is a group-wide endpoint filter rather than a per-route call, so a route added
+// later cannot be born unauthenticated.
+//
+// With the secret unset the group is NOT MAPPED: these routes do not exist and every one of them 404s.
+// That is the fail-closed direction and the one a deployment gets by omission — this server holds real
+// bitcoin, and an admin surface that defaults to open is worse than no admin surface at all.
+//
+// The read is pure observation. The three ACTIONS are the exception, and each is an operation that already
+// existed, is already tested, and is already reachable by other means — none of them is a new way to move
+// money. Every one of them is logged with what was done and to what.
+var adminToken = builder.Configuration["Game:AdminToken"];
+if (AdminGate.IsEnabled(adminToken))
+{
+    var admin = api.MapGroup("/admin").AddEndpointFilter(async (context, next) =>
+    {
+        var supplied = context.HttpContext.Request.Headers[AdminApiContract.TokenHeader].ToString();
+        if (AdminGate.Matches(adminToken, supplied)) return await next(context);
+        // The FACT of the refusal and the path — never the supplied value. A rejected guess is still a
+        // secret-shaped string, and a log full of them is a dictionary for whoever reads the logs.
+        app.Logger.LogWarning("Admin request to {Path} refused: missing or wrong {Header}.",
+            context.HttpContext.Request.Path, AdminApiContract.TokenHeader);
+        return Results.Json(new ErrorResponse("Admin authorisation required."),
+            statusCode: StatusCodes.Status401Unauthorized);
+    });
+
+    admin.MapGet("/overview", async (GameService game, CancellationToken ct) =>
+        Results.Ok(await game.AdminOverviewAsync(ct)));
+
+    // ACTION — the strand refund (#103): a bracket that can never resolve pays every CLEARED buy-in back
+    // to its entrant. Unchanged from the player-facing endpoint that already exposes it; safe because the
+    // service itself refuses a bracket that can still be played, marks durably BEFORE paying, and is
+    // single-shot. The operator route exists so this can be done without holding a player account.
+    admin.MapPost("/tournaments/{id}/refund", async (string id, GameService game, CancellationToken ct) =>
+    {
+        // The REQUEST, then the OUTCOME — two lines, because the service refuses a bracket that can still
+        // be played. A request logged with no outcome after it is a refusal, and reads as one.
+        app.Logger.LogInformation("ADMIN ACTION refund-tournament: requested for bracket {TournamentId}.", id);
+        var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, ct);
+        app.Logger.LogInformation(
+            "ADMIN ACTION refund-tournament: bracket {TournamentId} is now {Status}; {Entrants} entrant(s) "
+            + "refunded {Sats} sat in total.", id, session.Status, entrantsRefunded, refundedSats);
+        return Results.Ok(new TournamentRefundResponse(ToTournamentDto(session), entrantsRefunded, refundedSats));
+    });
+
+    // ACTION — expire covenant matches abandoned past their refund window. Moves NO money: it flips a
+    // status so the stake becomes reclaimable by each player's OWN wallet. Already runs on every listing
+    // of /api/matches, so this only chooses the moment.
+    admin.MapPost("/actions/reconcile-matches", async (GameService game, GameStore store, CancellationToken ct) =>
+    {
+        var before = store.Matches.Values.Count(m => m.Status == "expired");
+        await game.ReconcileAbandonedMatchesAsync(ct);
+        var after = store.Matches.Values.Count(m => m.Status == "expired");
+        // Worded as what the counter DID across this call, not as what this call caused: the same lazy
+        // reconcile runs on every /api/matches listing, so a concurrent visitor can move it too. An audit
+        // line that over-claims is worse than one that merely reports the window it observed.
+        var detail = $"Expired matches went {before} → {after} across this run; "
+                     + $"{after} of {store.Matches.Count} now expired.";
+        app.Logger.LogInformation("ADMIN ACTION reconcile-matches: {Detail}", detail);
+        return Results.Ok(new AdminActionResultDto("reconcile-matches", detail));
+    });
+
+    // ACTION — settle any season that has ENDED but not been paid. This is the SAME call GET
+    // /api/leaderboard/season already makes on every anonymous page load, so it grants no capability an
+    // unauthenticated visitor does not already have; it only lets an operator choose the moment and see
+    // the result. Already idempotent: the settled marker advances before a sat moves, under a lock.
+    admin.MapPost("/actions/settle-seasons", async (GameService game, GameStore store, CancellationToken ct) =>
+    {
+        var before = store.LastSettledSeason;
+        var board = await game.SeasonLeaderboard(ct);
+        // Same discipline as reconcile-matches: the marker's movement is REPORTED, not claimed, because an
+        // anonymous read of the season board settles too and could have moved it during this call.
+        var detail = store.LastSettledSeason > before
+            ? $"The settled-season marker advanced {before} → {store.LastSettledSeason}; "
+              + $"season {board.SeasonNumber} is live."
+            : $"Nothing was due — season {board.SeasonNumber} is live, last settled {store.LastSettledSeason}.";
+        app.Logger.LogInformation("ADMIN ACTION settle-seasons: {Detail}", detail);
+        return Results.Ok(new AdminActionResultDto("settle-seasons", detail));
+    });
+}
+else
+{
+    // Said once at boot so "my token doesn't work" has an answer that isn't guesswork. Names the key, never
+    // a value — there is no value to name.
+    app.Logger.LogInformation(
+        "Operator console DISABLED: no Game:AdminToken configured, so /api/admin/* is not mapped. "
+        + "Set Game__AdminToken to enable it.");
+}
+
 // ── Dev-only simulation of the CLIENT wallet (InMemory chain mode only) ────
 // These stand in for the player's own wallet actions until/unless a real
 // wallet is attached. They do not exist in NArk mode — there, the client's
