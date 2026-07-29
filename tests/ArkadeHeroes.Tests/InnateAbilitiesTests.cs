@@ -37,107 +37,133 @@ public class InnateAbilitiesTests
     }
 
     [Fact]
-    public void InnateBonuses_DefaultIsConservative()
+    public void InnateBonuses_DefaultIsRareChanceAndChunkyPayload()
     {
+        // The shape of the tuning, not its exact values: every proc is RARE (a Legendary trait — the strongest
+        // roll in the game, strength 0.030 — buys well under a coin flip) and its payload is CHUNKY (a real
+        // slice of a health bar or of the blow, not a rounding nudge).
         var ib = InnateBonuses.Default;
+        const double legendary = 0.030;   // AffinityBonuses.Default.Legendary — the top of the strength ladder
+        double Percent(double chance) => legendary * chance * 100;
+        foreach (var chance in new[] { ib.ShieldChance, ib.RegenChance, ib.TrueStrikeChance, ib.ThornsChance,
+                                       ib.BrandChance, ib.InitiativeChance })
+            Assert.InRange(Percent(chance), 5.0, 45.0);   // rare: a proc, never a permanent stat
+
+        Assert.InRange(ib.Ward, 0.15, 0.60);              // soaks a real slice of MaxHp when it fires
+        Assert.InRange(ib.Mend, 0.10, 0.50);              // heals a real slice of MaxHp
+        Assert.InRange(ib.Reflect, 0.25, 1.00);           // throws back a real slice of the blow
+        Assert.InRange(ib.Tick * ib.BrandTurns, 0.05, 0.40);   // the whole brand costs a real slice of MaxHp
         Assert.Equal(3, ib.BrandTurns);
-        Assert.True(ib is { Shield: 1.0, Accuracy: 1.0, Thorns: 1.0, Initiative: 1.0, Regen: 0.10, Brand: 0.10 });
         Assert.Same(InnateBonuses.Default, GameConfig.Default.Combat.InnateOrDefault); // null resolves to Default
     }
 
     [Fact]
-    public void Initiative_HigherStanceActsFirstInANearTie()
+    public void Initiative_StanceProcsASecondActionInTheSameTurn()
     {
-        // Two heroes with identical stats (same genome stat bytes → identical Speed). Without initiative,
-        // TurnOrder falls to the id tiebreak (CompareOrdinal), so "a" (< "b") acts first. Give "b" a Legendary
-        // Stance: its effective ordering speed edges ahead, so "b" acts — and lands the first SkillUsed event.
-        var plain = GenomeWith(200);                                   // high stats, no traits
-        var stanced = GenomeWith(200, (TraitCategory.Stance, 255));    // same stats + Legendary Stance
-        var a = HeroWith("a", 20, plain);
-        var b = HeroWith("b", 20, stanced);
-        var seed = new byte[32]; Array.Fill(seed, (byte)7);
-
-        var firstActor = BattleEngine.Fight(a, b, seed, Innate).Events
-            .First(e => e.Kind == BattleEventKind.SkillUsed || e.Kind == BattleEventKind.Missed || e.Kind == BattleEventKind.Dodged)
-            .ActorId;
-        Assert.Equal("b", firstActor);
-    }
-
-    [Fact]
-    public void Accuracy_EyesRaisesTheHitThresholdWithoutMovingTheRngStream()
-    {
-        // Accuracy is threshold-only: DeterministicRng.Chance is Next(100) < clamp(percent), so it draws once
-        // regardless of the threshold. Eyes raises the threshold by AccuracyBonus (+3 at Legendary), so a seed
-        // whose opening draw lands in [skill.Accuracy, skill.Accuracy + bonus) is a MISS for the plain hero but a
-        // HIT for the Eyed hero on the SAME draw. Search deterministically for such a flip seed — its existence
-        // proves the bonus moves the compare, not the stream (the identical Next(100) is consumed either way).
-        var plain = HeroWith("atk", 20, GenomeWith(140));
-        var eyed  = HeroWith("atk", 20, GenomeWith(140, (TraitCategory.Eyes, 255)));
-        var def   = HeroWith("def", 20, GenomeWith(140));
-        // NOTE: seeds are SHA256-derived (not s[0]=i, s[1]=i>>8). DeterministicRng is xoshiro256** whose FIRST
-        // output is a function of the _s1 seed word (bytes 8..15) only; a seed that leaves those bytes zero makes
-        // the opening Next(100) draw always 0, so the turn-1 accuracy roll would never miss. A hashed seed varies
-        // the opening draw, which is exactly the roll this test needs to land in the flip window.
-        byte[] seed = null!;
-        for (var i = 0; i < 5000 && seed is null; i++)
+        // Stance buys a rare EXTRA ACTION, not a permanent speed edge. Across a deterministic seed sweep the
+        // Legendary-Stance hero SOMETIMES resolves two attacks on a single turn, and the identical hero without
+        // Stance NEVER does (TurnOrder hands each fighter exactly one slot a turn). "Sometimes, not always" is
+        // the whole point of the rework: an always-on version of this would just be a speed stat.
+        int TurnsActedTwice(bool stance)
         {
-            var s = SHA256.HashData(BitConverter.GetBytes(i));
-            var plainFirst = BattleEngine.Fight(plain, def, s, Innate).Events[0];
-            var eyedFirst  = BattleEngine.Fight(eyed,  def, s, Innate).Events[0];
-            if (plainFirst.Kind == BattleEventKind.Missed && eyedFirst.Kind != BattleEventKind.Missed) seed = s;
+            var count = 0;
+            for (var i = 0; i < 120; i++)
+            {
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var a = HeroWith("a", 20, stance ? GenomeWith(170, (TraitCategory.Stance, 255)) : GenomeWith(170));
+                var b = HeroWith("b", 20, GenomeWith(170));
+                count += BattleEngine.Fight(a, b, s, Innate).Events
+                    .Where(e => e.ActorId == "a" && e.Kind is BattleEventKind.SkillUsed
+                                    or BattleEventKind.Missed or BattleEventKind.Dodged)
+                    .GroupBy(e => e.Turn).Count(g => g.Count() > 1);
+            }
+            return count;
         }
-        Assert.NotNull(seed);                                                            // the lever is real
-        Assert.Equal(BattleEventKind.Missed, BattleEngine.Fight(plain, def, seed, Innate).Events[0].Kind);
-        Assert.NotEqual(BattleEventKind.Missed, BattleEngine.Fight(eyed, def, seed, Innate).Events[0].Kind); // Eyes flipped it
+        Assert.Equal(0, TurnsActedTwice(stance: false));    // no Stance ⇒ never two actions in one turn
+        Assert.True(TurnsActedTwice(stance: true) > 0);     // Stance ⇒ the follow-up action really lands
     }
 
     [Fact]
-    public void Shield_AuraAbsorbsBeforeHp()
+    public void TrueStrike_EyesTradesWhiffsForCriticals()
     {
-        // A Legendary-Aura hero takes strictly LESS HP loss on the first blow than the same hero without Aura,
-        // by exactly the shield pool (MaxHp * 0.030 * 1.0). Compare first-blow HP on identical seed + attacker.
-        var atk = HeroWith("atk", 20, GenomeWith(220));
-        var bare = HeroWith("def", 20, GenomeWith(120));
-        var aura = HeroWith("def", 20, GenomeWith(120, (TraitCategory.Aura, 255)));
-        var seed = new byte[32]; Array.Fill(seed, (byte)3);
-
-        int FirstDefHp(Hero d) => BattleEngine.Fight(atk, d, seed, Innate).Events
-            .First(e => e.Kind == BattleEventKind.SkillUsed && e.TargetId == "def").TargetHpAfter;
-        // With a shield, the defender ends the first landed blow with MORE HP than bare (shield ate part of it).
-        Assert.True(FirstDefHp(aura) > FirstDefHp(bare));
+        // Eyes no longer nudges the hit threshold — it procs a TRUE STRIKE that cannot miss, cannot be dodged,
+        // and lands critical. Both halves are visible over a deterministic seed sweep: the Eyed attacker whiffs
+        // (Missed/Dodged) a strictly smaller share of its swings and crits a strictly larger share of the ones
+        // that land. Rates, not raw counts — the two sweeps run different numbers of swings.
+        (double Whiff, double Crit) Swings(bool eyes)
+        {
+            int whiffs = 0, landed = 0, crits = 0;
+            for (var i = 0; i < 200; i++)
+            {
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var atk = HeroWith("atk", 20, eyes ? GenomeWith(140, (TraitCategory.Eyes, 255)) : GenomeWith(140));
+                var def = HeroWith("def", 20, GenomeWith(140));
+                foreach (var e in BattleEngine.Fight(atk, def, s, Innate).Events.Where(e => e.ActorId == "atk"))
+                {
+                    if (e.Kind is BattleEventKind.Missed or BattleEventKind.Dodged) whiffs++;
+                    else if (e.Kind == BattleEventKind.SkillUsed) { landed++; if (e.Crit) crits++; }
+                }
+            }
+            return (whiffs / (double)(whiffs + landed), crits / (double)landed);
+        }
+        var plain = Swings(eyes: false);
+        var eyed = Swings(eyes: true);
+        Assert.True(eyed.Whiff < plain.Whiff, $"whiff rate {eyed.Whiff:F3} !< {plain.Whiff:F3}");   // cannot miss/dodge
+        Assert.True(eyed.Crit > plain.Crit, $"crit rate {eyed.Crit:F3} !> {plain.Crit:F3}");        // lands critical
     }
 
     [Fact]
-    public void Thorns_CrestReflectsPartOfTheBlowAtTheAttacker()
+    public void Ward_AuraProcsAShieldThatSoaksTheBlow()
     {
-        // A Legendary-Crest defender reflects 3% of each blow at the attacker. The attacker's TOTAL winning HP
-        // fraction across a deterministic seed sweep is strictly lower against thorny defenders than against bare
-        // ones of identical stats — thorns is the only difference, and reflected damage only ever costs the
-        // attacker HP (at stat-gene 160 neither hero rolls a drain skill, so nothing heals it back). A single seed
-        // is too coarse here: in this mirror the attacker only wins a subset of fights, so we sum over the sweep.
-        var atk = HeroWith("atk", 20, GenomeWith(160));
-        double TotalAtkHpFrac(bool crest)
+        // A Legendary-Aura defender occasionally throws up a ward that eats a whole strike. Across a deterministic
+        // seed sweep its TOTAL winning HP fraction is strictly higher than the same defender without Aura
+        // (identical stats + seeds) — a ward only ever prevents HP loss, it never costs anything.
+        var atk = HeroWith("atk", 20, GenomeWith(200));
+        double TotalDefHpFrac(bool aura)
         {
             double total = 0;
             for (var i = 0; i < 60; i++)
             {
                 var s = SHA256.HashData(BitConverter.GetBytes(i));
-                var def = HeroWith("def", 20, crest ? GenomeWith(160, (TraitCategory.Crest, 255)) : GenomeWith(160));
+                var def = HeroWith("def", 20, aura ? GenomeWith(180, (TraitCategory.Aura, 255)) : GenomeWith(180));
                 var r = BattleEngine.Fight(atk, def, s, Innate);
-                if (r.WinnerId == "atk") total += (double)r.WinnerRemainingHp / r.WinnerMaxHp;
+                if (r.WinnerId == "def") total += (double)r.WinnerRemainingHp / r.WinnerMaxHp;
             }
             return total;
         }
-        Assert.True(TotalAtkHpFrac(crest: true) < TotalAtkHpFrac(crest: false));   // reflected damage cost the attacker HP
+        Assert.True(TotalDefHpFrac(aura: true) > TotalDefHpFrac(aura: false));   // the ward saved HP
+    }
+
+    [Fact]
+    public void Thorns_CrestReflectsAChunkOfTheBlowAtTheAttacker()
+    {
+        // A Legendary-Crest defender occasionally counters. When it fires it is CHUNKY — exactly Reflect × the
+        // (pre-shield) blow that provoked it, straight off the attacker's HP. Both the counter and the blow it
+        // answers are in the log, so the payload is checked as arithmetic on a real proc rather than as a
+        // statistical HP-sum: with the counter now costing a draw of its own, the crest and bare sweeps resolve
+        // genuinely different fights, and a sum over them measures stream divergence as much as thorns.
+        var events = FirstFightWith(BattleEventKind.Thorns,
+            HeroWith("atk", 20, GenomeWith(160)), HeroWith("def", 20, GenomeWith(160, (TraitCategory.Crest, 255))));
+        Assert.NotNull(events);
+
+        var at = events!.ToList().FindIndex(e => e.Kind == BattleEventKind.Thorns);
+        var thorns = events[at];
+        // Execute logs the counter first and the blow that provoked it at the end of the same swing.
+        var blow = events.Skip(at).First(e => e.Kind == BattleEventKind.SkillUsed && e.ActorId == "atk");
+        Assert.Equal(thorns.Turn, blow.Turn);
+        Assert.Equal((int)Math.Round(blow.Damage * InnateBonuses.Default.Reflect), thorns.Damage);
+        Assert.True(thorns.Damage > 0);
+        Assert.Equal("def", thorns.ActorId);    // the crest-bearer is the source…
+        Assert.Equal("atk", thorns.TargetId);   // …and the attacker is the one who pays
     }
 
     [Fact]
     public void Regen_MarkingHealsOverTheFight()
     {
-        // A Legendary-Marking hero regenerates a slice of MaxHp at the start of each of its turns. Across a
-        // deterministic seed sweep its TOTAL winning HP fraction is strictly higher than the same hero WITHOUT
-        // regen (identical stats + seed) — regen only ever adds HP. A mid stat line (100) at level 10 gives a
-        // MaxHp high enough that the per-turn heal rounds to >= 1, while keeping fights long enough for it to tell.
+        // A Legendary-Marking hero occasionally mends, healing a quarter of MaxHp at the start of a turn on which
+        // it is hurt. Across a deterministic seed sweep its TOTAL winning HP fraction is strictly higher than the
+        // same hero WITHOUT Marking (identical stats + seed) — a mend only ever adds HP. A mid stat line (100) at
+        // level 10 keeps fights long enough to give the proc turns to land on.
         // (A single seed is too coarse in this mirror — the hero only wins a subset — so we sum over the sweep.)
         var foe = HeroWith("b", 10, GenomeWith(100));
         double TotalHpFrac(bool marking)
@@ -158,8 +184,8 @@ public class InnateAbilitiesTests
     [Fact]
     public void Brand_SigilBurnsTheTargetOverTime()
     {
-        // A Legendary-Sigil attacker brands its target on each landing hit; the brand ticks a slice of the
-        // target's MaxHp for BrandTurns turns. Against a STRONGER defender (so the defender wins and its
+        // A Legendary-Sigil attacker occasionally brands its target on a landing hit; the brand then ticks a slice
+        // of the target's MaxHp for BrandTurns turns. Against a STRONGER defender (so the defender wins and its
         // remaining HP is readable), the defender's TOTAL winning HP across a seed sweep is strictly lower when
         // the attacker brands than when it does not — the burn is the only difference and only costs HP (and any
         // fight it burns the defender to death simply drops from the winning total, deepening the gap).
@@ -201,6 +227,28 @@ public class InnateAbilitiesTests
     }
 
     [Fact]
+    public void FlagOn_WithNoExpressedCosmeticTraits_IsStillByteIdenticalToFlagOff()
+    {
+        // The mechanism BEHIND the flag-off guarantee, pinned directly. Procs need new RNG draws, and a new draw
+        // in the wrong place would silently reshuffle every downstream roll. Every draw site short-circuits on
+        // `Chance > 0`, and a hero with no expressed cosmetic trait resolves every chance to 0 — so even with the
+        // flag fully ON such a fight must take exactly the draws the pre-proc engine took. If someone later adds
+        // an unconditional proc roll, THIS is the test that catches it (the flag-off test would still pass,
+        // because both of its heroes would draw the same extra roll).
+        for (var i = 0; i < 200; i++)
+        {
+            var s = SHA256.HashData(BitConverter.GetBytes(i));
+            var a = HeroWith("a", 20, GenomeWith(180));   // plain: stat genes only, no cosmetic traits
+            var b = HeroWith("b", 20, GenomeWith(160));
+            var off = BattleEngine.Fight(a, b, s);          // Default → flag off
+            var on = BattleEngine.Fight(a, b, s, Innate);   // flag on, but nothing to proc
+            Assert.Equal(off.WinnerId, on.WinnerId);
+            Assert.Equal(off.WinnerRemainingHp, on.WinnerRemainingHp);
+            Assert.Equal(off.Events, on.Events);   // FULL event stream, field-by-field — same draws, same fight
+        }
+    }
+
+    [Fact]
     public void FlagOn_IsDeterministicAcrossRuns()
     {
         var a = HeroWith("a", 20, GenomeWith(180, (TraitCategory.Sigil, 255), (TraitCategory.Aura, 255)));
@@ -212,28 +260,71 @@ public class InnateAbilitiesTests
         Assert.Equal(r1.Events.Count, r2.Events.Count);   // same config + seed → identical replay (verifiable)
     }
 
-    [Fact]
-    public void BalanceProbe_EachPassiveIsANudgeNotASwing()
+    /// <summary>
+    /// The mirror win rate of a hero whose ONLY difference from its opponent is one max-roll (Legendary) trait.
+    /// Two deliberate properties make the number readable:
+    ///   • seeds are SHA256-derived. DeterministicRng is xoshiro256** whose FIRST output depends only on the _s1
+    ///     seed word (bytes 8..15), so the s[0]=i style of seed leaves that word zero and makes every fight's
+    ///     opening draw 0 — a degenerate stream that hid Eyes almost entirely under the old always-on tuning.
+    ///   • the trait alternates sides. In this exact stat mirror TurnOrder falls to the id tiebreak, which hands
+    ///     "a" the first move every turn; carrying the trait on "a" every time buys ~0.09 of free win rate that
+    ///     has nothing to do with the passive. Alternating cancels it, so an INERT passive scores ~0.500 and the
+    ///     number reported here is the passive's own lift.
+    /// </summary>
+    private static double MirrorWinRate(TraitCategory cat, int n = 400)
     {
-        // For each passive, 200 equal-level mirror-ish matches (same stat genes, the passive the only difference)
-        // must not swing the win rate past a ceiling — a max-roll cosmetic trait is an edge, never a trump.
+        var wins = 0;
+        for (var i = 0; i < n; i++)
+        {
+            var s = SHA256.HashData(BitConverter.GetBytes(i));
+            var bearerIsA = i % 2 == 0;
+            var bearerId = bearerIsA ? "a" : "b";
+            var bearer = HeroWith(bearerId, 20, GenomeWith(170, (cat, 255)));
+            var plain = HeroWith(bearerIsA ? "b" : "a", 20, GenomeWith(170));
+            var (x, y) = bearerIsA ? (bearer, plain) : (plain, bearer);
+            if (BattleEngine.Fight(x, y, s, Innate).WinnerId == bearerId) wins++;
+        }
+        return wins / (double)n;
+    }
+
+    [Fact]
+    public void BalanceProbe_EachProcIsAnEdgeNotATrump()
+    {
+        // Re-pinned for innate-v3 (rare procs). Measured at InnateBonuses.Default, n=400:
+        //   Aura .625  Marking .593  Eyes .593  Crest .608  Sigil .585  Stance .598
+        // The band is [0.53, 0.70]: the floor is above the ~0.510 an INERT passive scores, so a passive that
+        // quietly stops firing trips this; the ceiling keeps a max-roll cosmetic trait an edge, never a trump.
+        // If one breaches the ceiling, lower that passive's *Chance knob in InnateBonuses.Default and re-run.
+        // (The old always-on tuning measured Aura .55 / Marking .53 / Eyes .51 / Crest .57 / Sigil .57 /
+        //  Stance .51 on a biased probe — those numbers do not carry over and are not comparable.)
         var cats = new[] { TraitCategory.Aura, TraitCategory.Marking, TraitCategory.Eyes,
                            TraitCategory.Crest, TraitCategory.Sigil, TraitCategory.Stance };
         foreach (var cat in cats)
+            Assert.InRange(MirrorWinRate(cat), 0.53, 0.70);
+    }
+
+    [Fact]
+    public void ProcChance_ScalesWithTheExpressedRarityTier()
+    {
+        // The design claim of the rework: rarity buys the CHANCE, not the payload. A Legendary Aura and a Common
+        // Aura ward for exactly the same amount when they fire — the Legendary just fires far more often. Count
+        // ward beats over an identical deterministic sweep to see the ladder.
+        int Wards(byte auraGene)
         {
-            var wins = 0; const int n = 200;
-            for (var i = 0; i < n; i++)
+            var count = 0;
+            for (var i = 0; i < 150; i++)
             {
-                var s = new byte[32]; s[0] = (byte)i; s[1] = (byte)(i >> 8);
-                var withTrait = HeroWith("a", 20, GenomeWith(170, (cat, 255)));
-                var without   = HeroWith("b", 20, GenomeWith(170));
-                if (BattleEngine.Fight(withTrait, without, s, Innate).WinnerId == "a") wins++;
+                var s = SHA256.HashData(BitConverter.GetBytes(i));
+                var def = HeroWith("def", 20, GenomeWith(180, (TraitCategory.Aura, auraGene)));
+                count += BattleEngine.Fight(HeroWith("atk", 20, GenomeWith(200)), def, s, Innate)
+                    .Events.Count(e => e.Kind == BattleEventKind.ShieldAbsorbed);
             }
-            var rate = wins / (double)n;
-            // A single Legendary passive should tilt, not dominate: within [0.50, 0.70]. If a passive exceeds
-            // this, lower its InnateBonuses.Default knob and re-run. (id tiebreak gives "a" a hair over 0.5 base.)
-            Assert.InRange(rate, 0.50, 0.70);
+            return count;
         }
+        var legendary = Wards(255);   // top of the ladder
+        var common = Wards(100);      // an expressed but ordinary Aura
+        Assert.True(legendary > common, $"legendary wards {legendary} !> common {common}");
+        Assert.True(common > 0, "an expressed Common trait must still be able to proc (the 1% floor)");
     }
 
     // ── rung 2: each passive, when it fires, surfaces as its own beat in the event log (flag on) ──
@@ -254,15 +345,15 @@ public class InnateAbilitiesTests
     }
 
     [Fact]
-    public void ShieldAbsorbed_LogsAShieldBeatWhenAuraEatsPartOfABlow()
+    public void ShieldAbsorbed_LogsAShieldBeatWhenAuraWardsABlow()
     {
-        // Same setup as Shield_AuraAbsorbsBeforeHp: a Legendary-Aura defender under attack. The first landed blow is
-        // partly soaked by the shield, which now logs a ShieldAbsorbed beat on the defender (source == target).
-        var atk = HeroWith("atk", 20, GenomeWith(220));
-        var aura = HeroWith("def", 20, GenomeWith(120, (TraitCategory.Aura, 255)));
-        var seed = new byte[32]; Array.Fill(seed, (byte)3);
-        var events = BattleEngine.Fight(atk, aura, seed, Innate).Events;
-        Assert.Contains(events, e => e.Kind == BattleEventKind.ShieldAbsorbed
+        // A Legendary-Aura defender under attack. When the ward procs it soaks the blow, which logs a
+        // ShieldAbsorbed beat on the defender (source == target). It is a PROC now, so sweep for a fight that
+        // fires one rather than pinning a single seed.
+        var events = FirstFightWith(BattleEventKind.ShieldAbsorbed,
+            HeroWith("atk", 20, GenomeWith(220)), HeroWith("def", 20, GenomeWith(120, (TraitCategory.Aura, 255))));
+        Assert.NotNull(events);
+        Assert.Contains(events!, e => e.Kind == BattleEventKind.ShieldAbsorbed
             && e.ActorId == "def" && e.TargetId == "def" && e.Damage > 0);
     }
 

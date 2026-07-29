@@ -392,11 +392,12 @@ else
             .Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
 
     // The combat passive each expressed cosmetic category grants (rung-3 surfacing), per the design mapping.
+    // Each is a rare PROC whose chance scales with the trait's rarity tier, not an always-on modifier.
     static string Passive(TraitCategory c) => c switch
     {
         TraitCategory.Aura => "Shield",
         TraitCategory.Marking => "Regen",
-        TraitCategory.Eyes => "Accuracy",
+        TraitCategory.Eyes => "True Strike",
         TraitCategory.Crest => "Thorns",
         TraitCategory.Sigil => "Brand",
         TraitCategory.Stance => "Initiative",
