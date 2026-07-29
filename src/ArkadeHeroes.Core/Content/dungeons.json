@@ -1,0 +1,24 @@
+{
+  "dungeons": [
+    {
+      "id": "gauntlet",
+      "name": "The Gauntlet",
+      "entryFeeBonusSats": 250,
+      "xpLevelCap": 10,
+      "dropRequiresFullClear": true,
+      "dropRoll": "EntropyByte",
+      "waves": [
+        { "wave": 1, "levelOffset": -1, "xp": 15, "ghostGear": [] },
+        { "wave": 2, "levelOffset": 0, "xp": 20, "ghostGear": [] },
+        { "wave": 3, "levelOffset": 1, "xp": 25, "ghostGear": [] },
+        { "wave": 4, "levelOffset": 2, "xp": 30, "ghostGear": ["steel-saber", "chain-hauberk"] },
+        { "wave": 5, "levelOffset": 3, "xp": 40, "ghostGear": ["arkforged-edge", "covenant-plate", "vtxo-charm"] }
+      ],
+      "drops": [
+        { "itemId": "rusty-blade", "weight": 1 },
+        { "itemId": "padded-vest", "weight": 1 },
+        { "itemId": "lucky-feather", "weight": 1 }
+      ]
+    }
+  ]
+}

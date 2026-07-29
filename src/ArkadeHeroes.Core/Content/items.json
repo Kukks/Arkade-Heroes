@@ -1,0 +1,35 @@
+{
+  "packId": "core",
+  "items": [
+    { "id": "rusty-blade", "name": "Rusty Blade", "slot": "Weapon", "priceSats": 500, "minLevel": 1,
+      "mods": { "attack": 4 } },
+    { "id": "steel-saber", "name": "Steel Saber", "slot": "Weapon", "priceSats": 2500, "minLevel": 5,
+      "mods": { "attack": 10, "critPercent": 2, "speed": 2 } },
+    { "id": "arkforged-edge", "name": "Arkforged Edge", "slot": "Weapon", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": -15, "attack": 18, "magic": 6, "speed": -3, "critPercent": 4 } },
+
+    { "id": "padded-vest", "name": "Padded Vest", "slot": "Armor", "priceSats": 500, "minLevel": 1,
+      "mods": { "maxHp": 20, "defense": 3 } },
+    { "id": "chain-hauberk", "name": "Chain Hauberk", "slot": "Armor", "priceSats": 2500, "minLevel": 5,
+      "mods": { "maxHp": 45, "defense": 8, "speed": -2 } },
+    { "id": "covenant-plate", "name": "Covenant Plate", "slot": "Armor", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": 90, "defense": 14, "speed": -4 } },
+
+    { "id": "lucky-feather", "name": "Lucky Feather", "slot": "Trinket", "priceSats": 500, "minLevel": 1,
+      "mods": { "critPercent": 5 } },
+    { "id": "swift-anklet", "name": "Swift Anklet", "slot": "Trinket", "priceSats": 2500, "minLevel": 5,
+      "mods": { "speed": 8 } },
+    { "id": "vtxo-charm", "name": "VTXO Charm", "slot": "Trinket", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": 25, "magic": 8, "critPercent": 3 } },
+
+    { "id": "bulwark-ward", "name": "Bulwark Ward", "slot": "Trinket", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": 28, "defense": 6 }, "counters": "Offense" },
+    { "id": "sunder-sigil", "name": "Sunder Sigil", "slot": "Trinket", "priceSats": 10000, "minLevel": 10,
+      "mods": { "attack": 8, "magic": 8, "critPercent": 3 }, "counters": "Bulk" },
+    { "id": "snare-loop", "name": "Snare Loop", "slot": "Trinket", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": 12, "defense": 5, "speed": 10 }, "counters": "Tempo" },
+
+    { "id": "chaos-prism", "name": "Chaos Prism", "slot": "Trinket", "priceSats": 10000, "minLevel": 10,
+      "mods": { "maxHp": 25, "magic": 7, "critPercent": 3 }, "varianceBonus": 25 }
+  ]
+}

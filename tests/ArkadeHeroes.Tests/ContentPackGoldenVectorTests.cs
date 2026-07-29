@@ -32,16 +32,25 @@ public class ContentPackGoldenVectorTests
     private static string Int(long v) => v.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Every FIELD of every item in the shipped catalog, in catalog order. This is the sharpest possible
-    /// statement of "the JSON says exactly what the C# list said": a single transposed stat, a dropped
-    /// MinLevel gate, a reordered list, or a counter that decoded to the wrong enum member all move it.
+    /// Every FIELD of every item that existed when gear became authored data, in catalog order. This is the
+    /// sharpest possible statement of "the JSON says exactly what the C# list said": a single transposed
+    /// stat, a dropped MinLevel gate, a reordered list, or a counter that decoded to the wrong enum member
+    /// all move it.
+    ///
+    /// It walks a FIXED list of ids rather than the whole catalog, on purpose. Authoring is add-only, and
+    /// the point of this rung is that publishing a new item needs no code change — so a 14th item must not
+    /// fail this test, while restatting any of these 13 must. Per-item immutability is enforced separately
+    /// and generally by the seal ledger (<c>ContentValidationTests.RepricingAnAlreadyPublishedItemIsRefused</c>).
     /// </summary>
     [Fact]
     public void TheShippedGearCatalogMatchesItsPreContentPackGoldenVector()
     {
         var log = new StringBuilder();
-        foreach (var i in ItemCatalog.All)
-            log.Append(i.Id).Append('|').Append(i.Name).Append('|').Append(i.Slot)
+        foreach (var id in MigratedItemIds)
+        {
+            var i = ItemCatalog.Find(id);
+            Assert.True(i is not null, $"item '{id}' was published before the content pack and has vanished");
+            log.Append(i!.Id).Append('|').Append(i.Name).Append('|').Append(i.Slot)
                .Append('|').Append(Int(i.Mods.MaxHp)).Append(',').Append(Int(i.Mods.Attack))
                .Append(',').Append(Int(i.Mods.Magic)).Append(',').Append(Int(i.Mods.Defense))
                .Append(',').Append(Int(i.Mods.Speed)).Append(',').Append(Int(i.Mods.CritPercent))
@@ -49,10 +58,20 @@ public class ContentPackGoldenVectorTests
                .Append('|').Append(i.Counters?.ToString() ?? "-")
                .Append('|').Append(Int(i.VarianceBonus))
                .Append('\n');
+        }
 
-        Assert.Equal(13, ItemCatalog.All.Count);
         Assert.Equal("2217d75141c40c4be1d347cf5ef1671e62a4bc5c2f32c661c207c24ab70e6ad1", Hash(log.ToString()));
     }
+
+    /// <summary>The catalog exactly as it stood at base commit 149448d, in its authored order.</summary>
+    private static readonly string[] MigratedItemIds =
+    [
+        "rusty-blade", "steel-saber", "arkforged-edge",
+        "padded-vest", "chain-hauberk", "covenant-plate",
+        "lucky-feather", "swift-anklet", "vtxo-charm",
+        "bulwark-ward", "sunder-sigil", "snare-loop",
+        "chaos-prism",
+    ];
 
     /// <summary>
     /// The gauntlet's drop pick, EXHAUSTIVELY over the byte it reads. <c>RewardItem</c> selects with
