@@ -1209,6 +1209,38 @@ public class NArkChainService(
         return vtxos.Any(v => v.Assets?.Any(a => a.AssetId == parameters.ItemAssetId) == true);
     }
 
+    public async Task<bool> WasOfferSoldAsync(string offerId, CancellationToken ct = default)
+    {
+        var parameters = await GetOfferParamsAsync(offerId, ct);
+        if (parameters is null) return false;
+        // No fee leg, nothing to attribute: an offer built before the fee existed spends identically
+        // whether it sold or was reclaimed, so it stays uncounted rather than guessed at.
+        var fee = string.IsNullOrEmpty(parameters.TreasuryFeeAddress) ? 0 : parameters.FeeSats;
+        if (fee <= 0) return false;
+
+        var (contract, _) = await BuildOfferContractAsync(parameters, ct);
+        var offerScript = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { offerScript });
+        // ArkTxid names the Arkade transaction that SPENT a VTXO — it is null while one rests — so this
+        // is the id of the fulfil or the reclaim that closed the offer. Spent VTXOs are filtered out by
+        // default, hence includeSpent: the whole question is about one that is already gone.
+        var spendTxId = (await vtxoStorage.GetVtxos(
+                scripts: [offerScript], includeSpent: true, cancellationToken: ct))
+            .DistinctBy(v => v.OutPoint)
+            .FirstOrDefault(v => v.Assets?.Any(a => a.AssetId == parameters.ItemAssetId) == true)
+            ?.ArkTxid;
+        if (string.IsNullOrEmpty(spendTxId)) return false;
+
+        // Only a fulfil creates a treasury output in that transaction, and the covenant pins it to
+        // exactly the fee — so an exact-amount match cannot be satisfied by a reclaim.
+        var treasuryScript = ArkAddress.Parse(parameters.TreasuryFeeAddress!).ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { treasuryScript });
+        return (await vtxoStorage.GetVtxos(
+                scripts: [treasuryScript], includeSpent: true, cancellationToken: ct))
+            .DistinctBy(v => v.OutPoint)
+            .Any(v => v.TransactionId == spendTxId && v.Amount == (ulong)fee);
+    }
+
     // ── On-chain reads at the player's address ─────────────────────────
 
     public async Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default)

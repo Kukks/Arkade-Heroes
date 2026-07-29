@@ -72,10 +72,11 @@ public class GameOptions
     /// server can skip the cut. Raising this reduces what a seller nets at a given ask; it does not deter
     /// listing, because listing is free. An ask at or below this value is refused outright (the seller's
     /// payout would be non-positive and the covenant could not be built).
-    /// Booked as inflowByTag {"listing": n} when a HERO sale is claimed; item sales reach the treasury but
-    /// are untagged, because a fungible asset gives no way to tell a sale from a seller reclaim without
-    /// risking an over-count. Changing this affects only NEW offers — a resting one keeps the fee baked
-    /// into the covenant it was created with.</summary>
+    /// Booked as inflowByTag {"listing": n} for item AND hero sales alike, once the chain confirms the sale:
+    /// only a fulfil pays the treasury in the transaction that spends the offer, so a seller reclaim is
+    /// never mistaken for one. A sale the chain cannot confirm stays uncounted — the tally may lag the
+    /// treasury's real income, never lead it. Changing this affects only NEW offers — a resting one keeps
+    /// the fee baked into the covenant it was created with.</summary>
     public long OfferListingFeeSats { get; set; } = 1_000;
 
     /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),

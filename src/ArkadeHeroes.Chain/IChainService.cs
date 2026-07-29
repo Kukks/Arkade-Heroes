@@ -292,6 +292,18 @@ public interface IChainService
     Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default);
 
     /// <summary>
+    /// True when the transaction that SPENT the offer also paid the treasury the fee the covenant
+    /// pinned — the proof that a closed offer sold rather than being reclaimed by its seller. The
+    /// fulfil leaf routes the cut to the treasury in that same transaction; the reclaim leaf pays only
+    /// the seller, so the two spends are distinguishable even for a fungible item whose units are
+    /// otherwise interchangeable. False for an offer with no fee leg (nothing is attributable), one
+    /// still resting, or one whose spend the chain has not named yet: an unseen sale is left
+    /// UNCOUNTED, never invented, because over-stating the income of a treasury holding real bitcoin
+    /// is the direction that cannot be survived.
+    /// </summary>
+    Task<bool> WasOfferSoldAsync(string offerId, CancellationToken ct = default);
+
+    /// <summary>
     /// The public offer parameters for trustless client rebuild — everything a
     /// BUYER needs to reconstruct the offer covenant (via
     /// <see cref="Covenants.OfferContracts.Build"/>), verify the address matches
