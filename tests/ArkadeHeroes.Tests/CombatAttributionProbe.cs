@@ -47,7 +47,9 @@ namespace ArkadeHeroes.Tests;
 ///    extra level wins 73.4% and +5 levels wins 95.3%. They read as small only because the BREEDING
 ///    spread they are measured against is larger still. Gear does decay with level — the same tier-3 set
 ///    is worth 96.8% at level 10 but 82.9% at level 50, because its mods are flat adds against stats that
-///    keep growing — yet even at the level cap it is still decisive.
+///    keep growing — yet even at the level cap it is still decisive. Nor is that an artefact of the naked
+///    control: ONE TIER apart, which is the live comparison once nobody fights bare, tier-3 beats tier-2
+///    81.6% at level 10 and 66.8% at level 50 (tier-2 over tier-1: 80.6% / 67.8%).
 ///
 /// 2. THE RESOLVER IS HYPERSENSITIVE, and that — not a weak gear/level lever — is what makes a matchup
 ///    pre-decided. A fight is an attrition race whose damage term is Power*ATK/(DEF_target+25), so the
