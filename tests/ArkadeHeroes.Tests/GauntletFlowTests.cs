@@ -34,8 +34,11 @@ public class GauntletFlowTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(ReceiptVerifier.Verify(run.Receipt).Ok);
         Assert.Equal(run.XpAwarded, run.Receipt.XpAwardA);
 
-        // Client-side fairness recompute: re-derive the ghosts + fights, re-check the capped XP + item.
-        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, "g-nonce", run.Receipt.CommitmentHex, run);
+        // Client-side fairness recompute: re-derive the ghosts + fights, re-check the capped XP + item —
+        // under the rules the run's own stamp names, not this client's compiled-in default.
+        var (cfg, cfgError) = await client.Config.ResolveAsync(run.ConfigVersion);
+        Assert.Null(cfgError);
+        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, "g-nonce", run.Receipt.CommitmentHex, run, cfg);
         Assert.True(ok, detail);
 
         // Each wave carries the ghost snapshot + fight log the browser replays in the arena: the
@@ -68,8 +71,10 @@ public class GauntletFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var run = await client.Gauntlet.RunAsync(open.GauntletId, "capped-nonce");
 
         Assert.Equal(0, run.XpAwarded);
-        // And a client can prove it: the recompute agrees the award is 0.
-        Assert.True(FairnessAudit.VerifyGauntlet(open.GauntletId, "capped-nonce", run.Receipt.CommitmentHex, run).Ok);
+        // And a client can prove it: the recompute, under the run's stamped rules, agrees the award is 0.
+        var (cfg, cfgError) = await client.Config.ResolveAsync(run.ConfigVersion);
+        Assert.Null(cfgError);
+        Assert.True(FairnessAudit.VerifyGauntlet(open.GauntletId, "capped-nonce", run.Receipt.CommitmentHex, run, cfg).Ok);
     }
 
     [Fact]

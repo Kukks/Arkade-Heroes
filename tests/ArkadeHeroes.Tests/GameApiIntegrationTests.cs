@@ -70,8 +70,14 @@ public class GameApiIntegrationTests : IClassFixture<WebApplicationFactory<Progr
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest(fightNonce));
 
         Assert.NotEmpty(fight.Result.Events);
+        // Replay under the rules the server STAMPED this fight with, exactly as the browser and console do.
+        // The challenger here is a BRED child, so if it inherited an expressed cosmetic trait (mutation, in
+        // roughly one child in seven) an innate proc fires and a GameConfig.Default replay legitimately
+        // diverges -- which is the honest verdict for a client that ignored the stamp, not a flake.
+        var (cfg, cfgError) = await alice.Config.ResolveAsync(fight.ConfigVersion);
+        Assert.Null(cfgError);
         var (matchOk, matchDetail) = FairnessAudit.VerifyMatch(
-            open.MatchId, fightNonce, open.CommitmentHex, fight);
+            open.MatchId, fightNonce, open.CommitmentHex, fight, cfg);
         Assert.True(matchOk, matchDetail);
 
         // ── Shop: invoice → claim delivers the unit → equip ────────────
