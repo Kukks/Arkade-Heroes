@@ -21,7 +21,12 @@
         <div class="modal terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-gate-title">
             <div class="modal-head">
                 <h3 id="terms-gate-title" style="margin:0">@(IsReprompt ? "The terms have changed" : "Before you play")</h3>
-                <span class="hud">v@Terms.CurrentVersion</span>
+                @* Parenthesised deliberately: "v@Terms.CurrentVersion" has no space before the @, so Razor's
+                   email heuristic treats v@Terms... as an address and emits it VERBATIM — the acceptance
+                   modal showed the literal string "v@Terms.CurrentVersion" to players. Seen in a browser.
+                   The /terms page escapes this because it writes "version @Terms.CurrentVersion" with a
+                   space. Same class as #124 (hero levels rendered as raw Razor). *@
+                <span class="hud">v@(Terms.CurrentVersion)</span>
             </div>
 
             <p class="terms-lede">
