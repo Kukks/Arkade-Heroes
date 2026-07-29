@@ -283,6 +283,20 @@ public class GameService(
         if (NameTaken(normalized, heroId))
             throw new GameRuleException($"The name '{normalized}' is already taken by another hero.");
 
+        // A previous attempt can lose the apply-time uniqueness race AFTER its fee has cleared
+        // (ConfirmRenameAsync re-checks, throws, and leaves the session standing). That fee bought a
+        // rename that never happened, so reuse the paid invoice rather than billing again: one paid
+        // fee buys one APPLIED rename, however many names the player has to try. It cannot be milked
+        // — the session is removed on success, so the invoice stops being reusable the moment a
+        // rename lands.
+        if (store.Renames.TryGetValue(heroId, out var prior)
+            && prior.FeeInvoiceId is { } priorInvoice
+            && await chain.IsInvoicePaidAsync(priorInvoice, ct))
+        {
+            store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            return null;   // already paid for — nothing further to settle before confirming
+        }
+
         var fee = _options.HeroRenameFeeSats > 0
             ? await chain.CreateFeeInvoiceAsync($"rename:{heroId}", _options.HeroRenameFeeSats, ct)
             : null;

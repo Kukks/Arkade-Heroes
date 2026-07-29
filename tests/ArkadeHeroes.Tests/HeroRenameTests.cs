@@ -77,6 +77,48 @@ public class HeroRenameTests
             () => player.Heroes.RequestRenameAsync(heroes[1].Id, new RenameHeroRequest("Highlander")));
     }
 
+    /// <summary>
+    /// Losing the apply-time race must not cost the player the fee. Uniqueness is checked twice — once
+    /// when the name is requested and again when it is confirmed — so two heroes can both hold a pending
+    /// claim on the same name and whoever confirms second is refused. That second player has already PAID
+    /// by then, and the refusal leaves the rename session standing, so asking for a different name used to
+    /// mint a fresh invoice and bill them all over again for a race they did not lose through any fault.
+    ///
+    /// One paid fee buys one APPLIED rename, however many names it takes to find a free one.
+    /// </summary>
+    [Fact]
+    public async Task Rename_LosingTheApplyTimeRace_DoesNotChargeTheFeeTwice()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, _) = await factory.RegisterAsync("RN-Race");
+        var heroes = await player.ClaimStartersAsync();
+
+        var balanceBefore = (await player.Players.MeAsync()).BalanceSats;
+
+        // Both heroes stake a claim on the same name and both fees clear — legal, because uniqueness is
+        // only settled at confirm time.
+        var slow = await player.Heroes.RequestRenameAsync(heroes[0].Id, new RenameHeroRequest("Highlander"));
+        await player.Dev.PayInvoiceAsync(new { slow.Fee!.InvoiceId });
+        var quick = await player.Heroes.RequestRenameAsync(heroes[1].Id, new RenameHeroRequest("Highlander"));
+        await player.Dev.PayInvoiceAsync(new { quick.Fee!.InvoiceId });
+
+        // The quicker hero takes the name; the slower one is refused, fee already spent.
+        await player.Heroes.ConfirmRenameAsync(heroes[1].Id);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => player.Heroes.ConfirmRenameAsync(heroes[0].Id));
+
+        var spentSoFar = balanceBefore - (await player.Players.MeAsync()).BalanceSats;
+
+        // Picking another name reuses the fee already paid — no second invoice to settle.
+        var retry = await player.Heroes.RequestRenameAsync(heroes[0].Id, new RenameHeroRequest("Wanderer"));
+        Assert.Null(retry.Fee);
+
+        var renamed = await player.Heroes.ConfirmRenameAsync(heroes[0].Id);
+        Assert.Equal("Wanderer", renamed.Name);
+
+        // Two heroes renamed, two fees — not three.
+        Assert.Equal(spentSoFar, balanceBefore - (await player.Players.MeAsync()).BalanceSats);
+    }
+
     [Fact]
     public async Task Config_PublishesRenameFee_ForPreDisplay()
     {
