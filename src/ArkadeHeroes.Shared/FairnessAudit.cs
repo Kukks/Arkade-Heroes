@@ -179,8 +179,10 @@ public static class FairnessAudit
     /// soft foes. Then the capped XP and item are recomputed and checked against the SIGNED receipt, so a
     /// server can't over-award XP (past the level-10 cap) or fabricate a drop.
     /// </summary>
+    /// <remarks>The optional <paramref name="config"/> is the combat config the run was resolved under
+    /// (null → <c>GameConfig.Default</c>), resolved from the run's <c>ConfigVersion</c> stamp.</remarks>
     public static (bool Ok, string Detail) VerifyGauntlet(
-        string gauntletId, string nonce, string commitmentHex, GauntletRunResponse run)
+        string gauntletId, string nonce, string commitmentHex, GauntletRunResponse run, GameConfig? config = null)
     {
         var seed = Convert.FromHexString(run.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -190,7 +192,7 @@ public static class FairnessAudit
         if (!Convert.ToHexString(entropy).Equals(run.EntropyHex, StringComparison.OrdinalIgnoreCase))
             return (false, "entropy does not match DeriveEntropy(seed, gauntletId, hero, nonce)");
 
-        var resolved = Gauntlet.Resolve(RebuildHero(run.HeroSnapshot), entropy);
+        var resolved = Gauntlet.Resolve(RebuildHero(run.HeroSnapshot), entropy, config);
         if (resolved.WavesCleared != run.WavesCleared)
             return (false, $"replayed waves cleared ({resolved.WavesCleared}) differs from reported ({run.WavesCleared})");
 
@@ -212,8 +214,10 @@ public static class FairnessAudit
     /// title is recomputed from the score, and the score is checked against the SIGNED receipt (it rides in
     /// XpAwardB), so a server can't fabricate a leaderboard result.
     /// </summary>
+    /// <remarks>The optional <paramref name="config"/> is the combat config the run was resolved under
+    /// (null → <c>GameConfig.Default</c>), resolved from the run's <c>ConfigVersion</c> stamp.</remarks>
     public static (bool Ok, string Detail) VerifyTrials(
-        string trialsId, string nonce, string commitmentHex, TrialsRunResponse run)
+        string trialsId, string nonce, string commitmentHex, TrialsRunResponse run, GameConfig? config = null)
     {
         var seed = Convert.FromHexString(run.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -228,7 +232,7 @@ public static class FairnessAudit
         if (!Enum.TryParse<TrialsAffix>(run.Affix, out var affix))
             return (false, $"unknown weekly affix '{run.Affix}' — cannot replay the ladder faithfully");
 
-        var resolved = Trials.Resolve(RebuildHero(run.HeroSnapshot), entropy, affix: affix);
+        var resolved = Trials.Resolve(RebuildHero(run.HeroSnapshot), entropy, config, affix: affix);
         if (resolved.WavesCleared != run.WavesCleared)
             return (false, $"replayed waves survived ({resolved.WavesCleared}) differs from reported ({run.WavesCleared})");
 
@@ -247,8 +251,11 @@ public static class FairnessAudit
     /// winner AND every duel's event log — so a server can't misreport a duel or the aggregate outcome.
     /// (Copies the VerifyGauntlet pattern; the engine + replay guarantee are untouched.)
     /// </summary>
+    /// <remarks>The optional <paramref name="config"/> is the combat config the match was resolved under
+    /// (null → <c>GameConfig.Default</c>), resolved from the replay's <c>ConfigVersion</c> stamp — squad
+    /// synergy in particular only reproduces under the config that was in force.</remarks>
     public static (bool Ok, string Detail) VerifySquad(
-        string matchId, string nonce, string commitmentHex, SquadReplayDto replay)
+        string matchId, string nonce, string commitmentHex, SquadReplayDto replay, GameConfig? config = null)
     {
         var seed = Convert.FromHexString(replay.ServerSeedHex);
         if (!CommitReveal.Verify(seed, commitmentHex))
@@ -260,7 +267,7 @@ public static class FairnessAudit
 
         var challengers = replay.ChallengerLineup.Select(RebuildHero).ToList();
         var defenders = replay.DefenderLineup.Select(RebuildHero).ToList();
-        var resolved = SquadBattle.Resolve(challengers, defenders, entropy);
+        var resolved = SquadBattle.Resolve(challengers, defenders, entropy, config);
 
         if (resolved.ChallengerWon != replay.Result.ChallengerWon)
             return (false, "replayed match winner differs from the reported winner");
@@ -330,9 +337,11 @@ public static class FairnessAudit
     /// snapshots themselves, so a substituted genome/level/gear can't either. Mirrors
     /// <see cref="VerifySquad"/>; the resolver + replay guarantee are untouched.
     /// </summary>
+    /// <remarks>The optional <paramref name="config"/> is the combat config the bracket was resolved under
+    /// (null → <c>GameConfig.Default</c>), resolved from the replay's <c>ConfigVersion</c> stamp.</remarks>
     public static (bool Ok, string Detail) VerifyTournament(
         string tournamentId, string nonce, string commitmentHex, string entrantsCommitmentHex,
-        TournamentReplayDto replay)
+        TournamentReplayDto replay, GameConfig? config = null)
     {
         // Pin the entrant SET before anything else: a substituted snapshot re-resolves self-consistently
         // (same seed, same entropy, a bracket that replays), so no downstream check would catch it — only
@@ -350,7 +359,7 @@ public static class FairnessAudit
             return (false, "entropy does not match DeriveEntropy(seed, tournament, tournamentId, nonce)");
 
         var entrants = replay.Entrants.Select(RebuildHero).ToList();
-        var resolved = Tournament.Resolve(entrants, entropy);
+        var resolved = Tournament.Resolve(entrants, entropy, config);
 
         if (resolved.ChampionId != replay.ChampionHeroId)
             return (false, "replayed champion differs from the reported champion");

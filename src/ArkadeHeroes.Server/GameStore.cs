@@ -144,6 +144,10 @@ public class DeathMatchSession
     public BattleResult? Result { get; set; }
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
+    /// <summary>The GameConfigVersion of the rules this was RESOLVED under, recorded at resolve time so the
+    /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
+    /// stamping existed, which ran on GameConfig.Default).</summary>
+    public string? ConfigVersion { get; set; }
     public Shared.HeroDto? ChallengerSnapshot { get; set; }
     public Shared.HeroDto? DefenderSnapshot { get; set; }
 }
@@ -197,6 +201,10 @@ public class MatchSession
     public string Status { get; set; } = "open"; // open | accepted | resolved
     public BattleResult? Result { get; set; }
     public string? EntropyHex { get; set; }
+    /// <summary>The GameConfigVersion of the rules this was RESOLVED under, recorded at resolve time so the
+    /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
+    /// stamping existed, which ran on GameConfig.Default).</summary>
+    public string? ConfigVersion { get; set; }
     public string? Nonce { get; set; }
 
     /// <summary>Fight-time hero snapshots (level + equipment as actually fought) — persisted so ANY
@@ -267,6 +275,10 @@ public class SquadMatchSession
     public IReadOnlyList<Shared.HeroDto>? DefenderSnapshots { get; set; }
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
+    /// <summary>The GameConfigVersion of the rules this was RESOLVED under, recorded at resolve time so the
+    /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
+    /// stamping existed, which ran on GameConfig.Default).</summary>
+    public string? ConfigVersion { get; set; }
 }
 
 /// <summary>A pending hero rename in the unique-name registry: the player pays the treasury fee, then
@@ -304,6 +316,10 @@ public sealed class TournamentSession
     public IReadOnlyList<long> Prizes { get; set; } = [];
     public string? Nonce { get; set; }
     public string? EntropyHex { get; set; }
+    /// <summary>The GameConfigVersion of the rules this was RESOLVED under, recorded at resolve time so the
+    /// replay stays honest about its own rules. Null until resolved (and on anything resolved before
+    /// stamping existed, which ran on GameConfig.Default).</summary>
+    public string? ConfigVersion { get; set; }
     /// <summary>Entrant hero snapshots captured the moment the bracket FILLS — the locked fighting state
     /// the resolver runs over and any client re-runs (FairnessAudit.VerifyTournament), even after the
     /// heroes later change. NOT persisted: a restart-rehydrated bracket has none, can't honor its

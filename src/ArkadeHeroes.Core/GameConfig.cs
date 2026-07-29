@@ -5,11 +5,13 @@ namespace ArkadeHeroes.Core;
 
 /// <summary>
 /// The single source of truth for every tunable game-balance value. The server builds one from
-/// <c>GameOptions</c> and threads it through the deterministic methods; the client shares
-/// <see cref="Default"/> at COMPILE time, so a client re-verifying a genome/fight/level under
-/// Default already matches what the server computed — no runtime config propagation is needed
-/// pre-launch. (Per-artifact version pinning becomes necessary only at launch, when a persisted
-/// hero corpus must survive a runtime retune; that design is captured in the plan for then.)
+/// <c>GameOptions</c> and threads it through the deterministic methods; the client no longer has to
+/// ASSUME that config is <see cref="Default"/>. Every resolvable outcome is stamped with its
+/// <see cref="GameConfigVersion"/> and a client resolves that stamp — from its own compiled-in
+/// <see cref="Default"/> when it names those rules, otherwise via <c>GET /api/config/{version}</c> —
+/// so a replay is verified under the rules it actually ran on. An unstamped artifact predates the
+/// stamp and therefore ran on <see cref="Default"/>; an unresolvable stamp is an explicit failure to
+/// verify, never a quiet replay under Default.
 ///
 /// <see cref="Default"/> reproduces today's exact constants (referencing the named consts where
 /// they exist, byte-identical by construction), so passing no config behaves exactly as before.
@@ -162,8 +164,9 @@ public enum CombatSelectionPolicy { Greedy, Tactical }
 /// function of (heroes, seed, this config): the turn cap, element ring + crit + armor constants, the
 /// level at which each extra skill is learned, the status-effect magnitudes + stack cap, and the
 /// move-selection policy. Client and server share <see cref="Default"/> at compile time, so both
-/// resolve identically; versioning a live corpus later means pinning the config that produced each
-/// match (see <see cref="GameConfig"/>).
+/// resolve identically when nothing here is retuned; when something IS, the match carries its
+/// <see cref="GameConfigVersion"/> stamp and the client replays under those rules (see
+/// <see cref="GameConfig"/>).
 /// </summary>
 public sealed record CombatConfig(
     int MaxTurns, double ElementStrong, double ElementWeak, double CritMultiplier, double ArmorConstant,

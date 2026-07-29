@@ -283,7 +283,7 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
         w.Wave, w.GhostLevel, w.Won,
         ArkadeHeroes.Core.Progression.Gauntlet.GhostFor(entropyBytes, w.Wave, snapshot.Level).ToDto(),
         w.Result.ToDto())).ToList();
-    return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt));
+    return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt, game.ConfigVersion));
 });
 
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
@@ -344,7 +344,7 @@ api.MapPost("/trials/{id}/run", (string id, TrialsRunRequest request, HttpContex
         ArkadeHeroes.Core.Progression.Trials.GhostFor(entropyBytes, w.Wave, affix).ToDto(),
         w.Result.ToDto())).ToList();
     return Results.Ok(new TrialsRunResponse(
-        run.WavesCleared, waves, title, best, affix.ToString(), snapshot, seed, entropy, receipt));
+        run.WavesCleared, waves, title, best, affix.ToString(), snapshot, seed, entropy, receipt, game.ConfigVersion));
 });
 
 // ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────
@@ -367,7 +367,7 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero));
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion));
 });
 
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
@@ -381,7 +381,7 @@ api.MapGet("/deathmatch/{id}/replay", (string id, GameStore store) =>
         ? Results.Ok(new MatchReplayDto(
             s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
-            s.EntropyHex ?? "", s.Nonce ?? ""))
+            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? ""))
         : Results.NotFound());
 
 // Death-match discovery: the sessions a browser needs to SEE an incoming challenge — no list
@@ -430,7 +430,8 @@ api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest requ
     var defender = game.GetHero(session.DefenderHeroId);
     return Results.Ok(new FightResponse(result.ToDto(), serverSeedHex, entropyHex,
         challengerXp, defenderXp, challenger.ToDto(), defender.ToDto(),
-        challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout, receipt));
+        challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout, receipt,
+        session.ConfigVersion ?? ""));
 });
 
 api.MapGet("/matches", async (string? status, GameService game, GameStore store, CancellationToken ct) =>
@@ -459,7 +460,7 @@ api.MapGet("/matches/{matchId}/replay", (string matchId, GameStore store) =>
         ? Results.Ok(new MatchReplayDto(
             s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
-            s.EntropyHex ?? "", s.Nonce ?? ""))
+            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? ""))
         : Results.NotFound());
 
 // ── Team 3v3 squad matches (open → accept → resolve), reusing the wager escrow ─────────────────
@@ -499,7 +500,8 @@ api.MapGet("/squad/{matchId}/replay", (string matchId, GameStore store) =>
         && s.Result is { } r && s.ChallengerSnapshots is not null && s.DefenderSnapshots is not null
         ? Results.Ok(new SquadReplayDto(
             s.ChallengerSnapshots, s.DefenderSnapshots, r.ToDto(s.ChallengerSnapshots, s.DefenderSnapshots),
-            s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(), s.EntropyHex ?? "", s.Nonce ?? ""))
+            s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(), s.EntropyHex ?? "", s.Nonce ?? "",
+            s.ConfigVersion ?? ""))
         : Results.NotFound());
 
 // ── Tournaments (open → join → resolve): a buy-in bracket, prizes to the podium minus the house rake ──
@@ -551,7 +553,7 @@ api.MapGet("/tournament/{id}/replay", (string id, GameStore store) =>
             r.Matches.Where(m => m.Result is not null)
                 .Select(m => new TournamentMatchDto(m.Round, m.Index, m.AId, m.BId, m.WinnerId)).ToList(),
             r.ChampionId, t.CommitmentHex, Convert.ToHexString(t.ServerSeed).ToLowerInvariant(),
-            t.EntropyHex ?? "", t.Nonce ?? "", t.EntrantsCommitmentHex))
+            t.EntropyHex ?? "", t.Nonce ?? "", t.EntrantsCommitmentHex, t.ConfigVersion ?? ""))
         : Results.NotFound());
 
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
@@ -730,6 +732,32 @@ api.MapGet("/chain/info", async (IChainService chain, ReceiptSigner receipts, IC
         isNArk ? config["Chain:NArk:EsploraUri"] ?? "http://localhost:3000/api" : null,
         g.AbsorbChance, g.AbsorbContinueChance,
         GameConfigDto.From(g.ToGameConfig())));
+});
+
+// Resolve a STAMPED rules version to the rules themselves, so a client holding a replay stamped with
+// something other than its own compiled-in GameConfig.Default can still replay it faithfully.
+//
+// This registry is the RUNNING PROCESS's rules plus GameConfig.Default — deliberately not a durable archive
+// of every config ever served. That is exactly sufficient for what this server can serve: it stamps every
+// outcome from its own live config and holds resolved sessions in memory, so every replay it hands out
+// carries a version it can resolve; and Default covers every pre-stamp artifact plus any replay from a
+// default-rules deployment.
+//
+// An UNKNOWN version is a 404 — an explicit, honest failure. It must never fall back to Default: replaying
+// under rules that are merely PLAUSIBLE is precisely the bug this endpoint exists to fix, and it would
+// print "fairness ✗ SERVER CHEATED" over an honest result. A client that gets a 404 here (a replay saved
+// across a retune + restart) must say it cannot verify, not guess.
+api.MapGet("/config/{version}", (string version, GameService game) =>
+{
+    foreach (var candidate in new[] { game.Config, ArkadeHeroes.Core.GameConfig.Default })
+    {
+        var rules = GameRulesDto.From(candidate);
+        if (rules.Version.Equals(version, StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(rules);
+    }
+    return Results.NotFound(new ErrorResponse(
+        $"Unknown game-config version '{version}'. This server cannot serve the rules that outcome was " +
+        "resolved under, so it cannot be verified here."));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and

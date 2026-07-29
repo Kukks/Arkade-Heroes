@@ -354,8 +354,10 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     {
         var dto = await api.Tournament.GetAsync(tournamentId);
         var replay = await api.Tournament.ReplayAsync(tournamentId);
+        var (cfg, cfgError) = await api.Config.ResolveAsync(replay.ConfigVersion);
+        if (cfg is null) return (false, cfgError!);
         return FairnessAudit.VerifyTournament(
-            tournamentId, replay.Nonce, replay.CommitmentHex, dto.EntrantsCommitmentHex ?? "", replay);
+            tournamentId, replay.Nonce, replay.CommitmentHex, dto.EntrantsCommitmentHex ?? "", replay, cfg);
     }
 
     private async Task PayTournamentBuyInAsync(FeeInvoiceDto buyIn, Action<string>? onProgress)
@@ -496,8 +498,11 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             throw new GameWalletException(
                 $"Paid the entry fee on-chain, but it hasn't settled for the run yet — try again in a moment. ({last?.Message})");
 
-        // Client-side fairness recompute — the same gate the console client applies.
-        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run);
+        // Client-side fairness recompute — the same gate the console client applies, under the rules the
+        // server stamped on the run (an unresolvable stamp fails LOUDLY rather than replaying under Default).
+        var (cfg, cfgError) = await api.Config.ResolveAsync(run.ConfigVersion);
+        if (cfg is null) return new GauntletOutcome(run, false, cfgError!);
+        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run, cfg);
         return new GauntletOutcome(run, ok, detail);
     }
 
@@ -517,8 +522,11 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var nonce = RandomNonce();
         var run = await api.Trials.RunAsync(open.TrialsId, nonce);
 
-        // Client-side fairness recompute — the same gate every other resolved outcome gets.
-        var (ok, detail) = FairnessAudit.VerifyTrials(open.TrialsId, nonce, run.Receipt.CommitmentHex, run);
+        // Client-side fairness recompute — the same gate every other resolved outcome gets, under the rules
+        // the server stamped on the run.
+        var (cfg, cfgError) = await api.Config.ResolveAsync(run.ConfigVersion);
+        if (cfg is null) return new TrialsOutcome(run, false, cfgError!);
+        var (ok, detail) = FairnessAudit.VerifyTrials(open.TrialsId, nonce, run.Receipt.CommitmentHex, run, cfg);
         return new TrialsOutcome(run, ok, detail);
     }
 
@@ -633,7 +641,9 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             throw new GameWalletException(
                 $"Both sides staked, but the deposits haven't settled for the duel yet — try again in a moment. ({last?.Message})");
 
-        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
+        var (cfg, cfgError) = await api.Config.ResolveAsync(fight.ConfigVersion);
+        if (cfg is null) return new DuelOutcome(fight, false, cfgError!);
+        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight, cfg);
         return new DuelOutcome(fight, ok, detail);
     }
 
@@ -703,7 +713,10 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             throw new GameWalletException($"Both sides staked, but the deposits haven't settled yet — try again in a moment. ({last?.Message})");
 
         var replay = await api.Squad.ReplayAsync(matchId);
-        var (ok, detail) = FairnessAudit.VerifySquad(matchId, nonce, replay.CommitmentHex, replay);
+        var (cfg, cfgError) = await api.Config.ResolveAsync(replay.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifySquad(matchId, nonce, replay.CommitmentHex, replay, cfg);
         var w = await wallet.GetActiveWalletAsync();
         if (w is not null) state.UpdateBalance(await wallet.GetBalanceAsync(w.Id));
         return new SquadOutcome(res, replay, ok, detail);
@@ -810,7 +823,10 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
         var fr = new FightResponse(settle.Result, settle.ServerSeedHex, settle.EntropyHex, 0, 0,
             settle.ChallengerSnapshot, settle.DefenderSnapshot, settle.ChallengerSnapshot, settle.DefenderSnapshot);
-        var (ok, detail) = FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr);
+        var (cfg, cfgError) = await api.Config.ResolveAsync(settle.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr, cfg);
 
         // Absorb mode: if the winner re-minted, verify the absorbed genome against the seed + published odds.
         if (settle.Minted)

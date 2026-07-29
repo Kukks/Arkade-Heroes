@@ -701,7 +701,10 @@ public class GameClient : IAsyncDisposable
         PrintBattle(fight);
         await StoreReceiptAsync(fight.Receipt);
 
-        var (ok, detail) = FairnessAudit.VerifyMatch(open.MatchId, nonce, open.CommitmentHex, fight);
+        var (cfg, cfgError) = await _api.Config.ResolveAsync(fight.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifyMatch(open.MatchId, nonce, open.CommitmentHex, fight, cfg);
         Console.WriteLine(ok
             ? $"    fairness ✓ {detail}"
             : $"    fairness ✗ SERVER CHEATED: {detail}");
@@ -847,8 +850,12 @@ public class GameClient : IAsyncDisposable
         Console.WriteLine($"  → {run.WavesCleared}/5 waves, +{run.XpAwarded} xp (now L{run.NewLevel})" +
                           (run.ItemAwarded is not null ? $"; full clear won a {run.ItemAwarded}!" : ""));
 
-        // Client-audited: re-derive the ghosts + fights from the revealed seed and re-check the capped XP.
-        var (ok, detail) = FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run);
+        // Client-audited: re-derive the ghosts + fights from the revealed seed and re-check the capped XP,
+        // under the rules the server stamped on the run.
+        var (cfg, cfgError) = await _api.Config.ResolveAsync(run.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifyGauntlet(open.GauntletId, nonce, run.Receipt.CommitmentHex, run, cfg);
         Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
     }
 
@@ -913,7 +920,10 @@ public class GameClient : IAsyncDisposable
         // VerifyMatch reads only Result/seed/entropy/snapshots; the trailing wager/receipt fields default.
         var fr = new FightResponse(settle.Result, settle.ServerSeedHex, settle.EntropyHex, 0, 0,
             settle.ChallengerSnapshot, settle.DefenderSnapshot, settle.ChallengerSnapshot, settle.DefenderSnapshot);
-        var (ok, detail) = FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr);
+        var (cfg, cfgError) = await _api.Config.ResolveAsync(settle.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifyMatch(deathMatchId, nonce, settle.Receipt!.CommitmentHex, fr, cfg);
         Console.WriteLine(ok ? $"    fairness ✓ {detail}" : $"    fairness ✗ SERVER CHEATED: {detail}");
 
         // Absorb mode: the winner may have RE-MINTED absorbing the loser's trait — verify the new
@@ -980,7 +990,10 @@ public class GameClient : IAsyncDisposable
             Console.WriteLine($"    💰 pot: {fight.WinnerPayoutSats} sats paid to the winner's owner");
         await StoreReceiptAsync(fight.Receipt);
 
-        var (ok, detail) = FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight);
+        var (cfg, cfgError) = await _api.Config.ResolveAsync(fight.ConfigVersion);
+        var (ok, detail) = cfg is null
+            ? (false, cfgError!)
+            : FairnessAudit.VerifyMatch(matchId, nonce, match.CommitmentHex, fight, cfg);
         Console.WriteLine(ok
             ? $"    fairness ✓ {detail}"
             : $"    fairness ✗ SERVER CHEATED: {detail}");
