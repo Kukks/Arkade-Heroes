@@ -66,6 +66,45 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
         await buyer.Heroes.EquipAsync(buyerHeroes[0].Id, new EquipRequest("rusty-blade"));
     }
 
+    /// <summary>
+    /// An ITEM sale reaches the treasury structurally — the fulfil leaf pins the cut — but the server
+    /// used to book nothing for it, because a closing offer looks the same whether it sold or the seller
+    /// reclaimed it, and guessing would OVERSTATE income for a treasury holding real bitcoin. The two
+    /// spends are in fact distinguishable: only a fulfil pays the treasury in the transaction that spends
+    /// the offer. So a sale is now booked and a reclaim is still not — the under-count is closed without
+    /// opening an over-count.
+    /// </summary>
+    [Fact]
+    public async Task Offer_AnItemSaleIsBookedAsMarketplaceIncome_AReclaimIsNot()
+    {
+        var (seller, _) = await _factory.RegisterAsync("M-Book-Seller");
+        var (buyer, _) = await _factory.RegisterAsync("M-Book-Buyer");
+        await seller.BuyItemAsync("rusty-blade");
+        await seller.BuyItemAsync("rusty-blade");
+
+        static async Task<long> BookedAsync(ArkadeHeroesClient c) =>
+            (await c.Economy.HealthAsync()).InflowByTag.GetValueOrDefault("listing");
+        var before = await BookedAsync(seller);
+
+        // A SALE: the covenant paid the treasury its cut, and the server can now prove that it did.
+        var sold = await ListAsync(seller, "rusty-blade", 3_000);
+        Assert.True(sold.ListingFeeSats > 0, "this test needs a fee-bearing listing to have anything to book");
+        await seller.Dev.FundOfferAsync(new { OfferId = sold.OfferId });
+        await buyer.Offers.ListAsync();     // reconcile — the deposit makes the listing active
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = sold.OfferId });
+        await buyer.Offers.ListAsync();     // reconcile — where the offer closes
+        var afterSale = await BookedAsync(seller);
+        Assert.Equal(before + sold.ListingFeeSats, afterSale);
+
+        // A RECLAIM closes an offer exactly as a sale does, and must still book nothing.
+        var unsold = await ListAsync(seller, "rusty-blade", 3_000);
+        await seller.Dev.FundOfferAsync(new { OfferId = unsold.OfferId });
+        await buyer.Offers.ListAsync();
+        await seller.Dev.ReclaimOfferAsync(new { OfferId = unsold.OfferId });
+        await buyer.Offers.ListAsync();
+        Assert.Equal(afterSale, await BookedAsync(seller));
+    }
+
     [Fact]
     public async Task Offer_ParamsAreRebuildable_404ForUnknown()
     {

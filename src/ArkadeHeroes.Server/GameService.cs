@@ -2289,10 +2289,17 @@ public class GameService(
         if (offer.AssetDeposited)
             offer.Status = "active";
         else if (offer.Status == "active")
-            // The asset left a live listing — it sold, OR the seller reclaimed it. Those are
-            // indistinguishable from here, and the fee is only actually paid on a SALE, so nothing is
-            // booked as income at this point. See ClaimPurchasedHeroAsync for where a confirmed sale is.
+        {
+            // The asset left a live listing — it sold, OR the seller reclaimed it. The two spends are
+            // NOT interchangeable on-chain: only a fulfil pays the treasury the covenant's cut, in the
+            // very transaction that spends the offer. Book on that proof and nothing else — a sale the
+            // chain cannot confirm is left uncounted, because under-reporting is survivable and
+            // over-stating the income of a treasury holding real bitcoin is not.
+            // Keyed on the offer, so this and ClaimPurchasedHeroAsync can never book the same sale twice.
             offer.Status = "closed";
+            if (offer.ListingFeeSats > 0 && await chain.WasOfferSoldAsync(offer.Id, ct))
+                await store.RecordInflowAsync($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats, ct);
+        }
     }
 
     /// <summary>
@@ -2403,10 +2410,9 @@ public class GameService(
         await persistence.SaveHeroAsync(hero, ct);
         offer.Status = "closed";
         // A CONFIRMED sale — the chain shows the buyer holding the hero, so the fulfil ran and its
-        // covenant paid the treasury its cut. This is the only place a sale is provable: ReconcileOffer
-        // sees a closing offer but cannot tell a sale from a seller reclaim, and booking there would
-        // OVERSTATE treasury income, which is the dangerous direction for an insolvency-sensitive game.
-        // Keyed on the offer so the store's inflow dedup makes it once-only however often claim runs.
+        // covenant paid the treasury its cut. ReconcileOfferAsync now proves the same thing a second
+        // way (the treasury leg of the spending transaction), and both book under this one key, so the
+        // store's inflow dedup makes the sale once-only however often either path runs.
         if (offer.ListingFeeSats > 0)
             await store.RecordInflowAsync($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats, ct);
         return hero;

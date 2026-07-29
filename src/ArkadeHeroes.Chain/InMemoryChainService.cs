@@ -656,6 +656,7 @@ public class InMemoryChainService : IChainService
     {
         public bool Funded;
         public bool Closed; // fulfilled or reclaimed
+        public bool Sold;   // closed by a BUYER's fulfil, not a seller reclaim — the treasury was paid
         public bool IsHero => Kind == "hero";
     }
 
@@ -695,6 +696,11 @@ public class InMemoryChainService : IChainService
 
     public Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default)
         => Task.FromResult(_offers.TryGetValue(offerId, out var o) && o.Funded && !o.Closed);
+
+    /// <summary>Mirrors the chain's proof: only a buyer's fulfil pays the treasury, and only a
+    /// fee-bearing offer leaves anything to attribute.</summary>
+    public Task<bool> WasOfferSoldAsync(string offerId, CancellationToken ct = default)
+        => Task.FromResult(_offers.TryGetValue(offerId, out var o) && o.Sold && o.FeeSats > 0);
 
     public Task<Covenants.OfferParams?> GetOfferParamsAsync(string offerId, CancellationToken ct = default)
     {
@@ -748,6 +754,7 @@ public class InMemoryChainService : IChainService
         if (offer.IsHero) _assetHolders[offer.HeroAssetId] = buyerPlayerId;
         else _itemHoldings.AddOrUpdate((buyerPlayerId, offer.ItemId), 1UL, (_, count) => count + 1);
         offer.Closed = true;
+        offer.Sold = true;
     }
 
     /// <summary>Simulated seller reclaim of an unsold offer after expiry — the asset returns to the seller.</summary>
