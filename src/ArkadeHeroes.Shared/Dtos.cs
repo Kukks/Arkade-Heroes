@@ -386,7 +386,13 @@ public record PlayerProfileDto(string PlayerId, string Name,
 /// resting inventory buyable right now, closed is cleared (fulfilled OR reclaimed — the store doesn't split
 /// them). Active climbing while closed stalls is a glut — sellers listing faster than buyers take. That
 /// listings-outran-sales cross is the earliest signal CryptoKitties gave, days before its peak. These reflect
-/// the LAST-OBSERVED offer status (the health read never forces a chain reconcile), so they can lag truth.</summary>
+/// the LAST-OBSERVED offer status (the health read never forces a chain reconcile), so they can lag truth.
+///
+/// SCOPE — <see cref="TotalInflowSats"/>/<see cref="TotalOutflowSats"/> and both by-tag maps are tallied in
+/// memory and are NOT persisted, so they count only what THIS server process has observed since it started;
+/// a restart zeroes them. They are not lifetime figures and must not be labelled as such. Only
+/// <see cref="TreasuryBalanceSats"/> is authoritative — it is read from the chain, so it survives restarts
+/// and is the number to judge solvency on. The flows are a supplementary "what has moved lately" gauge.</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
     IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
     long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0,
