@@ -2286,6 +2286,13 @@ public class GameService(
         var item = Core.Equipment.ItemCatalog.Find(itemId)
             ?? throw new GameRuleException($"Unknown item '{itemId}'.");
 
+        // Tier gate: the top set is grown into, not bought into. Checked on EQUIP rather than on purchase, so
+        // a player can still buy ahead (and trade), and so a loadout that predates the gate keeps working —
+        // this rejects a new equip, it never strips a hero.
+        if (hero.Level < item.MinLevel)
+            throw new GameRuleException(
+                $"{item.Name} needs a level-{item.MinLevel} hero — {hero.Name} is level {hero.Level}.");
+
         var unitsHeld = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
         var unitsAllocated = store.Heroes.Values.Count(h =>
             h.OwnerId == player.Id &&

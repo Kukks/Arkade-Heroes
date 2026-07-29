@@ -78,5 +78,6 @@ public static class DtoMapper
         item.Id, item.Name, item.Slot.ToString(),
         item.Mods.MaxHp, item.Mods.Attack, item.Mods.Magic,
         item.Mods.Defense, item.Mods.Speed, item.Mods.CritPercent,
-        item.PriceSats);
+        item.PriceSats,
+        item.MinLevel, item.Counters?.ToString(), item.VarianceBonus);
 }

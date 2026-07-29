@@ -137,6 +137,36 @@ public class GameConfigVersionTests
     }
 
     [Fact]
+    public void Compute_ChangesForEveryGearCounterKnob()
+    {
+        // CombatConfig.Counters is a nested record the writer resolves through CountersOrDefault, so — like
+        // the innate knobs above — its members need their own exhaustive sweep. A shape WEIGHT that fell out
+        // of the id would be the severe failure: two configs that classify heroes differently, and therefore
+        // resolve counters differently, would share one stamp.
+        foreach (var perturbed in PerturbEachParameter(GearCounterRules.Default))
+        {
+            var config = GameConfig.Default with
+            {
+                Combat = GameConfig.Default.Combat with { Counters = (GearCounterRules)perturbed.Value },
+            };
+            Assert.True(
+                GameConfigVersion.Compute(config) != GameConfigVersion.Default,
+                $"GearCounterRules.{perturbed.Parameter} is not part of the version id");
+        }
+    }
+
+    [Fact]
+    public void Compute_TreatsANullCountersAsTheDefaultKnobs()
+    {
+        var omitted = GameConfig.Default with { Combat = GameConfig.Default.Combat with { Counters = null } };
+        var explicitly = GameConfig.Default with
+        {
+            Combat = GameConfig.Default.Combat with { Counters = GearCounterRules.Default },
+        };
+        Assert.Equal(GameConfigVersion.Compute(omitted), GameConfigVersion.Compute(explicitly));
+    }
+
+    [Fact]
     public void Compute_ChangesForTheStandaloneFusionThreshold()
     {
         Assert.NotEqual(GameConfigVersion.Default,
@@ -175,6 +205,8 @@ public class GameConfigVersionTests
         // A null Innate and an explicit InnateBonuses.Default are the SAME rules by design, so perturbing
         // this slot means supplying knobs that genuinely differ.
         _ when type == typeof(InnateBonuses) => InnateBonuses.Default with { Ward = 0.99 },
+        // Same rule for the gear-counter knobs (CountersOrDefault).
+        _ when type == typeof(GearCounterRules) => GearCounterRules.Default with { Edge = 0.99 },
         _ => throw new InvalidOperationException(
             $"No perturbation defined for {type.Name} — add one so this sweep stays exhaustive."),
     };
@@ -234,6 +266,17 @@ public class GameConfigVersionTests
                              Innate = InnateBonuses.Default with { Ward = 0.44, BrandTurns = 5 },
                          },
                      },
+                     // Gear counters ON with retuned knobs: a client that rebuilt this WITHOUT them would
+                     // classify shapes differently and replay a different fight, so the round trip has to
+                     // carry them the same way it carries the innate knobs.
+                     GameConfig.Default with
+                     {
+                         Combat = GameConfig.Default.Combat with
+                         {
+                             GearCounters = true,
+                             Counters = GearCounterRules.Default with { Edge = 0.31, BulkShare = 0.4 },
+                         },
+                     },
                  })
         {
             var dto = GameRulesDto.From(config);
@@ -250,8 +293,13 @@ public class GameConfigVersionTests
             Assert.Equal(config.Rarity, rebuilt.Rarity);
             Assert.Equal(config.Affinity, rebuilt.Affinity);
             Assert.Equal(config.Curve, rebuilt.Curve);
+            // The two null-resolving nested records are compared through their resolvers (an omitted record
+            // and an explicit Default are the same RULES), then nulled out so the remaining struct compare
+            // is about everything else.
             Assert.Equal(config.Combat.InnateOrDefault, rebuilt.Combat.InnateOrDefault);
-            Assert.Equal(config.Combat with { Innate = null }, rebuilt.Combat with { Innate = null });
+            Assert.Equal(config.Combat.CountersOrDefault, rebuilt.Combat.CountersOrDefault);
+            Assert.Equal(config.Combat with { Innate = null, Counters = null },
+                rebuilt.Combat with { Innate = null, Counters = null });
         }
     }
 

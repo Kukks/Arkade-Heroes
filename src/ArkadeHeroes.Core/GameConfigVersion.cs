@@ -90,7 +90,7 @@ public static class GameConfigVersion
          .Append('|').Append(m.SelectionPolicy.ToString())
          .Append('|').Append(Num(m.HealHpThresholdPercent))
          .Append('|').Append(Flag(m.ElementAwareSelection)).Append('|').Append(Flag(m.InnateAbilities))
-         .Append('|').Append(Flag(m.SquadSynergy));
+         .Append('|').Append(Flag(m.SquadSynergy)).Append('|').Append(Flag(m.GearCounters));
 
         // Innate: null and an explicit InnateBonuses.Default are the SAME rules (InnateOrDefault), so they
         // must hash the same — resolve before appending.
@@ -101,6 +101,12 @@ public static class GameConfigVersion
          .Append('|').Append(Bits(i.ThornsChance)).Append('|').Append(Bits(i.Reflect))
          .Append('|').Append(Bits(i.BrandChance)).Append('|').Append(Bits(i.Tick))
          .Append('|').Append(Num(i.BrandTurns)).Append('|').Append(Bits(i.InitiativeChance));
+
+        // Counters: same null-resolution rule as Innate — an omitted record and an explicit
+        // GearCounterRules.Default are one behaviour (CountersOrDefault), so they must be one id.
+        var gc = m.CountersOrDefault;
+        c.Append("\ncounters").Append('|').Append(Bits(gc.Edge)).Append('|').Append(Bits(gc.OffenseShare))
+         .Append('|').Append(Bits(gc.BulkShare)).Append('|').Append(Bits(gc.TempoShare));
     }
 
     /// <summary>An integral value as invariant digits — no locale digit shapes, signs, or group separators.</summary>

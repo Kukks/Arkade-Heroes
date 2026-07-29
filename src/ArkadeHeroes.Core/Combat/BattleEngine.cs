@@ -1,3 +1,4 @@
+using ArkadeHeroes.Core.Equipment;
 using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Core.Heroes;
 using ArkadeHeroes.Core.Skills;
@@ -26,6 +27,19 @@ public static class BattleEngine
         // per-side whole-lineup damage multiplier applied like affinity below, so a plain fight is unchanged.
         var fighterA = new FighterState(a, cfg, advantageA);
         var fighterB = new FighterState(b, cfg, advantageB);
+
+        // Gear counters need the OTHER hero's shape, so they resolve here rather than in the constructor.
+        // Both shapes read the UNEQUIPPED build (see CombatShapes), so neither side's loadout can move them —
+        // the pair is fixed before either multiplier is read, and there is no order dependence. Flag off ⇒
+        // Multiplier returns exactly 1.0 for both, which is the same no-op as advantageA/B outside a squad.
+        if (cfg.Combat.GearCounters)
+        {
+            var shapeA = CombatShapes.Of(a.Genome, a.Level, cfg);
+            var shapeB = CombatShapes.Of(b.Genome, b.Level, cfg);
+            fighterA.Counter = CombatShapes.Multiplier(fighterA.Gear, shapeB, cfg);
+            fighterB.Counter = CombatShapes.Multiplier(fighterB.Gear, shapeA, cfg);
+        }
+
         var events = new List<BattleEvent>();
 
         // End-of-action check, shared by a hero's normal action and by a Stance follow-up: if either side is
@@ -210,7 +224,11 @@ public static class BattleEngine
         var scale = skill.Scaling == SkillScaling.Attack ? actor.EffectiveAttack : actor.EffectiveMagic;
         var element = skill.Element ?? actor.Hero.Genome.Element;
         var elementMult = ElementMatrix.Multiplier(element, target.Hero.Genome.Element, cfg);
-        var variance = (90 + rng.Next(21)) / 100.0; // 0.90 .. 1.10
+        // The damage roll, ±VarianceSpan% around 1.0. The span is BaseVarianceSpan (10) unless a WILDCARD item
+        // widens it, so with no wildcard equipped — and always with the flag off — this is the identical
+        // `(90 + rng.Next(21)) / 100.0` draw the engine has always made: same call, same bounds, same stream.
+        var span = actor.VarianceSpan;
+        var variance = (100 - span + rng.Next(2 * span + 1)) / 100.0;
         // `||` evaluates the Chance call first ALWAYS (it is the left operand), so the crit draw is taken on
         // every landed blow exactly as before — True Strike only forces the outcome, it never skips the roll.
         var crit = rng.Chance(actor.Stats.CritPercent) || trueStrike;
@@ -221,8 +239,10 @@ public static class BattleEngine
         var affinity = Traits.AffinityModifier(actor.Hero.Genome, cfg);
         // (innate-v2 replaced the old single flat cosmetic-trait damage nudge with the six per-category
         //  passives resolved on FighterState; there is no flat innate damage factor here anymore.)
-        // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match.
-        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0) * affinity * actor.Advantage));
+        // Squad team-synergy multiplier — exactly 1.0 (a no-op) outside a synergy-on squad match; the gear
+        // COUNTER multiplier alongside it is likewise exactly 1.0 with CombatConfig.GearCounters off.
+        var damage = Math.Max(1, (int)(raw * elementMult * variance * (crit ? cfg.Combat.CritMultiplier : 1.0)
+            * affinity * actor.Advantage * actor.Counter));
 
         // Aura — Ward: a rare shield thrown up as the blow lands, soaking up to WardHp of THIS strike. Nothing
         // carries to the next blow: it is armour against one strike, not a life buffer, so it reads as a moment.
@@ -300,6 +320,20 @@ public static class BattleEngine
 
         /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy.</summary>
         public double Advantage { get; }
+
+        /// <summary>This hero's EQUIPPED items, resolved once — the counter multiplier and the variance span
+        /// both read them, and <see cref="StatBlock.ComputeFor"/> already folded their stat mods in.</summary>
+        public IReadOnlyList<Item> Gear { get; }
+
+        /// <summary>The gear-COUNTER damage multiplier against THIS opponent (1.0 = none), set by
+        /// <see cref="Fight"/> once both fighters exist. Exactly 1.0 whenever
+        /// <see cref="CombatConfig.GearCounters"/> is off.</summary>
+        public double Counter { get; set; } = 1.0;
+
+        /// <summary>Half-width of this hero's damage roll in whole percent — <see cref="CombatConfig.BaseVarianceSpan"/>
+        /// unless a WILDCARD item widens it.</summary>
+        public int VarianceSpan { get; }
+
         private readonly CombatConfig _cfg;
         private readonly Dictionary<string, int> _cooldowns = [];
 
@@ -308,8 +342,10 @@ public static class BattleEngine
             Hero = hero;
             _cfg = game.Combat;
             Advantage = advantage;
-            Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, hero.Equipment.ResolveItems());
+            Gear = hero.Equipment.ResolveItems();
+            Stats = StatBlock.ComputeFor(hero.Genome, hero.Level, Gear);
             Skills = SkillCatalog.SkillsFor(hero.Genome, hero.Level, game.Combat);
+            VarianceSpan = CombatShapes.VarianceSpan(Gear, game);
             Hp = Stats.MaxHp;
 
             if (game.Combat.InnateAbilities)

@@ -66,6 +66,14 @@ else
                             <span>@m</span>
                         }
                     </div>
+                    @if (MatchupNote(it) is { } note)
+                    {
+                        <p class="muted" style="margin:.35rem 0 0;font-size:.78rem">@note</p>
+                    }
+                    @if (it.MinLevel > 1)
+                    {
+                        <p class="muted" style="margin:.25rem 0 0;font-size:.78rem">Needs a level-@it.MinLevel hero.</p>
+                    }
                     <div class="gear-buy">
                         <div class="gear-price"><b>@it.PriceSats.ToString("N0")</b> <span>sats</span></div>
                         @if (State.IsSignedIn)
@@ -171,6 +179,18 @@ else
     }
 
     static string Signed(int n) => n > 0 ? $"+{n}" : n.ToString();
+
+    // What makes this item a CHOICE rather than a rung on a ladder: who it beats and who beats it, or — for
+    // the wildcard — that it buys uncertainty instead of an edge. Null for the plain stat items.
+    static string? MatchupNote(ItemDto i) => i.Counters switch
+    {
+        "Offense" => "Strong against Offense heroes, weak against Bulk.",
+        "Bulk" => "Strong against Bulk heroes, weak against Tempo.",
+        "Tempo" => "Strong against Tempo heroes, weak against Offense.",
+        _ => i.VarianceBonus > 0
+            ? $"Swings your damage ±{10 + i.VarianceBonus}% instead of ±10% — no edge, just a wilder fight."
+            : null,
+    };
 
     void OnState() => InvokeAsync(async () =>
     {

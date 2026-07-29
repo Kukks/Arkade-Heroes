@@ -45,4 +45,17 @@ public sealed record Item(
     string Name,
     EquipmentSlot Slot,
     StatMods Mods,
-    long PriceSats);
+    long PriceSats,
+    /// <summary>The hero level this item may first be EQUIPPED at (1 = no gate). Purely a server-side equip
+    /// rule — <see cref="StatMods"/> and the resolver never read it, so it is not part of the config stamp and
+    /// a replay of an already-equipped loadout is unaffected. It exists so a whale cannot buy a level-1 hero
+    /// straight into the top set: it delays convergence on tier-3 without lowering what tier-3 is worth.</summary>
+    int MinLevel = 1,
+    /// <summary>The build shape this item COUNTERS, or null for a plain stat item. Worth +Edge damage against
+    /// an opponent of that shape and -Edge against the shape that answers it — see
+    /// <see cref="Combat.CombatShapes"/>. Only read when <see cref="CombatConfig.GearCounters"/> is on.</summary>
+    Combat.CombatShape? Counters = null,
+    /// <summary>Whole percent this item ADDS to its wearer's own damage-roll half-width, on top of the stock
+    /// ±<see cref="CombatConfig.BaseVarianceSpan"/>%. Mean-preserving: it buys no edge, only uncertainty.
+    /// Only read when <see cref="CombatConfig.GearCounters"/> is on.</summary>
+    int VarianceBonus = 0);

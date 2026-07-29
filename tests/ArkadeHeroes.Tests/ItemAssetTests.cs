@@ -30,9 +30,29 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var (client, _) = await _factory.RegisterAsync("I-NoUnit");
         var heroes = await client.ClaimStartersAsync();
+        // A tier-1 item, so a level-1 starter clears ItemCatalog's level gate and the ONLY thing left to
+        // reject is the missing unit — which is what this test is about.
         var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
-            () => client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("steel-saber")));
+            () => client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("lucky-feather")));
         Assert.Contains("buy", ex.Message);
+    }
+
+    [Fact]
+    public async Task EquipBelowTheItemsLevelGateIsRejected_EvenWhenTheUnitIsHeld()
+    {
+        // The whale case the gate exists for: owning the top set does not put it on a level-1 hero.
+        var (client, _) = await _factory.RegisterAsync("I-Gated");
+        var heroes = await client.ClaimStartersAsync();
+
+        await client.BuyItemAsync("covenant-plate");
+        var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("covenant-plate")));
+        Assert.Contains("level-10", ex.Message);
+
+        // …while the tier a starter HAS grown into still equips, so the gate delays the top set rather than
+        // locking a new player out of gear altogether.
+        await client.BuyItemAsync("padded-vest");
+        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("padded-vest"));
     }
 
     [Fact]
@@ -62,12 +82,13 @@ public class ItemAssetTests : IClassFixture<WebApplicationFactory<Program>>
         var (client, _) = await _factory.RegisterAsync("I-TwoUnits");
         var heroes = await client.ClaimStartersAsync();
 
-        await client.BuyItemAsync("swift-anklet");
-        var second = await client.BuyItemAsync("swift-anklet");
+        // Tier-1 again: this test is about UNITS, so it uses gear a level-1 starter can actually wear.
+        await client.BuyItemAsync("padded-vest");
+        var second = await client.BuyItemAsync("padded-vest");
         Assert.Equal(2UL, second.UnitsHeld);
 
-        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("swift-anklet"));
-        await client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("swift-anklet"));
+        await client.Heroes.EquipAsync(heroes[0].Id, new EquipRequest("padded-vest"));
+        await client.Heroes.EquipAsync(heroes[1].Id, new EquipRequest("padded-vest"));
     }
 
     [Fact]
