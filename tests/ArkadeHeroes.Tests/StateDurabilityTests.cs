@@ -201,6 +201,34 @@ public class StateDurabilityTests
     }
 
     [Fact]
+    public async Task AFeeCapturedByARealPurchase_SurvivesARestart()
+    {
+        // The tests around this one drive the tally directly. This one drives the MONEY PATH — invoice, pay,
+        // claim — so the wiring from a real fee capture through to a durable row is exercised, not assumed.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        var price = ArkadeHeroes.Core.Equipment.ItemCatalog.Find("rusty-blade")!.PriceSats;
+        try
+        {
+            using (var first = HostOn(dbPath))
+            {
+                var (alice, _) = await first.RegisterAsync("Durable-Fee-Payer");
+                await alice.BuyItemAsync("rusty-blade");
+                Assert.Equal(price, first.Services.GetRequiredService<GameStore>().TreasuryInflowByTag["item"]);
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            Assert.Equal(price,
+                restarted.Services.GetRequiredService<GameStore>().TreasuryInflowByTag.GetValueOrDefault("item"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task AnInflowTalliedBeforeARestart_IsNotTalliedAgainAfterIt()
     {
         // THE reason the rows are persisted instead of the totals. Item purchases are durable and
