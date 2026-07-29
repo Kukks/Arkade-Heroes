@@ -95,16 +95,35 @@
             var wallet = await GameWallet.GetActiveWalletAsync();
             if (wallet is not null)
             {
-                var address = await GameWallet.GetReceiveAddressAsync(wallet.Id);
+                // The address and the balance both need the Arkade node, and resuming needs the game
+                // server. NONE of them may abort this bootstrap. They used to: an unreachable node threw
+                // out of OnInitializedAsync, so every line below it was skipped — including
+                // Acceptance.HydrateFor, which re-asked players to accept terms they had ALREADY
+                // accepted — and Blazor put "A glitch in the arcade" over an otherwise working page.
+                // Each failure is already logged by the failing call; here we only degrade the display.
+                //
+                // VERIFIED with a wallet in storage and the node stopped: no error banner, no console
+                // errors, the page renders. NOT verified: that the SESSION survives. With no address the
+                // header still reads "no wallet" and the roster showed "2 minted" rather than "2 yours",
+                // so something downstream of the address still gates sign-in. Guarding here is strictly
+                // better than crashing, but it is not yet a full offline-tolerant boot.
+                string? address = null;
+                try { address = await GameWallet.GetReceiveAddressAsync(wallet.Id); }
+                catch (Exception) { /* header shows the wallet without an address until the node answers */ }
+
                 Wallet.SetActiveWallet(wallet.Id, address);
                 Wallet.HydrateBackupPending();   // re-light the backup nudge if this wallet's phrase is still unsaved
                 // Read back what THIS wallet accepted, so a returning player isn't re-asked on every page
                 // load — and, just as importantly, so a different wallet in the same browser doesn't inherit
                 // the previous one's answer. The SERVER record still overrules once they're signed in.
                 Acceptance.HydrateFor(wallet.Id);
-                Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id));
+
+                try { Wallet.UpdateBalance(await GameWallet.GetBalanceAsync(wallet.Id)); }
+                catch (Exception) { /* balance stays unknown rather than taking the shell down with it */ }
+
                 // Resume the game session (sign in with the wallet) if it's a registered player.
-                await Session.ResumeAsync();
+                try { await Session.ResumeAsync(); }
+                catch (Exception) { /* unreachable server leaves them signed out, not crashed */ }
             }
         }
     }
