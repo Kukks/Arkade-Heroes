@@ -40,6 +40,7 @@ public sealed class ArkadeHeroesClient
         Tournament = new TournamentApi(this);
         Economy = new EconomyApi(this);
         Config = new ConfigApi(this);
+        Content = new ContentApi(this);
         Admin = new AdminApi(this);
     }
 
@@ -63,6 +64,9 @@ public sealed class ArkadeHeroesClient
     public EconomyApi Economy { get; }
     /// <summary>Resolves a replay's stamped rules version — see <see cref="ConfigApi.ResolveAsync"/>.</summary>
     public ConfigApi Config { get; }
+
+    /// <summary>Resolves an outcome's stamped CONTENT version — see <see cref="ContentApi.ResolveAsync"/>.</summary>
+    public ContentApi Content { get; }
     /// <summary>The operator console — every call takes the admin secret explicitly. See <see cref="AdminApi"/>.</summary>
     public AdminApi Admin { get; }
 

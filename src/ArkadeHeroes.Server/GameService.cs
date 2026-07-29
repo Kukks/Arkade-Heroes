@@ -46,6 +46,16 @@ public class GameService(
     /// <summary>The rules this server resolves under, for <c>GET /api/config/{version}</c>.</summary>
     public GameConfig Config => _config;
 
+    /// <summary>The CONTENT this server resolves under — the gear and dungeons compiled into this build.
+    /// Served by <c>GET /api/content/{version}</c>.</summary>
+    public ArkadeHeroes.Core.Content.ContentPack Content => ArkadeHeroes.Core.Content.ContentPack.Default;
+
+    /// <summary>The version id of that content — STAMPED onto every outcome this server resolves, beside
+    /// the config stamp. Item stats feed combat, so a verifier that replayed a match against DIFFERENT gear
+    /// than it was resolved under would disagree with an honest server and print "SERVER CHEATED". Cached
+    /// on the immutable default pack; a benign race recomputes the same value.</summary>
+    public string ContentVersion => ArkadeHeroes.Core.Content.ContentPackVersion.Default;
+
     private Shared.ProgressionReceiptDto IssueReceipt(Shared.ProgressionReceiptDto unsigned, params string[] heroIds)
     {
         var receipt = receipts.Issue(unsigned);
@@ -642,6 +652,8 @@ public class GameService(
             session.Nonce = nonce;
             session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
             session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
+        session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
+            session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
 
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
             // PrizePool clamps the rake to 0..100% so a misconfigured rake can never pay the podium above the pot.
@@ -1365,6 +1377,7 @@ public class GameService(
         session.EntropyHex = entropyHex;
         session.Nonce = nonce;
         session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
+        session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
 
         // ── ABSORB MODE: a seed-driven roll may RE-MINT the winner absorbing the loser's better
         // traits — BOTH heroes burn and a new hero mints under species to the winner. A failed roll
@@ -1924,6 +1937,7 @@ public class GameService(
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
         session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
+        session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
 
         var serverSeedHexOut = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         // Friendly (unstaked) fights are practice: they carry no XP and must NOT feed the
@@ -2152,6 +2166,7 @@ public class GameService(
         session.Nonce = nonce;
         session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
         session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
+        session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
 
         return (session, result, serverSeedHexOut, session.EntropyHex, challengerSnapshots, defenderSnapshots, winnerPayout, duelReceipts);
     }

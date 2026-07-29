@@ -153,7 +153,12 @@ public record DeathMatchSettleResponse(
     // Absorb mode: on a mint the winner's OLD hero is also gone and a NEW absorbed hero is minted.
     bool Minted = false, int TraitsAbsorbed = 0, string? NewGenomeHex = null, HeroDto? NewHero = null,
     // The rules this death-match was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 /// <summary>One death-match on the discovery list, derived from its session. Status = open (awaiting the defender's stake) | accepted (ready to settle) | resolved.</summary>
 public record DeathMatchDto(
@@ -178,7 +183,12 @@ public record GauntletRunResponse(
     string? ItemAwarded, string? ItemAssetId, HeroDto HeroSnapshot,
     string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt,
     // The rules this run was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 /// <summary>One line of the Fancy discovery race. Every catalog title is listed, claimed or not, so players
 /// can see what's still up for grabs — <see cref="HeroId"/> is null while a set is undiscovered.
@@ -207,7 +217,12 @@ public record TrialsRunResponse(
     int WavesCleared, IReadOnlyList<TrialsWaveDto> Waves, string? Title, int BestScore, string Affix,
     HeroDto HeroSnapshot, string ServerSeedHex, string EntropyHex, ProgressionReceiptDto Receipt,
     // The rules this run was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
@@ -258,7 +273,12 @@ public record FightResponse(
     // Signed, player-held progression fact for this match.
     ProgressionReceiptDto? Receipt = null,
     // The rules this fight was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 public record MatchDto(
     string MatchId,
@@ -278,7 +298,12 @@ public record MatchReplayDto(
     string WinnerHeroId, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
     // The rules this match was RESOLVED under (GameConfigVersion). Trailing optional: every match resolved
     // before stamping existed carries "" and verifies under GameConfig.Default, which is what it ran on.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 // ── Team 3v3 squad matches: a positional best-of-3 relay of 1v1 duels ──
 public record SquadDuelDto(int Slot, HeroDto Challenger, HeroDto Defender, BattleResultDto Result);
@@ -296,7 +321,12 @@ public record SquadReplayDto(
     IReadOnlyList<HeroDto> ChallengerLineup, IReadOnlyList<HeroDto> DefenderLineup,
     SquadResultDto Result, string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
     // The rules this squad match was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 public record SquadOpenResponse(string MatchId, string CommitmentHex, long WagerSats, string Status,
     FeeInvoiceDto? StakeInvoice, string? EscrowAddress, long EscrowStakeSats, FeeInvoiceDto? MatchFeeInvoice);
@@ -384,7 +414,12 @@ public record TournamentReplayDto(
     string CommitmentHex, string ServerSeedHex, string EntropyHex, string Nonce,
     string? EntrantsCommitmentHex = null,
     // The rules this bracket was RESOLVED under; "" = pre-stamp, i.e. GameConfig.Default.
-    string ConfigVersion = "");
+    string ConfigVersion = "",
+    // The CONTENT (gear + dungeons) this was resolved under (ContentPackVersion). Trailing optional, same
+    // discipline as ConfigVersion above: "" means the outcome predates content stamping, so it ran on the
+    // gear the binary compiled in. Item stats feed combat, so a replay verified against DIFFERENT content
+    // than it was resolved under would disagree with an honest server.
+    string ContentVersion = "");
 
 /// <summary>A player's derived accomplishments (from their roster + resolved tournaments) and the badges they've unlocked.</summary>
 public record PlayerAchievementsDto(int HeroesOwned, int HeroesBred, int Legendaries, int Fancies, int TournamentsWon,
@@ -735,3 +770,18 @@ public record AdminOverviewDto(
 /// <summary>What one management action did, in a line an operator can read back. The server logs the same
 /// fact — every admin action is logged with what was done and to what.</summary>
 public record AdminActionResultDto(string Action, string Detail);
+
+/// <summary>
+/// The authored CONTENT of one pack, served by <c>GET /api/content/{version}</c> so a client holding an
+/// outcome stamped with an unfamiliar content version can rebuild the gear and dungeons it was actually
+/// resolved under instead of assuming its own compiled-in pack.
+///
+/// It carries the AUTHORED JSON VERBATIM rather than a flattened mirror of the schema, and that is the
+/// point. <see cref="GameRulesDto"/> has to be kept in step with <c>GameConfig</c> by hand — a field
+/// forgotten there would serve a verifier rules that hash to something else, which is why it needs its own
+/// round-trip test. Here the wire form IS the source form, so the round trip cannot drift by construction:
+/// the client feeds these two strings back through the same <c>ContentPackLoader.Parse</c> the server used,
+/// recomputes <c>ContentPackVersion</c>, and REFUSES the answer unless it reproduces the version it asked
+/// for. A server cannot serve content other than the content it stamped.
+/// </summary>
+public record ContentPackDto(string Version, string ItemsJson, string DungeonsJson);

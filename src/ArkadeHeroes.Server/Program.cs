@@ -56,6 +56,24 @@ else
 
 var app = builder.Build();
 
+// Re-validate the authored content against the economy THIS server actually runs, before it serves a
+// single request.
+//
+// ContentPackLoader already validated the pack against GameConfig.Default when it loaded, but the treasury
+// rule — entry must cost more than the best item a dungeon can drop — is priced off the MATCH FEE, and an
+// operator can retune that downward through Game:* configuration. Content that is a safe sats sink under
+// the default economy can be a bitcoin faucet under theirs, and sats are real money the treasury cannot
+// print. So the rule is asked again here, against the live config, and a failure stops the process rather
+// than quietly running a leaking dungeon.
+{
+    var liveConfig = app.Services
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<GameOptions>>().Value.ToGameConfig();
+    var contentErrors = ArkadeHeroes.Core.Content.ContentValidation.Validate(
+        ArkadeHeroes.Core.Content.ContentPack.Default, liveConfig);
+    if (contentErrors.Count > 0)
+        throw new ArkadeHeroes.Core.Content.ContentValidationException(contentErrors);
+}
+
 // Rehydrate before serving: a purchase paid before the restart must be claimable after it.
 if (!string.IsNullOrWhiteSpace(stateDbPath))
 {
@@ -283,7 +301,7 @@ api.MapPost("/gauntlet/{id}/run", async (string id, GauntletRunRequest request, 
         w.Wave, w.GhostLevel, w.Won,
         ArkadeHeroes.Core.Progression.Gauntlet.GhostFor(entropyBytes, w.Wave, snapshot.Level).ToDto(),
         w.Result.ToDto())).ToList();
-    return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt, game.ConfigVersion));
+    return Results.Ok(new GauntletRunResponse(run.WavesCleared, waves, xp, receipt.LevelA, item, itemAssetId, snapshot, seed, entropy, receipt, game.ConfigVersion, game.ContentVersion));
 });
 
 // ── Endless PvE Trials (cold-start solo leaderboard): open (commit, FREE) → run (endless ghost ladder) ──
@@ -344,7 +362,7 @@ api.MapPost("/trials/{id}/run", (string id, TrialsRunRequest request, HttpContex
         ArkadeHeroes.Core.Progression.Trials.GhostFor(entropyBytes, w.Wave, affix).ToDto(),
         w.Result.ToDto())).ToList();
     return Results.Ok(new TrialsRunResponse(
-        run.WavesCleared, waves, title, best, affix.ToString(), snapshot, seed, entropy, receipt, game.ConfigVersion));
+        run.WavesCleared, waves, title, best, affix.ToString(), snapshot, seed, entropy, receipt, game.ConfigVersion, game.ContentVersion));
 });
 
 // ── Death-match (open → both stake a hero → settle; loser's hero burns) ─────
@@ -367,7 +385,7 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
 {
     var player = game.Authenticate(BearerToken(http));
     var (result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero) = await game.SettleDeathMatchAsync(player, id, request.Nonce, ct);
-    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion));
+    return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion, game.ContentVersion));
 });
 
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
@@ -381,7 +399,7 @@ api.MapGet("/deathmatch/{id}/replay", (string id, GameStore store) =>
         ? Results.Ok(new MatchReplayDto(
             s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
-            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? ""))
+            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? "", s.ContentVersion ?? ""))
         : Results.NotFound());
 
 // Death-match discovery: the sessions a browser needs to SEE an incoming challenge — no list
@@ -431,7 +449,7 @@ api.MapPost("/matches/{matchId}/fight", async (string matchId, FightRequest requ
     return Results.Ok(new FightResponse(result.ToDto(), serverSeedHex, entropyHex,
         challengerXp, defenderXp, challenger.ToDto(), defender.ToDto(),
         challengerSnapshot, defenderSnapshot, session.WagerSats, winnerPayout, receipt,
-        session.ConfigVersion ?? ""));
+        session.ConfigVersion ?? "", session.ContentVersion ?? ""));
 });
 
 api.MapGet("/matches", async (string? status, GameService game, GameStore store, CancellationToken ct) =>
@@ -460,7 +478,7 @@ api.MapGet("/matches/{matchId}/replay", (string matchId, GameStore store) =>
         ? Results.Ok(new MatchReplayDto(
             s.ChallengerSnapshot, s.DefenderSnapshot, s.Result.ToDto(), s.Result.WinnerId,
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(),
-            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? ""))
+            s.EntropyHex ?? "", s.Nonce ?? "", s.ConfigVersion ?? "", s.ContentVersion ?? ""))
         : Results.NotFound());
 
 // ── Team 3v3 squad matches (open → accept → resolve), reusing the wager escrow ─────────────────
@@ -501,7 +519,7 @@ api.MapGet("/squad/{matchId}/replay", (string matchId, GameStore store) =>
         ? Results.Ok(new SquadReplayDto(
             s.ChallengerSnapshots, s.DefenderSnapshots, r.ToDto(s.ChallengerSnapshots, s.DefenderSnapshots),
             s.CommitmentHex, Convert.ToHexString(s.ServerSeed).ToLowerInvariant(), s.EntropyHex ?? "", s.Nonce ?? "",
-            s.ConfigVersion ?? ""))
+            s.ConfigVersion ?? "", s.ContentVersion ?? ""))
         : Results.NotFound());
 
 // ── Tournaments (open → join → resolve): a buy-in bracket, prizes to the podium minus the house rake ──
@@ -553,7 +571,7 @@ api.MapGet("/tournament/{id}/replay", (string id, GameStore store) =>
             r.Matches.Where(m => m.Result is not null)
                 .Select(m => new TournamentMatchDto(m.Round, m.Index, m.AId, m.BId, m.WinnerId)).ToList(),
             r.ChampionId, t.CommitmentHex, Convert.ToHexString(t.ServerSeed).ToLowerInvariant(),
-            t.EntropyHex ?? "", t.Nonce ?? "", t.EntrantsCommitmentHex, t.ConfigVersion ?? ""))
+            t.EntropyHex ?? "", t.Nonce ?? "", t.EntrantsCommitmentHex, t.ConfigVersion ?? "", t.ContentVersion ?? ""))
         : Results.NotFound());
 
 // XP-weighted matchmaking: other players' heroes ranked by level proximity to the
@@ -758,6 +776,26 @@ api.MapGet("/config/{version}", (string version, GameService game) =>
     return Results.NotFound(new ErrorResponse(
         $"Unknown game-config version '{version}'. This server cannot serve the rules that outcome was " +
         "resolved under, so it cannot be verified here."));
+});
+
+// Resolve a STAMPED content version to the authored gear and dungeons themselves. Exactly the same
+// contract as /config/{version} above, for the same reason: item stats feed combat resolution, so a
+// verifier that rebuilt a hero's loadout from DIFFERENT content than the match ran on would replay a
+// different fight and call an honest server a cheat.
+//
+// The registry is this build's own pack — which is exactly what this process can honestly serve, since it
+// stamps every outcome from that pack. An UNKNOWN version is a 404, never a fall back to the compiled-in
+// pack: a client that gets one must say it cannot verify rather than guess.
+api.MapGet("/content/{version}", (string version, GameService game) =>
+{
+    var pack = game.Content;
+    if (!ArkadeHeroes.Core.Content.ContentPackVersion.Compute(pack)
+            .Equals(version, StringComparison.OrdinalIgnoreCase))
+        return Results.NotFound(new ErrorResponse(
+            $"Unknown content version '{version}'. This server cannot serve the gear and dungeons that " +
+            "outcome was resolved under, so it cannot be verified here."));
+
+    return Results.Ok(new ContentPackDto(pack.Version, pack.ItemsJson, pack.DungeonsJson));
 });
 
 // Receipts are signed public facts — anyone can pull a hero's chain and

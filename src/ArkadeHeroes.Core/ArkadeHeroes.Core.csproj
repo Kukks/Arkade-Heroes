@@ -6,4 +6,16 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    The authored content pack, EMBEDDED rather than copied next to the binary. The server and the browser
+    client must load byte-identical gear — gear stats feed combat resolution and combat is client-verifiable
+    — so the content travels inside the assembly where there is no file to divert, no path to get wrong, and
+    no I/O for WebAssembly to do. ContentPackLoader reads these by their logical resource names.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Content\items.json" />
+    <EmbeddedResource Include="Content\dungeons.json" />
+    <EmbeddedResource Include="Content\published-items.json" />
+  </ItemGroup>
+
 </Project>
