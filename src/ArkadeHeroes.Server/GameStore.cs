@@ -318,10 +318,22 @@ public class GameStore
     private long _heroesMinted;
     /// <summary>Cumulative heroes minted since this server started — every starter, bred, fused and absorbed
     /// hero passes through the one mint choke point. NOT persisted: a "since boot" churn counter, meant to be
-    /// read as a RATE (delta over time) against the burn rate, not as a lifetime total. Burns aren't counted
-    /// here — a burn is the only thing that removes a hero, so burned = minted − current supply.</summary>
+    /// read as a RATE (delta over time) against the burn rate, not as a lifetime total.</summary>
     public long HeroesMinted => Interlocked.Read(ref _heroesMinted);
     public void RecordMint() => Interlocked.Increment(ref _heroesMinted);
+
+    /// <summary>Burns counted DIRECTLY at each burn site, not inferred as (minted − supply).
+    ///
+    /// The subtraction was correct only while heroes were volatile, so a restart zeroed minted and supply
+    /// together. Heroes are durable now, so after a restart minted starts at 0 against a surviving supply of
+    /// N and the subtraction clamps to 0 — hiding every real burn until mints exceed the whole population.
+    /// The mint half of the gauge kept counting, so the card read "mints, no burns": the alarm state, from
+    /// a healthy game. Counting at the source keeps both halves on the same footing (deltas over one uptime)
+    /// and drops the old "every hero removal is a burn" assumption — a future non-burn removal simply won't
+    /// call this.</summary>
+    public long HeroesBurned => Interlocked.Read(ref _heroesBurned);
+    public void RecordBurn() => Interlocked.Increment(ref _heroesBurned);
+    private long _heroesBurned;
 
     // ── Hero durability: the dirty set the periodic flush drains ──
     private readonly ConcurrentDictionary<string, byte> _dirtyHeroes = new();

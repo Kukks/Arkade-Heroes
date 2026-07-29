@@ -329,11 +329,12 @@ public class GameService(
         var heroSupply = store.Heroes.Count;
         // Gen-0 heroes come ONLY from the free starter grant — this is the tradeable-asset float that grant emits.
         var gen0Supply = store.Heroes.Values.Count(h => h.Generation == 0);
-        // Burns are the ONLY path that removes a hero (merge/absorb/death-match all TryRemove; a transfer keeps
-        // the hero and just changes its owner), so burned = minted − current supply. Clamped for the nanosecond
-        // race between the two reads. ASSUMPTION, true today at all 5 removal sites: every removal is a burn — a
-        // future non-burn removal would be miscounted here, so keep hero removal to the burn flows.
-        var heroesBurned = Math.Max(0, minted - heroSupply);
+        // Counted at each burn site (merge ×2, absorb ×2, death-match ×1), NOT inferred as minted − supply.
+        // That subtraction held only while heroes were volatile; since they persist, a restart leaves minted
+        // at 0 against a surviving supply and the old clamp swallowed every real burn until mints overtook the
+        // whole population — so the card showed mints with no burns, which is the alarm state, from a healthy
+        // game. Both counters are now per-uptime deltas, which is how the gauge is documented to be read.
+        var heroesBurned = store.HeroesBurned;
         // Market liquidity: resting (buyable) inventory vs cleared. Last-observed status — a pure read never
         // reconciles against the chain, so a just-sold offer may still read active until the next list call.
         var activeOffers = store.Offers.Values.Count(o => o.Status == "active");
@@ -1015,6 +1016,7 @@ public class GameService(
         // or a restart resurrects two heroes whose assets no longer exist.
         store.Heroes.TryRemove(session.BaseId, out _);
         store.Heroes.TryRemove(session.SacrificeId, out _);
+        store.RecordBurn(); store.RecordBurn();
         await persistence.DeleteHeroAsync(session.BaseId, ct);
         await persistence.DeleteHeroAsync(session.SacrificeId, ct);
 
@@ -1200,6 +1202,7 @@ public class GameService(
                 // BOTH input heroes are burned on-chain — drop their server records and their durable rows.
                 store.Heroes.TryRemove(winner.Id, out _);
                 store.Heroes.TryRemove(loser.Id, out _);
+                store.RecordBurn(); store.RecordBurn();
                 await persistence.DeleteHeroAsync(winner.Id, ct);
                 await persistence.DeleteHeroAsync(loser.Id, ct);
 
@@ -1224,6 +1227,7 @@ public class GameService(
         session.Completed = true;
         session.WinnerHeroId = result.WinnerId;
         store.Heroes.TryRemove(loser.Id, out _);
+        store.RecordBurn();
         // The loser is burned on-chain — erase its durable row too, or a restart resurrects it.
         await persistence.DeleteHeroAsync(loser.Id, ct);
 
