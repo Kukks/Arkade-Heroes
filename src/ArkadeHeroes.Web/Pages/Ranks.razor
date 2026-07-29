@@ -86,6 +86,31 @@ else
                     <span class="chip mono">@_economy.ActiveOfferCount.ToString("N0") resting · @_economy.ClosedOfferCount.ToString("N0") cleared</span>
                 </div>
             }
+            @if (_economy.UnbookedClosedFeeOffers > 0 || _economy.LedgerWriteFailures > 0)
+            {
+                @* Instrument health, not economy: both booked-income faults under-report SILENTLY, so a
+                   persistent one and a quiet week read the same. These give each a shape. Neither is an
+                   alarm on its own — the unbooked count is mostly genuine reclaims — so they are worded as
+                   questions and read as a TREND against the captured-fees figures above. *@
+                <div style="border-top:1px solid rgba(255,255,255,.08);margin:.7rem 0 .5rem"></div>
+                <p class="muted" style="margin:0 0 .3rem">booking health — read as a trend, not a level</p>
+                @if (_economy.UnbookedClosedFeeOffers > 0)
+                {
+                    <div class="match-row">
+                        <span>closed with a fee, unbooked <span class="hud">reclaims, or a stalled sale detector</span></span>
+                        <span class="spacer"></span>
+                        <span class="chip mono">@_economy.UnbookedClosedFeeOffers.ToString("N0")</span>
+                    </div>
+                }
+                @if (_economy.LedgerWriteFailures > 0)
+                {
+                    <div class="match-row">
+                        <span>ledger writes refused <span class="hud">durable totals are behind this uptime's</span></span>
+                        <span class="spacer"></span>
+                        <span class="chip mono">@_economy.LedgerWriteFailures.ToString("N0")</span>
+                    </div>
+                }
+            }
         </div>
     }
 

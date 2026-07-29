@@ -416,11 +416,30 @@ public record PlayerProfileDto(string PlayerId, string Name,
 /// marker, so a fee tallied before a restart cannot be tallied again after one. On a server running with no
 /// state database (the in-memory default) they remain per-process and a restart still zeroes them. Either
 /// way only <see cref="TreasuryBalanceSats"/> is authoritative on SOLVENCY — it is read from the chain, and
-/// it is what the treasury HOLDS, where the flows are what it has booked moving in and out.</summary>
+/// it is what the treasury HOLDS, where the flows are what it has booked moving in and out.
+///
+/// TRIPWIRES — the last two are not economy measurements but INSTRUMENT-HEALTH ones: both of the ways the
+/// booking above is known to fail are safe (they under-report, never over-report) and silent, and a silent
+/// under-report is indistinguishable from a quiet period. Neither number diagnoses a fault by itself; each
+/// only gives the fault a shape to be spotted by. Both are per-uptime and never gate anything.</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
     IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
     long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0,
-    long ActiveOfferCount = 0, long ClosedOfferCount = 0);
+    long ActiveOfferCount = 0, long ClosedOfferCount = 0,
+    /// <summary>Fee-bearing offers that CLOSED with nothing booked against them — POSSIBLE RECLAIMS, OR a
+    /// broken sale detector, and this count cannot tell which. Most will be genuine reclaims (taking an
+    /// unsold listing back is free and books nothing, correctly), so a non-zero value is normal and is NOT
+    /// on its own a fault. The signal is the TREND: this climbing steadily while booked <c>listing</c>
+    /// income stays flat means sales have stopped being attributed — the detector reads the spending
+    /// transaction's treasury output to tell a fulfil from a reclaim, and if that ever stops matching, item
+    /// fees quietly return to being uncounted. Self-correcting: an offer booked later by any path stops
+    /// counting here.</summary>
+    long UnbookedClosedFeeOffers = 0,
+    /// <summary>Durable treasury-ledger writes that FAILED and were swallowed. The swallow is deliberate
+    /// and load-bearing (throwing would re-pay a daily claim or re-deliver a paid item), so this counter is
+    /// the only way the failure surfaces as a number. Non-zero means the durable totals have fallen behind
+    /// the in-memory ones and a restart will lose the difference; it never means a sat moved wrongly.</summary>
+    long LedgerWriteFailures = 0);
 
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into
