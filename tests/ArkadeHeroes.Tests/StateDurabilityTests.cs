@@ -166,6 +166,119 @@ public class StateDurabilityTests
     }
 
     [Fact]
+    public async Task TreasuryFlowTotals_SurviveARestart()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var first = HostOn(dbPath))
+            {
+                _ = first.CreateClient();   // start the host so the schema is created
+                var store = first.Services.GetRequiredService<GameStore>();
+                await store.RecordInflowAsync("inv-item-a", "item", 500);
+                await store.RecordInflowAsync("inv-item-b", "item", 250);   // same tag — the totals GROUP them
+                await store.RecordInflowAsync("inv-breed-a", "breed", 120);
+                await store.RecordOutflowAsync("daily", 900);
+                await store.RecordOutflowAsync("wager", 2000);
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var reloaded = restarted.Services.GetRequiredService<GameStore>();
+
+            // Totals are never stored — they are grouped back out of the rows, so they cannot drift from
+            // the movements they summarise.
+            Assert.Equal(750, reloaded.TreasuryInflowByTag["item"]);
+            Assert.Equal(120, reloaded.TreasuryInflowByTag["breed"]);
+            Assert.Equal(900, reloaded.TreasuryOutflowByTag["daily"]);
+            Assert.Equal(2000, reloaded.TreasuryOutflowByTag["wager"]);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task AnInflowTalliedBeforeARestart_IsNotTalliedAgainAfterIt()
+    {
+        // THE reason the rows are persisted instead of the totals. Item purchases are durable and
+        // re-delivery after a crash is deliberate, so the SAME invoice legitimately reaches the tally again
+        // on the far side of a restart. If the totals survived but the already-counted set did not, that
+        // second call would book the fee twice — and a treasury that over-reports its income reads as
+        // solvent when it is not. Double-counted INCOME is the one direction there is no recovering from.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var first = HostOn(dbPath))
+            {
+                _ = first.CreateClient();
+                await first.Services.GetRequiredService<GameStore>()
+                    .RecordInflowAsync("inv-item-redelivered", "item", 500);
+            }
+
+            using (var restarted = HostOn(dbPath))
+            {
+                _ = restarted.CreateClient();
+                var reloaded = restarted.Services.GetRequiredService<GameStore>();
+                Assert.Equal(500, reloaded.TreasuryInflowByTag["item"]);
+
+                // The re-delivery: the same invoice, recorded a second time on a fresh process.
+                await reloaded.RecordInflowAsync("inv-item-redelivered", "item", 500);
+                Assert.Equal(500, reloaded.TreasuryInflowByTag["item"]);
+
+                // Not simply frozen — a DIFFERENT invoice on the same tag still counts.
+                await reloaded.RecordInflowAsync("inv-item-fresh", "item", 500);
+                Assert.Equal(1000, reloaded.TreasuryInflowByTag["item"]);
+            }
+
+            // And the refusal is durable, not just an in-memory nicety: the re-record left no second row,
+            // so a further restart still reads two fees, not three.
+            using var again = HostOn(dbPath);
+            _ = again.CreateClient();
+            Assert.Equal(1000, again.Services.GetRequiredService<GameStore>().TreasuryInflowByTag["item"]);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Outflow_AppendsInsteadOfDeduping()
+    {
+        // Outflow has no natural key and has never been deduped: two identical payouts are two real
+        // payouts. Giving the durable rows dedup semantics would silently swallow the second one and
+        // under-report what the treasury actually paid — so they append under a surrogate key instead.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var first = HostOn(dbPath))
+            {
+                _ = first.CreateClient();
+                var store = first.Services.GetRequiredService<GameStore>();
+                await store.RecordOutflowAsync("daily", 100);
+                await store.RecordOutflowAsync("daily", 100);   // same tag, same amount, a second real payout
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var reloaded = restarted.Services.GetRequiredService<GameStore>();
+            Assert.Equal(200, reloaded.TreasuryOutflowByTag["daily"]);
+
+            await reloaded.RecordOutflowAsync("daily", 100);
+            Assert.Equal(300, reloaded.TreasuryOutflowByTag["daily"]);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task WithNoStatePathConfigured_NothingIsPersisted()
     {
         // The default: no database, no file, historical behaviour. Guards against persistence silently

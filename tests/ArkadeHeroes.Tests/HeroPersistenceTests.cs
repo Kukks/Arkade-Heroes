@@ -264,6 +264,8 @@ public class HeroPersistenceTests
             => processDied() ? Task.CompletedTask : inner.SaveHeroProgressionAsync(hero, ct);
         public Task DeleteHeroAsync(string heroId, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.DeleteHeroAsync(heroId, ct);
+        public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveTreasuryFlowAsync(id, direction, tag, sats, ct);
     }
 
     /// <summary>

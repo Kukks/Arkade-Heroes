@@ -46,6 +46,12 @@ public interface IGameStatePersistence
     /// <summary>Durably erase a burned hero (a merge's inputs, a death-match loser) right where it leaves the
     /// live store — a rehydrated ghost would be a fightable, listable hero whose on-chain asset is retired.</summary>
     Task DeleteHeroAsync(string heroId, CancellationToken ct = default);
+
+    /// <summary>Durably append one treasury movement — a fee captured or a payout made — so the by-tag totals
+    /// can be grouped back out of the rows at boot. On the INFLOW side <paramref name="id"/> is the invoice id
+    /// and the row IS the dedup marker: an id already stored is silently left alone, which is what stops an
+    /// invoice counted before a restart from being counted again after one.</summary>
+    Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default);
 }
 
 /// <summary>No durability — the historical behaviour, where all state lives and dies with the process.</summary>
@@ -59,6 +65,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveHeroAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -173,6 +180,14 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         // count, so the next live find of a set takes the right number instead of a second "#1".
         foreach (var row in await db.FancyFinds.AsNoTracking().ToListAsync(ct))
             store.LoadFancyFind(new FancyFind(row.Title, row.HeroId, row.HeroName, row.OwnerId, row.UnixSeconds, row.Edition));
+
+        // Treasury flows fold back into the by-tag totals — which are never stored, only grouped out of the
+        // rows, so they cannot drift from the movements they summarise. Folding row by row (rather than
+        // letting SQL do the GROUP BY) is the same arithmetic and rebuilds the inflow dedup set in the same
+        // pass — and that set is the half that must not be lost: totals without it would let an invoice
+        // already counted before the restart be counted a second time after it.
+        foreach (var row in await db.TreasuryFlows.AsNoTracking().ToListAsync(ct))
+            store.LoadTreasuryFlow(row.Id, row.Direction, row.Tag, row.Sats);
     }
 
     public async Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default)
@@ -394,6 +409,17 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         // be idempotent under a retry that re-runs the settle's in-memory tail.
         if (await db.Heroes.FindAsync([heroId], ct) is not { } row) return;
         db.Heroes.Remove(row);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        // Append-only, never updated. A row already at this key is the INFLOW dedup firing: that invoice's
+        // fee is already counted, so there is nothing to add — the same silent no-op the in-memory tally
+        // has always given a repeat record call, now surviving a restart.
+        if (await db.TreasuryFlows.FindAsync([direction, id], ct) is not null) return;
+        db.TreasuryFlows.Add(new PersistedTreasuryFlow { Id = id, Direction = direction, Tag = tag, Sats = sats });
         await db.SaveChangesAsync(ct);
     }
 }

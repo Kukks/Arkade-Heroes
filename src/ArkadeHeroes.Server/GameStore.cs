@@ -308,8 +308,12 @@ public sealed class TournamentSession
     public string? EntrantsCommitmentHex { get; set; }
 }
 
-/// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.</summary>
-public class GameStore
+/// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.
+///
+/// The optional <paramref name="persistence"/> is the treasury ledger's durability seam only — everything
+/// else in here is saved by <see cref="GameService"/>. It defaults to none so a bare <c>new GameStore()</c>
+/// (and an in-memory server, which gets the null implementation) behaves exactly as it always has.</summary>
+public class GameStore(Persistence.IGameStatePersistence? persistence = null, ILogger<GameStore>? logger = null)
 {
     public ConcurrentDictionary<string, Player> Players { get; } = new();
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
@@ -423,16 +427,62 @@ public class GameStore
     // Economy telemetry: treasury OUTFLOW tallied by category ("daily"/"season"/"tournament"/"wager"/"squad").
     // Pure observability — recorded once per SUCCESSFUL payout; never gates or changes any behavior.
     public ConcurrentDictionary<string, long> TreasuryOutflowByTag { get; } = new();
-    public void RecordOutflow(string tag, long sats) => TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+    public async Task RecordOutflowAsync(string tag, long sats, CancellationToken ct = default)
+    {
+        TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+        // Append-only under a surrogate id: a payout has no natural key and has never been deduped, and
+        // giving it one now would silently drop the second of two identical legitimate payouts.
+        await PersistFlowAsync(Guid.NewGuid().ToString("N"), Persistence.PersistedTreasuryFlow.Out, tag, sats, ct);
+    }
 
     // Treasury INFLOW (fee captures) tallied by category. Deduped by invoice id, so a record call inside a
     // reconcile loop (e.g. the offer listing-fee latch) can never double-count. Pure observability.
     public ConcurrentDictionary<string, long> TreasuryInflowByTag { get; } = new();
     private readonly ConcurrentDictionary<string, byte> _talliedInflowInvoices = new();
-    public void RecordInflow(string invoiceId, string tag, long sats)
+    public async Task RecordInflowAsync(string invoiceId, string tag, long sats, CancellationToken ct = default)
     {
-        if (_talliedInflowInvoices.TryAdd(invoiceId, 0))
+        if (!_talliedInflowInvoices.TryAdd(invoiceId, 0)) return;
+        TreasuryInflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+        await PersistFlowAsync(invoiceId, Persistence.PersistedTreasuryFlow.In, tag, sats, ct);
+    }
+
+    /// <summary>Rehydrate one durable treasury movement at boot, folding it into the by-tag total it belongs
+    /// to. An INFLOW row also restores its invoice id to the already-counted set — the half that makes the
+    /// totals safe to keep. Without it a durable total plus a re-delivered purchase (item purchases persist,
+    /// and re-delivery after a crash is deliberate) would tally the same fee twice, and a treasury that
+    /// over-reports its income reads as solvent when it is not.</summary>
+    public void LoadTreasuryFlow(string id, string direction, string tag, long sats)
+    {
+        if (direction != Persistence.PersistedTreasuryFlow.In)
+        {
+            TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+            return;
+        }
+        if (_talliedInflowInvoices.TryAdd(id, 0))
             TreasuryInflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
+    }
+
+    /// <summary>
+    /// Writes the durable row behind a tally — and DELIBERATELY swallows a write failure, because these
+    /// tallies sit on money paths that have already moved sats and whose catch blocks unwind in-memory state.
+    /// A throw out of the daily claim's tally would restore <c>LastClaimDay</c> in memory over a durable
+    /// consume and let the same day be paid twice; a throw out of the item claim's would flip a durably
+    /// claimed purchase back to pending and re-deliver the asset. Telemetry must not be able to cause either.
+    /// A lost row under-reports income until the next one lands, which is the survivable direction — and it
+    /// cannot cause a double count, since the dedup marker is that same missing row.
+    /// </summary>
+    private async Task PersistFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct)
+    {
+        if (persistence is null) return;
+        try
+        {
+            await persistence.SaveTreasuryFlowAsync(id, direction, tag, sats, ct);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Treasury {Direction} of {Sats} sat tagged {Tag} was tallied but not persisted; "
+                                   + "the durable total will under-report it after a restart.", direction, sats, tag);
+        }
     }
 
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement

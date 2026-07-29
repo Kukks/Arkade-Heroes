@@ -215,7 +215,7 @@ public class GameService(
         if (pending.FeeInvoiceId is not null && !await chain.IsInvoicePaidAsync(pending.FeeInvoiceId, ct))
             throw new GameRuleException("The rename fee invoice has not been paid yet — pay it from your wallet, then confirm.");
         if (pending.FeeInvoiceId is not null)
-            store.RecordInflow(pending.FeeInvoiceId, "rename", _options.HeroRenameFeeSats);
+            await store.RecordInflowAsync(pending.FeeInvoiceId, "rename", _options.HeroRenameFeeSats, ct);
         // Re-check uniqueness at apply time — another hero may have claimed the name since the request.
         if (NameTaken(pending.NewName, heroId))
             throw new GameRuleException($"The name '{pending.NewName}' was claimed before you confirmed — pick another.");
@@ -464,7 +464,7 @@ public class GameService(
             for (var i = 0; i < podium.Count && i < prizes.Count; i++)
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
-                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); store.RecordOutflow("tournament", prizes[i]); }
+                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); await store.RecordOutflowAsync("tournament", prizes[i], ct); }
                 catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
             }
             return (session, result, Convert.ToHexString(session.ServerSeed).ToLowerInvariant(), session.EntropyHex, prizes);
@@ -519,7 +519,7 @@ public class GameService(
                     // with the bracket already durably marked refunded (mirrors the podium's per-prize catch).
                     if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct)) continue;
                     await chain.PayoutAsync(e.PlayerId, session.BuyInSats, $"tournament-refund:{session.Id}:{e.PlayerId}", ct);
-                    store.RecordOutflow("tournament-refund", session.BuyInSats);
+                    await store.RecordOutflowAsync("tournament-refund", session.BuyInSats, ct);
                     refunded++;
                     refundedSats += session.BuyInSats;
                 }
@@ -713,7 +713,7 @@ public class GameService(
         {
             // Invoice mode: the fee is now in the treasury (a paid Receive invoice). Tally it as "breed"
             // inflow, deduped by invoice id (covenant mode captures structurally → recorded at execution).
-            store.RecordInflow(session.FeeInvoiceId!, "breed", session.FeeSats);
+            await store.RecordInflowAsync(session.FeeInvoiceId!, "breed", session.FeeSats, ct);
         }
 
         var parentA = GetOwnedHero(player, session.ParentAId);
@@ -746,7 +746,7 @@ public class GameService(
             child = await BuildAndStoreHero(player, mint, outcome.ChildGenome, outcome.ChildGeneration,
                 session.ParentAId, session.ParentBId, serverSeedHex, nonce, entropyHex, ct);
             // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
-            store.RecordInflow(session.Id, "breed", session.FeeSats);
+            await store.RecordInflowAsync(session.Id, "breed", session.FeeSats, ct);
         }
         else
         {
@@ -813,7 +813,7 @@ public class GameService(
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
         if (!await chain.IsInvoicePaidAsync(session.FeeInvoiceId, ct))
             throw new GameRuleException("The gauntlet fee invoice has not been paid yet — pay it from your wallet, then run.");
-        store.RecordInflow(session.FeeInvoiceId, "gauntlet", session.FeeSats);
+        await store.RecordInflowAsync(session.FeeInvoiceId, "gauntlet", session.FeeSats, ct);
 
         var hero = GetOwnedHero(player, session.HeroId);
         var heroSnapshot = hero.ToDto();          // pre-run, so the client can replay the ghosts + fights
@@ -998,7 +998,7 @@ public class GameService(
         var fused = await BuildAndStoreHero(player, mint, fusedGenome, fusedGeneration,
             session.BaseId, session.SacrificeId, serverSeedHex, nonce, entropyHex, ct);
         // The merge spend retired both inputs and delivered FeeSats to the treasury — tally it (dedup by session id).
-        store.RecordInflow(session.Id, "merge", session.FeeSats);
+        await store.RecordInflowAsync(session.Id, "merge", session.FeeSats, ct);
         // Chain FIRST, latch + in-memory effects after (the breed/death-match settle pattern): if the
         // execute faults, the session stays open and the inputs untouched, so the deposited base +
         // sacrifice + fee can be retried instead of stranded in escrow behind a Completed flag.
@@ -1146,8 +1146,8 @@ public class GameService(
         var challenger = GetHero(session.ChallengerHeroId);
         var defender = GetHero(session.DefenderHeroId);
         // Death-match fees (both confirmed paid above) — treasury captures, tallied once per invoice.
-        store.RecordInflow(session.ChallengerFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(challenger.Level, session.Absorb, _config));
-        store.RecordInflow(session.DefenderFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config));
+        await store.RecordInflowAsync(session.ChallengerFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(challenger.Level, session.Absorb, _config), ct);
+        await store.RecordInflowAsync(session.DefenderFeeInvoiceId!, "deathmatch", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config), ct);
         // Pre-fight snapshots — what the engine fights with — so the client can replay + verify the winner.
         var challengerSnapshot = challenger.ToDto();
         var defenderSnapshot = defender.ToDto();
@@ -1470,7 +1470,7 @@ public class GameService(
                     standings.Select((e, i) => new Shared.SeasonWinnerDto(e.Rank, e.Name, shares[i])).ToList());
                 for (var i = 0; i < standings.Count; i++)
                 {
-                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); store.RecordOutflow("season", shares[i]); }
+                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); await store.RecordOutflowAsync("season", shares[i], ct); }
                     catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
                 }
             }
@@ -1559,7 +1559,7 @@ public class GameService(
             try
             {
                 await chain.PayoutAsync(player.Id, affordable, $"daily:{window.DayIndex}", ct);
-                store.RecordOutflow("daily", affordable);
+                await store.RecordOutflowAsync("daily", affordable, ct);
             }
             catch
             {
@@ -1642,9 +1642,9 @@ public class GameService(
         var defender = GetHero(session.DefenderHeroId);
         // Match fees (staked fights; both confirmed above) — treasury captures, tallied once per invoice.
         if (session.ChallengerFeeInvoiceId is not null)
-            store.RecordInflow(session.ChallengerFeeInvoiceId, "match", Leveling.MatchFee(challenger.Level, _config));
+            await store.RecordInflowAsync(session.ChallengerFeeInvoiceId, "match", Leveling.MatchFee(challenger.Level, _config), ct);
         if (session.DefenderFeeInvoiceId is not null)
-            store.RecordInflow(session.DefenderFeeInvoiceId, "match", Leveling.MatchFee(defender.Level, _config));
+            await store.RecordInflowAsync(session.DefenderFeeInvoiceId, "match", Leveling.MatchFee(defender.Level, _config), ct);
 
         // Snapshot pre-fight state (level, equipment) — what the engine actually
         // fights with — so clients can replay and verify.
@@ -1680,7 +1680,7 @@ public class GameService(
             {
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
-                store.RecordOutflow("wager", winnerPayout);
+                await store.RecordOutflowAsync("wager", winnerPayout, ct);
             }
 
             // Season prize pool: a slice of this staked match's fees accrues to the current season's pot.
@@ -1871,9 +1871,9 @@ public class GameService(
         var defenders = session.DefenderLineup.Select(GetHero).ToList();
         // Squad match fees (both confirmed above) — treasury captures, tallied once per invoice.
         if (session.ChallengerFeeInvoiceId is not null)
-            store.RecordInflow(session.ChallengerFeeInvoiceId, "squad-fee", Leveling.MatchFee(challengers.Max(h => h.Level), _config));
+            await store.RecordInflowAsync(session.ChallengerFeeInvoiceId, "squad-fee", Leveling.MatchFee(challengers.Max(h => h.Level), _config), ct);
         if (session.DefenderFeeInvoiceId is not null)
-            store.RecordInflow(session.DefenderFeeInvoiceId, "squad-fee", Leveling.MatchFee(defenders.Max(h => h.Level), _config));
+            await store.RecordInflowAsync(session.DefenderFeeInvoiceId, "squad-fee", Leveling.MatchFee(defenders.Max(h => h.Level), _config), ct);
         var challengerSnapshots = challengers.Select(h => h.ToDto()).ToList();
         var defenderSnapshots = defenders.Select(h => h.ToDto()).ToList();
 
@@ -1899,7 +1899,7 @@ public class GameService(
             {
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
-                store.RecordOutflow("squad", winnerPayout);
+                await store.RecordOutflowAsync("squad", winnerPayout, ct);
             }
             var seasonFee = Leveling.MatchFee(challengers.Max(h => h.Level), _config) + Leveling.MatchFee(defenders.Max(h => h.Level), _config);
             var seasonAccrue = seasonFee * _config.SeasonFeeAccrualPct / 100;
@@ -2037,7 +2037,7 @@ public class GameService(
             purchase.DeliveryTxId = delivery.ArkTxId;
             purchase.Status = "claimed";
             await persistence.SaveItemPurchaseAsync(purchase, ct);   // delivered — record it so it can't be re-delivered
-            store.RecordInflow(invoiceId, "item", item.PriceSats);
+            await store.RecordInflowAsync(invoiceId, "item", item.PriceSats, ct);
             var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
             return (delivery.ItemAssetId, delivery.ArkTxId, held);
         }
@@ -2323,7 +2323,7 @@ public class GameService(
         // OVERSTATE treasury income, which is the dangerous direction for an insolvency-sensitive game.
         // Keyed on the offer so the store's inflow dedup makes it once-only however often claim runs.
         if (offer.ListingFeeSats > 0)
-            store.RecordInflow($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats);
+            await store.RecordInflowAsync($"offer-sale:{offer.Id}", "listing", offer.ListingFeeSats, ct);
         return hero;
     }
 }
