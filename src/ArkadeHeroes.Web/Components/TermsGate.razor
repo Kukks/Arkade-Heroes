@@ -1,0 +1,146 @@
+@inject TermsState Acceptance
+@inject WalletState State
+@inject ArkadeHeroesClient Api
+@implements IDisposable
+
+@* The Terms-of-Use gate. This game stakes REAL BITCOIN and destroys assets permanently, so entry is gated
+   on a deliberate act — read, tick, accept — never on an implied "by continuing you agree". Declining is a
+   first-class outcome: nothing has been created and nothing is recorded, the player simply doesn't play.
+
+   Two ways in:
+     • the player pressed Play and hasn't accepted yet (TermsState.Prompting) — this runs BEFORE any wallet
+       is created, before registration, before starters are minted;
+     • the player is signed in but the SERVER says their recorded acceptance predates the current terms, so
+       the document changed under them and has to be re-agreed.
+*@
+
+@if (Showing)
+{
+    @* No click-outside-to-dismiss and no ✕: dismissing is not an answer to this question. *@
+    <div class="modal-backdrop terms-backdrop">
+        <div class="modal terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-gate-title">
+            <div class="modal-head">
+                <h3 id="terms-gate-title" style="margin:0">@(IsReprompt ? "The terms have changed" : "Before you play")</h3>
+                <span class="hud">v@Terms.CurrentVersion</span>
+            </div>
+
+            <p class="terms-lede">
+                @if (IsReprompt)
+                {
+                    <text>
+                        You previously accepted an older version of these terms. Please read the current version
+                        and accept it to keep playing.
+                    </text>
+                }
+                else
+                {
+                    <text>
+                        Arkade Heroes plays for <b>real bitcoin</b>, and some actions <b>destroy assets permanently</b>
+                        — a death-match burns the losing hero, a fusion burns both inputs, and a lost recovery phrase
+                        cannot be recovered by anyone, including us. Read the terms before you start.
+                    </text>
+                }
+            </p>
+
+            <div class="terms-scroll">
+                <TermsDocument />
+            </div>
+
+            @if (_error is not null)
+            {
+                <div class="status-line" style="margin:.7rem 0 0"><span class="dot bad"></span> @_error</div>
+            }
+
+            <label class="terms-check">
+                <input type="checkbox" @bind="_read" @bind:event="onchange" disabled="@_busy" />
+                <span>I have read and accept the Terms of Use, and I understand I can lose bitcoin and heroes permanently.</span>
+            </label>
+
+            <div class="btn-row terms-actions">
+                <button class="btn primary" @onclick="Accept" disabled="@(!_read || _busy)">
+                    @(_busy ? "Recording…" : "Accept & continue")
+                </button>
+                <button class="btn ghost" @onclick="Decline" disabled="@_busy">Decline</button>
+            </div>
+            <p class="muted terms-foot">
+                You can re-read the terms any time at <a href="terms">/terms</a>.
+            </p>
+        </div>
+    </div>
+}
+
+@code {
+    bool _read;
+    bool _busy;
+    string? _error;
+
+    /// <summary>A signed-in player whose SERVER record predates the current terms — the document changed.</summary>
+    bool IsReprompt => State.IsSignedIn && Acceptance.MustAccept(State.Player);
+
+    // Signed-out visitors are NOT prompted just for browsing: entry is gated at Play, which opens the prompt
+    // explicitly. Only a signed-in player with a stale record is asked unprompted, because they can act.
+    bool Showing => Acceptance.Prompting || IsReprompt;
+
+    protected override void OnInitialized()
+    {
+        Acceptance.OnChange += OnChanged;
+        State.OnChange += OnChanged;
+    }
+
+    async Task Accept()
+    {
+        if (!_read || _busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var version = Terms.CurrentVersion;
+
+            // Signed in → record it server-side FIRST and let a failure stop us. The browser cache is not
+            // the record; if the durable write didn't land, the player has not demonstrably accepted anything.
+            //
+            // Not signed in → there is no player row yet. The version rides along on the registration
+            // request (see GameSession.StartPlayingAsync), so the acceptance and the player are created
+            // together and there's no window where one exists without the other.
+            if (State.IsSignedIn)
+            {
+                await Api.Players.AcceptTermsAsync(version);
+                State.SetPlayer(await Api.Players.MeAsync());   // refresh so the gate reads the new record
+            }
+
+            Acceptance.Accepted(version);
+            _read = false;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't record your acceptance: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    void Decline()
+    {
+        // Declining an updated set of terms ends the SESSION, not the account: the wallet, its keys and every
+        // hero are untouched, and pressing Play offers the terms again. Nothing is destroyed by saying no.
+        // The bearer token goes with it, so "declined" isn't merely a hidden dialog — the tab genuinely
+        // stops being able to act as that player until the terms are accepted.
+        if (State.IsSignedIn)
+        {
+            Api.ClearAuthToken();
+            State.SetPlayer(null);
+        }
+        _read = false;
+        Acceptance.Declined();
+    }
+
+    void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Acceptance.OnChange -= OnChanged;
+        State.OnChange -= OnChanged;
+    }
+}

@@ -56,6 +56,9 @@ builder.Services.AddSingleton<IAssetManager, AssetManager>();
 // The game's wallet facade + shared session state (the in-tab, non-custodial player wallet).
 builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.GameWallet>();
 builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.WalletState>();
+// The Terms-of-Use gate's state. Singleton so the pending prompt is shared by whoever opened it (the Play
+// button) and whoever renders it (the layout's TermsGate).
+builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.TermsState>();
 // Sign-in-with-wallet bridge to the game server — Scoped to use the SDK client (its bearer
 // token, set on register/login, then persists app-wide in WASM's single scope).
 builder.Services.AddScoped<ArkadeHeroes.Web.Wallet.GameSession>();

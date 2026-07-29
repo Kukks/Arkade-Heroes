@@ -25,6 +25,10 @@ public class PersistedItemPurchase
 ///
 /// <c>StarterClaimed</c> and <c>LastClaimDay</c> are the load-bearing fields: losing them would let a
 /// returning player re-claim free starter heroes and re-claim the same day's faucet reward.
+///
+/// <c>TermsAcceptedVersion</c>/<c>TermsAcceptedAtUtc</c> are here because browser-local storage proves
+/// nothing — it is one cache clear from gone, and it is the player's own machine. An acceptance of terms
+/// that disclose permadeath and real-bitcoin loss is only worth something if it can be produced later.
 /// </summary>
 public class PersistedPlayer
 {
@@ -34,6 +38,8 @@ public class PersistedPlayer
     public string? LoginPubKeyHex { get; set; }
     public required int StreakCount { get; set; }
     public int? LastClaimDay { get; set; }
+    public int? TermsAcceptedVersion { get; set; }
+    public DateTimeOffset? TermsAcceptedAtUtc { get; set; }
 }
 
 /// <summary>

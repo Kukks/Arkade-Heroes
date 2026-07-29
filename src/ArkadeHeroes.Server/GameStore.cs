@@ -18,6 +18,13 @@ public class Player
     public int StreakCount { get; set; }
     /// <summary>The last day-index the player claimed the daily reward (null = never) — enforces once/day.</summary>
     public int? LastClaimDay { get; set; }
+
+    /// <summary>The Terms-of-Use version this player explicitly accepted (null = never). Load-bearing:
+    /// this game stakes real bitcoin and burns assets permanently, so the record of WHAT the player agreed
+    /// to — and when — is the only evidence the disclosure was ever made.</summary>
+    public int? TermsAcceptedVersion { get; set; }
+    /// <summary>When that acceptance happened, in UTC.</summary>
+    public DateTimeOffset? TermsAcceptedAtUtc { get; set; }
 }
 
 /// <summary>The first hero ever to express a named Fancy set, and who owned it at that moment — the prize

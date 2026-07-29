@@ -4,6 +4,7 @@
 @inject NavigationManager Nav
 @inject WalletState State
 @inject GameSession Session
+@inject TermsState Acceptance
 @implements IDisposable
 
 <PageTitle>Arkade Heroes</PageTitle>
@@ -138,10 +139,18 @@
     async Task Play()
     {
         if (_starting || string.IsNullOrWhiteSpace(_name)) return;
+        // Claim the re-entrancy guard BEFORE the first await. The terms prompt suspends here for as long as
+        // the player takes to read, and a second Play in that window would otherwise sail past this check
+        // and register (and claim starters) twice off the one acceptance.
         _starting = true;
         _playError = null;
         try
         {
+            // THE GATE. Nothing irreversible has happened yet — no wallet exists, no player is registered,
+            // no starter has been minted. StartPlayingAsync does all three, so the terms have to be accepted
+            // here, before it is called at all. Declining just returns: the player is where they started.
+            if (!await Acceptance.RequestAcceptanceAsync(State.Player)) return;
+
             await Session.StartPlayingAsync(_name.Trim());
             Nav.NavigateTo("heroes?mine=1");
         }

@@ -43,6 +43,18 @@
     <PackageReference Include="Microsoft.Build.Framework" Version="17.9.5" ExcludeAssets="all" PrivateAssets="all" />
   </ItemGroup>
 
+  <!--
+    Bundle the Terms of Use so the browser can render them inside the acceptance gate and at /terms, without
+    the player navigating away to a repo file. docs/TERMS.md stays the single source: this copies it, it does
+    not duplicate it, so an edit there is what ships (bump Shared/Terms.CurrentVersion alongside it).
+
+    Conditional on the file existing so a checkout without the document still builds — the acceptance
+    mechanism does not depend on the prose being present, and TermsDocument says so plainly when it isn't.
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\docs\TERMS.md')">
+    <Content Include="..\..\docs\TERMS.md" Link="wwwroot\terms.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Client.Sdk\ArkadeHeroes.Client.Sdk.csproj" />
     <!-- The full non-custodial NArk wallet, running in the browser (REST transport to arkd, no relay). -->

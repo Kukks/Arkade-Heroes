@@ -11,9 +11,23 @@ namespace ArkadeHeroes.Shared;
 /// and pass it here (<see cref="NonceHex"/> + <see cref="SignatureHex"/>), so a
 /// login key you don't control cannot be registered against your player.
 /// </summary>
+/// <param name="AcceptedTermsVersion">
+/// The <see cref="Terms"/> version the player explicitly accepted before this registration, recorded
+/// against the new player row in the same call so there is no window where a player exists with no
+/// acceptance on file. Null means none was offered (the console client, tests) — registration still
+/// succeeds, but nothing is recorded.
+/// </param>
 public record RegisterPlayerRequest(
     string Name, string ArkadeAddress,
-    string? LoginPubKeyHex = null, string? NonceHex = null, string? SignatureHex = null);
+    string? LoginPubKeyHex = null, string? NonceHex = null, string? SignatureHex = null,
+    int? AcceptedTermsVersion = null);
+
+/// <summary>Explicitly accept the Terms of Use at a stated version — the deliberate act itself.</summary>
+public record AcceptTermsRequest(int Version);
+
+/// <summary>What the server has on file for this player's Terms acceptance, and what it currently requires.</summary>
+public record TermsAcceptanceDto(
+    int? AcceptedVersion, DateTimeOffset? AcceptedAtUtc, int CurrentVersion, bool AcceptanceRequired);
 
 /// <summary>A fresh single-use nonce to sign for wallet login.</summary>
 public record LoginChallengeResponse(string NonceHex);
@@ -24,13 +38,18 @@ public record LoginRequest(string LoginPubKeyHex, string NonceHex, string Signat
 /// <summary>A fee/stake invoice: pay this exact treasury address from your own wallet.</summary>
 public record FeeInvoiceDto(string InvoiceId, string PayToAddress, long AmountSats, string Memo);
 
+/// <param name="TermsAcceptedVersion">The <see cref="Terms"/> version this player accepted, per the SERVER's
+/// record — the source of truth the browser gate reads, so a cleared cache still can't un-ask the question
+/// (nor re-ask one already answered). Null = nothing on file.</param>
 public record PlayerDto(
     string PlayerId,
     string Name,
     string ArkadeAddress,
     long BalanceSats,
     bool StarterClaimed,
-    string? Token = null);
+    string? Token = null,
+    int? TermsAcceptedVersion = null,
+    DateTimeOffset? TermsAcceptedAtUtc = null);
 
 // ── Heroes ─────────────────────────────────────────────────────────────────
 

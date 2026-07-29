@@ -1,0 +1,45 @@
+@page "/terms"
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Terms of Use · Arkade Heroes</PageTitle>
+
+@* The terms at a stable address, readable by anyone at any time — before accepting, and long after. The
+   acceptance modal renders the same component, so what a player agrees to and what they can re-read later
+   are the same text, not two copies that can drift. *@
+
+<div class="page-head">
+    <h1 style="margin:0">Terms of Use</h1>
+    <span class="hud">version @Terms.CurrentVersion</span>
+</div>
+
+<div class="card">
+    @if (State.Player is { TermsAcceptedVersion: int accepted })
+    {
+        <div class="status-line" style="margin-bottom:1rem">
+            <span class="dot @(Terms.Satisfies(accepted) ? "ok" : "bad")"></span>
+            @if (Terms.Satisfies(accepted))
+            {
+                <span>You accepted version @accepted@(AcceptedOn).</span>
+            }
+            else
+            {
+                <span>You accepted version @accepted@(AcceptedOn) — these terms have since been updated to version @Terms.CurrentVersion.</span>
+            }
+        </div>
+    }
+
+    <TermsDocument />
+</div>
+
+@code {
+    string AcceptedOn => State.Player?.TermsAcceptedAtUtc is { } at
+        ? $" on {at.UtcDateTime:yyyy-MM-dd}"
+        : "";
+
+    protected override void OnInitialized() => State.OnChange += OnChanged;
+
+    void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.OnChange -= OnChanged;
+}

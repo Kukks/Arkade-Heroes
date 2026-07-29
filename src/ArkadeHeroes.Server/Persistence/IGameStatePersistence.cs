@@ -94,6 +94,8 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 LoginPubKeyHex = row.LoginPubKeyHex,
                 StreakCount = row.StreakCount,
                 LastClaimDay = row.LastClaimDay,
+                TermsAcceptedVersion = row.TermsAcceptedVersion,
+                TermsAcceptedAtUtc = row.TermsAcceptedAtUtc,
             };
             store.Players[player.Id] = player;
             store.PlayersByToken[player.Token] = player;
@@ -260,6 +262,8 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 LoginPubKeyHex = player.LoginPubKeyHex,
                 StreakCount = player.StreakCount,
                 LastClaimDay = player.LastClaimDay,
+                TermsAcceptedVersion = player.TermsAcceptedVersion,
+                TermsAcceptedAtUtc = player.TermsAcceptedAtUtc,
             });
         }
         else
@@ -269,6 +273,8 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.LoginPubKeyHex = player.LoginPubKeyHex;
             row.StreakCount = player.StreakCount;
             row.LastClaimDay = player.LastClaimDay;
+            row.TermsAcceptedVersion = player.TermsAcceptedVersion;
+            row.TermsAcceptedAtUtc = player.TermsAcceptedAtUtc;
         }
         await db.SaveChangesAsync(ct);
     }

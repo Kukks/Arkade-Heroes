@@ -50,7 +50,8 @@ public class GameService(
 
     public async Task<(Player Player, string Address, long Balance)> RegisterPlayerAsync(
         string name, string arkadeAddress, string? loginPubKeyHex,
-        string? nonceHex, string? signatureHex, CancellationToken ct)
+        string? nonceHex, string? signatureHex, CancellationToken ct,
+        int? acceptedTermsVersion = null)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new GameRuleException("Player name is required.");
         if (string.IsNullOrWhiteSpace(arkadeAddress))
@@ -73,12 +74,22 @@ public class GameService(
                 throw new GameRuleException("This wallet is already registered — use 'login' to resume it.");
         }
 
+        // Validate the claimed acceptance BEFORE the player exists: a registration carrying a garbage
+        // version must fail outright rather than create a player whose acceptance record is nonsense.
+        if (acceptedTermsVersion is int claimed && !Shared.Terms.IsAcceptableVersion(claimed))
+            throw new GameRuleException(
+                $"Unknown Terms of Use version {claimed} — the current version is {Shared.Terms.CurrentVersion}.");
+
         var player = new Player
         {
             Id = NewId("player"),
             Name = name.Trim(),
             Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
             LoginPubKeyHex = loginKey,
+            // Recorded in the SAME call that creates the player, so there is no window in which a player
+            // row exists with no acceptance on file even though the player did accept.
+            TermsAcceptedVersion = acceptedTermsVersion,
+            TermsAcceptedAtUtc = acceptedTermsVersion is null ? null : DateTimeOffset.UtcNow,
         };
 
         try
@@ -167,6 +178,55 @@ public class GameService(
                 && pk.SigVerifyBIP340(sig, digest);
         }
         catch { return false; }
+    }
+
+    // ── Terms of Use: the explicit, versioned, server-recorded acceptance ──
+
+    /// <summary>
+    /// Records that this player explicitly accepted the Terms of Use at <paramref name="version"/>.
+    ///
+    /// The version is validated against <see cref="Shared.Terms"/> first: zero (what a missing JSON field
+    /// deserialises into), negatives, and versions that do not exist yet are all REFUSED. Recording an
+    /// unchecked number would be worse than recording nothing — a stored "accepted v9999" would silently
+    /// satisfy every future bump, so the player would never be re-asked about terms they never read.
+    ///
+    /// Monotonic: an older acceptance arriving late (a stale tab that still thinks v1 is current, posting
+    /// after the player already accepted v2 elsewhere) must not walk the record backwards and re-prompt.
+    /// </summary>
+    public async Task<Player> AcceptTermsAsync(Player player, int version, CancellationToken ct)
+    {
+        if (!Shared.Terms.IsAcceptableVersion(version))
+            throw new GameRuleException(
+                $"Unknown Terms of Use version {version} — the current version is {Shared.Terms.CurrentVersion}.");
+
+        if (player.TermsAcceptedVersion is int already && already >= version)
+            return player;   // already covered; nothing to record and nothing to walk back
+
+        player.TermsAcceptedVersion = version;
+        player.TermsAcceptedAtUtc = DateTimeOffset.UtcNow;
+        // Durably, and awaited inline: browser-local storage is one cache clear from gone and is the
+        // player's own machine, so the row IS the evidence that the disclosure was made and agreed to.
+        await persistence.SavePlayerAsync(player, ct);
+        return player;
+    }
+
+    /// <summary>What is on file for this player, and what the server currently requires.</summary>
+    public Shared.TermsAcceptanceDto TermsFor(Player player) => new(
+        player.TermsAcceptedVersion, player.TermsAcceptedAtUtc,
+        Shared.Terms.CurrentVersion, _options.RequireTermsAcceptance);
+
+    /// <summary>
+    /// Refuses an irreversible entry point until the player's recorded acceptance covers the current terms.
+    /// OPT-IN (<c>Game:RequireTermsAcceptance</c>, default off) because the browser gate already stops a
+    /// player reaching this, and turning it on unconditionally would break every API client that never
+    /// showed a terms screen. A deployment that stakes real bitcoin turns it on.
+    /// </summary>
+    private void RequireAcceptedTerms(Player player)
+    {
+        if (!_options.RequireTermsAcceptance) return;
+        if (!Shared.Terms.Satisfies(player.TermsAcceptedVersion))
+            throw new GameRuleException(
+                "You must accept the Terms of Use before playing — this game stakes real bitcoin and can destroy assets permanently.");
     }
 
     // ── Heroes ─────────────────────────────────────────────────────────
@@ -533,6 +593,10 @@ public class GameService(
     /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
+        // The first irreversible step into the game — assets get minted here. Gate it (opt-in) on the
+        // terms the player is supposed to have read before any of that happened.
+        RequireAcceptedTerms(player);
+
         // Per-player gate: the claimed-check → reserve pair below is only race-safe when concurrent
         // claims are serialized — without it two requests can both read false and mint four starters.
         using var gate = await store.LockAsync($"starters:{player.Id}", ct);

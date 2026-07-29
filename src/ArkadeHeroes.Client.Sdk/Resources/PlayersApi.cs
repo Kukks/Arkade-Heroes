@@ -24,6 +24,14 @@ public sealed class PlayersApi(ArkadeHeroesClient client)
 
     public Task<PlayerDto> MeAsync() => client.GetAsync<PlayerDto>("/api/players/me");
 
+    /// <summary>What the server has on file for this player's Terms of Use acceptance, and the version it
+    /// currently requires — the source of truth the browser gate reads.</summary>
+    public Task<TermsAcceptanceDto> TermsAsync() => client.GetAsync<TermsAcceptanceDto>("/api/players/me/terms");
+
+    /// <summary>Record this player's explicit acceptance of the Terms of Use at a given version.</summary>
+    public Task<TermsAcceptanceDto> AcceptTermsAsync(int version) =>
+        client.PostAsync<TermsAcceptanceDto>("/api/players/me/terms", new AcceptTermsRequest(version));
+
     /// <summary>The signed-in player's derived accomplishments + unlocked badges.</summary>
     public Task<PlayerAchievementsDto> AchievementsAsync() => client.GetAsync<PlayerAchievementsDto>("/api/players/me/achievements");
 
