@@ -207,7 +207,7 @@ public class AbsorbConfigStampTests : IClassFixture<WebApplicationFactory<Progra
         // (trustlessly — the SDK re-hashes what it is served) to the very odds its settle ran on.
         using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:AbsorbChance", "200"));
         var api = new ArkadeHeroesClient(factory.CreateClient());
-        var expected = GameConfigVersion.Compute(GameConfig.Default with { Absorb = new AbsorbOdds(200, 90) });
+        var expected = GameConfigVersion.Compute(new GameOptions { AbsorbChance = 200 }.ToGameConfig());
 
         var info = await api.Chain.InfoAsync();
         Assert.Equal(expected, info.Config!.Version);
