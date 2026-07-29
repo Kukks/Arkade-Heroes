@@ -105,6 +105,35 @@ public class PersistedHero
 }
 
 /// <summary>
+/// One treasury movement — a fee captured (<see cref="In"/>) or a payout made (<see cref="Out"/>). The ROWS
+/// are the record and the by-tag totals are GROUPED from them at boot, never stored: a stored total can drift
+/// from the movements it claims to summarise, a derived one cannot.
+///
+/// The key is load-bearing on the inflow side. <c>Id</c> is the invoice id, so the primary key IS the
+/// "already counted" set — and rehydrating it is the whole point. Persisting the totals ALONE would be worse
+/// than not persisting at all: item purchases are durable and re-delivery after a crash is deliberate, so the
+/// same invoice legitimately reaches the tally twice across a restart, and a surviving total with a lost
+/// dedup set would count it twice. Double-counted INCOME is the unsurvivable direction for a treasury holding
+/// real bitcoin — it makes an insolvent treasury read as solvent.
+///
+/// Outflow has no natural key and is NOT deduped (it never was): those rows are append-only under a surrogate
+/// id. The key is composite so that surrogate can never collide with an invoice id and silently swallow a
+/// payout as an "already counted" duplicate.
+/// </summary>
+public class PersistedTreasuryFlow
+{
+    public const string In = "in";
+    public const string Out = "out";
+
+    /// <summary>Inflow: the invoice id, which is what makes this row the dedup marker. Outflow: a surrogate.</summary>
+    public required string Id { get; set; }
+    /// <summary><see cref="In"/> or <see cref="Out"/>.</summary>
+    public required string Direction { get; set; }
+    public required string Tag { get; set; }
+    public required long Sats { get; set; }
+}
+
+/// <summary>
 /// SQLite store for the game state a restart must not lose. Most rows are here because losing one costs a
 /// player REAL SATS — an item they paid for but hadn't claimed, a tournament buy-in paid into a bracket that
 /// hadn't run. Fancy finds are the exception: they cost no sats, but they carry an irreplaceable scarcity
@@ -122,6 +151,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedPlayer> Players => Set<PersistedPlayer>();
     public DbSet<PersistedFancyFind> FancyFinds => Set<PersistedFancyFind>();
     public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
+    public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -131,5 +161,8 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedPlayer>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedFancyFind>().HasKey(x => x.HeroId);
         modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
+        // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
+        // collides is the "already counted" no-op, and that must never be able to eat a payout row.
+        modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });
     }
 }

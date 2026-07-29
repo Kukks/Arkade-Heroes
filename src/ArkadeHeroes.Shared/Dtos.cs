@@ -390,11 +390,14 @@ public record PlayerProfileDto(string PlayerId, string Name,
 /// listings-outran-sales cross is the earliest signal CryptoKitties gave, days before its peak. These reflect
 /// the LAST-OBSERVED offer status (the health read never forces a chain reconcile), so they can lag truth.
 ///
-/// SCOPE — <see cref="TotalInflowSats"/>/<see cref="TotalOutflowSats"/> and both by-tag maps are tallied in
-/// memory and are NOT persisted, so they count only what THIS server process has observed since it started;
-/// a restart zeroes them. They are not lifetime figures and must not be labelled as such. Only
-/// <see cref="TreasuryBalanceSats"/> is authoritative — it is read from the chain, so it survives restarts
-/// and is the number to judge solvency on. The flows are a supplementary "what has moved lately" gauge.</summary>
+/// SCOPE — <see cref="TotalInflowSats"/>/<see cref="TotalOutflowSats"/> and both by-tag maps are DURABLE
+/// where the server is configured with a state database: every movement is stored as its own row and the
+/// totals are grouped back out of those rows at boot, so they survive a restart. The rows, not the totals,
+/// are what is stored — an inflow row is keyed by its invoice id, which doubles as the already-counted
+/// marker, so a fee tallied before a restart cannot be tallied again after one. On a server running with no
+/// state database (the in-memory default) they remain per-process and a restart still zeroes them. Either
+/// way only <see cref="TreasuryBalanceSats"/> is authoritative on SOLVENCY — it is read from the chain, and
+/// it is what the treasury HOLDS, where the flows are what it has booked moving in and out.</summary>
 public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, long TotalOutflowSats,
     IReadOnlyDictionary<string, long> InflowByTag, IReadOnlyDictionary<string, long> OutflowByTag, long SeasonAccrualSats,
     long HeroSupply = 0, long Gen0Supply = 0, long HeroesMinted = 0, long HeroesBurned = 0,

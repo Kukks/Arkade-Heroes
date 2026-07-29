@@ -33,10 +33,10 @@ else
             <p class="muted" style="margin:-.1rem 0 .7rem">spendable balance · @_economy.SeasonAccrualSats.ToString("N0") sat accrued to season pots</p>
             @if (_economy.TotalInflowSats > 0)
             {
-                @* Tallied in memory, so this counts only what this server has seen since it started — a
-                   restart zeroes it. Say so rather than implying a lifetime total; the treasury balance
-                   above is the chain-backed figure. *@
-                <p class="muted" style="margin:0 0 .3rem">fees captured this run — @_economy.TotalInflowSats.ToString("N0") sat</p>
+                @* Grouped from durable per-movement rows, so this survives a restart and no longer needs the
+                   "this run" hedge. Still not a substitute for the chain-backed balance above: it is what the
+                   treasury has BOOKED, not what it holds. *@
+                <p class="muted" style="margin:0 0 .3rem">fees captured — @_economy.TotalInflowSats.ToString("N0") sat</p>
                 @foreach (var kv in _economy.InflowByTag.OrderByDescending(k => k.Value))
                 {
                     <div class="match-row">
@@ -48,7 +48,7 @@ else
             }
             @if (_economy.TotalOutflowSats > 0)
             {
-                <p class="muted" style="margin:0 0 .3rem">paid out this run — @_economy.TotalOutflowSats.ToString("N0") sat total</p>
+                <p class="muted" style="margin:0 0 .3rem">paid out — @_economy.TotalOutflowSats.ToString("N0") sat total</p>
                 @foreach (var kv in _economy.OutflowByTag.OrderByDescending(k => k.Value))
                 {
                     <div class="match-row">
