@@ -84,6 +84,15 @@ public class GameOptions
     /// An operator raises it to protect scheduled obligations (e.g. the season pot) from the daily emission drain.</summary>
     public long TreasuryReserveFloorSats { get; set; } = 0;
 
+    /// <summary>Shared secret for the operator console (<c>/api/admin/*</c>), sent on every admin request in
+    /// the <c>X-Admin-Token</c> header and compared in constant time (<see cref="AdminGate"/>).
+    /// UNSET (the default) means the admin surface is not mapped AT ALL: its routes do not exist and every
+    /// one of them 404s. That is the fail-closed direction, and it is the one a deployment gets by omission —
+    /// an operator console on a server holding real bitcoin has to be switched ON deliberately.
+    /// Set it out of band (<c>Game__AdminToken</c>), never in a committed file. It is never logged, never put
+    /// in a URL, and no endpoint ever returns it.</summary>
+    public string? AdminToken { get; set; }
+
     /// <summary>Path to the SQLite file holding state a restart must not lose (currently paid item purchases).
     /// UNSET = no persistence at all: everything stays in memory and is lost on restart, exactly as before.
     /// Set it in a deployment so a player who paid for an item can still claim it after a bounce.</summary>
