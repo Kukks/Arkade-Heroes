@@ -115,4 +115,29 @@ public class OfferContractAddressStabilityTests
 
         Assert.Equal(AddressOf(noFee), AddressOf(feeButNoTreasury));
     }
+
+    /// <summary>
+    /// The fee changes the FULFILL leaf and nothing else: reclaim is built from the item, the seller
+    /// script and the timelock, none of which a fee touches, and both variants carry the same two
+    /// leaves. That is what lets the existing live reclaim probe — which only ever ran a no-fee
+    /// contract — stand for the fee-bearing case too: a seller reclaiming a fee-bearing offer spends a
+    /// leaf byte-identical to the one already proven to co-sign, through a control block of identical
+    /// shape, at an address the round-trip facts above pin.
+    ///
+    /// Pinned so that stays true. If someone makes reclaim fee-dependent, the composition argument
+    /// silently stops holding and only this test would notice.
+    /// </summary>
+    [Fact]
+    public void TheFeeChangesOnlyTheFulfillLeaf_LeavingReclaimByteIdentical()
+    {
+        var noFee = new OfferParams(SellerAddress, ItemAssetId, Ask, 330, "offer-leaves", RefundAfter);
+        var withFee = noFee with { FeeSats = Fee, TreasuryFeeAddress = TreasuryAddress };
+
+        var a = OfferContracts.Build(noFee, KeyExtensions.ParseOutputDescriptor(OperatorHex, Network.RegTest), EmulatorSignerHex);
+        var b = OfferContracts.Build(withFee, KeyExtensions.ParseOutputDescriptor(OperatorHex, Network.RegTest), EmulatorSignerHex);
+
+        Assert.Equal(a.ScriptFor("reclaim"), b.ScriptFor("reclaim"));
+        Assert.NotEqual(a.ScriptFor("fulfill"), b.ScriptFor("fulfill"));
+        Assert.Equal(a.FunctionNames.OrderBy(n => n), b.FunctionNames.OrderBy(n => n));
+    }
 }
