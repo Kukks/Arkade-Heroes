@@ -89,6 +89,96 @@ public class GameConfigVersionTests
         }
     }
 
+    /// <summary>
+    /// The exhaustive version of the test above, by reflection over the primary constructors — so a
+    /// verification-critical value ADDED LATER and forgotten in the canonical writer fails here instead of
+    /// shipping. That failure mode is the severe one: two configs that fight differently would share a
+    /// stamp, and GET /api/config/{version} would hand a verifier the wrong rules with full confidence.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(GameConfig.Absorb))]
+    [InlineData(nameof(GameConfig.Gene))]
+    [InlineData(nameof(GameConfig.Sterility))]
+    [InlineData(nameof(GameConfig.Rarity))]
+    [InlineData(nameof(GameConfig.Affinity))]
+    [InlineData(nameof(GameConfig.Curve))]
+    [InlineData(nameof(GameConfig.Combat))]
+    public void Compute_ChangesForEVERYMemberOfEveryVerificationCriticalRecord(string member)
+    {
+        var d = GameConfig.Default;
+        var current = typeof(GameConfig).GetProperty(member)!.GetValue(d)!;
+
+        foreach (var perturbed in PerturbEachParameter(current))
+        {
+            var config = d with { };
+            typeof(GameConfig).GetProperty(member)!.SetValue(config, perturbed.Value);
+            Assert.True(
+                GameConfigVersion.Compute(config) != GameConfigVersion.Default,
+                $"{member}.{perturbed.Parameter} is not part of the version id — a config that fights " +
+                "differently would share a stamp with Default");
+        }
+    }
+
+    [Fact]
+    public void Compute_ChangesForEveryInnateKnob()
+    {
+        // CombatConfig.Innate is a nested record the writer resolves through InnateOrDefault, so its members
+        // need the same exhaustive sweep.
+        foreach (var perturbed in PerturbEachParameter(InnateBonuses.Default))
+        {
+            var config = GameConfig.Default with
+            {
+                Combat = GameConfig.Default.Combat with { Innate = (InnateBonuses)perturbed.Value },
+            };
+            Assert.True(
+                GameConfigVersion.Compute(config) != GameConfigVersion.Default,
+                $"InnateBonuses.{perturbed.Parameter} is not part of the version id");
+        }
+    }
+
+    [Fact]
+    public void Compute_ChangesForTheStandaloneFusionThreshold()
+    {
+        Assert.NotEqual(GameConfigVersion.Default,
+            GameConfigVersion.Compute(GameConfig.Default with { FusionConcentrateThreshold = 216 }));
+    }
+
+    /// <summary>Yields one copy of <paramref name="record"/> per primary-constructor parameter, with that
+    /// one parameter changed to a different value and every other left alone.</summary>
+    private static IEnumerable<(string Parameter, object Value)> PerturbEachParameter(object record)
+    {
+        var type = record.GetType();
+        var ctor = type.GetConstructors().OrderByDescending(c => c.GetParameters().Length).First();
+        var parameters = ctor.GetParameters();
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var args = parameters
+                .Select(p => type.GetProperty(p.Name!)!.GetValue(record))
+                .ToArray();
+            args[i] = Perturb(parameters[i].ParameterType, args[i]);
+            yield return (parameters[i].Name!, ctor.Invoke(args));
+        }
+    }
+
+    private static object Perturb(Type type, object? value) => type switch
+    {
+        _ when type == typeof(byte) => (byte)((byte)value! + 1),          // 255 wraps to 0 — still a change
+        _ when type == typeof(int) => (int)value! + 1,
+        _ when type == typeof(long) => (long)value! + 1,
+        _ when type == typeof(double) => (double)value! + 0.125,
+        _ when type == typeof(bool) => !(bool)value!,
+        _ when type == typeof(CombatSelectionPolicy) =>
+            (CombatSelectionPolicy)value! == CombatSelectionPolicy.Greedy
+                ? CombatSelectionPolicy.Tactical
+                : CombatSelectionPolicy.Greedy,
+        // A null Innate and an explicit InnateBonuses.Default are the SAME rules by design, so perturbing
+        // this slot means supplying knobs that genuinely differ.
+        _ when type == typeof(InnateBonuses) => InnateBonuses.Default with { Ward = 0.99 },
+        _ => throw new InvalidOperationException(
+            $"No perturbation defined for {type.Name} — add one so this sweep stays exhaustive."),
+    };
+
     [Fact]
     public void Compute_IgnoresTheEconomy_SoAFeeChangeStrandsNoReplay()
     {
