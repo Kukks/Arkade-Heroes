@@ -847,11 +847,13 @@ if (AdminGate.IsEnabled(adminToken))
         var before = store.Matches.Values.Count(m => m.Status == "expired");
         await game.ReconcileAbandonedMatchesAsync(ct);
         var after = store.Matches.Values.Count(m => m.Status == "expired");
-        app.Logger.LogInformation(
-            "ADMIN ACTION reconcile-matches: {Newly} match(es) newly expired ({After} of {Total} now expired).",
-            after - before, after, store.Matches.Count);
-        return Results.Ok(new AdminActionResultDto("reconcile-matches",
-            $"{after - before} match(es) newly expired — {after} of {store.Matches.Count} now expired."));
+        // Worded as what the counter DID across this call, not as what this call caused: the same lazy
+        // reconcile runs on every /api/matches listing, so a concurrent visitor can move it too. An audit
+        // line that over-claims is worse than one that merely reports the window it observed.
+        var detail = $"Expired matches went {before} → {after} across this run; "
+                     + $"{after} of {store.Matches.Count} now expired.";
+        app.Logger.LogInformation("ADMIN ACTION reconcile-matches: {Detail}", detail);
+        return Results.Ok(new AdminActionResultDto("reconcile-matches", detail));
     });
 
     // ACTION — settle any season that has ENDED but not been paid. This is the SAME call GET
@@ -862,8 +864,11 @@ if (AdminGate.IsEnabled(adminToken))
     {
         var before = store.LastSettledSeason;
         var board = await game.SeasonLeaderboard(ct);
+        // Same discipline as reconcile-matches: the marker's movement is REPORTED, not claimed, because an
+        // anonymous read of the season board settles too and could have moved it during this call.
         var detail = store.LastSettledSeason > before
-            ? $"Settled season(s) {before + 1}–{store.LastSettledSeason}; season {board.SeasonNumber} is live."
+            ? $"The settled-season marker advanced {before} → {store.LastSettledSeason}; "
+              + $"season {board.SeasonNumber} is live."
             : $"Nothing was due — season {board.SeasonNumber} is live, last settled {store.LastSettledSeason}.";
         app.Logger.LogInformation("ADMIN ACTION settle-seasons: {Detail}", detail);
         return Results.Ok(new AdminActionResultDto("settle-seasons", detail));

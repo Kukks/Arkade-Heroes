@@ -419,7 +419,7 @@ public class AdminConsoleTests
         Assert.Equal(balanceBefore, await chain.TreasuryBalanceAsync(CancellationToken.None));   // no money moved
 
         var second = await admin.Admin.ReconcileMatchesAsync(Token);
-        Assert.Contains("0 match(es) newly expired", second.Detail);
+        Assert.Contains("1 of 1 now expired", second.Detail);
         Assert.Equal(1, store.Matches.Values.Count(m => m.Status == "expired"));
     }
 
@@ -443,7 +443,7 @@ public class AdminConsoleTests
 
         Assert.Equal("settle-seasons", first.Action);
         Assert.Equal(live - 1, store.LastSettledSeason);   // the marker caught up
-        Assert.Contains("Settled season", first.Detail);
+        Assert.Contains("marker advanced", first.Detail);
 
         var second = await admin.Admin.SettleSeasonsAsync(Token);
         Assert.Contains("Nothing was due", second.Detail);
