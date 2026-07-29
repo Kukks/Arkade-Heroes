@@ -51,9 +51,28 @@
     Conditional on the file existing so a checkout without the document still builds — the acceptance
     mechanism does not depend on the prose being present, and TermsDocument says so plainly when it isn't.
   -->
-  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\docs\TERMS.md')">
-    <Content Include="..\..\docs\TERMS.md" Link="wwwroot\terms.md" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
+  <!--
+    COPY it into wwwroot rather than Link-ing it. A <Content Include> with a wwwroot Link and
+    CopyToOutputDirectory lands the file in bin/**/wwwroot but never registers it as a STATIC WEB ASSET,
+    which is what Blazor WASM actually serves from. The result is a 200 with Content-Length 0 at
+    /terms.md, TermsDocument correctly reporting "not bundled", and — because the acceptance gate fails
+    closed — onboarding blocked entirely. Verified in a browser before and after this change.
+
+    Generated, not committed (see .gitignore): docs/TERMS.md stays the single source, so an edit there is
+    what ships. Bump Shared/Terms.CurrentVersion alongside a material edit.
+
+    Conditional on the source existing so a checkout without the document still builds — the acceptance
+    mechanism does not depend on the prose being present, and TermsDocument says so plainly when it isn't.
+  -->
+  <Target Name="BundleTermsDocument"
+          BeforeTargets="ResolveStaticWebAssetsInputs;BeforeBuild"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\docs\TERMS.md')"
+          Inputs="$(MSBuildThisFileDirectory)..\..\docs\TERMS.md"
+          Outputs="$(MSBuildThisFileDirectory)wwwroot\terms.md">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\docs\TERMS.md"
+          DestinationFiles="$(MSBuildThisFileDirectory)wwwroot\terms.md"
+          SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Client.Sdk\ArkadeHeroes.Client.Sdk.csproj" />

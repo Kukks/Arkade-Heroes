@@ -24,7 +24,7 @@ public static class MarkdownLite
         var inList = false;
         var inCodeBlock = false;
 
-        foreach (var raw in markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        foreach (var raw in Fold(markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')))
         {
             var line = raw.TrimEnd();
 
@@ -95,6 +95,60 @@ public static class MarkdownLite
         CloseList(html, ref inList);
         if (inCodeBlock) html.Append("</pre>");
         return html.ToString();
+    }
+
+    /// <summary>
+    /// Joins soft-wrapped lines into one logical line before block parsing.
+    ///
+    /// The document is hard-wrapped, and treating every source line as its own block split each
+    /// wrapped sentence into a separate paragraph AND cut inline markup at the wrap — a bold span
+    /// opening on one line and closing on the next rendered as literal asterisks. On a terms document
+    /// that hit the most emphatic sentences exactly: "**We will never ask for it.**" and "**No payout,
+    /// prize or reward is guaranteed.**" both showed their markers. Found by reading the rendered page.
+    ///
+    /// Only PROSE continues a block. A blank line, heading, rule, bullet, ordered item, quote, table row
+    /// or fence always starts a new one, and nothing is ever dropped — every input line still reaches
+    /// the output, which is this renderer's standing invariant.
+    /// </summary>
+    private static List<string> Fold(string[] lines)
+    {
+        var folded = new List<string>();
+        var inCodeBlock = false;
+
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            var trimmed = line.TrimStart();
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                inCodeBlock = !inCodeBlock;
+                folded.Add(line);
+                continue;
+            }
+            if (inCodeBlock || line.Length == 0) { folded.Add(line); continue; }
+
+            var opensBlock = trimmed is "---" or "***" or "___"
+                || trimmed.StartsWith('#')
+                || trimmed.StartsWith('|')
+                || trimmed.StartsWith("- ", StringComparison.Ordinal)
+                || trimmed.StartsWith("* ", StringComparison.Ordinal)
+                || trimmed.StartsWith("> ", StringComparison.Ordinal)
+                || OrderedItem(trimmed) is not null;
+
+            // A heading, rule or fence is a closed block: prose after it starts something new.
+            var previous = folded.Count > 0 ? folded[^1].TrimStart() : "";
+            var previousTakesMore = previous.Length > 0
+                && previous is not ("---" or "***" or "___")
+                && !previous.StartsWith('#')
+                && !previous.StartsWith('|')
+                && !previous.StartsWith("```", StringComparison.Ordinal);
+
+            if (!opensBlock && previousTakesMore) folded[^1] += " " + trimmed;
+            else folded.Add(line);
+        }
+
+        return folded;
     }
 
     /// <summary>"1. text" → "text"; anything else → null.</summary>
