@@ -109,6 +109,48 @@ public class MoneyPathRaceGuardTests
     }
 
     [Fact]
+    public async Task ConcurrentRenameConfirms_GiveOneNameToExactlyOneHero()
+    {
+        // A hero name is sold as GLOBALLY UNIQUE and costs real sats, so two owners holding the same one is
+        // both a broken promise and a double charge. ConfirmRenameAsync re-checks uniqueness at apply time,
+        // but the check and the assignment are one check-then-act: released on a barrier, concurrent
+        // confirms for the same name can all read "free" before any of them takes it. Measured before the
+        // keyed lock, 64 racers handed ONE name to TWO heroes — intermittently, which is exactly why this
+        // needs a barrier test rather than a sequential one.
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.Configure<GameOptions>(o => o.HeroRenameFeeSats = 0)));
+        var svc = factory.Services.GetRequiredService<GameService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        var contenders = new List<(Player Player, string HeroId)>();
+        for (var i = 0; i < Racers; i++)
+        {
+            var (client, dto) = await factory.RegisterAsync($"Race-Rename-{i}");
+            var hero = (await client.ClaimStartersAsync())[0];
+            contenders.Add((store.Players[dto.PlayerId], hero.Id));
+        }
+
+        // Every contender legitimately passes the REQUEST-time check: nobody holds the name yet.
+        const string wanted = "Solstice Vanguard";
+        foreach (var (player, heroId) in contenders)
+            await svc.RequestRenameAsync(player, heroId, wanted, CancellationToken.None);
+
+        var claimed = await RaceAsync(Racers, async () =>
+        {
+            var next = contenders[Interlocked.Increment(ref _renameCursor) % contenders.Count];
+            await svc.ConfirmRenameAsync(next.Player, next.HeroId, CancellationToken.None);
+        });
+
+        // Exactly one hero may end up wearing it, and the losers must be refusals rather than silent
+        // overwrites — so the count of heroes holding the name is the assertion, not the success count.
+        Assert.Equal(1, store.Heroes.Values.Count(
+            h => string.Equals(h.Name, wanted, StringComparison.OrdinalIgnoreCase)));
+        Assert.True(claimed >= 1, "at least one confirm must land, or the name was never claimable");
+    }
+
+    private int _renameCursor = -1;
+
+    [Fact]
     public async Task TournamentPrize_OnePayoutFailing_StillPaysTheRestOfThePodium()
     {
         // The podium pays each place in a loop and a dropped prize is never retried (a documented v1
