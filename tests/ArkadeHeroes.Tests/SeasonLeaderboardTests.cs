@@ -31,11 +31,17 @@ public class SeasonLeaderboardTests : IClassFixture<WebApplicationFactory<Progra
         await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("season-nonce"));
 
-        // The public season board shows the current season number and the winner's staked win.
+        // The public season board shows the current season number and both fighters' staked match.
         var season = await alice.Leaderboard.SeasonAsync();
         Assert.Equal(Season.Current(DateTimeOffset.UtcNow, 14).Number, season.SeasonNumber);
         Assert.True(season.EndsAtUnix > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        Assert.Contains(season.Standings, e => e.HeroId == fight.Result.WinnerId && e.Wins >= 1);
+        Assert.Contains(season.Standings, e => e.HeroId == fight.Result.WinnerId && e.Matches >= 1);
+
+        // No WIN is banked, and that is the rule working. Two fresh starters are both level 1 with 0 XP —
+        // the floor — so the loser could pay nothing, the conserved transfer moved 0, and a fight that
+        // moved nothing earns no rank. Season rank is paid in real sats, so a stake-free win must not
+        // count; that is precisely what made the board farmable for the price of the match fees.
+        Assert.DoesNotContain(season.Standings, e => e.HeroId == fight.Result.WinnerId && e.Wins >= 1);
     }
 
     [Fact]
