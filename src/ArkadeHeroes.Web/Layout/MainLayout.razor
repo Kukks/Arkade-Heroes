@@ -74,7 +74,9 @@
     // The active top-level section, so the parent nav item stays lit across its sub-pages.
     private string Section => _path switch
     {
-        "" => "arena",
+        // The two reference pages belong to the arena: they explain what a hero IS, which is the
+        // question the landing page raises and neither the roster nor the market answers.
+        "" or "codex" or "tech" => "arena",
         "market" or "sell" => "market",
         "wallet" => "wallet",
         var p when p == "heroes" || p.StartsWith("heroes/")
@@ -164,6 +166,13 @@
             [
                 ("Browse", "market", NavLinkMatch.All),
                 ("Sell", "sell", NavLinkMatch.Prefix),
+            ],
+            // Without these, /codex and /tech are reachable only by typing the URL.
+            "arena" =>
+            [
+                ("Home", "", NavLinkMatch.All),
+                ("Codex", "codex", NavLinkMatch.Prefix),
+                ("How it works", "tech", NavLinkMatch.Prefix),
             ],
             _ => [],
         };
