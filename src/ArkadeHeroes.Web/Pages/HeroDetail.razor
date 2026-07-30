@@ -1,4 +1,5 @@
 @page "/heroes/{Id}"
+@using ArkadeHeroes.Core.Combat
 @using ArkadeHeroes.Core.Genetics
 @inject ArkadeHeroesClient Api
 @inject WalletState State
@@ -100,6 +101,36 @@ else
                 <div><span>CRIT</span><b>@h.Stats.CritPercent%</b></div>
                 <div><span>DODGE</span><b>@h.Stats.DodgePercent%</b></div>
             </div>
+            @* Build SHAPE and the counter charm — shown ONLY when the published config has GearCounters on,
+               the same gate PR #112 put on the innate badges. This surface is why the flip is legitimate
+               rather than merely live: a counter is decided by the OPPONENT's shape, so a player who cannot
+               see shape reads the swing as randomness instead of as a matchup to plan for.
+               Shape is a pure function of the UNEQUIPPED build (genome + level) under the default counter
+               knobs — the same ones a live arena resolves under — so it is recomputed here rather than served. *@
+            @if (_gearCounters && _shape is { } shape)
+            {
+                var counterGear = CounterGear(h);
+                <div class="hud" style="margin:.9rem 0 .4rem">build shape · what an opponent's charm keys off</div>
+                <div class="chips">
+                    <span class="chip" title="@ShapeBlurb(shape)">shape <b>@(Lower(shape))</b></span>
+                    @foreach (var g in counterGear)
+                    {
+                        @if (ShapeOf(g.Counters) is { } countered)
+                        {
+                            <span class="chip" title="@(g.Name): stronger against a @(Lower(countered)) build, weaker against a @(Lower(CombatShapes.WeakTo(countered))) one, and neutral otherwise — only the matchup decides.">counters <b>@(Lower(countered))</b></span>
+                        }
+                        else if (g.VarianceBonus > 0)
+                        {
+                            <span class="chip ghost" title="@(g.Name): a wider, mean-preserving damage roll — it buys no edge at all, only less certainty. Worth bringing as the underdog and leaving at home as the favourite.">wildcard <b>+@(g.VarianceBonus)% roll</b></span>
+                        }
+                    }
+                    @* Only claim "none" when the catalog actually loaded — with it missing we do not KNOW. *@
+                    @if (counterGear.Count == 0 && _catalog.Count > 0)
+                    {
+                        <span class="muted">no counter charm — this hero's trinket is matchup-neutral</span>
+                    }
+                </div>
+            }
         </div>
 
         <div class="card">
@@ -322,6 +353,8 @@ else
     private string? _renameError;
     private bool _innateAbilities;
     private IReadOnlyList<(TraitCategory Category, RarityTier Tier)> _passives = [];
+    private bool _gearCounters;
+    private CombatShape? _shape;
 
     protected override void OnInitialized() => State.OnChange += OnState;
 
@@ -346,9 +379,13 @@ else
             _advertisedKey = chainInfo.GameSignerKey;
             _renameFeeSats = chainInfo.Config?.HeroRenameFeeSats ?? 0;
             _innateAbilities = chainInfo.Config?.InnateAbilities ?? false;
+            _gearCounters = chainInfo.Config?.GearCounters ?? false;
             // Passive badges are optional chrome — a genome-parse hiccup must never fail the whole hero page.
             try { _passives = _innateAbilities && _hero is not null ? Traits.InnatePassives(Genome.FromHex(_hero.GenomeHex)) : []; }
             catch { _passives = []; }
+            // Same rule for the shape badge: chrome, so a bad genome hides it rather than breaking the page.
+            try { _shape = _gearCounters && _hero is not null ? CombatShapes.Of(Genome.FromHex(_hero.GenomeHex), _hero.Level) : null; }
+            catch { _shape = null; }
             _replayedLevel = ReceiptVerifier.ReplayLevel(Id, _receipts);
             if (_catalog.Count == 0)
             {
@@ -403,6 +440,30 @@ else
         TraitCategory.Stance => "Initiative",
         _ => c.ToString(),
     };
+
+    // Shape names read as lowercase prose in the chips, matching the rest of the card's voice.
+    static string Lower(CombatShape s) => s.ToString().ToLowerInvariant();
+
+    // What the shape MEANS, in the terms the stat grid above it already uses.
+    static string ShapeBlurb(CombatShape s) => s switch
+    {
+        CombatShape.Offense => "Attack/Magic lead this build — it hits hardest.",
+        CombatShape.Bulk => "Defense/HP lead this build — it is hardest to kill.",
+        _ => "Speed/Crit lead this build — it acts first and crits most.",
+    };
+
+    // The DTO carries the countered shape as a string; anything unrecognised reads as "no counter" rather
+    // than throwing, so a newer server naming a shape this build has never heard of degrades quietly.
+    static CombatShape? ShapeOf(string? counters) =>
+        Enum.TryParse<CombatShape>(counters, out var s) ? s : null;
+
+    // The counter charms / wildcard this hero is actually wearing, resolved against the SERVER's catalog
+    // rather than a compiled-in copy — item rows are authored content and can differ from this build's.
+    private List<ItemDto> CounterGear(HeroDto h) => h.Equipment.Values
+        .Select(id => _catalog.FirstOrDefault(i => i.Id == id))
+        .OfType<ItemDto>()
+        .Where(i => i.Counters is not null || i.VarianceBonus > 0)
+        .ToList();
 
     // Fill % for the XP-to-next bar; a max-level hero (no next threshold) reads full.
     static int XpPct(HeroDto h) => h.XpToNext > 0

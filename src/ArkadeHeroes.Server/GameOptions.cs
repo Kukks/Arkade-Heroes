@@ -128,14 +128,27 @@ public class GameOptions
     /// a WILDCARD item may widen its wearer's damage roll (see <see cref="Core.Combat.CombatShapes"/>). This
     /// is what stops a played-out roster converging on one tier-3 set — measured, it lifts gear's total-effect
     /// share of a fully-geared roster's outcome variance from 0.0% to 9.3%.
-    /// DEFAULT OFF, deliberately, and NOT because the mechanism is unproven: flipping it changes live combat
-    /// for everyone, and a counter the player cannot SEE reads as randomness. The flip wants the hero card to
-    /// show a hero's shape first, so counter-picking is a decision rather than a surprise. The same stamp
-    /// argument as InnateAbilities makes the flip itself safe whenever it happens: the resulting config hashes
-    /// to a non-default <see cref="GameConfigVersion"/>, every outcome carries it, and a verifier resolves it.
+    /// LIVE by default — and it waited for the one thing that was missing rather than for more balance data:
+    /// a counter the player cannot SEE reads as randomness rather than as strategy, so the hero card now shows
+    /// a hero's build SHAPE and whether it carries a counter charm (gated on the PUBLISHED
+    /// <see cref="Shared.GameConfigDto.GearCounters"/>), which makes counter-picking a decision instead of a
+    /// surprise.
+    /// It is a CONFIG switch rather than a Core constant for the same two reasons as InnateAbilities above. It
+    /// can be turned back off without a code change if the balance band moves. And
+    /// <see cref="CombatConfig.Default"/> must STAY off regardless: that constant is what every UNSTAMPED
+    /// (pre-stamp) replay is reconstructed under, so flipping it there would silently rewrite what historical
+    /// outcomes are checked against.
+    /// Turning this on is safe for verification precisely because of the stamp: the resulting config hashes to
+    /// a non-default <see cref="GameConfigVersion"/> — the flag AND every <see cref="GearCounterRules"/> knob
+    /// are hashed — every outcome resolved under it carries that stamp, and a client resolves the stamp via
+    /// GET /api/config/{version} before replaying, so a verifier follows the flip automatically instead of
+    /// replaying under its own compiled-in default. Unlike innate, the blindness to watch is GEAR, not
+    /// generation: the counter multiplier is a product over the wearer's items, so an UNGEARED hero — or two
+    /// heroes wearing the same trinket — fights identically either way. <c>GearCounterFlipSafetyTests</c>
+    /// measures exactly that, so the gap is a number rather than a worry.
     /// The level GATE on the item catalog is independent of this switch and is live either way — it is an
     /// equip rule, not a combat rule.</summary>
-    public bool GearCounters { get; set; } = false;
+    public bool GearCounters { get; set; } = true;
 
     /// <summary>Opt-in server-side Terms enforcement: when true, claiming starter heroes — the first
     /// irreversible step, where assets are minted — is refused until the player's RECORDED acceptance covers

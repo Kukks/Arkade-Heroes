@@ -101,10 +101,18 @@ public class InnateFlipSafetyTests
         Assert.False(GameConfig.Default.Combat.InnateAbilities);
 
         // Turning it on genuinely moves the version id, which is what makes the flip visible to a verifier
-        // instead of silent. Nothing else about the rules moved.
+        // instead of silent.
         Assert.NotEqual(GameConfigVersion.Default, Stamp);
-        Assert.Equal(Stamp, GameConfigVersion.Compute(
-            GameConfig.Default with { Combat = GameConfig.Default.Combat with { InnateAbilities = true } }));
+
+        // The live stamp is EXACTLY the two flags the server ships, enumerated: innate (#149) and gear
+        // counters. GearCounters joined the live config when the hero card began showing build shape, so the
+        // delta from Default is no longer innate alone — this line was updated deliberately for that, and it
+        // stays an exact equality on purpose. It is the RATCHET that catches a THIRD rules flag going live
+        // without anyone re-deriving the stamp, so it must keep enumerating rather than relax to NotEqual.
+        Assert.Equal(Stamp, GameConfigVersion.Compute(GameConfig.Default with
+        {
+            Combat = GameConfig.Default.Combat with { InnateAbilities = true, GearCounters = true },
+        }));
 
         // And the stamp round-trips through the wire the client actually resolves over.
         Assert.Equal(Stamp, GameConfigVersion.Compute(Resolved));
