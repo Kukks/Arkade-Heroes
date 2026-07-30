@@ -1732,7 +1732,17 @@ public class GameService(
         {
             foreach (var s in SeasonPrize.DueSeasons(store.LastSettledSeason, current))
             {
-                var standings = SeasonStandings(Season.ForNumber(s, _config.SeasonLengthDays)).Take(3).ToList();
+                // A prize needs a WIN behind it. The board ranks on wins but falls through to level and
+                // match count when they tie, so a season in which nobody won anything still had a "top
+                // three" — and paid them, out of a pot that includes a treasury-funded base. That is
+                // reachable without trying: a fight between two heroes with no XP banked moves nothing, so
+                // every entrant sits on zero wins, and the payout then went to whoever had the highest
+                // level and the most matches, both of which cost only fees to pump. Requiring a win reuses
+                // the no-competitors path below, which already retains the pot rather than forcing it out.
+                var standings = SeasonStandings(Season.ForNumber(s, _config.SeasonLengthDays))
+                    .Where(e => e.Wins > 0)
+                    .Take(3)
+                    .ToList();
                 var pot = _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(s);
                 if (standings.Count == 0) { store.LastSettledSeason = s; continue; }   // no competitors / receipts gone
                 if (await chain.TreasuryBalanceAsync(ct) < pot) break;                 // underfunded → retry on a later read
