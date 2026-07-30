@@ -33,6 +33,7 @@ public class DailyDurabilityGuardTests
             using (var first = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
             {
                 b.UseSetting("Game:StateDbPath", dbPath);
+                b.UseSetting("Game:DailyRewardEnabled", "true");
                 b.ConfigureTestServices(s =>
                 {
                     s.AddSingleton<IChainService>(chain);
@@ -56,6 +57,10 @@ public class DailyDurabilityGuardTests
             using var restarted = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
             {
                 b.UseSetting("Game:StateDbPath", dbPath);
+                // The faucet must be OPEN on the restarted host too. Closed, the claim below still throws
+                // GameRuleException — but for "not available on this server", which would let this test
+                // pass without ever exercising the durable already-claimed guard it exists to prove.
+                b.UseSetting("Game:DailyRewardEnabled", "true");
                 b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain));
             });
             _ = restarted.CreateClient();   // force the host to start so the boot-time rehydrate runs
@@ -87,7 +92,10 @@ public class DailyDurabilityGuardTests
         var chain = new PayoutProbeChain(new InMemoryChainService());
         chain.Inner.FundTreasury(50_000);
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        {
+            b.UseSetting("Game:DailyRewardEnabled", "true");
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain));
+        });
 
         var (alice, dto) = await factory.RegisterAsync("Daily-Retry");
         await alice.ClaimStartersAsync();

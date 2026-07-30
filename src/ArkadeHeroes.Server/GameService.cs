@@ -1828,6 +1828,19 @@ public class GameService(
     /// retry without losing the day.</summary>
     public async Task<Shared.DailyClaimResultDto> ClaimDailyAsync(Player player, CancellationToken ct)
     {
+        // Refused outright unless the operator opened the faucet. Default-off because on an open signup
+        // this pays real sats to anyone who can make a keypair, and a keypair is free.
+        if (!_options.DailyRewardEnabled)
+            throw new GameRuleException("The daily reward is not available on this server.");
+
+        // A wallet with no heroes is not a player, it is an address. Requiring one raises the cost of a
+        // farmed account from "generate a key" to "also claim starters", which is the gate that actually
+        // has a price attached — and it keeps the faucet pointed at people who are playing. Cheap enough
+        // to check before taking the lock: it moves no money, and racing a concurrent starter claim can
+        // only refuse a reward the player can immediately retry for.
+        if (!store.Heroes.Values.Any(h => h.OwnerId == player.Id))
+            throw new GameRuleException("Claim your starter heroes before collecting a daily reward.");
+
         // Per-player gate: the claimed-today check, the day-consuming write, and the payout below must
         // be one atomic step — the client poll-retries, so two concurrent claims would otherwise both
         // pass the guard and the faucet would pay twice off the same treasury reading.

@@ -1,9 +1,16 @@
+@inject ArkadeHeroesClient Api
 @inject GameSession Session
 @inject WalletState State
 @implements IDisposable
 
 @* The daily engagement loop, shared by the Home banner and the /daily page: today's quests,
-   the streak, and a once-a-day sats claim. Signed-out shows the Play nudge. *@
+   the streak, and a once-a-day sats claim. Signed-out shows the Play nudge.
+
+   Renders nothing at all when the server has the faucet closed, which is how it ships. Offering a
+   Claim button that is guaranteed to come back "not available on this server" would be worse than
+   silence: it reads as a broken game rather than a feature this operator has not switched on. *@
+@if (_faucetOpen)
+{
 <div class="card">
     <div class="page-head" style="margin:0 0 .5rem">
         <h3 style="margin:0">Daily rewards</h3>
@@ -54,6 +61,7 @@
         }
     }
 </div>
+}
 
 @code {
     private DailyStatusDto? _status;
@@ -62,16 +70,22 @@
     private string? _flash;
     private string? _error;
 
+    /// <summary>Whether this server pays a daily reward at all. Defaults to hidden, so a server we
+    /// cannot reach shows nothing rather than a button that cannot work.</summary>
+    private bool _faucetOpen;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnState;
         _wasSignedIn = State.IsSignedIn;
+        try { _faucetOpen = (await Api.Chain.InfoAsync()).Config?.DailyRewardEnabled ?? false; }
+        catch { _faucetOpen = false; }
         await LoadAsync();
     }
 
     private async Task LoadAsync()
     {
-        if (!State.IsSignedIn) { _status = null; StateHasChanged(); return; }
+        if (!_faucetOpen || !State.IsSignedIn) { _status = null; StateHasChanged(); return; }
         try { _status = await Session.DailyStatusAsync(); }
         catch { _status = null; }
         StateHasChanged();

@@ -19,11 +19,12 @@ public class EconomyHealthTests
     [Fact]
     public async Task Health_TalliesDailyPayoutOnce_AndReflectsBalance()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         chain.FundTreasury(50_000);
 
         var (player, _) = await factory.RegisterAsync("Econ-Daily");
+        await player.ClaimStartersAsync();   // the faucet only pays players who own a hero
 
         var before = await player.Economy.HealthAsync();
         Assert.Equal(50_000, before.TreasuryBalanceSats);

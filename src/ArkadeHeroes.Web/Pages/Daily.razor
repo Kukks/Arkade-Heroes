@@ -1,4 +1,5 @@
 @page "/daily"
+@inject ArkadeHeroesClient Api
 
 <PageTitle>Daily · Arkade Heroes</PageTitle>
 
@@ -13,11 +14,26 @@
     <SeasonPassCard />
 </div>
 
-<div class="card muted" style="margin-top:1.2rem">
-    <h3 style="margin:0 0 .4rem">How it works</h3>
-    <p style="margin:0">
-        Claim a base reward just for showing up each day, plus a bonus for every daily quest you finish —
-        win a duel, clear a gauntlet, breed, and more. Consecutive days multiply your payout, up to double.
-        The board resets at midnight UTC.
-    </p>
-</div>
+@* The explainer is conditional on the same flag as the card it explains. Describing a base reward and
+   a streak multiplier on a server that pays neither would be the one kind of copy worth deleting. *@
+@if (_faucetOpen)
+{
+    <div class="card muted" style="margin-top:1.2rem">
+        <h3 style="margin:0 0 .4rem">How it works</h3>
+        <p style="margin:0">
+            Claim a base reward just for showing up each day, plus a bonus for every daily quest you finish —
+            win a duel, clear a gauntlet, breed, and more. Consecutive days multiply your payout, up to double.
+            The board resets at midnight UTC.
+        </p>
+    </div>
+}
+
+@code {
+    private bool _faucetOpen;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _faucetOpen = (await Api.Chain.InfoAsync()).Config?.DailyRewardEnabled ?? false; }
+        catch { _faucetOpen = false; }
+    }
+}

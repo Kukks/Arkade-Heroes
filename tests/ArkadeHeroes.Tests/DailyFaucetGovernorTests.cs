@@ -10,7 +10,7 @@ public class DailyFaucetGovernorTests
     [Fact]
     public async Task Claim_OnEmptyTreasury_PaysZero_DoesNotThrow_StreakStillAdvances()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen();
         var (alice, _) = await factory.RegisterAsync("Daily-Gov");
         await alice.ClaimStartersAsync();
 
@@ -26,7 +26,7 @@ public class DailyFaucetGovernorTests
     [Fact]
     public async Task Claim_CapsToPartialTreasury()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen();
         var (alice, _) = await factory.RegisterAsync("Daily-Gov-Partial");
         await alice.ClaimStartersAsync();
         await alice.Dev.FundTreasuryAsync(new { Sats = 20L });   // less than the 50-sat base reward

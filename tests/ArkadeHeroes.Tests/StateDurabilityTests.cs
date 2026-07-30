@@ -17,8 +17,14 @@ namespace ArkadeHeroes.Tests;
 /// </summary>
 public class StateDurabilityTests
 {
-    private static WebApplicationFactory<Program> HostOn(string dbPath) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseSetting("Game:StateDbPath", dbPath));
+    /// <summary>A host on a given state DB. The daily faucet ships closed, and opt-in rather than blanket
+    /// so the 20-odd hosts here that never touch it keep testing the shipped configuration.</summary>
+    private static WebApplicationFactory<Program> HostOn(string dbPath, bool dailyFaucetOpen = false) =>
+        new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("Game:StateDbPath", dbPath);
+            if (dailyFaucetOpen) b.UseSetting("Game:DailyRewardEnabled", "true");
+        });
 
     [Fact]
     public async Task PaidButUnclaimedPurchase_SurvivesARestart()
@@ -101,7 +107,7 @@ public class StateDurabilityTests
         try
         {
             string playerId;
-            using (var first = HostOn(dbPath))
+            using (var first = HostOn(dbPath, dailyFaucetOpen: true))
             {
                 var chain = (ArkadeHeroes.Chain.InMemoryChainService)
                     first.Services.GetRequiredService<ArkadeHeroes.Chain.IChainService>();
