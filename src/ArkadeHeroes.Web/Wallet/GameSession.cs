@@ -870,7 +870,8 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
 
     /// <summary>
     /// Reclaim ONE stranded covenant escrow back to the player's own wallet — the browser half of the
-    /// console's <c>canceloffer</c> / <c>refund-breed</c> / <c>refund-merge</c>. Trustless by construction:
+    /// console's <c>canceloffer</c> / <c>refund-breed</c> / <c>refund-merge</c> / <c>refund</c> /
+    /// <c>refund-death</c>. Trustless by construction:
     /// the contract is rebuilt in the browser from the escrow's public params and the reclaim leaf is
     /// script-pinned to the player's own address, so the server supplies verifiable parameters and nothing
     /// more — a lying server can make this fail, never divert the asset.
@@ -912,6 +913,16 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
             case "merge":
                 await MergeEscrowRefundFlow.ReclaimAsync(services, w.Id, address, emulator,
                     await api.Merge.EscrowAsync(item.Id), ChainTime);
+                break;
+            case "wager":
+                await EscrowRefundFlow.RefundAsync(services, w.Id, address, emulator,
+                    await api.Matches.EscrowAsync(item.Id), ChainTime);
+                break;
+            case "deathmatch":
+                // The JOINT escrow: this spends only MY reclaim{Side} leaf, which the covenant bounds to my
+                // own hero and gear — so a half-funded escrow (the opponent never staked) comes home too.
+                await DeathMatchRefundFlow.ReclaimAsync(services, w.Id, address, emulator,
+                    await api.DeathMatch.EscrowAsync(item.Id), ChainTime);
                 break;
             default:
                 // A kind this build has no flow for. Say so rather than silently doing nothing — the

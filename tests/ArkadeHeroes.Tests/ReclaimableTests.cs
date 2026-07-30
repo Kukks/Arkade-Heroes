@@ -85,4 +85,98 @@ public class ReclaimableTests
         Assert.Equal("breed", stuck.Kind);
         Assert.Equal(commit.BreedingId, stuck.Id);
     }
+
+    [Fact]
+    public async Task StakedCovenantWager_IsReclaimable()
+    {
+        // A wagered duel whose stake is in the per-party escrow. Real sats, and the only way back is the
+        // covenant's timelocked refund leaf — the console has had `refund <matchId>` for ages, so the
+        // browser needs to be able to SEE the stake to spend the same leaf.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("RC-Wager-A");
+        var (bob, _) = await factory.RegisterAsync("RC-Wager-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = await alice.Matches.OpenAsync(
+            new OpenMatchRequest(a[0].Id, b[0].Id, 4_000, "covenant"));
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+
+        var stuck = Assert.Single(await alice.Players.ReclaimableAsync());
+        Assert.Equal("wager", stuck.Kind);
+        Assert.Equal(open.MatchId, stuck.Id);
+        Assert.Contains("4000-sat stake", stuck.Summary);
+    }
+
+    [Fact]
+    public async Task CovenantWager_ListsOnlyTheSideThatActuallyStaked()
+    {
+        // The wager's escrows are PER-PARTY, so "is the escrow funded" is the wrong question — the right
+        // one is whose stake is in it. Bob accepted and so is a party to the match, but never staked: he
+        // has nothing to recover, and a row offering him one could only ever fail.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("RC-WagerSide-A");
+        var (bob, _) = await factory.RegisterAsync("RC-WagerSide-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = await alice.Matches.OpenAsync(
+            new OpenMatchRequest(a[0].Id, b[0].Id, 4_000, "covenant"));
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        await bob.Matches.AcceptAsync(open.MatchId);
+
+        Assert.Equal("wager", Assert.Single(await alice.Players.ReclaimableAsync()).Kind);
+        Assert.Empty(await bob.Players.ReclaimableAsync());
+    }
+
+    [Fact]
+    public async Task SettledCovenantWager_IsNotReclaimable()
+    {
+        // The duel resolved, so the escrows were SWEPT by the settle — nothing is left to reclaim for
+        // either side. This is gated on the match's own status rather than on a funding probe, and it has
+        // to be: a settled escrow's per-party funding can still read as staked, so a funding-only gate
+        // would leave every finished duel on this page forever behind a button that cannot work.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("RC-WagerSettled-A");
+        var (bob, _) = await factory.RegisterAsync("RC-WagerSettled-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = await alice.Matches.OpenAsync(
+            new OpenMatchRequest(a[0].Id, b[0].Id, 4_000, "covenant"));
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
+        await bob.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        await alice.PayInvoiceAsync(open.MatchFeeInvoice!.InvoiceId);
+        await bob.PayInvoiceAsync(accept.MatchFeeInvoice!.InvoiceId);
+        await alice.Matches.FightAsync(open.MatchId, new FightRequest("rc-settled"));
+
+        Assert.Empty(await alice.Players.ReclaimableAsync());
+        Assert.Empty(await bob.Players.ReclaimableAsync());
+    }
+
+    [Fact]
+    public async Task HalfFundedDeathMatch_IsReclaimableByTheHeroesStaker()
+    {
+        // The death-match escrow is JOINT — one address, both heroes — but its reclaim leaf is PER SIDE and
+        // purely structural, so the staker recovers their hero even though the opponent never showed. That
+        // is why this must NOT be gated on IsDeathMatchEscrowFundedAsync, which is true only once BOTH
+        // heroes are in: the half-funded escrow is precisely the one holding a hero with no way forward.
+        // Bob, who never accepted, still holds his hero and so has nothing here.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("RC-DM-A");
+        var (bob, _) = await factory.RegisterAsync("RC-DM-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(
+            new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+
+        var stuck = Assert.Single(await alice.Players.ReclaimableAsync());
+        Assert.Equal("deathmatch", stuck.Kind);
+        Assert.Equal(open.DeathMatchId, stuck.Id);
+        Assert.Contains(a[0].Name, stuck.Summary);
+        Assert.Empty(await bob.Players.ReclaimableAsync());
+    }
 }

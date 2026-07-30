@@ -1,6 +1,12 @@
 using System.Text.Json;
 using ArkadeHeroes.Chain.NArk;
+using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
+using NArk.Abstractions.Intents;
+using NArk.Abstractions.Safety;
+using NArk.Abstractions.VTXOs;
+using NArk.Abstractions.Wallets;
+using NArk.Core.Services;
 using NBitcoin;
 
 namespace ArkadeHeroes.Chain.Covenants;
@@ -32,41 +38,61 @@ public sealed class RefundNotYetDueException(long dueUnixSeconds, long chainUnix
 /// </summary>
 public static class EscrowRefundFlow
 {
-    /// <summary>
-    /// Reclaims the caller's stake from an abandoned covenant match.
-    /// Trustless by construction: the contracts are rebuilt locally from
-    /// <paramref name="parameters"/>, and the refund leaf can only pay the
-    /// caller's own address — a lying server can make this fail, never steal.
-    /// </summary>
+    /// <summary>Refunds from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
     /// <returns>The emulator's co-signed response for the refund transaction.</returns>
-    public static async Task<EmulatorSubmitResponse> RefundAsync(
+    public static Task<EmulatorSubmitResponse> RefundAsync(
         SelfCustodyWallet wallet,
         Uri emulatorUri,
         WagerEscrowParams parameters,
         Func<CancellationToken, Task<long>> chainMedianTime,
         TimeSpan? vtxoTimeout = null,
         CancellationToken ct = default)
+        => RefundAsync(wallet.Services, wallet.WalletId, wallet.Address,
+            emulatorUri, parameters, chainMedianTime, vtxoTimeout, ct);
+
+    /// <summary>
+    /// Service-level refund — runs against any NArk service graph (a player wallet's isolated
+    /// container OR a browser's Blazor DI), so the console and the browser share ONE implementation
+    /// of this covenant spend rather than each carrying its own.
+    ///
+    /// Reclaims the caller's stake from an abandoned covenant match. Trustless by
+    /// construction: the contracts are rebuilt locally from <paramref name="parameters"/>,
+    /// and the refund leaf can only pay the caller's own address — a lying server can
+    /// make this fail, never steal.
+    /// </summary>
+    /// <returns>The emulator's co-signed response for the refund transaction.</returns>
+    public static async Task<EmulatorSubmitResponse> RefundAsync(
+        IServiceProvider services,
+        string walletId,
+        string playerAddress,
+        Uri emulatorUri,
+        WagerEscrowParams parameters,
+        Func<CancellationToken, Task<long>> chainMedianTime,
+        TimeSpan? vtxoTimeout = null,
+        CancellationToken ct = default)
     {
-        var transport = wallet.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
 
         var (challengerContract, defenderContract) =
             WagerEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
 
-        var isChallenger = wallet.Address == parameters.ChallengerAddress;
-        var isDefender = wallet.Address == parameters.DefenderAddress;
+        var isChallenger = playerAddress == parameters.ChallengerAddress;
+        var isDefender = playerAddress == parameters.DefenderAddress;
         if (!isChallenger && !isDefender)
             throw new InvalidOperationException(
-                $"This wallet ({wallet.Address}) is not a party to match {parameters.MatchId}.");
+                $"This wallet ({playerAddress}) is not a party to match {parameters.MatchId}.");
         var myContract = isChallenger ? challengerContract : defenderContract;
-        var myScript = ArkAddress.Parse(wallet.Address).ScriptPubKey;
+        var myScript = ArkAddress.Parse(playerAddress).ScriptPubKey;
 
         IReadOnlyList<global::NArk.Abstractions.VTXOs.ArkVtxo> vtxos;
         try
         {
-            vtxos = await CovenantSpender.WaitForVtxosAsync(
-                wallet, myContract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
+            vtxos = await CovenantSpender.WaitForVtxosCoreAsync(
+                services.GetRequiredService<VtxoSynchronizationService>(),
+                services.GetRequiredService<IVtxoStorage>(),
+                myContract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
         }
         catch (TimeoutException)
         {
@@ -85,8 +111,12 @@ public static class EscrowRefundFlow
             throw new RefundNotYetDueException(parameters.RefundAfterUnixSeconds, chainNow);
 
         // Single canonical submission — no retry, no fallback (see class doc).
-        return await CovenantSpender.SpendManyAsync(
-            wallet, emulatorUri,
+        return await CovenantSpender.SpendManyCoreAsync(
+            transport,
+            services.GetRequiredService<ISafetyService>(),
+            services.GetRequiredService<IWalletProvider>(),
+            services.GetRequiredService<IIntentStorage>(),
+            walletId, emulatorUri,
             [
                 new CovenantSpender.CovenantInput(
                     myContract, "refund", [ArkadeCovenants.EncodeIndex(0)], stake,

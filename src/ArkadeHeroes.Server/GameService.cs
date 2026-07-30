@@ -2497,13 +2497,25 @@ public class GameService(
 
     /// <summary>
     /// This player's covenant escrows that may still hold their assets with no path forward: a listing
-    /// whose asset is deposited but has not closed, and breed/merge deposits that were never revealed.
+    /// whose asset is deposited but has not closed, breed/merge deposits that were never revealed, and
+    /// the two abandonable STAKES — a wagered duel's sats and a death-match's hero (plus its gear).
     /// The timelocked reclaim leaf recovers each one from the player's OWN wallet, so this is DISCOVERY
     /// ONLY — someone who knows the id can always reclaim whether or not this endpoint lists it.
     /// Breed and merge are listed whenever the session is unfinished, NOT only when the escrow reads
     /// fully funded: a run that died between the two parent deposits leaves assets escrowed while
     /// IsBreedEscrowFundedAsync still reports false, and that is precisely the case worth surfacing.
     /// Reclaiming an escrow that turns out to be empty is harmless; hiding one that holds a hero is not.
+    ///
+    /// The two stakes follow that same ruling with the precision each escrow shape allows. A wager has
+    /// PER-PARTY escrows, so GetWagerEscrowFundingAsync answers exactly the question that matters — is
+    /// THIS player's stake on-chain — and the row appears only when it is. A death-match instead has ONE
+    /// JOINT escrow with no per-side funding probe: IsDeathMatchEscrowFundedAsync is true only once BOTH
+    /// heroes are in, so gating on it would hide the half-funded escrow, which is the very case a stranded
+    /// hero sits in. That escrow IS recoverable half-funded — the reclaim{Side} leaf is per-side and
+    /// structural (NumAssetGroupsIs + AssetInputSumIs over MY assets only, never the counterparty's), so
+    /// one side reclaims without the other ever having staked. Death-matches therefore list like breed and
+    /// merge, on the session being unfinished. The defender is the one exception: they are handed the joint
+    /// address only BY accepting, so before accept they have staked nothing and a row would be pure noise.
     /// </summary>
     public async Task<IReadOnlyList<Shared.ReclaimableDto>> ListReclaimableAsync(Player player, CancellationToken ct)
     {
@@ -2536,6 +2548,39 @@ public class GameService(
                 items.Add(new Shared.ReclaimableDto("merge", merge.Id,
                     $"An unfinished fusion — the base and sacrifice heroes and the {merge.FeeSats}-sat fee may be escrowed.",
                     p.RefundAfterUnixSeconds));
+
+        // Probe the chain for abandonment first, exactly as the offer branch reconciles first — a match
+        // whose stake was already refunded must not keep offering a reclaim that can only fail.
+        await ReconcileAbandonedMatchesAsync(ct);
+        foreach (var match in store.Matches.Values
+                     .Where(m => m.Mode == "covenant" && m.Status != "resolved"
+                                 && (m.ChallengerPlayerId == player.Id || m.DefenderPlayerId == player.Id)).ToList())
+        {
+            // Only THIS player's side matters. The stake is sats at a per-party address, so a funded probe
+            // of the other side says nothing about whether this player has anything to recover.
+            var funding = await chain.GetWagerEscrowFundingAsync(match.Id, ct);
+            if (funding is null) continue;
+            var mine = match.ChallengerPlayerId == player.Id ? funding.ChallengerFunded : funding.DefenderFunded;
+            if (!mine) continue;
+            if (await chain.GetWagerEscrowParamsAsync(match.Id, ct) is { } p)
+                items.Add(new Shared.ReclaimableDto("wager", match.Id,
+                    $"An unfinished duel — your {match.WagerSats}-sat stake is escrowed.",
+                    p.RefundAfterUnixSeconds));
+        }
+
+        foreach (var dm in store.DeathMatches.Values
+                     .Where(d => !d.Completed
+                                 && (d.ChallengerPlayerId == player.Id
+                                     // Accepting IS staking, so before it the defender holds their hero still.
+                                     || (d.DefenderPlayerId == player.Id && d.Accepted))).ToList())
+            if (await chain.GetDeathMatchEscrowParamsAsync(dm.Id, ct) is { } p)
+            {
+                var heroId = dm.ChallengerPlayerId == player.Id ? dm.ChallengerHeroId : dm.DefenderHeroId;
+                var name = store.Heroes.TryGetValue(heroId, out var hero) ? hero.Name : "Your hero";
+                items.Add(new Shared.ReclaimableDto("deathmatch", dm.Id,
+                    $"An unfinished death-match — {name} and any gear staked with them may be escrowed.",
+                    p.RefundAfterUnixSeconds));
+            }
 
         // Soonest-unlockable first, tie-broken on the unique id so the order is total (see #113).
         return items.OrderBy(i => i.ReclaimAfterUnixSeconds)
