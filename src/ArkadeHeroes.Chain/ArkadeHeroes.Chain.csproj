@@ -8,6 +8,26 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <!--
+      CVE-2025-6965 (GHSA-2m69-gcr7-jv3q, CVSS 7.2): SQLite before 3.50.2 lets the number of aggregate
+      terms exceed the columns available, corrupting memory. EF Core pulls the native library through
+      SQLitePCLRaw, and EF 10.0.10 — the newest — STILL pins bundle_e_sqlite3/core 2.1.11, whose bundled
+      SQLite is affected. So there is no supported fix to wait for at the EF level.
+
+      lib.e_sqlite3 is a PURE NATIVE-ASSET package (its nuspec declares no dependencies at all — just
+      "builds of the native SQLite code for various platforms"), while the managed P/Invoke surface lives
+      in SQLitePCLRaw.core. Naming it here therefore swaps ONLY the native binary for a patched build and
+      leaves the managed stack on the 2.1.11 that EF expects. The alternative — bundle_e_sqlite3 3.0.5 — is
+      a major bump that restructures the graph and would leave core at 2.1.11 anyway, i.e. a mixed 2.1/3.0
+      provider stack under an EF pinned to 2.1.11. Same benefit, worse risk.
+
+      Version chosen for the WASM side too, deliberately: this package version scheme now tracks the
+      bundled SQLite, and 3.50.3 ships runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a — the exact
+      asset our net10.0 browser build already resolves from 2.1.11 (neither version ships a net10.0 one),
+      so the in-browser wallet's storage swaps like-for-like. Keep this in step with ArkadeHeroes.Web.
+      Drop this line once EF's own SQLitePCLRaw floor reaches a patched SQLite.
+    -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
   <PropertyGroup>
