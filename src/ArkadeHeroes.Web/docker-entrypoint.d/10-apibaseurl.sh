@@ -21,7 +21,24 @@
 set -eu
 
 : "${API_BASE_URL:=http://localhost:5210}"
+# Which Ark network the IN-BROWSER wallet dials (arkd + esplora). regtest | mutinynet | mainnet.
+# It lives in this script rather than a sibling because both keys share one file — two scripts
+# each rewriting appsettings.json would clobber whichever ran first.
+: "${ARK_NETWORK:=regtest}"
 target=/usr/share/nginx/html/appsettings.json
+
+# Reject an unknown network HERE, at container start, instead of shipping a bundle that throws
+# in the browser after the user has already loaded the app. Program.cs refuses it too; this is
+# the copy that fails while there is still a container log to read it in.
+case "$ARK_NETWORK" in
+  regtest|mutinynet|mainnet) ;;
+  *)
+    echo "10-apibaseurl.sh: FATAL: ARK_NETWORK='$ARK_NETWORK' is not a known network." >&2
+    echo "  Use regtest, mutinynet or mainnet. Refusing to start rather than defaulting —" >&2
+    echo "  a wallet silently on the wrong network puts player funds out of reach." >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -f "$target" ]; then
   echo "10-apibaseurl.sh: FATAL: $target is missing from the published bundle." >&2
@@ -36,7 +53,8 @@ escaped=$(printf '%s' "$API_BASE_URL" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 
 cat > "$target" <<JSON
 {
-  "ApiBaseUrl": "${escaped}"
+  "ApiBaseUrl": "${escaped}",
+  "ArkNetwork": "${ARK_NETWORK}"
 }
 JSON
 
@@ -53,4 +71,4 @@ JSON
 # is a few dozen bytes, so there is nothing to gain by compressing it.
 rm -f "$target.gz" "$target.br"
 
-echo "10-apibaseurl.sh: ApiBaseUrl set to ${API_BASE_URL}"
+echo "10-apibaseurl.sh: ApiBaseUrl=${API_BASE_URL} ArkNetwork=${ARK_NETWORK}"
