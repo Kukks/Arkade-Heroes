@@ -1,0 +1,274 @@
+@page "/tech"
+
+@* How the game is actually built. Every claim here is something the repository does — the opcodes are
+   the ones ArkadeCovenants emits, the flows are the ones that run, and where something is enforced by
+   the server rather than by a covenant it says so. TechPageTests keeps the opcode table honest. *@
+
+<PageTitle>How it works · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>How it works</h2>
+    <span class="hud">covenants, assets, and why you don't have to trust us</span>
+    <span class="spacer"></span>
+    <a class="btn ghost" href="/">← back to the arena</a>
+</div>
+
+<p class="muted codex-intro">
+    Most games ask you to trust a database. This one is built so you mostly don't have to: your heroes
+    are Bitcoin assets you hold, the rules that move them are enforced by script rather than by our good
+    behaviour, and every outcome we publish can be re-derived on your own machine.
+</p>
+
+@* ---- ASSETS ---------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2rem"><h3 style="margin:0">A hero is an asset, not a row</h3>
+    <span class="hud">arkade assets on bitcoin</span></div>
+<div class="grid cols">
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Yours, in your wallet</h4>
+        <p class="muted tech-p">
+            Each hero is an Arkade asset held at your own address. We never custody it. If this server
+            disappeared tomorrow the asset would still be yours, and the strand that defines the creature
+            is committed in its genesis — so anybody can rebuild the same hero from it.
+        </p>
+    </div>
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">The strand is the record</h4>
+        <p class="muted tech-p">
+            A hero's stats and look are not stored in a database row — they are <em>derived</em> from its
+            strand every time, so there is no field for us to edit. The strand itself, its generation,
+            both parents and the very seed that produced it are written into the asset's own metadata
+            when it is minted, which is what makes a bloodline auditable years later by someone who has
+            never spoken to us.
+        </p>
+    </div>
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Gear and XP too</h4>
+        <p class="muted tech-p">
+            Equipment and earned experience are assets in their own right, not counters on an account.
+            That is what lets them be staked, traded and — in a death match — genuinely lost.
+        </p>
+    </div>
+</div>
+
+@* ---- ARKADE SCRIPT --------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Arkade Script</h3>
+    <span class="hud">the rules, written as spending conditions</span></div>
+<p class="muted cx-note">
+    Arkade Script lets a spending condition look at the transaction that is trying to spend it. That is
+    the whole trick: instead of asking a server to promise it will do the right thing, the coin itself
+    refuses to move unless the transaction has the right <b>shape</b>.
+</p>
+
+<div class="card">
+    <div class="hud">The simplest one we use — pay exactly this address, exactly this amount</div>
+    <pre class="tech-code"><code>DUP INSPECTOUTPUTSCRIPTPUBKEY 1 EQUALVERIFY &lt;witness program&gt; EQUALVERIFY
+INSPECTOUTPUTVALUE &lt;amount&gt; EQUAL</code></pre>
+    <p class="muted tech-p" style="margin-top:.6rem">
+        The witness supplies an output index; the script insists that output is a P2TR paying a specific
+        key, and that its value is exactly the amount baked into the script. Nobody can redirect it,
+        including us.
+    </p>
+</div>
+
+<div class="card" style="margin-top:1rem;overflow-x:auto">
+    <div class="hud" style="margin-bottom:.6rem">The introspection opcodes this game leans on</div>
+    <table class="codex-table">
+        <thead><tr><th>Op</th><th>Name</th><th>What the covenant learns</th></tr></thead>
+        <tbody>
+            @foreach (var op in Opcodes)
+            {
+                <tr>
+                    <td class="mono">@op.Code</td>
+                    <td class="mono">@op.Name</td>
+                    <td class="muted">@op.Does</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <p class="codex-foot" style="margin-top:.7rem">
+        The asset ones are what make a game possible rather than just a payment. A covenant that can count
+        the assets at an output, find a group by asset id, and sum a group across inputs and outputs can
+        express "this hero must be destroyed", "the child must land here", "exactly one asset, to that
+        player" — as a spending rule.
+    </p>
+</div>
+
+@* ---- STRUCTURAL ------------------------------------------------------------------------ *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Structural enforcement</h3>
+    <span class="hud">we sign the verdict; the script fixes the consequences</span></div>
+<p class="muted cx-note">
+    Be precise about this, because it is the part people get wrong. The server still <b>signs the
+    outcome</b> — who won, what the child's strand is — and the covenant checks that signature. What
+    changed is that a signature is no longer <em>enough</em>. Alongside it, the script checks the
+    shape of the transaction itself: which assets must be destroyed, which must survive, and whose
+    address every one of them lands at.
+</p>
+<p class="muted cx-note">
+    So the operator can decide a verdict. It cannot pay the pot to itself, keep a child it was supposed
+    to hand over, quietly leave a "burned" hero alive, or fail to give your parents back — none of those
+    transactions are spendable, no matter who signed them.
+</p>
+<div class="grid cols">
+    @foreach (var c in Covenants)
+    {
+        <div class="card">
+            <div class="hud">@c.Name</div>
+            <h4 style="margin:.25rem 0 .5rem">@c.Headline</h4>
+            <p class="muted tech-p">@c.Detail</p>
+        </div>
+    }
+</div>
+
+@* ---- SWAPS ----------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Non-interactive swaps</h3>
+    <span class="hud">nobody has to be online</span></div>
+<div class="card">
+    <p class="muted tech-p" style="max-width:76ch">
+        Listing a hero or an item does not park it with us. The seller deposits the asset into a covenant
+        address built from the offer's own terms, and then walks away. <b>Anyone</b> can fulfil it later
+        by building one transaction that takes the asset and pays the seller the ask — the covenant will
+        not permit any other shape, so the swap is atomic: either both legs happen or neither does.
+    </p>
+    <div class="tech-flow">
+        <span class="tech-step">seller deposits the asset</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step">offer rests at its own address</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step">any buyer pays the ask in one tx</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step out">asset and payment settle together</span>
+    </div>
+    <p class="codex-foot" style="max-width:76ch">
+        No escrow agent, no counterparty online, no trusted matching. If nobody buys, the seller reclaims
+        it after the offer expires — again without asking us. The marketplace fee is a leg of the same
+        covenant, so it cannot be skipped and cannot be inflated.
+    </p>
+</div>
+
+@* ---- RANDOMNESS ------------------------------------------------------------------------ *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Randomness you can check</h3>
+    <span class="hud">commit, contribute, reveal</span></div>
+<div class="card">
+    <div class="tech-flow">
+        <span class="tech-step">we publish SHA256(seed)</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step">you add your own nonce</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step">the action resolves</span>
+        <span class="tech-arrow">→</span>
+        <span class="tech-step out">we reveal the seed</span>
+    </div>
+    <p class="muted tech-p" style="max-width:76ch">
+        We commit to a secret seed <em>before</em> knowing what you will do, and you mix in a value we
+        cannot predict. Afterwards the seed is revealed, and the commitment proves it is the same one —
+        so we could not have picked a seed that suited us, and you could not have picked a nonce that
+        suited you. The entropy is then <span class="mono">SHA256(seed ‖ context)</span>, with every part
+        length-prefixed so two different contexts can never collide into the same roll.
+    </p>
+    <p class="codex-foot" style="max-width:76ch">
+        Everything downstream is a pure function of that entropy: a bred child, a fusion, an absorbed
+        trait, a bracket. Nothing rolls behind a curtain.
+    </p>
+</div>
+
+@* ---- VERIFIABLE OUTCOMES ---------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Fights you can re-run</h3>
+    <span class="hud">don't trust the result — recompute it</span></div>
+<div class="card">
+    <p class="muted tech-p" style="max-width:76ch">
+        Combat is deterministic. Given the two heroes, their gear and the revealed entropy, the fight has
+        exactly one outcome, and your own client replays it blow by blow to confirm the one we reported.
+        The same holds for a bred child, a fusion, an absorb, a gauntlet, a squad match and a tournament
+        bracket — each has its own verifier.
+    </p>
+    <p class="muted tech-p" style="max-width:76ch">
+        Rules change over time, so every published outcome carries a stamp of the rules version it was
+        resolved under, and the exact rule set for any version can be fetched and checked. An old replay
+        stays verifiable under the rules it actually ran on rather than silently failing against today's.
+        A server that served rules other than the ones it stamped is caught by your client's own
+        recompute — not taken on its word.
+    </p>
+</div>
+
+@* ---- MUTATION -------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Mutation, without a dice roll we control</h3>
+    <span class="hud">deterministic, domain-separated</span></div>
+<div class="card">
+    <p class="muted tech-p" style="max-width:76ch">
+        A breeding does not "roll" anything at runtime. The parents and the entropy are hashed into a
+        fixed pool of bytes, and each trait reads its own slice of that pool to decide what is inherited,
+        whether a hidden trait surfaces, and whether a mutation fires. Same inputs, same child, forever —
+        which is exactly what makes it checkable.
+    </p>
+    <p class="muted tech-p" style="max-width:76ch">
+        Each operation hashes with its own domain tag, so the pool that decides a <b>breeding</b> can
+        never be reused as the pool that decides a <b>fusion</b>, an <b>absorb</b>, or whether a hero is
+        born <b>sterile</b>. Without that separation, one roll could be replayed to predict another.
+    </p>
+</div>
+
+@* ---- LIMITS ---------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">What is not covenant-enforced</h3>
+    <span class="hud">the honest part</span></div>
+<div class="card">
+    <p class="muted tech-p" style="max-width:76ch">
+        Not everything is. Matchmaking, the ladder, the daily loop and the season pot are ordinary server
+        logic — the covenants secure <em>custody and settlement</em>, not every rule of play. What that
+        buys you is the part that matters most: nobody can take a hero off you, mint one that was never
+        bred, spend a stake to the wrong place, or strand your escrow. Where you must trust the operator,
+        it is about scheduling and bookkeeping rather than ownership.
+    </p>
+    <p class="codex-foot" style="max-width:76ch">
+        And if the operator vanishes mid-flow, the escrows have timelocked reclaim paths you can take
+        yourself — that is what the reclaim page is for.
+    </p>
+</div>
+
+<p class="codex-note muted" style="margin-top:2rem">
+    Sats in this game are real bitcoin. That is the point, and it is also the risk — read the terms.
+</p>
+
+@code {
+    record Op(string Code, string Name, string Does);
+
+    // The opcodes ArkadeCovenants actually emits. Pinned by TechPageTests against the constants there.
+    static readonly Op[] Opcodes =
+    [
+        new("0xc9", "INSPECTINPUTVALUE", "What an input being spent was worth."),
+        new("0xcc", "CHECKSIGFROMSTACK", "That the operator really signed this verdict — the gate the structural checks sit alongside."),
+        new("0xcf", "INSPECTOUTPUTVALUE", "What an output is paying."),
+        new("0xd1", "INSPECTOUTPUTSCRIPTPUBKEY", "Who an output pays — the check behind every 'must go here'."),
+        new("0xe5", "INSPECTNUMASSETGROUPS", "How many distinct assets this transaction touches at all."),
+        new("0xe8", "FINDASSETGROUPBYASSETID", "Whether a specific asset is present, and where."),
+        new("0xeb", "INSPECTASSETGROUP", "An asset group's output index and amount."),
+        new("0xec", "INSPECTASSETGROUPSUM", "An asset's total across inputs, outputs, or both — how a burn is proven."),
+        new("0xed", "INSPECTOUTASSETCOUNT", "How many assets sit at one output — how 'exactly one' is enforced."),
+    ];
+
+    record Cov(string Name, string Headline, string Detail);
+
+    static readonly Cov[] Covenants =
+    [
+        new("Breeding", "The child must land in your wallet",
+            "Both parents are escrowed, and the covenant only releases when the transaction actually "
+            + "creates the child asset at the output paying you. The server cannot keep the child, "
+            + "swap it, or quietly mint a second one."),
+        new("Fusion", "Two in, one out — and the second is really gone",
+            "The sacrificed hero must be destroyed in the same transaction that forges the result. "
+            + "There is no path that produces the new hero while leaving the old one alive."),
+        new("Death match", "The loser is burned, the winner is paid",
+            "Both heroes and both stakes go into one joint escrow. Settlement is only valid if the "
+            + "losing hero's asset is provably burned and the pot lands at the winner — checked by "
+            + "summing the asset across the transaction, not by trusting a result we posted."),
+        new("Offers", "Take the asset only by paying the ask",
+            "The item or hero rests in a covenant that permits exactly two shapes: a fulfilment that "
+            + "pays the seller (and the fee) in the same transaction, or a reclaim by the seller after "
+            + "expiry. Nothing else spends it."),
+        new("Wagers", "The pot can only go to a party",
+            "A staked match escrows both stakes. The settle path is bound to the parties' own scripts, "
+            + "so the pot cannot be paid to a third address even by the server that arbitrates."),
+        new("Reclaim", "You can always get your own stake back",
+            "Every escrow has a timelocked path you can take without the server's help, so a crash, a "
+            + "disappearance or an abandoned opponent cannot strand your hero or your sats."),
+    ];
+}
