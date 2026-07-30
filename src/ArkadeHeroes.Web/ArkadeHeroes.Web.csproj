@@ -14,6 +14,13 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
     <PackageReference Include="Bit.Besql" Version="10.4.3" />
+    <!-- Patched native SQLite for CVE-2025-6965 — full reasoning in ArkadeHeroes.Chain.csproj. This is the
+         copy that matters most: it is the SQLite the NON-CUSTODIAL WALLET runs on, in the player's own
+         browser, holding the keys to their heroes and their sats. Bit.Besql brings the vulnerable native
+         library in here independently of EF, so the pin has to be named on this project too.
+         3.50.3 ships runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a, which is the asset this
+         net10.0 WASM build already resolved out of 2.1.11 — neither version ships a net10.0 one. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
   <!--
