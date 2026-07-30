@@ -2381,6 +2381,10 @@ public class GameService(
             ListingFeeSats = fee,
         };
         store.Offers[offerId] = listing;
+        // Durable BEFORE the seller is handed an address to deposit into: the covenant's params already
+        // survive a restart, but this row is the only thing that can NAME the offer afterwards, and the
+        // deposit becomes possible the moment this response lands. (No-op unless persistence is configured.)
+        await persistence.SaveOfferAsync(listing, ct);
         return (listing, info);
     }
 
@@ -2437,6 +2441,7 @@ public class GameService(
     private async Task ReconcileOfferAsync(OfferListing offer, CancellationToken ct)
     {
         if (offer.Status == "closed") return;
+        var statusBefore = offer.Status;
         // `pending` means exactly one thing again: the asset has not landed yet. The marketplace fee is
         // enforced by the covenant at fulfil, so there is no invoice to wait on and a listing goes live
         // the moment its asset is observed. AssetDeposited is kept as the explicit fact the free-to-sell
@@ -2470,6 +2475,18 @@ public class GameService(
                         offer.Id, offer.ListingFeeSats);
             }
         }
+
+        // Latch the new status durably — but ONLY on a real transition. Reconcile runs over every live offer
+        // on every market read, and an unchanged listing must not buy a database write per page load.
+        //
+        // This is chain-FIRST-then-latch: the chain was just read and is the source of truth, so the row only
+        // records what was observed. That it comes AFTER the fee booking above is deliberate. A crash between
+        // the two rehydrates the offer as still `active`, so the next reconcile closes it again and re-books
+        // under the same once-only key (see OfferSaleInflowId) — which the treasury's inflow dedup absorbs, so
+        // the fee is counted exactly once. Latching `closed` FIRST would instead filter the offer out at load
+        // (a closed row is never rehydrated) and lose the fee permanently. Under-booking is survivable and
+        // double-booking real-bitcoin income is not, so the safe half of that trade is the one taken here.
+        if (offer.Status != statusBefore) await persistence.SaveOfferAsync(offer, ct);
     }
 
     /// <summary>The once-only key a listing fee is booked under. ReconcileOfferAsync and
@@ -2556,6 +2573,10 @@ public class GameService(
             ListingFeeSats = fee,
         };
         store.Offers[offerId] = listing;
+        // Durable before the deposit address reaches the seller, as for item offers — and the stakes are
+        // higher here: the hero itself is persisted, so a lost offer row leaves the game believing the seller
+        // still owns a hero whose asset is escrowed in the covenant.
+        await persistence.SaveOfferAsync(listing, ct);
         return (listing, info);
     }
 
@@ -2591,6 +2612,11 @@ public class GameService(
         // store's inflow dedup makes the sale once-only however often either path runs.
         if (offer.ListingFeeSats > 0)
             await store.RecordInflowAsync(OfferSaleInflowId(offer.Id), "listing", offer.ListingFeeSats, ct);
+        // The close goes durable last, for the same reason it does in ReconcileOfferAsync: a crash before this
+        // point leaves the offer rehydrating as `active`, and reconcile then closes it and re-books under the
+        // same once-only key. The hero's new ownership is already durable above, so the only thing still at
+        // stake here is whether the sale can be found again — never who owns the hero.
+        await persistence.SaveOfferAsync(offer, ct);
         return hero;
     }
 }
