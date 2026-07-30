@@ -37,19 +37,24 @@ public class TechPageTests
             .ToDictionary(f => f.Name, f => (byte)f.GetRawConstantValue()!);
 
     [Fact]
-    public void EveryOpcodeThePagePublishes_IsOneTheCovenantsActuallyUse()
+    public void EveryOpcodeThePagePublishes_MatchesTheConstantOfThatName()
     {
         var published = Published();
         Assert.NotEmpty(published);
 
-        var real = CovenantOpcodes().Values.ToHashSet();
+        // Match on NAME first, then check the byte. Checking only "some constant has this value" would
+        // let the page pair a real byte with the wrong opcode name — which is a worse kind of wrong than
+        // an unknown byte, because it reads as authoritative.
+        var real = CovenantOpcodes()
+            .ToDictionary(kv => kv.Key["Op".Length..].ToUpperInvariant(), kv => kv.Value);
+
         foreach (var (code, name) in published)
         {
-            var value = Convert.ToByte(code, 16);
-            Assert.True(real.Contains(value),
-                $"The tech page publishes {code} ({name}), but no opcode constant in ArkadeCovenants has "
-                + "that value any more. Either the covenants changed and the page is now wrong, or the "
-                + "row should be removed — do not leave players a table of opcodes we do not use.");
+            Assert.True(real.TryGetValue(name, out var actual),
+                $"The tech page publishes {name}, but ArkadeCovenants declares no Op{name} constant. "
+                + "Either the covenants changed and the page is now wrong, or the row should go — do not "
+                + "leave players a table of opcodes we do not use.");
+            Assert.Equal($"0x{actual:x2}", code);
         }
     }
 

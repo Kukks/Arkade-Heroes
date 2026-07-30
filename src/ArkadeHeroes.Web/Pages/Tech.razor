@@ -34,9 +34,11 @@
     <div class="card">
         <h4 style="margin:0 0 .5rem">The strand is the record</h4>
         <p class="muted tech-p">
-            We do not store a hero's stats, look or lineage anywhere. They are <em>derived</em> from the
-            32 committed values every time. There is no field for us to edit, which is a stronger promise
-            than one we would have to keep.
+            A hero's stats and look are not stored in a database row — they are <em>derived</em> from its
+            strand every time, so there is no field for us to edit. The strand itself, its generation,
+            both parents and the very seed that produced it are written into the asset's own metadata
+            when it is minted, which is what makes a bloodline auditable years later by someone who has
+            never spoken to us.
         </p>
     </div>
     <div class="card">
@@ -93,11 +95,18 @@ INSPECTOUTPUTVALUE &lt;amount&gt; EQUAL</code></pre>
 
 @* ---- STRUCTURAL ------------------------------------------------------------------------ *@
 <div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Structural enforcement</h3>
-    <span class="hud">shape, not signatures</span></div>
+    <span class="hud">we sign the verdict; the script fixes the consequences</span></div>
 <p class="muted cx-note">
-    An earlier version of these covenants worked by having the server sign off on each outcome. That is
-    only as good as the server. The ones running now check the transaction's structure instead, so the
-    rule holds even against the operator.
+    Be precise about this, because it is the part people get wrong. The server still <b>signs the
+    outcome</b> — who won, what the child's strand is — and the covenant checks that signature. What
+    changed is that a signature is no longer <em>enough</em>. Alongside it, the script checks the
+    shape of the transaction itself: which assets must be destroyed, which must survive, and whose
+    address every one of them lands at.
+</p>
+<p class="muted cx-note">
+    So the operator can decide a verdict. It cannot pay the pot to itself, keep a child it was supposed
+    to hand over, quietly leave a "burned" hero alive, or fail to give your parents back — none of those
+    transactions are spendable, no matter who signed them.
 </p>
 <div class="grid cols">
     @foreach (var c in Covenants)
@@ -226,6 +235,7 @@ INSPECTOUTPUTVALUE &lt;amount&gt; EQUAL</code></pre>
     static readonly Op[] Opcodes =
     [
         new("0xc9", "INSPECTINPUTVALUE", "What an input being spent was worth."),
+        new("0xcc", "CHECKSIGFROMSTACK", "That the operator really signed this verdict — the gate the structural checks sit alongside."),
         new("0xcf", "INSPECTOUTPUTVALUE", "What an output is paying."),
         new("0xd1", "INSPECTOUTPUTSCRIPTPUBKEY", "Who an output pays — the check behind every 'must go here'."),
         new("0xe5", "INSPECTNUMASSETGROUPS", "How many distinct assets this transaction touches at all."),
