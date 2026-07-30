@@ -1,0 +1,242 @@
+@page "/codex"
+@using System.Globalization
+@inject ArkadeHeroesClient Api
+
+@* The reference: every trait, every rarity band, every number that decides a fight or a birth.
+   Values that the server publishes are read LIVE from it, so this page describes the server you are
+   actually playing on rather than the one that was compiled. The rest are Core defaults, pinned by
+   CodexReferenceTests so a retune fails the build instead of quietly making this page wrong. *@
+
+<PageTitle>Codex · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Codex</h2>
+    <span class="hud">every trait, every band, every number</span>
+    <span class="spacer"></span>
+    <a class="btn ghost" href="/">← back to the arena</a>
+</div>
+
+<p class="muted codex-intro">
+    A hero is one strand and nothing else — every number below is read back out of it. None of this is
+    hidden from you, and none of it can be changed after a creature is born.
+</p>
+
+@* ---- TRAITS ---------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2rem"><h3 style="margin:0">The eight traits</h3>
+    <span class="hud">what you see, and what it does</span></div>
+<p class="muted cx-note">
+    Every hero carries all eight. Each one holds two values: the one it <b>wears</b>, and the one it
+    only <b>carries</b> — invisible on this creature, but able to surface in its children.
+</p>
+
+<div class="grid cols codex-traits">
+    @foreach (var t in TraitRef)
+    {
+        <div class="card codex-trait">
+            <div class="page-head" style="margin:0 0 .4rem">
+                <h4 style="margin:0">@t.Name</h4>
+                <span class="spacer"></span>
+                <span class="chip @(t.IsAffinity ? "ok" : "")">@(t.IsAffinity ? "affinity" : "passive")</span>
+            </div>
+            <p class="muted" style="margin:0;font-size:.85rem">@t.What</p>
+        </div>
+    }
+</div>
+<p class="codex-foot" style="max-width:70ch">
+    The six <b>passives</b> shape the creature and, when the server has innate abilities switched on
+    (@(_innate is null ? "checking…" : _innate == true ? "on here" : "off here")), buy a chance at a
+    combat proc. The two <b>affinities</b> always nudge damage directly — see the table below.
+</p>
+
+@* ---- RARITY ---------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Rarity</h3>
+    <span class="hud">how the 256 possible values are carved up</span></div>
+<p class="muted cx-note">
+    Every trait value is a number from 0 to 255, and where it falls decides its tier. The bands are
+    deliberately lopsided: four fifths of the space is Common, and exactly one value in the whole range
+    is Legendary.
+</p>
+
+<div class="card" style="overflow-x:auto">
+    <table class="codex-table">
+        <thead>
+            <tr>
+                <th>Tier</th><th>Values</th><th>Share of the range</th>
+                <th>Rarity score</th><th>Affinity bonus</th><th>Sterility risk</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in RarityRef)
+            {
+                <tr>
+                    <td><span class="tier-dot @r.Css"></span><b class="@r.Css">@r.Tier</b></td>
+                    <td class="mono">@r.Range</td>
+                    <td class="mono">@r.Count of 256 · @Pct(r.Count / 256.0 * 100)</td>
+                    <td class="mono">@r.Weight</td>
+                    <td class="mono">+@Pct(r.Affinity)</td>
+                    <td class="mono">@(r.Sterile == 0 ? "—" : $"{r.Sterile}%")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+<p class="codex-foot" style="max-width:78ch">
+    <b>Share of the range</b> is how much of the number space a tier occupies — not your odds of getting
+    one. An inherited trait is whatever your parents had; only a fresh mutation rolls against the space.
+    <b>Rarity score</b> is what the boards rank by, summed across a hero's eight worn traits (a value of
+    exactly 0 is "plain" and scores nothing). <b>Affinity bonus</b> applies only to the two affinity
+    traits, and all bonuses together are capped at +@Pct(AffinityCapPct) — an affinity nudges a fight, it
+    never decides one. <b>Sterility risk</b> is the chance a hero of that tier is born unable to breed:
+    the price of chasing rarity.
+</p>
+
+@* ---- MUTATION -------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Mutation</h3>
+    <span class="hud">when a trait comes back new</span></div>
+<p class="muted cx-note">
+    About one trait in forty-three comes out of a breeding as something neither parent carried. When that
+    happens, this is what it rolls — weighted hard toward the bottom, so a Legendary mutation stays a
+    story rather than a Tuesday.
+</p>
+<div class="card">
+    <div class="codex-odds">
+        @foreach (var m in MutationOdds)
+        {
+            <span class="codex-odd @m.Css" style="flex:@F(m.Share)" title="@m.Tier @Pct(m.Share)"></span>
+        }
+    </div>
+    <div class="codex-odd-keys">
+        @foreach (var m in MutationOdds)
+        {
+            <span class="@m.Css"><i></i>@m.Tier <b>@Pct(m.Share)</b></span>
+        }
+    </div>
+</div>
+
+@* ---- ELEMENTS -------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">Elements</h3>
+    <span class="hud">a ring of eight — each beats the next</span></div>
+<p class="muted cx-note">
+    Every hero has exactly one element. There is no best one: each is strong against the element after it
+    and weak against the one before, all the way around the circle.
+</p>
+<div class="grid cols codex-elements">
+    @foreach (var (name, index) in Elements.Select((e, n) => (e, n)))
+    {
+        <div class="card codex-element">
+            <div class="hud">@name</div>
+            <div class="cx-el-line ok">beats @Elements[(index + 1) % Elements.Length]</div>
+            <div class="cx-el-line bad">loses to @Elements[(index + Elements.Length - 1) % Elements.Length]</div>
+        </div>
+    }
+</div>
+<p class="codex-foot">
+    A favourable matchup multiplies damage by <b class="mono">@F(ElementStrong)×</b>; an unfavourable one
+    by <b class="mono">@F(ElementWeak)×</b>. A critical hit multiplies by
+    <b class="mono">@F(CritMultiplier)×</b>.
+</p>
+
+@* ---- BUILD ----------------------------------------------------------------------------- *@
+<div class="page-head" style="margin-top:2.2rem"><h3 style="margin:0">The rest of the strand</h3>
+    <span class="hud">what never shows on the outside</span></div>
+<div class="grid cols">
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Stats</h4>
+        <p class="muted" style="margin:0;font-size:.86rem">
+            <b>Might</b> drives physical damage, <b>Vitality</b> health, <b>Speed</b> who moves first,
+            <b>Cunning</b> magical damage, and <b>Fortune</b> the chance of a critical hit. Each starts
+            from the strand and grows as the hero levels.
+        </p>
+    </div>
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Hidden growth</h4>
+        <p class="muted" style="margin:0;font-size:.86rem">
+            A second, invisible number per stat that decides how fast it grows. Two heroes with identical
+            starting stats can end up nothing alike by level 20 — which is why a low-level hero is a bet,
+            not a known quantity.
+        </p>
+    </div>
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Techniques</h4>
+        <p class="muted" style="margin:0;font-size:.86rem">
+            Two technique slots drawn from the strand. The first is known from level 1, the second unlocks
+            at level @GeneSkillBLevel, and the Elemental Burst at level @BurstLevel.
+        </p>
+    </div>
+    <div class="card">
+        <h4 style="margin:0 0 .5rem">Recovery</h4>
+        <p class="muted" style="margin:0;font-size:.86rem">
+            How long this hero needs between breedings. Inherited like everything else — and worth
+            checking before you plan a bloodline around one creature.
+        </p>
+    </div>
+</div>
+
+<p class="codex-note muted" style="margin-top:2rem">
+    Numbers marked live are read from this server as you load the page; the rest are the game's defaults
+    and are checked against the code on every build. If an operator retunes their server, the fight
+    outcomes it publishes carry the rules version they were resolved under, so an old replay stays
+    checkable under the rules it actually ran on.
+</p>
+
+@code {
+    // Live from the server where it publishes the value — this page should describe the server you are
+    // on, not the one that happened to be compiled.
+    private bool? _innate;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _innate = (await Api.Chain.InfoAsync()).Config?.InnateAbilities; }
+        catch { _innate = null; }
+    }
+
+    static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+    static string Pct(double v) => v.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    record Trait(string Name, string What, bool IsAffinity);
+
+    static readonly Trait[] TraitRef =
+    [
+        new("Aura", "The glow a creature carries. The first thing you notice across a roster.", false),
+        new("Markings", "Patterning over the body — stripes, spots, scars, plating.", false),
+        new("Eyes", "Eye form and colour, and the single most recognisable feature at a glance.", false),
+        new("Crest", "What it wears on its head: horns, a crown, a fin, nothing at all.", false),
+        new("Sigil", "A mark it was born with. Rare sigils are the collector's chase.", false),
+        new("Stance", "How it holds itself — and how it reads in a fight before a blow lands.", false),
+        new("Element affinity", "How well it channels its own element. Adds damage directly.", true),
+        new("Temperament", "Its disposition in a fight. Adds damage directly, like the affinity above.", true),
+    ];
+
+    record Band(string Tier, string Css, string Range, int Count, int Weight, double Affinity, int Sterile);
+
+    // RarityBands.Default(255, 253, 241, 206, weights 50/20/8/3/1), AffinityBonuses.Default and
+    // SterilityChances.Default(50, 30, 15, 5). Pinned by CodexReferenceTests.
+    static readonly Band[] RarityRef =
+    [
+        new("Legendary", "legendary", "255",     1,   50, 3.0, 50),
+        new("Epic",      "epic",      "253–254", 2,   20, 2.0, 30),
+        new("Rare",      "rare",      "241–252", 12,   8, 1.2, 15),
+        new("Uncommon",  "uncommon",  "206–240", 35,   3, 0.6,  5),
+        new("Common",    "common",    "0–205",   206,  1, 0.2,  0),
+    ];
+
+    const double AffinityCapPct = 5.0;
+    const double ElementStrong = 1.3, ElementWeak = 0.75, CritMultiplier = 1.5;
+    const int GeneSkillBLevel = 6, BurstLevel = 9;
+
+    record Odd(string Tier, string Css, double Share);
+
+    // GeneMixer.MutatedVariant's cutoffs: 176 / 56 / 18 / 4 / 2 out of 256.
+    static readonly Odd[] MutationOdds =
+    [
+        new("Common", "common", 176 / 256d * 100),
+        new("Uncommon", "uncommon", 56 / 256d * 100),
+        new("Rare", "rare", 18 / 256d * 100),
+        new("Epic", "epic", 4 / 256d * 100),
+        new("Legendary", "legendary", 2 / 256d * 100),
+    ];
+
+    // Element enum order — each is strong against the NEXT in this ring.
+    static readonly string[] Elements =
+        ["Ember", "Gale", "Terra", "Tide", "Volt", "Frost", "Radiant", "Umbral"];
+}

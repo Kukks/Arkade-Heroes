@@ -15,60 +15,72 @@
 <section class="codex">
     <div class="page-head">
         <h2 style="margin:0">What makes a hero</h2>
-        <span class="hud">32 bytes · nothing else</span>
+        <span class="hud">one strand · no two alike</span>
     </div>
 
     <div class="card codex-strand">
-        <svg viewBox="0 20 1000 296" class="codex-svg" role="img"
-             aria-label="A hero's 32-byte genome drawn as a DNA strand: bytes 0 to 15 hold stats, element, skills, growth, breeding cooldown and appearance; bytes 16 to 31 hold eight trait categories, each a dominant and a recessive gene.">
-            @* Backbones. Sampled finely so the crossover reads as a curve, not a polygon. *@
-            <polyline class="cx-backbone" points="@_strandA" />
-            <polyline class="cx-backbone" points="@_strandB" />
+        @* A real double helix, not a picture of one: each rung is a DOM element placed in 3D space by
+           its own rotation about the vertical axis, inside a perspective container, and the whole
+           assembly turns. The browser depth-sorts it, so rungs genuinely pass in front of and behind
+           one another as it spins. Pure CSS transforms — no canvas, no WebGL, no library — so it costs
+           nothing to load and keeps running on a page whose backend is asleep.
 
-            @* One rung per byte. Colour carries the meaning: teal = mechanics, magenta = a trait's
-               expressed gene, dim magenta = the recessive it carries but does not show. *@
-            @for (var i = 0; i < ByteCount; i++)
-            {
-                var half = Math.Abs(Amp * Math.Sin(Theta(i)));
-                <line class="cx-rung @RungClass(i)"
-                      x1="@F(X(i))" y1="@F(Yc - half)" x2="@F(X(i))" y2="@F(Yc + half)">
-                    <title>byte @i — @ByteMeaning(i)</title>
-                </line>
-            }
+           Decorative: it carries no information the legend beside it does not state in words, so it is
+           hidden from assistive tech rather than narrated as 32 meaningless nodes. *@
+        <div class="dna-stage" aria-hidden="true">
+            <div class="dna-spin">
+                @for (var i = 0; i < StrandLength; i++)
+                {
+                    <div class="dna-pair @RungClass(i)" style="--i:@i">
+                        <span class="dna-node"></span>
+                        <span class="dna-rod"></span>
+                        <span class="dna-node"></span>
+                    </div>
+                }
+            </div>
 
-            @* Trait callouts, above. Staggered two deep so eight labels fit without collision.
-               Each is wrapped in a <g>: Razor claims a bare <text> tag as its own control element,
-               so an SVG label has to be nested inside markup to survive the parser. *@
-            @foreach (var (cat, index) in TraitCallouts.Select((c, n) => (c, n)))
-            {
-                var cx = X(16 + index * 2) + Dx / 2;
-                var textY = index % 2 == 0 ? 86 : 44;
-                <g>
-                    <path class="cx-lead trait" d="@Bracket(X(16 + index * 2) - 9, X(17 + index * 2) + 9, 120, up: true)" />
-                    <line class="cx-lead trait" x1="@F(cx)" y1="120" x2="@F(cx)" y2="@(textY + 8)" />
-                    <text class="cx-label trait" x="@F(cx)" y="@textY" text-anchor="middle">@cat</text>
-                </g>
-            }
+            @* Markers naming every point, held still beside the strand rather than pinned to it. Each
+               sits at its own point's height, so the rung sweeps past its own name as it turns —
+               readable at a glance, and nothing to chase with your eyes. They alternate sides so 32
+               names have room to breathe. *@
+            <div class="dna-marks">
+                @for (var i = 0; i < StrandLength; i++)
+                {
+                    <span class="dna-mark @RungClass(i) @(i % 2 == 0 ? "left" : "right")" style="--i:@i">
+                        @PointName(i)
+                    </span>
+                }
+            </div>
+            <div class="dna-floor"></div>
+        </div>
 
-            @* Mechanical callouts, below. *@
-            @foreach (var (block, index) in Mechanics.Select((b, n) => (b, n)))
-            {
-                var first = X(block.Start);
-                var last = X(block.Start + block.Length - 1);
-                var cx = (first + last) / 2;
-                var textY = index % 2 == 0 ? 262 : 300;
-                <g>
-                    <path class="cx-lead mech" d="@Bracket(first - 9, last + 9, 230, up: false)" />
-                    <line class="cx-lead mech" x1="@F(cx)" y1="230" x2="@F(cx)" y2="@(textY - 10)" />
-                    <text class="cx-label mech" x="@F(cx)" y="@textY" text-anchor="middle">@block.Label</text>
-                </g>
-            }
-        </svg>
+        <div class="codex-strand-copy">
+            <h3>Every hero is one strand, and the strand is the whole hero</h3>
+            <p class="muted">
+                Nothing about a creature is stored anywhere else. Its power, its element, the way it
+                fights and the way it looks are all read back out of the strand it was born with — which
+                is why no two are the same, and why nobody can quietly edit yours.
+            </p>
 
-        <div class="codex-legend">
-            <span><i class="cx-key mech"></i>bytes 0–15 — what it can <b>do</b>: stats, element, skills, and growth that only shows up as it levels</span>
-            <span><i class="cx-key dom"></i>bytes 16–31, expressed — what you <b>see</b></span>
-            <span><i class="cx-key rec"></i>…and the recessive beside it — what it can <b>pass on</b></span>
+            @* The text of each row is wrapped in its own element on purpose: a bare run of text beside
+               a <b> would become two separate flex items and lay out as a column of single words. *@
+            <div class="codex-legend">
+                <div class="cx-row">
+                    <i class="cx-key mech"></i>
+                    <p><b>What it can do.</b> Might, vitality, speed, cunning and luck; its element; the
+                        techniques it knows; and hidden growth that only shows as it levels.</p>
+                </div>
+                <div class="cx-row">
+                    <i class="cx-key dom"></i>
+                    <p><b>What you see.</b> Aura, markings, eyes, crest, sigil, stance — plus the two
+                        affinities that give it an edge in a fight.</p>
+                </div>
+                <div class="cx-row">
+                    <i class="cx-key rec"></i>
+                    <p><b>What it hides.</b> Beside every visible trait sits one it carries but does not
+                        wear. You will never see it — but its children might.</p>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -87,10 +99,10 @@
             </div>
 
             <p class="muted">
-                Mechanics cross over byte by byte. Each visible trait is usually one parent's — but
-                roughly one in four pulls a <b class="cx-ink-hidden">hidden recessive</b> into the light,
-                and about one in forty-three comes back as something
-                <b class="cx-ink-mut">neither parent carried</b>.
+                The child's build is drawn piece by piece from both parents. Each visible trait is usually
+                one parent's too — but roughly one in four pulls a
+                <b class="cx-ink-hidden">hidden trait</b> into the light, and about one in forty-three
+                comes back as something <b class="cx-ink-mut">neither parent carried</b>.
             </p>
 
             <div class="codex-origins">
@@ -198,8 +210,13 @@
         </div>
     </div>
 
+    <div class="codex-more">
+        <a class="btn ghost" href="codex">Read the full codex →</a>
+        <span class="muted">every trait, every rarity band, every number that decides a fight</span>
+    </div>
+
     <p class="codex-note muted">
-        Every creature above is drawn from the genome printed in the page source, by the same renderer
+        Every creature above is drawn from a fixed strand held in the page itself, by the same renderer
         the game uses — and every outcome is the real output of the same functions that run when you
         breed, fuse or fight. Nothing here is an artist's impression.
     </p>
@@ -214,67 +231,38 @@
     const string Fused = LandingGenomes.Fused;
     const string Absorbed = LandingGenomes.Absorbed;
 
-    // --- Strand geometry. -------------------------------------------------------------------
-    const int ByteCount = 32;
-    const double X0 = 25, Dx = 30, Yc = 175, Amp = 34, Period = 8;
+    /// <summary>Rungs in the helix — one per position in a real genome, so the strand on screen has the
+    /// length the game actually works with rather than a number chosen to look good.</summary>
+    const int StrandLength = 32;
 
-    static double X(int i) => X0 + i * Dx;
+    /// <summary>Colours a rung by what that stretch of the strand governs: the first half is everything
+    /// the hero can DO, the second half alternates a trait it wears with the one it merely carries.</summary>
+    static string RungClass(int i) => i < 16 ? "mech" : (i - 16) % 2 == 0 ? "dom" : "rec";
 
-    /// <summary>Phase-shifted by half a byte so no rung ever lands on a crossover and collapses to a dot.</summary>
-    static double Theta(double t) => 2 * Math.PI * (t + 0.5) / Period;
+    static readonly string[] Stats = ["Might", "Vitality", "Speed", "Cunning", "Fortune"];
+    static readonly string[] TraitNames =
+        ["Aura", "Markings", "Eyes", "Crest", "Sigil", "Stance", "Affinity", "Temperament"];
 
-    /// <summary>Invariant formatting is load-bearing: Blazor WASM adopts the browser's culture, and a
-    /// comma decimal separator would corrupt every SVG coordinate on the page.</summary>
+    /// <summary>What one point on the strand governs, in the words a player would use. The real map is
+    /// in Genome.cs; this is the same thing said out loud rather than as an offset.</summary>
+    static string PointName(int i) => i switch
+    {
+        < 5 => Stats[i],
+        5 => "Element",
+        < 8 => $"Technique {(i == 6 ? "I" : "II")}",
+        < 13 => $"Growth · {Stats[i - 8]}",
+        13 => "Recovery",
+        14 => "Form",
+        15 => "Palette",
+        // Each trait takes two points: the one it wears, and the one it only carries.
+        _ => (i - 16) % 2 == 0 ? TraitNames[(i - 16) / 2] : $"{TraitNames[(i - 16) / 2]} · carried",
+    };
+
+    /// <summary>Invariant formatting: Blazor WASM adopts the browser's culture, and a comma decimal
+    /// separator in a style attribute would break the odds bar on half the world's machines.</summary>
     static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
     static string Pct(double v) => v.ToString("0.#", CultureInfo.InvariantCulture) + "%";
-
-    static string Strand(int sign)
-    {
-        var pts = new List<string>();
-        for (var t = -0.4; t <= ByteCount - 0.6; t += 0.2)
-            pts.Add($"{F(X0 + t * Dx)},{F(Yc + sign * Amp * Math.Sin(Theta(t)))}");
-        return string.Join(" ", pts);
-    }
-
-    static readonly string _strandA = Strand(1);
-    static readonly string _strandB = Strand(-1);
-
-    /// <summary>A squared-off callout bracket spanning one byte block.</summary>
-    static string Bracket(double x1, double x2, double y, bool up)
-    {
-        var tick = up ? 8 : -8;
-        return $"M {F(x1)} {F(y - tick)} L {F(x1)} {F(y)} L {F(x2)} {F(y)} L {F(x2)} {F(y - tick)}";
-    }
-
-    static string RungClass(int i) => i < 16 ? "mech" : (i - 16) % 2 == 0 ? "dom" : "rec";
-
-    record Block(int Start, int Length, string Label);
-
-    static readonly Block[] Mechanics =
-    [
-        new(0, 5, "Stats"),
-        new(5, 1, "Element"),
-        new(6, 2, "Skills"),
-        new(8, 5, "Growth"),
-        new(13, 1, "Cooldown"),
-        new(14, 2, "Look"),
-    ];
-
-    static readonly string[] TraitCallouts =
-        ["Aura", "Marking", "Eyes", "Crest", "Sigil", "Stance", "Affinity", "Temperament"];
-
-    /// <summary>Hover text for a single rung — the byte map from Genome.cs, in players' words.</summary>
-    static string ByteMeaning(int i) => i switch
-    {
-        < 5 => new[] { "strength", "vitality", "agility", "intellect", "luck" }[i],
-        5 => "element",
-        < 8 => $"skill gene {(char)('A' + i - 6)}",
-        < 13 => $"hidden growth ({new[] { "STR", "VIT", "AGI", "INT", "LUK" }[i - 8]})",
-        13 => "breeding cooldown",
-        < 16 => "appearance",
-        _ => $"{TraitCallouts[(i - 16) / 2]} — {((i - 16) % 2 == 0 ? "expressed" : "recessive")}",
-    };
 
     // --- Where this child's eight traits actually came from. --------------------------------
     record Origin(string Trait, string From, string Kind);

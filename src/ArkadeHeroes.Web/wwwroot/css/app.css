@@ -198,34 +198,117 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 
 /* --- Genome codex (landing explainer) ------------------------------------- */
 .codex { margin-top: 2.6rem; }
-.codex-strand { padding: 1rem .4rem .4rem; overflow-x: auto; }
-/* The callout labels stop being legible below this width, so on a phone the strand
-   scrolls sideways rather than shrinking into an unreadable smear. */
-.codex-svg { display: block; width: 100%; min-width: 720px; height: auto; }
-
-.cx-backbone { fill: none; stroke: var(--line); stroke-width: 2; }
-.cx-rung { stroke-width: 3; stroke-linecap: round; }
-.cx-rung.mech { stroke: var(--accent); opacity: .85; }
-.cx-rung.dom  { stroke: var(--accent-2); }
-.cx-rung.rec  { stroke: var(--accent-2); opacity: .38; }
-.cx-lead { fill: none; stroke-width: 1; }
-.cx-lead.mech  { stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-.cx-lead.trait { stroke: color-mix(in srgb, var(--accent-2) 45%, var(--line)); }
-.cx-label {
-    font-family: var(--font-hud); font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
+.codex-strand {
+    display: grid; grid-template-columns: minmax(280px, 480px) 1fr; gap: 1.4rem; align-items: center;
+    padding: 1.4rem;
+    background:
+        radial-gradient(520px 380px at 22% 50%, rgba(53,240,208,.10), transparent 65%),
+        radial-gradient(460px 340px at 30% 60%, rgba(255,77,157,.09), transparent 62%),
+        linear-gradient(180deg, var(--surface), var(--bg-2));
+    overflow: hidden;
 }
-.cx-label.mech  { fill: var(--accent); }
-.cx-label.trait { fill: var(--accent-2); }
+
+/* --- The 3D double helix -------------------------------------------------
+   Each rung is a real element rotated about the vertical axis by its own index and stacked down
+   the strand; the parent spins. With preserve-3d the browser projects and depth-sorts them, so
+   rungs pass in front of and behind each other for genuine depth — no canvas, no WebGL, and the
+   whole thing composites on the GPU. */
+.dna-stage {
+    position: relative; height: 540px; perspective: 900px; perspective-origin: 50% 50%;
+    display: grid; place-items: center;
+}
+/* One full turn takes --spin. Rungs sit 24deg apart, so a rung reaches the front every
+   --spin * 24/360 — that figure is --step, and it is what the markers are timed against. */
+.dna-stage { --spin: 32s; --gap: 15px; }
+.dna-spin {
+    position: relative; width: 0; height: 0;
+    transform-style: preserve-3d;
+    animation: dna-spin var(--spin) linear infinite;
+}
+@keyframes dna-spin { from { transform: rotateY(0deg); } to { transform: rotateY(360deg); } }
+
+.dna-pair {
+    position: absolute; left: 0; top: 0;
+    display: flex; align-items: center; justify-content: center;
+    transform-style: preserve-3d;
+    /* 15.5 centres the 32 rungs on the stage; 24deg per step gives just over two full turns.
+       --gap is shared with the side markers so a name always sits level with its own point. */
+    transform:
+        translate(-50%, -50%)
+        translateY(calc((var(--i) - 15.5) * var(--gap)))
+        rotateY(calc(var(--i) * 24deg));
+}
+.dna-rod { width: 132px; height: 2px; border-radius: 2px; }
+.dna-node {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    /* Kept facing the camera so the beads read as spheres rather than vanishing edge-on. */
+    animation: dna-shimmer 4s ease-in-out infinite;
+    animation-delay: calc(var(--i) * -120ms);
+}
+@keyframes dna-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+.dna-pair.mech .dna-rod  { background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.dna-pair.mech .dna-node { background: var(--accent); box-shadow: 0 0 10px 1px rgba(53,240,208,.75); }
+.dna-pair.dom  .dna-rod  { background: linear-gradient(90deg, transparent, var(--accent-2), transparent); }
+.dna-pair.dom  .dna-node { background: var(--accent-2); box-shadow: 0 0 10px 1px rgba(255,77,157,.75); }
+/* The carried half is deliberately faint — it is the trait you cannot see. */
+.dna-pair.rec  .dna-rod  { background: linear-gradient(90deg, transparent, rgba(255,77,157,.35), transparent); }
+.dna-pair.rec  .dna-node { background: rgba(255,77,157,.45); box-shadow: 0 0 7px 0 rgba(255,77,157,.35); }
+
+/* --- Point markers ------------------------------------------------------
+   Held still beside the strand, each at its own point's height, so the rung sweeps past its own
+   name as it turns. Deliberately NOT attached to the 3D layer: a label that rotates with the helix
+   spends half its life edge-on and unreadable, and one you have to track with your eyes is worse
+   than one that simply sits there. */
+.dna-marks { position: absolute; inset: 0; pointer-events: none; }
+.dna-mark {
+    position: absolute;
+    top: calc(50% + (var(--i) - 15.5) * var(--gap));
+    transform: translateY(-50%);
+    display: flex; align-items: center; gap: .4rem; white-space: nowrap;
+    font-family: var(--font-hud); font-size: .58rem; letter-spacing: .08em; text-transform: uppercase;
+}
+/* Leader ticks point inward, toward the strand. */
+.dna-mark::before, .dna-mark::after { content: ""; width: 14px; height: 1px; background: currentColor; opacity: .45; }
+.dna-mark.left  { right: calc(50% + 74px); flex-direction: row; }
+.dna-mark.left::before  { display: none; }
+.dna-mark.right { left: calc(50% + 74px); }
+.dna-mark.right::after  { display: none; }
+.dna-mark.mech { color: color-mix(in srgb, var(--accent) 78%, var(--text)); }
+.dna-mark.dom  { color: color-mix(in srgb, var(--accent-2) 78%, var(--text)); }
+.dna-mark.rec  { color: rgba(255,77,157,.5); }
+
+/* A soft pool of light under the strand so it reads as standing in space, not pasted on. */
+.dna-floor {
+    position: absolute; left: 50%; bottom: 6%; width: 260px; height: 46px; transform: translateX(-50%);
+    background: radial-gradient(closest-side, rgba(53,240,208,.20), transparent 75%);
+    filter: blur(6px); pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dna-spin { animation: none; transform: rotateY(-24deg); }
+    .dna-node { animation: none; }
+}
+
+.codex-strand-copy h3 { margin: 0 0 .6rem; font-size: 1.3rem; line-height: 1.25; }
+.codex-strand-copy p { max-width: 54ch; }
 
 .codex-legend {
-    display: grid; gap: .35rem; padding: .9rem 1rem 1rem;
-    font-size: .78rem; color: var(--muted);
+    display: grid; gap: .7rem; margin-top: 1.1rem;
+    font-size: .84rem; color: var(--muted); line-height: 1.5;
 }
+.cx-row { display: flex; align-items: flex-start; gap: .65rem; }
+.cx-row p { margin: 0; flex: 1; min-width: 0; }
 .codex-legend b { color: var(--text); font-weight: 600; }
-.cx-key { display: inline-block; width: 22px; height: 3px; border-radius: 2px; margin-right: .6rem; vertical-align: middle; }
-.cx-key.mech { background: var(--accent); }
-.cx-key.dom  { background: var(--accent-2); }
-.cx-key.rec  { background: var(--accent-2); opacity: .38; }
+.cx-key { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-top: .25rem; }
+.cx-key.mech { background: var(--accent); box-shadow: 0 0 9px 0 rgba(53,240,208,.6); }
+.cx-key.dom  { background: var(--accent-2); box-shadow: 0 0 9px 0 rgba(255,77,157,.6); }
+.cx-key.rec  { background: rgba(255,77,157,.42); }
+
+@media (max-width: 860px) {
+    .codex-strand { grid-template-columns: 1fr; }
+    .dna-stage { height: 340px; }
+}
 
 .codex-ops { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; margin-top: 1.1rem; }
 .codex-op h3 { margin: .3rem 0 1rem; font-size: 1.15rem; }
@@ -290,6 +373,30 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .codex-odd-keys .legendary i { background: var(--gold); }
 
 .codex-note { margin: 1.1rem 0 0; font-size: .76rem; color: var(--faint); text-align: center; }
+
+/* --- /codex reference page ------------------------------------------------ */
+.codex-intro { max-width: 70ch; }
+.cx-note { max-width: 74ch; font-size: .88rem; }
+.codex-traits .codex-trait h4 { font-size: .98rem; }
+.codex-table { width: 100%; border-collapse: collapse; font-size: .85rem; min-width: 620px; }
+.codex-table th {
+    text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line);
+    font-family: var(--font-hud); font-size: .66rem; text-transform: uppercase;
+    letter-spacing: .12em; color: var(--muted); font-weight: 600; white-space: nowrap;
+}
+.codex-table td { padding: .55rem .7rem; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.codex-table tr:last-child td { border-bottom: none; }
+.tier-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .5rem; }
+.tier-dot.common { background: var(--r-common); }   b.common    { color: var(--r-common); }
+.tier-dot.uncommon { background: var(--r-uncommon); } b.uncommon { color: var(--r-uncommon); }
+.tier-dot.rare { background: var(--r-rare); }       b.rare      { color: var(--r-rare); }
+.tier-dot.epic { background: var(--r-epic); }       b.epic      { color: var(--r-epic); }
+.tier-dot.legendary { background: var(--gold); }    b.legendary { color: var(--gold); }
+
+.codex-element { display: grid; gap: .3rem; }
+.cx-el-line { font-size: .78rem; }
+.cx-el-line.ok { color: var(--ok); }
+.cx-el-line.bad { color: var(--danger); opacity: .85; }
 
 @media (max-width: 1000px) { .codex-ops { grid-template-columns: 1fr; } }
 
