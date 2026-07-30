@@ -103,8 +103,9 @@
                 }
             </div>
             <p class="codex-foot">
-                This exact child: five traits straight from a parent, one recessive surfaced, one fresh
-                mutation — and a <b class="cx-ink-rare">Rare</b> temperament carried down from Emberfang.
+                This exact child: six traits straight from a parent — one of them a
+                <b class="cx-ink-rare">Rare</b> temperament carried down from Emberfang — plus one
+                recessive surfaced and one fresh mutation.
             </p>
         </article>
 
@@ -205,12 +206,13 @@
 </section>
 
 @code {
-    // --- The real genomes (see the file header for how they were derived). ------------------
-    const string Ember = "a3f21c05d84b6790e2c1358fa07d4b621a2b3c4d5e6f708190a1b2c3d4e5f607";
-    const string Tide = "5e7d19c4a2360f8b71d3e50629ac8f1422334455667788990011aabbccddeeff";
-    const string Child = "5ef21cc4d8360f8b71d3e506297d8f0e22333c556677709990a1c3c31be5f607";
-    const string Fused = "a3f21c05d84b6790e2c1358fa07d4b621a1a3c3c5e6f70880011b2c3d4ccf6ff";
-    const string Absorbed = "5e7d19c4a2360f8b71d3e50629ac8f1422334455667788990011aabbccddf6ff";
+    // --- The real genomes. LandingGenomes is the single source; a unit test re-derives every
+    //     one of these from Core on each build (see its doc comment). --------------------------
+    const string Ember = LandingGenomes.Ember;
+    const string Tide = LandingGenomes.Tide;
+    const string Child = LandingGenomes.Child;
+    const string Fused = LandingGenomes.Fused;
+    const string Absorbed = LandingGenomes.Absorbed;
 
     // --- Strand geometry. -------------------------------------------------------------------
     const int ByteCount = 32;
@@ -308,6 +310,6 @@
         new("Uncommon", "uncommon", 56 / 256d * 100),
         new("Rare", "rare", 18 / 256d * 100),
         new("Epic", "epic", 4 / 256d * 100),
-        new("Legend", "legendary", 2 / 256d * 100),
+        new("Legendary", "legendary", 2 / 256d * 100),
     ];
 }

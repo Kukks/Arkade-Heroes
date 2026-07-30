@@ -123,17 +123,16 @@
 }
 
 @code {
-    // Fixed showcase genomes for the landing art. Hardcoded on purpose: the renderer is deterministic,
-    // so these draw the same three creatures for every visitor, with no API call, no account and no
-    // dependency on the server being up — the page still looks like a game when the backend is cold.
-    // Each is 32 bytes: [0..15] mechanical (element, stats, appearance), [16..31] the trait block, which
-    // is filled here rather than zeroed so the art shows the trait variety a real bred hero has and a
-    // gen-0 starter does not.
+    // Fixed showcase genomes for the landing art, shared with the codex explainer via LandingGenomes.
+    // Fixed on purpose: the renderer is deterministic, so these draw the same three creatures for every
+    // visitor, with no API call, no account and no dependency on the server being up — the page still
+    // looks like a game when the backend is cold. Their trait block [16..31] is filled rather than
+    // zeroed, so the art shows the variety a real bred hero has and a gen-0 starter does not.
     private static readonly (string Genome, string Name)[] Showcase =
     [
-        ("a3f21c05d84b6790e2c1358fa07d4b621a2b3c4d5e6f708190a1b2c3d4e5f607", "Emberfang"),
-        ("5e7d19c4a2360f8b71d3e50629ac8f1422334455667788990011aabbccddeeff", "Tidecaller"),
-        ("0c4a8e26f1b95d3708e2a6c41d7f0b53f0e1d2c3b4a5968778695a4b3c2d1e0f", "Glimmerhusk"),
+        (LandingGenomes.Ember, "Emberfang"),
+        (LandingGenomes.Tide, "Tidecaller"),
+        (LandingGenomes.Glimmer, "Glimmerhusk"),
     ];
 
     enum Conn { Connecting, Ok, Fail }
