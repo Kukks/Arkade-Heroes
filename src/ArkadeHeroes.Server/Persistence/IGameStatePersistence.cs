@@ -481,6 +481,12 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             // Status is the ONLY thing that ever moves. The rest is fixed at listing: the covenant is built
             // from those values and its address is derived from them, so a row that disagreed with the
             // deployed covenant would describe an offer that does not exist on-chain.
+            //
+            // Which is also why this needs no per-offer gate, where SaveHeroAsync needs one: the hero saves
+            // race over IDENTITY, so a loser's stale copy can revert an ownership change and durably mis-own
+            // a hero. Status carries no such fact — it is re-derived from the chain on the next reconcile, so
+            // the worst a lost race leaves is a row reading `active` for an offer memory has already closed,
+            // and a restart then reconciles it closed again (re-booking under the same once-only key).
             row.Status = offer.Status;
         }
         await db.SaveChangesAsync(ct);
