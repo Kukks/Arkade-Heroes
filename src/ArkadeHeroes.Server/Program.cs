@@ -88,6 +88,51 @@ if (!string.IsNullOrWhiteSpace(stateDbPath))
 
 app.UseCors();
 
+// ── Serve the Blazor WASM bundle from this host ───────────────────────────────
+// The published frontend is copied into wwwroot at image build time, so ONE container is
+// the entire deployment. That also makes the browser's origin equal to the API's, which is
+// why the localhost-only CORS policy above is never consulted rather than needing to be
+// widened for a public domain — a same-origin request does not carry an Origin header at
+// all. Running the API alone (no wwwroot, e.g. every test host) is unaffected: with no
+// files to serve these are no-ops, not errors.
+app.UseBlazorFrameworkFiles();
+app.UseStaticFiles();
+
+// Deep links (/heroes/abc, /market, …) are client-side routes with no file behind them, so
+// the browser must still receive index.html and let the WASM router resolve them.
+//
+// This is a MIDDLEWARE that rewrites an existing 404, NOT MapFallbackToFile. Both routing
+// variants were tried and both changed the API's behaviour, because a catch-all endpoint
+// participates in matching for every request:
+//   • plain MapFallbackToFile turned a POST to an unregistered admin route from 404 into
+//     405 — the path now matched a GET-only endpoint (AdminConsoleTests.AdminSurface_
+//     DoesNotExist_WhenNoTokenIsConfigured), and 405 also tells a prober the path is real;
+//   • an added MapFallback("/api/{**rest}") turned a bodyless POST to /api/players/me/terms
+//     from 400 into 404 (TermsAcceptanceTests.AnAcceptanceWithNoVersionAtAll…).
+// Acting only on a response that is ALREADY 404 adds no route, so endpoint matching — and
+// therefore every status code the API returns — is exactly what it was before.
+//
+// Deliberately narrow: GET/HEAD only (a POST to a missing page is not a deep link), never
+// under /api (an API 404 must stay a JSON-shaped 404, not a page that parses as garbage),
+// and only when a bundle is actually present, so an API-only host is untouched.
+var indexHtml = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
+if (File.Exists(indexHtml))
+{
+    app.Use(async (context, next) =>
+    {
+        await next();
+        if (context.Response.StatusCode == StatusCodes.Status404NotFound
+            && !context.Response.HasStarted
+            && !context.Request.Path.StartsWithSegments("/api")
+            && (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)))
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.SendFileAsync(indexHtml);
+        }
+    });
+}
+
 // GameRuleException → 400; anything else → 500, both with readable JSON.
 app.Use(async (context, next) =>
 {

@@ -24,7 +24,14 @@ builder.Logging.AddFilter("NArk", LogLevel.Information);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 
 // ── Game server API — the typed SDK, the same transport the console client uses ──
-var apiBase = builder.Configuration["ApiBaseUrl"] ?? "http://localhost:5210";
+// EMPTY means same-origin, and that is the normal case now: the server hosts this bundle,
+// so whoever served the app also serves /api and BaseAddress is simply where we loaded
+// from. Set ApiBaseUrl only for the split deployment — a `dotnet run` frontend against a
+// separately-run API — where the two really are different origins. Falling back to
+// HostEnvironment.BaseAddress rather than a hardcoded localhost port means the bundle is
+// correct wherever it is served from, with no configuration at all.
+var apiBase = builder.Configuration["ApiBaseUrl"];
+if (string.IsNullOrWhiteSpace(apiBase)) apiBase = builder.HostEnvironment.BaseAddress;
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(apiBase) });
 builder.Services.AddScoped(sp => new ArkadeHeroesClient(sp.GetRequiredService<HttpClient>()));
 
