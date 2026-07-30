@@ -665,8 +665,28 @@ public class GameService(
             for (var i = 0; i < podium.Count && i < prizes.Count; i++)
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
-                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], $"tournament:{session.Id}:rank{i + 1}", ct); await store.RecordOutflowAsync("tournament", prizes[i], ct); }
-                catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
+                var tag = $"tournament:{session.Id}:rank{i + 1}";
+                // A failed prize is never retried (documented v1 limit), so the LOG is the only record that
+                // this player is owed real sats — swallowing it silently made the debt unrecoverable.
+                // Payout and booking are caught separately ON PURPOSE: a booking failure means the sats DID
+                // move, and reading that as "unpaid" is exactly how a manual reconciliation double-pays.
+                try { await chain.PayoutAsync(winnerPlayerId, prizes[i], tag, ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex,
+                        "Tournament prize payout FAILED and will never be retried: player {PlayerId} is owed "
+                        + "{Sats} sats for {Tag}. Settle it by hand — nothing else records this debt.",
+                        winnerPlayerId, prizes[i], tag);
+                    continue;
+                }
+                try { await store.RecordOutflowAsync("tournament", prizes[i], ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex,
+                        "Tournament prize of {Sats} sats for {Tag} WAS PAID but could not be booked as "
+                        + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
+                        + "under-reports by this amount.", prizes[i], tag);
+                }
             }
             return (session, result, Convert.ToHexString(session.ServerSeed).ToLowerInvariant(), session.EntropyHex, prizes);
         }
@@ -712,19 +732,46 @@ public class GameService(
             long refundedSats = 0;
             foreach (var e in session.Entrants)
             {
-                try
+                var tag = $"tournament-refund:{session.Id}:{e.PlayerId}";
+                // Only a CLEARED buy-in ever reached the treasury — "refunding" an unpaid seat would pay sats
+                // the treasury never received. Each step is caught on its own because the three failures mean
+                // different things to whoever has to clean up: an unreadable paid-check leaves the debt
+                // UNKNOWN, a failed payout leaves it OWED, and a failed booking means it was already PAID.
+                // A fault on any of them loses only THIS entrant's refund — it never aborts the rest with the
+                // bracket already durably marked refunded (mirrors the podium's per-prize catch). None are
+                // retried, so these logs are the only record that survives.
+                bool paid;
+                try { paid = await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct); }
+                catch (Exception ex)
                 {
-                    // Only a CLEARED buy-in ever reached the treasury — "refunding" an unpaid seat would pay
-                    // sats the treasury never received. The paid-check AND the payout both sit inside this try,
-                    // so a chain fault on EITHER loses only THIS entrant's refund — it never aborts the rest
-                    // with the bracket already durably marked refunded (mirrors the podium's per-prize catch).
-                    if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct)) continue;
-                    await chain.PayoutAsync(e.PlayerId, session.BuyInSats, $"tournament-refund:{session.Id}:{e.PlayerId}", ct);
-                    await store.RecordOutflowAsync("tournament-refund", session.BuyInSats, ct);
-                    refunded++;
-                    refundedSats += session.BuyInSats;
+                    logger?.LogError(ex,
+                        "Tournament refund SKIPPED for player {PlayerId}: could not read whether buy-in "
+                        + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {Tag}. Check the "
+                        + "invoice by hand before paying anything.",
+                        e.PlayerId, e.BuyInInvoiceId, session.BuyInSats, tag);
+                    continue;
                 }
-                catch { /* a rare payout / paid-check failure loses that one refund (never re-paid) — documented v1 limit */ }
+                if (!paid) continue;
+
+                try { await chain.PayoutAsync(e.PlayerId, session.BuyInSats, tag, ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex,
+                        "Tournament refund payout FAILED and will never be retried: player {PlayerId} paid a "
+                        + "buy-in and is owed {Sats} sats back for {Tag}. Settle it by hand — nothing else "
+                        + "records this debt.", e.PlayerId, session.BuyInSats, tag);
+                    continue;
+                }
+                refunded++;
+                refundedSats += session.BuyInSats;
+                try { await store.RecordOutflowAsync("tournament-refund", session.BuyInSats, ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex,
+                        "Tournament refund of {Sats} sats for {Tag} WAS PAID but could not be booked as "
+                        + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
+                        + "under-reports by this amount.", session.BuyInSats, tag);
+                }
             }
             return (session, refunded, refundedSats);
         }
@@ -1696,8 +1743,27 @@ public class GameService(
                     standings.Select((e, i) => new Shared.SeasonWinnerDto(e.Rank, e.Name, shares[i])).ToList());
                 for (var i = 0; i < standings.Count; i++)
                 {
-                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], $"season:{s}:rank{standings[i].Rank}", ct); await store.RecordOutflowAsync("season", shares[i], ct); }
-                    catch { /* a rare payout failure loses that one prize (never re-paid) — documented v1 limit */ }
+                    var tag = $"season:{s}:rank{standings[i].Rank}";
+                    // Never retried (documented v1 limit), so the LOG is the only record of the debt. Payout
+                    // and booking are caught separately because a booking failure means the sats DID move —
+                    // reading that as "unpaid" is how a manual reconciliation double-pays a champion.
+                    try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], tag, ct); }
+                    catch (Exception ex)
+                    {
+                        logger?.LogError(ex,
+                            "Season prize payout FAILED and will never be retried: player {PlayerId} is owed "
+                            + "{Sats} sats for {Tag}. Settle it by hand — nothing else records this debt.",
+                            standings[i].OwnerId, shares[i], tag);
+                        continue;
+                    }
+                    try { await store.RecordOutflowAsync("season", shares[i], ct); }
+                    catch (Exception ex)
+                    {
+                        logger?.LogError(ex,
+                            "Season prize of {Sats} sats for {Tag} WAS PAID but could not be booked as "
+                            + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
+                            + "under-reports by this amount.", shares[i], tag);
+                    }
                 }
             }
         }
