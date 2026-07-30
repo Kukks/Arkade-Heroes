@@ -1,7 +1,13 @@
 using ArkadeHeroes.Chain.NArk;
+using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
 using NArk.Abstractions.Assets;
+using NArk.Abstractions.Intents;
+using NArk.Abstractions.Safety;
+using NArk.Abstractions.VTXOs;
+using NArk.Abstractions.Wallets;
 using NArk.Core.Assets;
+using NArk.Core.Services;
 using NBitcoin;
 
 namespace ArkadeHeroes.Chain.Covenants;
@@ -17,31 +23,51 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// </summary>
 public static class MergeEscrowRefundFlow
 {
-    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+    /// <summary>Reclaims from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
+    public static Task<EmulatorSubmitResponse> ReclaimAsync(
         SelfCustodyWallet wallet,
         Uri emulatorUri,
         MergeEscrowParams parameters,
         Func<CancellationToken, Task<long>> chainMedianTime,
         TimeSpan? vtxoTimeout = null,
         CancellationToken ct = default)
+        => ReclaimAsync(wallet.Services, wallet.WalletId, wallet.Address,
+            emulatorUri, parameters, chainMedianTime, vtxoTimeout, ct);
+
+    /// <summary>
+    /// Service-level reclaim — runs against any NArk service graph (a player wallet's isolated
+    /// container OR a browser's Blazor DI), so the console and the browser share ONE implementation
+    /// of this covenant spend rather than each carrying its own.
+    /// </summary>
+    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+        IServiceProvider services,
+        string walletId,
+        string playerAddress,
+        Uri emulatorUri,
+        MergeEscrowParams parameters,
+        Func<CancellationToken, Task<long>> chainMedianTime,
+        TimeSpan? vtxoTimeout = null,
+        CancellationToken ct = default)
     {
-        var transport = wallet.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
         var contract = MergeEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
 
-        if (wallet.Address != parameters.PlayerAddress)
+        if (playerAddress != parameters.PlayerAddress)
             throw new InvalidOperationException(
-                $"This wallet ({wallet.Address}) is not the merging player for {parameters.MergeId}.");
-        var playerScript = ArkAddress.Parse(wallet.Address).ScriptPubKey;
+                $"This wallet ({playerAddress}) is not the merging player for {parameters.MergeId}.");
+        var playerScript = ArkAddress.Parse(playerAddress).ScriptPubKey;
         var baseAsset = AssetId.FromString(parameters.BaseId);
         var sacrificeAsset = AssetId.FromString(parameters.SacrificeId);
 
         IReadOnlyList<global::NArk.Abstractions.VTXOs.ArkVtxo> vtxos;
         try
         {
-            vtxos = await CovenantSpender.WaitForVtxosAsync(
-                wallet, contract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
+            vtxos = await CovenantSpender.WaitForVtxosCoreAsync(
+                services.GetRequiredService<VtxoSynchronizationService>(),
+                services.GetRequiredService<IVtxoStorage>(),
+                contract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
         }
         catch (TimeoutException)
         {
@@ -73,8 +99,12 @@ public static class MergeEscrowRefundFlow
             AssetGroup.Create(sacrificeAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
         ]);
         // Single canonical submission — no retry (submit-once discipline).
-        return await CovenantSpender.SpendManyAsync(
-            wallet, emulatorUri, inputs,
+        return await CovenantSpender.SpendManyCoreAsync(
+            transport,
+            services.GetRequiredService<ISafetyService>(),
+            services.GetRequiredService<IWalletProvider>(),
+            services.GetRequiredService<IIntentStorage>(),
+            walletId, emulatorUri, inputs,
             [new TxOut(Money.Satoshis(total), playerScript)],
             extraPackets: [packet], ct: ct);
     }

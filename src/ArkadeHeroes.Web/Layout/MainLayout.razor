@@ -78,7 +78,7 @@
         "market" or "sell" => "market",
         "wallet" => "wallet",
         var p when p == "heroes" || p.StartsWith("heroes/")
-                   || p is "spar" or "gauntlet" or "trials" or "duel" or "deathmatch" or "breed" or "merge" or "gear" or "leaderboard" or "daily" or "squad" or "tournaments" => "heroes",
+                   || p is "spar" or "gauntlet" or "trials" or "duel" or "deathmatch" or "breed" or "merge" or "gear" or "leaderboard" or "daily" or "squad" or "tournaments" or "reclaim" => "heroes",
         _ => "",
     };
 
@@ -156,6 +156,9 @@
                 ("Merge", "merge", NavLinkMatch.Prefix),
                 ("Gear", "gear", NavLinkMatch.Prefix),
                 ("Ranks", "leaderboard", NavLinkMatch.Prefix),
+                // Sits beside Breed and Merge on purpose: those two flows create two of the three escrow
+                // kinds it recovers, so a run that died halfway is one tab from where it was started.
+                ("Recover", "reclaim", NavLinkMatch.Prefix),
             ],
             "market" =>
             [

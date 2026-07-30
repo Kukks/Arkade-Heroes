@@ -1,6 +1,12 @@
 using ArkadeHeroes.Chain.NArk;
+using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
+using NArk.Abstractions.Intents;
+using NArk.Abstractions.Safety;
+using NArk.Abstractions.VTXOs;
+using NArk.Abstractions.Wallets;
 using NArk.Core.Assets;
+using NArk.Core.Services;
 using NBitcoin;
 
 namespace ArkadeHeroes.Chain.Covenants;
@@ -21,22 +27,41 @@ namespace ArkadeHeroes.Chain.Covenants;
 /// </summary>
 public static class OfferReclaimFlow
 {
+    /// <summary>Reclaims from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
     /// <returns>The emulator's co-signed response for the reclaim transaction.</returns>
-    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static Task<EmulatorSubmitResponse> ReclaimAsync(
         SelfCustodyWallet seller,
         Uri emulatorUri,
         OfferParams offer,
         Func<CancellationToken, Task<long>> chainMedianTime,
         TimeSpan? vtxoTimeout = null,
         CancellationToken ct = default)
+        => ReclaimAsync(seller.Services, seller.WalletId, seller.Address,
+            emulatorUri, offer, chainMedianTime, vtxoTimeout, ct);
+
+    /// <summary>
+    /// Service-level reclaim — runs against any NArk service graph (a player wallet's isolated
+    /// container OR a browser's Blazor DI), so the console and the browser share ONE implementation
+    /// of this covenant spend rather than each carrying its own.
+    /// </summary>
+    /// <returns>The emulator's co-signed response for the reclaim transaction.</returns>
+    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+        IServiceProvider services,
+        string walletId,
+        string sellerAddress,
+        Uri emulatorUri,
+        OfferParams offer,
+        Func<CancellationToken, Task<long>> chainMedianTime,
+        TimeSpan? vtxoTimeout = null,
+        CancellationToken ct = default)
     {
-        var transport = seller.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
         var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
 
-        if (seller.Address != offer.SellerAddress)
+        if (sellerAddress != offer.SellerAddress)
             throw new InvalidOperationException(
-                $"This wallet ({seller.Address}) is not the seller of offer {offer.OfferId}.");
+                $"This wallet ({sellerAddress}) is not the seller of offer {offer.OfferId}.");
 
         var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
         var sellerScript = ArkAddress.Parse(offer.SellerAddress).ScriptPubKey;
@@ -45,8 +70,10 @@ public static class OfferReclaimFlow
         IReadOnlyList<global::NArk.Abstractions.VTXOs.ArkVtxo> vtxos;
         try
         {
-            vtxos = await CovenantSpender.WaitForVtxosAsync(
-                seller, contract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
+            vtxos = await CovenantSpender.WaitForVtxosCoreAsync(
+                services.GetRequiredService<VtxoSynchronizationService>(),
+                services.GetRequiredService<IVtxoStorage>(),
+                contract, 1, vtxoTimeout ?? TimeSpan.FromSeconds(20), ct);
         }
         catch (TimeoutException)
         {
@@ -69,8 +96,12 @@ public static class OfferReclaimFlow
             AssetGroup.Create(item, null,
                 [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
         ]);
-        return await CovenantSpender.SpendManyAsync(
-            seller, emulatorUri,
+        return await CovenantSpender.SpendManyCoreAsync(
+            transport,
+            services.GetRequiredService<ISafetyService>(),
+            services.GetRequiredService<IWalletProvider>(),
+            services.GetRequiredService<IIntentStorage>(),
+            walletId, emulatorUri,
             [
                 // The covenant-v2 reclaim leaf is fully baked (AssetAtOutput: item → output 0
                 // paying the seller, script-pinned) — EMPTY witness.
