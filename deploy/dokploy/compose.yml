@@ -7,11 +7,21 @@
 # breaks the moment Dokploy clones without submodules.
 #
 # ── HOW CONTINUOUS DEPLOY WORKS HERE ──────────────────────────────────────────
-# Dokploy's git Autodeploy fires on a push to the repo, but these services are pinned to
-# image TAGS, so a redeploy only changes anything once a new image exists under that tag.
-# CI publishes `latest` on every push to main, so: push → CI builds+pushes → Dokploy
-# redeploys → `pull_policy: always` fetches the new digest. Trigger the redeploy from CI
-# with Dokploy's deployment webhook so the two are ordered rather than racing.
+# TURN DOKPLOY'S GIT AUTODEPLOY **OFF** for this service.
+#
+# It fires on the PUSH, but the images it pulls are only published ~4 minutes later by
+# .github/workflows/docker-publish.yml. Left on, Dokploy redeploys against the PREVIOUS
+# `latest` and the site silently lags one commit behind — a stale deployment that reports
+# success, which is worse than a failed one because nothing tells you.
+#
+# Instead, that workflow's `deploy` job calls Dokploy's deployment webhook and `needs` the
+# image build, so it cannot fire until both images are actually pushed. Wire it up as:
+#   Dokploy → this service → Deployments → copy the webhook URL
+#   GitHub  → repo Settings → Secrets → DOKPLOY_DEPLOY_WEBHOOK
+# With the secret unset the job skips and CI still passes, so forks are unaffected.
+#
+# Order then is: push → CI builds + pushes both images → webhook → Dokploy redeploys →
+# `pull_policy: always` fetches the new digest.
 #
 # Pin to a version tag instead of `latest` for anything you care about being able to roll
 # back: `latest` cannot be rolled back to a known-good build, only forward.

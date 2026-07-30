@@ -100,3 +100,42 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Tell Dokploy to redeploy, AFTER both images exist ─────────────────────
+  #
+  # Dokploy's own git Autodeploy fires on the PUSH, but the images it pulls are only
+  # published by the job above, ~4 minutes later. Left to itself it therefore redeploys
+  # against the PREVIOUS `latest` and the deployment silently lags one commit behind —
+  # the failure mode is not an error, it is a stale site that looks fine.
+  #
+  # So: turn Dokploy's git Autodeploy OFF and let this job be the trigger instead. It
+  # `needs` the build matrix, so it cannot run until every image has actually been pushed.
+  deploy:
+    name: Trigger Dokploy
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # Pushes to main only. Tags cut release images but should not move a running
+    # environment, and pull_request never pushes an image at all.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Redeploy
+        env:
+          # Dokploy → your Compose service → Deployments → the deployment webhook URL.
+          # Unset is the SAFE state: no secret, no call, the workflow still passes. That
+          # keeps forks and anyone without a deployment from failing CI on a missing secret.
+          HOOK: ${{ secrets.DOKPLOY_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -z "${HOOK:-}" ]; then
+            echo "DOKPLOY_DEPLOY_WEBHOOK is not set — skipping (images are published; nothing was deployed)." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # --fail so an HTTP error is a red job rather than a silent no-op: a deploy that
+          # did not happen must not look like one that did.
+          code=$(curl -sS -X POST --fail-with-body -o /tmp/hook.out -w '%{http_code}' "$HOOK") || {
+            echo "Dokploy webhook FAILED (HTTP $code):" >> "$GITHUB_STEP_SUMMARY"
+            sed -n '1,20p' /tmp/hook.out >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          echo "Dokploy redeploy triggered (HTTP $code) after both images were pushed." \
+            >> "$GITHUB_STEP_SUMMARY"
