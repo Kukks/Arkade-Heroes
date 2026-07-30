@@ -1924,7 +1924,9 @@ public class GameService(
         // winning, not bought. No on-chain XP mirror: a losable ladder can't be a
         // non-custodial asset you'd have to claw back — progression stays
         // receipt-based (the receipts are the audit trail; the server is the ledger).
-        var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(winner.Level, loser.Level) : 0;
+        var transfer = session.WagerSats > 0
+            ? Leveling.PayableTransfer(winner.Level, loser.Level, loser.Xp, _config)
+            : 0;
         ApplyXp(winner, transfer);
         ApplyXp(loser, -transfer);
         var challengerDelta = challengerWon ? transfer : -transfer;
@@ -2148,7 +2150,9 @@ public class GameService(
             var d = defenders[duel.Slot];
             var cWon = duel.Result.WinnerId == c.Id;
             var (w, l) = cWon ? (c, d) : (d, c);
-            var transfer = session.WagerSats > 0 ? Leveling.XpTransfer(w.Level, l.Level) : 0;
+            var transfer = session.WagerSats > 0
+                ? Leveling.PayableTransfer(w.Level, l.Level, l.Xp, _config)
+                : 0;
             ApplyXp(w, transfer);
             ApplyXp(l, -transfer);
             var cDelta = cWon ? transfer : -transfer;

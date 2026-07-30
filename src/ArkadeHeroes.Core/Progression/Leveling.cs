@@ -17,6 +17,8 @@ public static class Leveling
     // A staked win MOVES XP from the loser to the winner: the winner gains
     // exactly what the loser loses, so self-play — across any number of wallets —
     // can only CONCENTRATE XP between your heroes, never MINT it (Sybil-proof).
+    // That holds only when a settle uses PayableTransfer below; XpTransfer alone is
+    // the SIZE OF THE GAP, and a loser too poor to pay it cannot make up the balance.
     // The amount scales with the level DIFFERENCE, not the absolute level: beating
     // a much-weaker hero transfers 0 (no farming down the ladder), a peer transfers
     // the base, an upset over a higher hero transfers a lot (and strips it off them).
@@ -27,6 +29,33 @@ public static class Leveling
     /// <summary>XP the winner gains and the loser loses, from the level gap (clamped at 0).</summary>
     public static long XpTransfer(int winnerLevel, int loserLevel)
         => Math.Max(0, BaseTransfer + TransferPerLevel * (loserLevel - winnerLevel));
+
+    /// <summary>Total XP a hero has banked: everything spent climbing to its level, plus progress toward the next.
+    /// This is exactly what <see cref="Apply"/> can take off it before it bottoms out at level 1 with 0 XP.</summary>
+    public static long TotalXp(int level, long xp, GameConfig? config = null)
+    {
+        if (level < 1) throw new ArgumentOutOfRangeException(nameof(level));
+        var total = xp;
+        for (var l = 1; l < level; l++) total += XpToNext(l, config);
+        return total;
+    }
+
+    /// <summary>
+    /// The transfer a staked win actually MOVES — <see cref="XpTransfer"/> clamped to what the loser owns.
+    ///
+    /// Settle with this, never with the raw amount. <see cref="Apply"/> floors a losing hero at level 1 / 0 XP,
+    /// so a loser that owns less than the gap says still hands over its whole balance and no more; awarding the
+    /// winner the unclamped figure would credit XP the loser never paid, i.e. MINT it. That is not hypothetical
+    /// at the bottom of the ladder: a free starter sits at level 1 with 0 XP, pays nothing when it loses, and
+    /// does not deplete — so it can be beaten over and over, each win conjuring the full base transfer. That
+    /// would break the Sybil-proofness the conserved transfer exists to provide.
+    ///
+    /// The ceiling is deliberately NOT clamped here: a hero at <see cref="XpCurve.MaxLevel"/> keeps no surplus,
+    /// so beating one still costs the loser its stake and that XP leaves the game. Draining is a sink, and a
+    /// sink cannot make the books insolvent the way a mint can.
+    /// </summary>
+    public static long PayableTransfer(int winnerLevel, int loserLevel, long loserXp, GameConfig? config = null)
+        => Math.Min(XpTransfer(winnerLevel, loserLevel), TotalXp(loserLevel, loserXp, config));
 
     // ── The per-character match fee (a level-proportional sats sink) ────
     // Each fighter pays to enter a staked match, proportional to its OWN level —
