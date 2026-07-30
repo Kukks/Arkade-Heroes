@@ -1,0 +1,225 @@
+@page "/reclaim"
+@* For RefundNotYetDueException — the typed "timelock still shut" answer the reclaim flows raise. *@
+@using ArkadeHeroes.Chain.Covenants
+@inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject WalletState State
+@implements IDisposable
+
+<PageTitle>Recover · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Recover stranded <span class="neon">value</span></h2>
+    <span class="spacer"></span>
+    <button class="btn ghost sm" @onclick="Reload" disabled="@(_loading || _busyId is not null)">Refresh</button>
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">Press <a href="/">Play</a> on the home page — your wallet is set up automatically — then come back to check for stranded escrows.</div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> checking your escrows…</div>
+}
+else if (!_loaded)
+{
+    @* Never fall through to "nothing stranded" on a failed read. This page's whole job is to stop escrowed
+       value from being invisible, and a silent empty state would tell a player their stuck hero is fine. *@
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't check your escrows.</div>
+        <p class="muted" style="margin:.7rem 0 0">
+            This is not the same as having nothing stranded — the list didn't load, so anything escrowed is
+            still escrowed. @_loadError
+        </p>
+        <div class="btn-row" style="margin-top:.7rem">
+            <button class="btn primary sm" @onclick="Reload" disabled="@_loading">Try again</button>
+        </div>
+    </div>
+}
+else if (_items.Count == 0)
+{
+    <div class="card muted">
+        Nothing stranded. Every escrow you've opened has either completed or been reclaimed —
+        if a <a href="breed">breeding</a>, <a href="merge">fusion</a> or <a href="market">listing</a> ever
+        stops halfway, whatever it holds shows up here.
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="hud" style="margin-bottom:.6rem">Escrowed with no way forward — reclaim to your own wallet</div>
+        @foreach (var it in _items)
+        {
+            <div class="match-row">
+                <span class="chip">@(KindLabel(it.Kind))</span>
+                <span>@it.Summary</span>
+                <span class="spacer"></span>
+                @if (IsUnlocked(it))
+                {
+                    <button class="btn primary sm" @onclick="() => DoReclaim(it)" disabled="@(_busyId is not null)">
+                        @(_busyId == it.Id ? "Reclaiming…" : "Reclaim")
+                    </button>
+                }
+                else
+                {
+                    @* Disabled, with the wait spelled out: the covenant refuses an early spend, and a
+                       refused submission permanently poisons the transaction on the node — so this must
+                       never be a button the player can probe to find out. *@
+                    <span class="chip">@(Countdown(it))</span>
+                    <button class="btn ghost sm" disabled>Reclaim</button>
+                }
+            </div>
+        }
+    </div>
+
+    <p class="muted" style="margin:.9rem 0 0">
+        Each of these is recovered by spending the escrow's own timelocked reclaim leaf. Your browser rebuilds
+        the contract from the escrow's public parameters and signs with your key — the server only supplies
+        parameters you can check, so it can make a reclaim fail but never take the asset elsewhere.
+    </p>
+}
+
+@if (_chainClockUnknown && _items.Count > 0)
+{
+    <div class="status-line" style="margin-top:.9rem">
+        <span class="dot wait"></span>
+        Couldn't read the chain clock, so these windows can't be checked ahead of time — a reclaim will say
+        whether it's due.
+    </div>
+}
+@if (_status is not null)
+{
+    <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
+}
+@if (_done is not null)
+{
+    <div class="status-line" style="margin-top:.9rem"><span class="dot ok"></span> @_done</div>
+}
+@if (_error is not null)
+{
+    <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div>
+}
+
+@code {
+    private List<ReclaimableDto> _items = [];
+    private bool _loading = true;
+    private bool _loaded;
+    private string? _busyId;
+    private string? _status;
+    private string? _done;
+    private string? _error;
+    private string? _loadError;
+
+    // CHAIN time (median-time-past), not the browser's clock — a reclaim leaf is a CLTV against consensus
+    // time, so a tab running fast would otherwise show a shut window as open. Read once per load and
+    // counted down from, since median-time-past only advances as blocks land. Null when unreadable, which
+    // is reported rather than papered over with the local clock.
+    private long? _chainNow;
+    private bool _chainClockUnknown;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_loaded && !_loading) await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _items = await Api.Players.ReclaimableAsync();
+            _loaded = true;
+            _loadError = null;
+            // Only worth a round-trip when there is something whose window we'd have to judge.
+            if (_items.Count > 0) await ReadChainClockAsync();
+        }
+        catch (Exception ex)
+        {
+            // On a cold load the bearer token may still be settling and OnState retries once signed in — but
+            // the failure is RECORDED rather than swallowed, because _loaded staying false is what keeps the
+            // page from claiming nothing is stranded when it simply couldn't look.
+            _loadError = ex.Message;
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task ReadChainClockAsync()
+    {
+        try
+        {
+            _chainNow = await Session.ChainMedianTimeAsync();
+            _chainClockUnknown = false;
+        }
+        catch
+        {
+            // No esplora reachable from this browser. Don't substitute the local clock — say so, and let
+            // the reclaim flow (which gates on the same chain clock) be the authority.
+            _chainNow = null;
+            _chainClockUnknown = true;
+        }
+    }
+
+    private async Task Reload()
+    {
+        _error = null; _done = null;
+        await LoadAsync();
+    }
+
+    // Unknown chain clock leaves the button enabled on purpose: the flow re-reads the clock itself and
+    // refuses before submitting anything, so the worst case is an informative failure, never an early spend.
+    private bool IsUnlocked(ReclaimableDto it) =>
+        _chainNow is not long now || ReclaimWindow.IsUnlocked(it.ReclaimAfterUnixSeconds, now);
+
+    private string Countdown(ReclaimableDto it) =>
+        _chainNow is long now ? ReclaimWindow.Describe(it.ReclaimAfterUnixSeconds, now) : "window unknown";
+
+    private static string KindLabel(string kind) => kind switch
+    {
+        "offer" => "Listing",
+        "breed" => "Breeding",
+        "merge" => "Fusion",
+        _ => kind,
+    };
+
+    private async Task DoReclaim(ReclaimableDto it)
+    {
+        _busyId = it.Id; _error = null; _done = null;
+        try
+        {
+            await Session.ReclaimAsync(it, s => { _status = s; StateHasChanged(); });
+            _done = $"Reclaimed — {KindLabel(it.Kind).ToLowerInvariant()} {it.Id[..Math.Min(8, it.Id.Length)]} is spending back to your wallet.";
+        }
+        catch (RefundNotYetDueException ex)
+        {
+            // The authoritative answer, straight from the chain: show both clocks AND the human wait, and
+            // adopt the chain time the exception carries so every other row's countdown corrects itself.
+            _chainNow = ex.ChainUnixSeconds;
+            _chainClockUnknown = false;
+            _error = $"Not yet — this unlocks at chain time {ex.DueUnixSeconds}, the chain is at "
+                   + $"{ex.ChainUnixSeconds} ({ReclaimWindow.Describe(ex.DueUnixSeconds, ex.ChainUnixSeconds)}). Nothing was submitted.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _status = null;
+            _busyId = null;
+            // Reload even when the reclaim threw, for the same reason the tournament and death-match pages
+            // do: a partly-completed action still changes what's stranded, and the list is exactly what the
+            // player needs to see afterwards.
+            await LoadAsync();
+        }
+    }
+}

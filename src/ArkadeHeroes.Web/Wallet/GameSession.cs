@@ -11,7 +11,7 @@ namespace ArkadeHeroes.Web.Wallet;
 /// a player — the server never holds a key. Scoped so it can use the request-scoped SDK client
 /// (whose bearer token, set on register/login, persists for the app in WASM's single scope).
 /// </summary>
-public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state, TermsState terms, IServiceProvider services)
+public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState state, TermsState terms, IServiceProvider services, HttpClient http)
 {
     /// <summary>
     /// Silently resume the player this wallet is registered as (sign a fresh challenge and log in).
@@ -852,6 +852,75 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// <summary>Clear a hero's equipment slot (Weapon/Armor/Trinket), returning the item to the player.</summary>
     public async Task<HeroDto> UnequipAsync(string heroId, string slot) =>
         (await api.Heroes.UnequipAsync(heroId, new UnequipRequest(slot))).Hero;
+
+    /// <summary>
+    /// The clock a reclaim timelock actually answers to: the chain's median-time-past, read from the
+    /// esplora the server advertises. Deliberately NOT the browser's clock — a covenant reclaim leaf is a
+    /// CLTV against consensus time, so a tab with a fast clock would otherwise be told a shut window is
+    /// open. Read once per page load and counted down from, since median-time-past only moves as blocks land.
+    /// </summary>
+    public async Task<long> ChainMedianTimeAsync(CancellationToken ct = default) =>
+        await ChainMedianTimeAsync(await api.Chain.InfoAsync(), ct);
+
+    private Task<long> ChainMedianTimeAsync(ChainInfoDto info, CancellationToken ct) =>
+        EsploraChainTime.GetMedianTimeAsync(http, string.IsNullOrEmpty(info.EsploraApiUri)
+            ? throw new GameWalletException(
+                "This arena didn't advertise an esplora API, so the chain clock that governs reclaim timelocks can't be read.")
+            : info.EsploraApiUri, ct);
+
+    /// <summary>
+    /// Reclaim ONE stranded covenant escrow back to the player's own wallet — the browser half of the
+    /// console's <c>canceloffer</c> / <c>refund-breed</c> / <c>refund-merge</c>. Trustless by construction:
+    /// the contract is rebuilt in the browser from the escrow's public params and the reclaim leaf is
+    /// script-pinned to the player's own address, so the server supplies verifiable parameters and nothing
+    /// more — a lying server can make this fail, never divert the asset.
+    ///
+    /// Runs the SAME flow the console runs (the service-level overload, bound to this browser's NArk DI),
+    /// so there is one implementation of each covenant spend rather than a second one that can drift.
+    ///
+    /// Throws <see cref="RefundNotYetDueException"/> — carrying the due and current chain times — when the
+    /// timelock has not opened. The flow raises that BEFORE submitting anything: a refused submission would
+    /// permanently poison the canonical txid on arkd, so the window is checked, never probed.
+    /// </summary>
+    public async Task ReclaimAsync(ReclaimableDto item, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+        var info = await api.Chain.InfoAsync();
+        if (string.IsNullOrEmpty(info.EmulatorUri))
+            throw new GameWalletException("This arena isn't in covenant mode (no emulator advertised).");
+        var emulator = new Uri(info.EmulatorUri);
+        Task<long> ChainTime(CancellationToken ct) => ChainMedianTimeAsync(info, ct);
+
+        // The REGISTERED address, for the same reason BuyHeroAsync uses it: the reclaim leaf is pinned to
+        // the address baked into the escrow params, which is the one the server recorded. A fresh receive
+        // address advances once funded, so it would not match — the flows compare and refuse rather than
+        // build a spend to the wrong script, which is why a mismatch here fails loudly instead of quietly.
+        var address = state.Player?.ArkadeAddress ?? await wallet.GetReceiveAddressAsync(w.Id);
+
+        onProgress?.Invoke("Rebuilding the escrow covenant in your browser…");
+        switch (item.Kind)
+        {
+            case "offer":
+                await OfferReclaimFlow.ReclaimAsync(services, w.Id, address, emulator,
+                    await api.Offers.ParamsAsync(item.Id), ChainTime);
+                break;
+            case "breed":
+                await BreedEscrowRefundFlow.ReclaimAsync(services, w.Id, address, emulator,
+                    await api.Breeding.EscrowAsync(item.Id), ChainTime);
+                break;
+            case "merge":
+                await MergeEscrowRefundFlow.ReclaimAsync(services, w.Id, address, emulator,
+                    await api.Merge.EscrowAsync(item.Id), ChainTime);
+                break;
+            default:
+                // A kind this build has no flow for. Say so rather than silently doing nothing — the
+                // player is looking at escrowed value and needs to know it went unhandled.
+                throw new GameWalletException(
+                    $"This build can't reclaim a '{item.Kind}' escrow — reclaim it from the console client.");
+        }
+        onProgress?.Invoke("Reclaim co-signed — the escrow is spending back to your wallet…");
+    }
 
     // One escrow deposit (a hero asset when assetId is set, else sats), then wait for the wallet's
     // coins to re-settle before returning — so the next deposit in the sequence doesn't contend for
