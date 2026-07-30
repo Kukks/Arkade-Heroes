@@ -41,8 +41,9 @@ else if (_items.Count == 0)
 {
     <div class="card muted">
         Nothing stranded. Every escrow you've opened has either completed or been reclaimed —
-        if a <a href="breed">breeding</a>, <a href="merge">fusion</a> or <a href="market">listing</a> ever
-        stops halfway, whatever it holds shows up here.
+        if a <a href="breed">breeding</a>, <a href="merge">fusion</a>, <a href="market">listing</a>,
+        <a href="duel">duel</a> or <a href="deathmatch">death-match</a> ever stops halfway, whatever it
+        holds shows up here.
     </div>
 }
 else
@@ -188,6 +189,8 @@ else
         "offer" => "Listing",
         "breed" => "Breeding",
         "merge" => "Fusion",
+        "wager" => "Duel",
+        "deathmatch" => "Death-match",
         _ => kind,
     };
 
