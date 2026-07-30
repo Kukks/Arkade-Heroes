@@ -53,9 +53,13 @@ public static class TrialsBoardBuilder
 /// <summary>
 /// The leaderboard is computed entirely from signed progression receipts —
 /// anyone holding the receipt chain can recompute it, so the server's ranking
-/// carries no trust of its own (the receipts are the source of truth). Wins and
-/// matches come from "match" receipts; the level is the hero's receipt-provable
+/// carries no trust of its own (the receipts are the source of truth). Matches and
+/// wins come from "match" receipts; the level is the hero's receipt-provable
 /// current level.
+///
+/// A win only counts if the fight MOVED XP — see the note at the tally below. Rank
+/// is paid in real sats at season settlement, so a fight that put nothing at stake
+/// must not buy standing.
 /// </summary>
 public static class LeaderboardBuilder
 {
@@ -69,7 +73,14 @@ public static class LeaderboardBuilder
         {
             matches[r.HeroAId] = matches.GetValueOrDefault(r.HeroAId) + 1;
             matches[r.HeroBId] = matches.GetValueOrDefault(r.HeroBId) + 1;
-            if (r.ResultHeroId is { } winner)
+            // A win only ranks if the fight actually moved XP. The ladder already refuses to pay for
+            // beating someone far below you (Leveling.XpTransfer clamps to 0), so counting such a fight
+            // toward rank let the board be farmed for the price of the match fees — and rank is paid in
+            // real sats at season settlement. XpAwardA is the clamp's own recorded output, so "zero" is
+            // the ruleset's verdict that this fight was worth nothing, not a judgement made here. The
+            // match still counts: it happened, and dropping it would hide the farming instead of
+            // devaluing it.
+            if (r.ResultHeroId is { } winner && r.XpAwardA != 0)
                 wins[winner] = wins.GetValueOrDefault(winner) + 1;
         }
 

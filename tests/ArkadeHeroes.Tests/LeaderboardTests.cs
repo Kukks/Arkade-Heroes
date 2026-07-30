@@ -1,4 +1,5 @@
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Progression;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -19,8 +20,14 @@ public class LeaderboardTests : IClassFixture<WebApplicationFactory<Program>>
             ["h2"] = ("Bo", 5, "p2"),
             ["h3"] = ("Cy", 5, "p3"),
         };
+        // XpAwardA/B must be non-zero: only a fight that MOVED XP ranks (see XpConservationTests and
+        // LeaderboardFarmingExposureTests). These stand for ordinary peer wins, which always carry a
+        // transfer, so the amount is realistic filler rather than the 0 this fixture used to pass.
         ProgressionReceiptDto Match(string id, string a, string b, string winner) =>
-            new("match", id, a, b, winner, "", "", "", 0, 0, 0, 0, 0, "", "");
+            new("match", id, a, b, winner, "", "", "",
+                winner == a ? Leveling.BaseTransfer : -Leveling.BaseTransfer,
+                winner == a ? -Leveling.BaseTransfer : Leveling.BaseTransfer,
+                0, 0, 0, "", "");
         var receipts = new[]
         {
             Match("m1", "h1", "h2", "h1"), // h1 beats h2
@@ -54,12 +61,17 @@ public class LeaderboardTests : IClassFixture<WebApplicationFactory<Program>>
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("lb-duel"));
 
         var board = await alice.Leaderboard.TopAsync();
-        // The two dueling heroes appear, and the winner sits above the loser.
-        var winnerRank = board.First(e => e.HeroId == fight.Result.WinnerId).Rank;
+        // Both duellists reach the board and the fight is tallied against each of them.
         var loserId = fight.Result.WinnerId == aliceHeroes[0].Id ? bobHeroes[0].Id : aliceHeroes[0].Id;
-        var loserRank = board.First(e => e.HeroId == loserId).Rank;
-        Assert.True(winnerRank < loserRank, "winner should outrank the loser");
-        Assert.Equal(1, board.First(e => e.HeroId == fight.Result.WinnerId).Wins);
+        Assert.Equal(1, board.First(e => e.HeroId == fight.Result.WinnerId).Matches);
+        Assert.Equal(1, board.First(e => e.HeroId == loserId).Matches);
+
+        // But NO win is credited, and that is correct rather than a plumbing failure. Both fighters are
+        // fresh starters — level 1 with 0 XP, which is the floor — so the loser had nothing to hand over,
+        // the conserved transfer moved 0, and a fight that moved nothing does not confer rank. Rank is
+        // paid in real sats at settlement, and crediting a stake-free win is exactly how the board was
+        // farmable. Earning rank means beating someone who had something to lose.
+        Assert.Equal(0, board.First(e => e.HeroId == fight.Result.WinnerId).Wins);
     }
 
     [Fact]
