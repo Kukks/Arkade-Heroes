@@ -22,6 +22,21 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> checking your escrows…</div>
 }
+else if (!_loaded)
+{
+    @* Never fall through to "nothing stranded" on a failed read. This page's whole job is to stop escrowed
+       value from being invisible, and a silent empty state would tell a player their stuck hero is fine. *@
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't check your escrows.</div>
+        <p class="muted" style="margin:.7rem 0 0">
+            This is not the same as having nothing stranded — the list didn't load, so anything escrowed is
+            still escrowed. @_loadError
+        </p>
+        <div class="btn-row" style="margin-top:.7rem">
+            <button class="btn primary sm" @onclick="Reload" disabled="@_loading">Try again</button>
+        </div>
+    </div>
+}
 else if (_items.Count == 0)
 {
     <div class="card muted">
@@ -94,6 +109,7 @@ else
     private string? _status;
     private string? _done;
     private string? _error;
+    private string? _loadError;
 
     // CHAIN time (median-time-past), not the browser's clock — a reclaim leaf is a CLTV against consensus
     // time, so a tab running fast would otherwise show a shut window as open. Read once per load and
@@ -123,12 +139,16 @@ else
         {
             _items = await Api.Players.ReclaimableAsync();
             _loaded = true;
+            _loadError = null;
             // Only worth a round-trip when there is something whose window we'd have to judge.
             if (_items.Count > 0) await ReadChainClockAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            // The token may still be settling on a cold load; OnState retries once signed in.
+            // On a cold load the bearer token may still be settling and OnState retries once signed in — but
+            // the failure is RECORDED rather than swallowed, because _loaded staying false is what keeps the
+            // page from claiming nothing is stranded when it simply couldn't look.
+            _loadError = ex.Message;
         }
         finally { _loading = false; }
     }
