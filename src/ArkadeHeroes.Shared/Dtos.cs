@@ -563,7 +563,12 @@ public record GameConfigDto(
     // The server's CURRENT rules version — the stamp every outcome it resolves from now on carries.
     // Trailing optional: an older server that omits it deserializes to "" and clients treat that as
     // "unstamped" (GameConfig.Default), exactly as they treat a pre-stamp replay.
-    string Version = "")
+    string Version = "",
+    // Whether gear COUNTERS are live — same job as InnateAbilities above. The frontend reads it to decide
+    // whether to surface a hero's build SHAPE and the counter line at all, because a counter the player
+    // cannot see reads as randomness rather than as strategy. Appended (defaulted) so an older server that
+    // omits it deserializes to false — which is exactly the rules such a server resolves under.
+    bool GearCounters = false)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -579,7 +584,8 @@ public record GameConfigDto(
         c.HeroRenameFeeSats,
         c.TournamentRakePct,
         c.Combat.InnateAbilities,
-        ArkadeHeroes.Core.GameConfigVersion.Compute(c));
+        ArkadeHeroes.Core.GameConfigVersion.Compute(c),
+        c.Combat.GearCounters);
 }
 
 /// <summary>

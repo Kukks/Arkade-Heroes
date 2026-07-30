@@ -109,9 +109,11 @@ public class CombatAttributionProbe
         Combat = GameConfig.Default.Combat with { InnateAbilities = true },
     };
 
-    /// <summary>Counters + wildcard ON, on top of <see cref="Live"/> — the rules the counter guards measure.
-    /// Not what the server ships yet (<c>GameOptions.GearCounters</c> is off pending the hero card showing a
-    /// hero's shape), so these are measurements of a config behind a flag, deliberately.</summary>
+    /// <summary>Counters + wildcard ON, on top of <see cref="Live"/> — the rules the counter guards measure,
+    /// and now also what the server ships: <c>GameOptions.GearCounters</c> defaults true once the hero card
+    /// began showing a hero's build shape, which is the visibility the flip was waiting on.
+    /// <see cref="GameConfig.Default"/> still keeps both flags off (it is what unstamped replays reconstruct
+    /// under), which is why this config is built up here rather than read from Default.</summary>
     private static readonly GameConfig Countered = Live with
     {
         Combat = Live.Combat with { GearCounters = true },
