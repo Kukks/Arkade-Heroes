@@ -393,6 +393,25 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .tier-dot.epic { background: var(--r-epic); }       b.epic      { color: var(--r-epic); }
 .tier-dot.legendary { background: var(--gold); }    b.legendary { color: var(--gold); }
 
+/* --- /tech page ----------------------------------------------------------- */
+.tech-p { margin: 0; font-size: .86rem; line-height: 1.6; }
+.tech-code {
+    margin: .6rem 0 0; padding: .8rem .9rem; overflow-x: auto;
+    background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+    font-family: var(--font-hud); font-size: .72rem; line-height: 1.7; color: var(--accent);
+}
+.tech-flow {
+    display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+    margin: .9rem 0 1rem;
+}
+.tech-step {
+    font-family: var(--font-hud); font-size: .66rem; text-transform: uppercase; letter-spacing: .08em;
+    padding: .45rem .7rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--line); background: var(--bg-2); color: var(--muted);
+}
+.tech-step.out { border-color: var(--accent); color: var(--accent); }
+.tech-arrow { color: var(--faint); }
+
 .codex-element { display: grid; gap: .3rem; }
 .cx-el-line { font-size: .78rem; }
 .cx-el-line.ok { color: var(--ok); }
