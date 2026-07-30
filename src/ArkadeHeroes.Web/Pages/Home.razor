@@ -11,12 +11,16 @@
 
 <section class="hero-panel">
     <div>
-        <div class="hud">Bitcoin L2 · non-custodial</div>
-        <h1>Breed, battle &amp; trade<br /><span class="neon">heroes you truly own.</span></h1>
+        <div class="hud">Breed · Battle · Trade</div>
+        <h1>Raise a champion.<br /><span class="neon">Take on all comers.</span></h1>
         <p>
-            Your heroes are Arkade assets and your keys never leave this browser.
-            Covenants — not our servers — enforce every breed, duel, and trade.
+            Every hero is one of a kind — its look, its stats and its bloodline all come from a
+            genome no two creatures share. Breed them, level them, send them into the arena,
+            and trade the ones you can bear to part with.
         </p>
+        @* The chain is real and load-bearing, but it is not the pitch. One quiet line, below the
+           fold of the eye, for the people who care that "yours" is more than a database row. *@
+        <p class="muted chain-note">Heroes are yours on Bitcoin — not entries in our database.</p>
 
         @if (State.IsSignedIn)
         {
@@ -35,7 +39,7 @@
                     @(_starting ? "Summoning…" : "Play →")
                 </button>
             </div>
-            <p class="muted play-note">No signup, no email — we set up your wallet automatically. You can back it up any time.</p>
+            <p class="muted play-note">No signup, no email. Pick a name and your first two heroes are summoned.</p>
         }
         @* Outside the signed-in/out branch: a partial-failure (registered, but the starter
            mint didn't land) flips IsSignedIn, so the error must survive that switch. *@
@@ -44,7 +48,21 @@
             <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_playError</div>
         }
     </div>
-    <div class="hero-art">GEN·0<br />STARTER</div>
+    @* Real creatures, not a placeholder. These are drawn by the SAME genome renderer the rest of the
+       game uses, from fixed genomes held below — so the first thing a visitor sees is the actual art,
+       and it needs no network call, no account and no server that is awake yet. *@
+    <div class="hero-art">
+        <div class="showcase">
+            @foreach (var (genome, name) in Showcase)
+            {
+                <div class="showcase-hero">
+                    <HeroSprite Genome="@genome" Name="@name" Size="96" />
+                    <span class="hud">@name</span>
+                </div>
+            }
+        </div>
+        <span class="hud showcase-note">every hero is one of a kind</span>
+    </div>
 </section>
 
 @if (State.IsSignedIn)
@@ -84,6 +102,10 @@
     }
 </div>
 
+@* Static, server-independent, and the answer to "what actually IS this?" — so it sits high,
+   above the live roster strip that needs a warm backend to say anything at all. *@
+<GenomeCodex />
+
 @if (_featured.Count > 0)
 {
     <div class="page-head" style="margin-top:2rem">
@@ -101,6 +123,19 @@
 }
 
 @code {
+    // Fixed showcase genomes for the landing art. Hardcoded on purpose: the renderer is deterministic,
+    // so these draw the same three creatures for every visitor, with no API call, no account and no
+    // dependency on the server being up — the page still looks like a game when the backend is cold.
+    // Each is 32 bytes: [0..15] mechanical (element, stats, appearance), [16..31] the trait block, which
+    // is filled here rather than zeroed so the art shows the trait variety a real bred hero has and a
+    // gen-0 starter does not.
+    private static readonly (string Genome, string Name)[] Showcase =
+    [
+        ("a3f21c05d84b6790e2c1358fa07d4b621a2b3c4d5e6f708190a1b2c3d4e5f607", "Emberfang"),
+        ("5e7d19c4a2360f8b71d3e50629ac8f1422334455667788990011aabbccddeeff", "Tidecaller"),
+        ("0c4a8e26f1b95d3708e2a6c41d7f0b53f0e1d2c3b4a5968778695a4b3c2d1e0f", "Glimmerhusk"),
+    ];
+
     enum Conn { Connecting, Ok, Fail }
     Conn _state = Conn.Connecting;
     ChainInfoDto? _info;
