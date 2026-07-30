@@ -102,11 +102,19 @@
                 // accepted — and Blazor put "A glitch in the arcade" over an otherwise working page.
                 // Each failure is already logged by the failing call; here we only degrade the display.
                 //
-                // VERIFIED with a wallet in storage and the node stopped: no error banner, no console
-                // errors, the page renders. NOT verified: that the SESSION survives. With no address the
-                // header still reads "no wallet" and the roster showed "2 minted" rather than "2 yours",
-                // so something downstream of the address still gates sign-in. Guarding here is strictly
-                // better than crashing, but it is not yet a full offline-tolerant boot.
+                // VERIFIED in a browser with a wallet in storage and the node stopped: no error banner,
+                // no console errors, the page renders with the roster.
+                //
+                // What a null address does NOT cost: the session. WalletState.Connected keys off the
+                // wallet ID, not the address, so the pill still reads as connected — ShortAddress simply
+                // renders empty. And sign-in doesn't touch the node at all: GameSession.LoginAsync is a
+                // game-SERVER round-trip (challenge → sign locally → login), so an unreachable Arkade
+                // node leaves the player signed in. What is lost is narrow and cosmetic: the pill shows
+                // no address text and the balance stays at its last known value.
+                //
+                // NOT re-observed since: the behaviour when the game SERVER is the unreachable one. That
+                // path is guarded below the same way, but it is a different failure and no one has driven
+                // it — treat it as untested rather than working.
                 string? address = null;
                 try { address = await GameWallet.GetReceiveAddressAsync(wallet.Id); }
                 catch (Exception) { /* header shows the wallet without an address until the node answers */ }
