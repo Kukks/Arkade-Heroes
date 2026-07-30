@@ -179,4 +179,34 @@ public class ReclaimableTests
         Assert.Contains(a[0].Name, stuck.Summary);
         Assert.Empty(await bob.Players.ReclaimableAsync());
     }
+
+    [Fact]
+    public async Task SettledDeathMatch_IsNotReclaimableByEitherSide()
+    {
+        // The death-match counterpart of SettledCovenantWager_IsNotReclaimable, and the sharper of the two:
+        // a settle BURNS the losing hero, so a row left behind here would offer to recover a hero that no
+        // longer exists. Gated on the session's own Completed flag rather than on a funding probe, for the
+        // same reason the duel is gated on status — the escrow's funding can still read as staked after the
+        // settle has swept it, so a funding-only gate would strand every finished death-match on this page
+        // forever behind a button that cannot work.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("RC-DMSettled-A");
+        var (bob, _) = await factory.RegisterAsync("RC-DMSettled-B");
+        var a = await alice.ClaimStartersAsync();
+        var b = await bob.ClaimStartersAsync();
+
+        // Both stake their hero AND pay the per-character death-match fee — settle refuses without both.
+        var open = await alice.DeathMatch.OpenAsync(new DeathMatchOpenRequest(a[0].Id, b[0].Id));
+        await alice.Dev.FundDeathMatchEscrowAsync(
+            new { DeathMatchId = open.DeathMatchId, Role = "challenger" });
+        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.FeeInvoice!.InvoiceId });
+        var accept = await bob.DeathMatch.AcceptAsync(open.DeathMatchId);
+        await bob.Dev.FundDeathMatchEscrowAsync(
+            new { DeathMatchId = open.DeathMatchId, Role = "defender" });
+        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.FeeInvoice!.InvoiceId });
+        await alice.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest("rc-dm-settled"));
+
+        Assert.Empty(await alice.Players.ReclaimableAsync());
+        Assert.Empty(await bob.Players.ReclaimableAsync());
+    }
 }
