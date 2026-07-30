@@ -41,6 +41,10 @@ public sealed record GameConfig(
     int MatchmakingTake,        // suggested-opponents page size
     int SeasonLengthDays = 14,  // ranked-ladder season length (days); the current season is time-derived
     // ── Daily engagement loop (sats faucet: base + per-quest bonus, streak-scaled) ──
+    // Published so the client can HIDE the daily surface rather than offer a button that always
+    // fails. Default false: on an open signup the faucet pays real sats to anyone who can make a
+    // keypair, and a keypair is free — see GameOptions.DailyRewardEnabled.
+    bool DailyRewardEnabled = false,
     long DailyBaseSats = 50,          // paid just for claiming (login hook / sybil floor)
     long DailyQuestBonusSats = 150,   // per completed daily quest
     int DailyQuestsPerDay = 3,        // quests offered per day (rotated from the catalog)

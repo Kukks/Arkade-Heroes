@@ -17,11 +17,16 @@ public class TreasuryReserveFloorTests
     {
         const long Floor = 10_000;
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-            b.ConfigureServices(s => s.Configure<GameOptions>(o => o.TreasuryReserveFloorSats = Floor)));
+            b.ConfigureServices(s => s.Configure<GameOptions>(o =>
+            {
+                o.TreasuryReserveFloorSats = Floor;
+                o.DailyRewardEnabled = true;
+            })));
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         chain.FundTreasury(Floor + 30);   // only 30 sats sit above the floor (the daily reward is more)
 
         var (player, _) = await factory.RegisterAsync("Gov-Floor");
+        await player.ClaimStartersAsync();   // the faucet only pays players who own a hero
         var claim = await player.Daily.ClaimAsync();
 
         Assert.Equal(30, claim.AwardedSats);                       // paid only the surplus above the floor
@@ -33,11 +38,16 @@ public class TreasuryReserveFloorTests
     {
         const long SeasonPot = 25_000;   // GameConfig.Default.SeasonPotBaseSats, no accrual yet
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-            b.ConfigureServices(s => s.Configure<GameOptions>(o => o.ReserveSeasonPot = true)));
+            b.ConfigureServices(s => s.Configure<GameOptions>(o =>
+            {
+                o.ReserveSeasonPot = true;
+                o.DailyRewardEnabled = true;
+            })));
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         chain.FundTreasury(SeasonPot + 30);   // only 30 sats sit above the reserved season pot
 
         var (player, _) = await factory.RegisterAsync("Gov-Season");
+        await player.ClaimStartersAsync();   // the faucet only pays players who own a hero
         var claim = await player.Daily.ClaimAsync();
 
         Assert.Equal(30, claim.AwardedSats);                          // only the surplus above the pot is emitted

@@ -204,13 +204,19 @@ public class TreasuryObservabilityTests
         var healthy = new InMemoryChainService();
         var refused = new InMemoryChainService();
         using var control = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(healthy)));
+        {
+            b.UseSetting("Game:DailyRewardEnabled", "true");
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(healthy));
+        });
         using var broken = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("Game:DailyRewardEnabled", "true");
             b.ConfigureTestServices(s =>
             {
                 s.AddSingleton<IChainService>(refused);
                 s.AddSingleton<IGameStatePersistence>(new RefusingLedgerPersistence());
-            }));
+            });
+        });
 
         // The same money path on both: buy an item (a fee IN), then claim the daily reward (a payout OUT).
         static async Task<(long Spent, long Awarded, long Booked, long Paid)> RunAsync(

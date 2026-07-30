@@ -569,7 +569,13 @@ public record GameConfigDto(
     // whether to surface a hero's build SHAPE and the counter line at all, because a counter the player
     // cannot see reads as randomness rather than as strategy. Appended (defaulted) so an older server that
     // omits it deserializes to false — which is exactly the rules such a server resolves under.
-    bool GearCounters = false)
+    bool GearCounters = false,
+    // Whether this server pays a daily reward at all. The frontend reads it to decide whether to render
+    // the daily surface: the faucet ships closed, and a Claim button that can only ever answer "not
+    // available on this server" reads as a broken game rather than an unswitched-on feature. Appended
+    // (defaulted false) so an older server that omits it deserializes to hidden — the safe direction,
+    // since showing a faucet that does not exist is the failure worth avoiding.
+    bool DailyRewardEnabled = false)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -586,7 +592,8 @@ public record GameConfigDto(
         c.TournamentRakePct,
         c.Combat.InnateAbilities,
         ArkadeHeroes.Core.GameConfigVersion.Compute(c),
-        c.Combat.GearCounters);
+        c.Combat.GearCounters,
+        c.DailyRewardEnabled);
 }
 
 /// <summary>

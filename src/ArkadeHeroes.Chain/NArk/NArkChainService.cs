@@ -230,8 +230,9 @@ public class NArkChainService(
             if (!await WaitForTreasurySatsAsync(TimeSpan.FromSeconds(30), ct))
                 throw new InvalidOperationException(
                     $"Treasury wallet has no funds — send sats to {_treasuryAddress} " +
-                    "(regtest: node regtest/regtest.mjs ark send --to <address> --amount <sats> --password secret) " +
-                    "so the species control asset can be issued.");
+                    "so the species control asset can be issued. On a public network fund that address " +
+                    "from any Arkade wallet; on the local regtest stack: " +
+                    "node regtest/regtest.mjs ark send --to <address> --amount <sats> --password secret");
 
             var issuance = await assetManager.IssueAsync(_treasuryWalletId!,
                 new IssuanceParams(Amount: 1, ControlAssetId: null,

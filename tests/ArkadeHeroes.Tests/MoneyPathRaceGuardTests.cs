@@ -43,7 +43,7 @@ public class MoneyPathRaceGuardTests
     [Fact]
     public async Task ConcurrentDailyClaims_PayTheFaucetExactlyOnce()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen();
         var (alice, dto) = await factory.RegisterAsync("Race-Daily");
         await alice.ClaimStartersAsync();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();

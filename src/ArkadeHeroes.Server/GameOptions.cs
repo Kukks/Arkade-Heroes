@@ -53,6 +53,18 @@ public class GameOptions
     public int SeasonLengthDays { get; set; } = 14;
 
     // ── Daily engagement loop tunables (sats faucet: base + per-quest bonus, streak-scaled) ──
+    /// <summary>
+    /// Whether the daily sats faucet is open at all. OFF by default, because on an open signup it is a
+    /// standing invitation: a wallet is free to create and the signed challenge only proves you hold a key
+    /// you invented, so nothing stops one person registering a thousand accounts and collecting from each.
+    /// At the shipped numbers that is up to 1,000 sats per account per day — real bitcoin, out of a
+    /// treasury that cannot inflate to cover it.
+    ///
+    /// Turn it on once signup costs an attacker something (see the starter-claim gate), and keep
+    /// TreasuryReserveFloorSats set, which is the backstop rather than the fix.
+    /// </summary>
+    public bool DailyRewardEnabled { get; set; } = false;
+
     public long DailyBaseSats { get; set; } = 50;
     public long DailyQuestBonusSats { get; set; } = 150;
     public int DailyQuestsPerDay { get; set; } = 3;
@@ -178,6 +190,7 @@ public class GameOptions
         BreedFeeDoublingCap: BreedFeeDoublingCap,
         MatchmakingTake: MatchmakingTake,
         SeasonLengthDays: SeasonLengthDays,
+        DailyRewardEnabled: DailyRewardEnabled,
         DailyBaseSats: DailyBaseSats,
         DailyQuestBonusSats: DailyQuestBonusSats,
         DailyQuestsPerDay: DailyQuestsPerDay,

@@ -1,5 +1,7 @@
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace ArkadeHeroes.Tests;
@@ -22,6 +24,17 @@ internal static class NonCustodialTestHelpers
 
     public static async Task<List<HeroDto>> ClaimStartersAsync(this ArkadeHeroesClient client) =>
         (await client.Heroes.ClaimStartersAsync()).Heroes.ToList();
+
+    /// <summary>
+    /// A server with the daily sats faucet open. It ships CLOSED
+    /// (<see cref="GameOptions.DailyRewardEnabled"/>): on an open signup the faucet pays real bitcoin to
+    /// anyone who can make a keypair, and a keypair is free. So a test that exercises the daily loop has
+    /// to open it the way an operator would — through configuration — rather than by reaching past the
+    /// guard. Dispose the returned factory; it is a derived host, not the shared fixture.
+    /// </summary>
+    public static WebApplicationFactory<Program> WithDailyFaucetOpen(
+        this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(b => b.UseSetting("Game:DailyRewardEnabled", "true"));
 
     /// <summary>Simulated client-wallet payment of a fee invoice.</summary>
     public static Task PayInvoiceAsync(this ArkadeHeroesClient client, string invoiceId) =>

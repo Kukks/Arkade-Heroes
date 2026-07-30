@@ -8,10 +8,13 @@ namespace ArkadeHeroes.Tests;
 /// claim is rejected), and completing a real server-verified quest adds its bonus to the claim.
 /// Same-day only — multi-day streak progression is proven at the pure-function level (DailyTests),
 /// since the server has no injectable clock.</summary>
-public class DailyLoopTests : IClassFixture<WebApplicationFactory<Program>>
+public class DailyLoopTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
+    // Every test here exercises the faucet, and the faucet ships closed, so the whole class runs against
+    // a host an operator has opened. The derived factory is ours to dispose; the injected one is xunit's.
     private readonly WebApplicationFactory<Program> _factory;
-    public DailyLoopTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    public DailyLoopTests(WebApplicationFactory<Program> factory) => _factory = factory.WithDailyFaucetOpen();
+    public void Dispose() => _factory.Dispose();
 
     [Fact]
     public async Task FreshPlayer_ClaimsBaseOncePerDay_SecondClaimRejected()
