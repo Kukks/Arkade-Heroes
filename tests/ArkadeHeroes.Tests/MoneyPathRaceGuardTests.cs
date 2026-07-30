@@ -109,6 +109,54 @@ public class MoneyPathRaceGuardTests
     }
 
     [Fact]
+    public async Task TournamentPrize_OnePayoutFailing_StillPaysTheRestOfThePodium()
+    {
+        // The podium pays each place in a loop and a dropped prize is never retried (a documented v1
+        // limit), so the ONE thing that must hold is isolation: losing rank 1's sats must not also cost
+        // rank 2 theirs. Nothing exercised this before — the pre-existing fault seam only matched
+        // `wager-pot:`/`squad-pot:` memos, so no test had ever faulted a tournament or season payout.
+        var chain = new FailableChain(new InMemoryChainService());
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddSingleton<IChainService>(chain)));
+        chain.Inner.FundTreasury(200_000);   // generous, so the injected fault is the ONLY way a payout can fail
+
+        const long buyIn = 1_000;
+        var entrants = new List<(ArkadeHeroesClient Client, string PlayerId, string HeroId)>();
+        for (var i = 0; i < 4; i++)
+        {
+            var (client, dto) = await factory.RegisterAsync($"Race-Tourney-{i}");
+            var hero = (await client.ClaimStartersAsync())[0];
+            entrants.Add((client, dto.PlayerId, hero.Id));
+        }
+
+        // Buy-ins are cleared straight on the sim rather than through /api/dev/pay-invoice: that endpoint
+        // downcasts IChainService to InMemoryChainService, which this decorator is not.
+        var open = await entrants[0].Client.Tournament.OpenAsync(
+            new OpenTournamentRequest(entrants[0].HeroId, buyIn, 4));
+        chain.Inner.PayInvoiceFromPlayer(entrants[0].PlayerId, open.BuyIn.InvoiceId);
+        for (var i = 1; i < 4; i++)
+        {
+            var join = await entrants[i].Client.Tournament.JoinAsync(
+                open.Tournament.Id, new JoinTournamentRequest(entrants[i].HeroId));
+            chain.Inner.PayInvoiceFromPlayer(entrants[i].PlayerId, join.BuyIn.InvoiceId);
+        }
+
+        // Rank 1's prize faults. Rank 2's must still land, and the bracket must still resolve.
+        chain.FailNextTournamentPrize = true;
+        var resolved = await entrants[0].Client.Tournament.ResolveAsync(
+            open.Tournament.Id, new FightRequest("tourney-payout-fault"));
+
+        Assert.Equal("resolved", resolved.Tournament.Status);
+        Assert.Equal(2, resolved.Prizes.Count);            // both places are still awarded on paper…
+        Assert.Equal(1, chain.TournamentPrizesPaid);       // …and exactly the non-faulted one actually paid
+
+        // The books must record only what really moved — a phantom outflow for the dropped prize would
+        // make the treasury look poorer than it is and hide the debt instead of surfacing it.
+        var store = factory.Services.GetRequiredService<GameStore>();
+        Assert.Equal(resolved.Prizes[1], store.TreasuryOutflowByTag.GetValueOrDefault("tournament"));
+    }
+
+    [Fact]
     public async Task FightResolve_PayoutFailure_LeavesMatchRetryable_AndPaysOnce()
     {
         var chain = new FailableChain(new InMemoryChainService());
@@ -516,6 +564,11 @@ public class MoneyPathRaceGuardTests
         public volatile bool FailNextMergeExecute;
         public volatile bool FailNextPotPayout;
         public volatile bool FailNextItemDelivery;
+        /// <summary>Faults the next `tournament:` prize payout and counts the ones that settle, so a test can
+        /// prove a dropped prize does not take the rest of the podium down with it.</summary>
+        public volatile bool FailNextTournamentPrize;
+        private int _tournamentPrizesPaid;
+        public int TournamentPrizesPaid => Volatile.Read(ref _tournamentPrizesPaid);
 
         public Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)
         {
@@ -542,7 +595,7 @@ public class MoneyPathRaceGuardTests
             }
             return inner.DeliverItemAssetAsync(toPlayerId, itemId, itemName, ct);
         }
-        public Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default)
+        public async Task<string> PayoutAsync(string toPlayerId, long amountSats, string memo, CancellationToken ct = default)
         {
             if (FailNextPotPayout && (memo.StartsWith("wager-pot:", StringComparison.Ordinal)
                                       || memo.StartsWith("squad-pot:", StringComparison.Ordinal)))
@@ -550,7 +603,18 @@ public class MoneyPathRaceGuardTests
                 FailNextPotPayout = false;
                 throw new InvalidOperationException("Simulated pot-payout fault (injected by test).");
             }
-            return inner.PayoutAsync(toPlayerId, amountSats, memo, ct);
+            if (memo.StartsWith("tournament:", StringComparison.Ordinal))
+            {
+                if (FailNextTournamentPrize)
+                {
+                    FailNextTournamentPrize = false;
+                    throw new InvalidOperationException("Simulated tournament-prize fault (injected by test).");
+                }
+                var prizeTx = await inner.PayoutAsync(toPlayerId, amountSats, memo, ct);
+                Interlocked.Increment(ref _tournamentPrizesPaid);
+                return prizeTx;
+            }
+            return await inner.PayoutAsync(toPlayerId, amountSats, memo, ct);
         }
         public Task<long> TreasuryBalanceAsync(CancellationToken ct = default) => inner.TreasuryBalanceAsync(ct);
         public Task<WagerEscrowInfo> CreateWagerEscrowAsync(string matchId, string challengerPlayerId, string defenderPlayerId, long stakeSats, byte[] seedCommitment32, string oraclePubKeyHex, long refundAfterUnixSeconds, CancellationToken ct = default) => inner.CreateWagerEscrowAsync(matchId, challengerPlayerId, defenderPlayerId, stakeSats, seedCommitment32, oraclePubKeyHex, refundAfterUnixSeconds, ct);
