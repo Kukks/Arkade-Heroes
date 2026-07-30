@@ -1,0 +1,315 @@
+@* The landing-page explainer: what a genome is, and what the four things you can do to a hero
+   actually do to its bytes.
+
+   EVERY genome below is real. The parents are the landing showcase creatures; the child is the
+   literal output of GeneMixer.Mix(Emberfang, Tidecaller, entropy) for the entropy held here, the
+   fused genome is Fusion.Fuse of the same pair, and the absorbed genome is Absorb.Resolve. They
+   were computed by running the game's own Core functions and pasted in, because ArkadeHeroes.Web
+   does not reference ArkadeHeroes.Core — the alternative was to invent plausible-looking hex, and
+   an explainer that lies about the rules it is explaining is worse than no explainer.
+
+   Static by design: no API call, no account, no awake server. The section renders on a cold
+   backend, which is exactly when a visitor is deciding whether this is worth their time. *@
+@using System.Globalization
+
+<section class="codex">
+    <div class="page-head">
+        <h2 style="margin:0">What makes a hero</h2>
+        <span class="hud">32 bytes · nothing else</span>
+    </div>
+
+    <div class="card codex-strand">
+        <svg viewBox="0 20 1000 296" class="codex-svg" role="img"
+             aria-label="A hero's 32-byte genome drawn as a DNA strand: bytes 0 to 15 hold stats, element, skills, growth, breeding cooldown and appearance; bytes 16 to 31 hold eight trait categories, each a dominant and a recessive gene.">
+            @* Backbones. Sampled finely so the crossover reads as a curve, not a polygon. *@
+            <polyline class="cx-backbone" points="@_strandA" />
+            <polyline class="cx-backbone" points="@_strandB" />
+
+            @* One rung per byte. Colour carries the meaning: teal = mechanics, magenta = a trait's
+               expressed gene, dim magenta = the recessive it carries but does not show. *@
+            @for (var i = 0; i < ByteCount; i++)
+            {
+                var half = Math.Abs(Amp * Math.Sin(Theta(i)));
+                <line class="cx-rung @RungClass(i)"
+                      x1="@F(X(i))" y1="@F(Yc - half)" x2="@F(X(i))" y2="@F(Yc + half)">
+                    <title>byte @i — @ByteMeaning(i)</title>
+                </line>
+            }
+
+            @* Trait callouts, above. Staggered two deep so eight labels fit without collision.
+               Each is wrapped in a <g>: Razor claims a bare <text> tag as its own control element,
+               so an SVG label has to be nested inside markup to survive the parser. *@
+            @foreach (var (cat, index) in TraitCallouts.Select((c, n) => (c, n)))
+            {
+                var cx = X(16 + index * 2) + Dx / 2;
+                var textY = index % 2 == 0 ? 86 : 44;
+                <g>
+                    <path class="cx-lead trait" d="@Bracket(X(16 + index * 2) - 9, X(17 + index * 2) + 9, 120, up: true)" />
+                    <line class="cx-lead trait" x1="@F(cx)" y1="120" x2="@F(cx)" y2="@(textY + 8)" />
+                    <text class="cx-label trait" x="@F(cx)" y="@textY" text-anchor="middle">@cat</text>
+                </g>
+            }
+
+            @* Mechanical callouts, below. *@
+            @foreach (var (block, index) in Mechanics.Select((b, n) => (b, n)))
+            {
+                var first = X(block.Start);
+                var last = X(block.Start + block.Length - 1);
+                var cx = (first + last) / 2;
+                var textY = index % 2 == 0 ? 262 : 300;
+                <g>
+                    <path class="cx-lead mech" d="@Bracket(first - 9, last + 9, 230, up: false)" />
+                    <line class="cx-lead mech" x1="@F(cx)" y1="230" x2="@F(cx)" y2="@(textY - 10)" />
+                    <text class="cx-label mech" x="@F(cx)" y="@textY" text-anchor="middle">@block.Label</text>
+                </g>
+            }
+        </svg>
+
+        <div class="codex-legend">
+            <span><i class="cx-key mech"></i>bytes 0–15 — what it can <b>do</b>: stats, element, skills, and growth that only shows up as it levels</span>
+            <span><i class="cx-key dom"></i>bytes 16–31, expressed — what you <b>see</b></span>
+            <span><i class="cx-key rec"></i>…and the recessive beside it — what it can <b>pass on</b></span>
+        </div>
+    </div>
+
+    <div class="codex-ops">
+        @* ---- BREEDING ---------------------------------------------------------------- *@
+        <article class="card codex-op">
+            <div class="hud">Breeding</div>
+            <h3>Two heroes, one heir</h3>
+
+            <div class="codex-reaction">
+                <div class="codex-slot"><HeroSprite Genome="@Ember" Name="Emberfang" Size="72" /><span class="hud">Emberfang</span></div>
+                <span class="codex-glyph">×</span>
+                <div class="codex-slot"><HeroSprite Genome="@Tide" Name="Tidecaller" Size="72" /><span class="hud">Tidecaller</span></div>
+                <span class="codex-glyph arrow">→</span>
+                <div class="codex-slot out"><HeroSprite Genome="@Child" Name="their child" Size="72" /><span class="hud">the child</span></div>
+            </div>
+
+            <p class="muted">
+                Mechanics cross over byte by byte. Each visible trait is usually one parent's — but
+                roughly one in four pulls a <b class="cx-ink-hidden">hidden recessive</b> into the light,
+                and about one in forty-three comes back as something
+                <b class="cx-ink-mut">neither parent carried</b>.
+            </p>
+
+            <div class="codex-origins">
+                @foreach (var o in ChildOrigins)
+                {
+                    <div class="codex-origin">
+                        <span class="t">@o.Trait</span>
+                        <span class="o @o.Kind">@o.From</span>
+                    </div>
+                }
+            </div>
+            <p class="codex-foot">
+                This exact child: six traits straight from a parent — one of them a
+                <b class="cx-ink-rare">Rare</b> temperament carried down from Emberfang — plus one
+                recessive surfaced and one fresh mutation.
+            </p>
+        </article>
+
+        @* ---- FUSION ------------------------------------------------------------------ *@
+        <article class="card codex-op">
+            <div class="hud">Fusion</div>
+            <h3>Burn two, concentrate one</h3>
+
+            <div class="codex-reaction">
+                <div class="codex-slot"><HeroSprite Genome="@Ember" Name="the base" Size="72" /><span class="hud">base</span></div>
+                <span class="codex-glyph">+</span>
+                <div class="codex-slot burn"><HeroSprite Genome="@Tide" Name="the sacrifice" Size="72" /><span class="hud">sacrificed</span></div>
+                <span class="codex-glyph arrow">→</span>
+                <div class="codex-slot out"><HeroSprite Genome="@Fused" Name="the fused hero" Size="72" /><span class="hud">concentrated</span></div>
+            </div>
+
+            <p class="muted">
+                Feed one hero to another and each trait pair usually keeps the <b>rarer</b> of the two.
+                Stats come from the base alone, so fusing never inflates power — it only sharpens
+                rarity. The sacrifice is gone for good.
+            </p>
+
+            <div class="codex-origins">
+                @foreach (var f in FusionRows)
+                {
+                    <div class="codex-origin">
+                        <span class="t">@f.Trait</span>
+                        <span class="o @f.Kind">@f.Result</span>
+                    </div>
+                }
+            </div>
+            <p class="codex-foot">
+                <b class="cx-ink-mut">The catch:</b> rarity buys risk. The rarer a hero's traits, the
+                likelier it comes out sterile — a beautiful dead end that can never breed again.
+            </p>
+        </article>
+
+        @* ---- ABSORB ------------------------------------------------------------------ *@
+        <article class="card codex-op">
+            <div class="hud">Death match</div>
+            <h3>Winner takes the trait</h3>
+
+            <div class="codex-reaction">
+                <div class="codex-slot"><HeroSprite Genome="@Tide" Name="the winner" Size="72" /><span class="hud">winner</span></div>
+                <span class="codex-glyph">vs</span>
+                <div class="codex-slot burn"><HeroSprite Genome="@Ember" Name="the loser" Size="72" /><span class="hud">destroyed</span></div>
+                <span class="codex-glyph arrow">→</span>
+                <div class="codex-slot out"><HeroSprite Genome="@Absorbed" Name="the winner, improved" Size="72" /><span class="hud">absorbed</span></div>
+            </div>
+
+            <p class="muted">
+                Stake a hero against someone else's. The loser is destroyed — permanently — and the
+                winner can absorb what it was beaten by. Only genuine <b>upgrades</b> are on the table:
+                a trait the loser wore better. Everything else about the winner is untouched.
+            </p>
+
+            <div class="codex-origins">
+                <div class="codex-origin">
+                    <span class="t">Temperament</span>
+                    <span class="o hidden">Uncommon → <b class="cx-ink-rare">Rare</b></span>
+                </div>
+                <div class="codex-origin">
+                    <span class="t">everything else</span>
+                    <span class="o">unchanged</span>
+                </div>
+            </div>
+            <p class="codex-foot">
+                One byte moved. Absorbing is uncommon (~40%), taking more than one trait rarer still —
+                so a death match is a gamble on both sides of the board.
+            </p>
+        </article>
+    </div>
+
+    @* Full width on purpose: at any smaller size the Legendary sliver is too narrow to sit a label
+       inside, and padding it out to fit would misrepresent the very number that makes it matter.
+       So the bar stays honestly to scale and the labels live beside it. *@
+    <div class="card codex-mutation">
+        <div class="hud">If a trait mutates, what it rolls</div>
+        <div class="codex-odds">
+            @foreach (var b in MutationOdds)
+            {
+                <span class="codex-odd @b.Tier" style="flex:@F(b.Share)" title="@b.Label @Pct(b.Share)"></span>
+            }
+        </div>
+        <div class="codex-odd-keys">
+            @foreach (var b in MutationOdds)
+            {
+                <span class="@b.Tier"><i></i>@b.Label <b>@Pct(b.Share)</b></span>
+            }
+        </div>
+    </div>
+
+    <p class="codex-note muted">
+        Every creature above is drawn from the genome printed in the page source, by the same renderer
+        the game uses — and every outcome is the real output of the same functions that run when you
+        breed, fuse or fight. Nothing here is an artist's impression.
+    </p>
+</section>
+
+@code {
+    // --- The real genomes. LandingGenomes is the single source; a unit test re-derives every
+    //     one of these from Core on each build (see its doc comment). --------------------------
+    const string Ember = LandingGenomes.Ember;
+    const string Tide = LandingGenomes.Tide;
+    const string Child = LandingGenomes.Child;
+    const string Fused = LandingGenomes.Fused;
+    const string Absorbed = LandingGenomes.Absorbed;
+
+    // --- Strand geometry. -------------------------------------------------------------------
+    const int ByteCount = 32;
+    const double X0 = 25, Dx = 30, Yc = 175, Amp = 34, Period = 8;
+
+    static double X(int i) => X0 + i * Dx;
+
+    /// <summary>Phase-shifted by half a byte so no rung ever lands on a crossover and collapses to a dot.</summary>
+    static double Theta(double t) => 2 * Math.PI * (t + 0.5) / Period;
+
+    /// <summary>Invariant formatting is load-bearing: Blazor WASM adopts the browser's culture, and a
+    /// comma decimal separator would corrupt every SVG coordinate on the page.</summary>
+    static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    static string Pct(double v) => v.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    static string Strand(int sign)
+    {
+        var pts = new List<string>();
+        for (var t = -0.4; t <= ByteCount - 0.6; t += 0.2)
+            pts.Add($"{F(X0 + t * Dx)},{F(Yc + sign * Amp * Math.Sin(Theta(t)))}");
+        return string.Join(" ", pts);
+    }
+
+    static readonly string _strandA = Strand(1);
+    static readonly string _strandB = Strand(-1);
+
+    /// <summary>A squared-off callout bracket spanning one byte block.</summary>
+    static string Bracket(double x1, double x2, double y, bool up)
+    {
+        var tick = up ? 8 : -8;
+        return $"M {F(x1)} {F(y - tick)} L {F(x1)} {F(y)} L {F(x2)} {F(y)} L {F(x2)} {F(y - tick)}";
+    }
+
+    static string RungClass(int i) => i < 16 ? "mech" : (i - 16) % 2 == 0 ? "dom" : "rec";
+
+    record Block(int Start, int Length, string Label);
+
+    static readonly Block[] Mechanics =
+    [
+        new(0, 5, "Stats"),
+        new(5, 1, "Element"),
+        new(6, 2, "Skills"),
+        new(8, 5, "Growth"),
+        new(13, 1, "Cooldown"),
+        new(14, 2, "Look"),
+    ];
+
+    static readonly string[] TraitCallouts =
+        ["Aura", "Marking", "Eyes", "Crest", "Sigil", "Stance", "Affinity", "Temperament"];
+
+    /// <summary>Hover text for a single rung — the byte map from Genome.cs, in players' words.</summary>
+    static string ByteMeaning(int i) => i switch
+    {
+        < 5 => new[] { "strength", "vitality", "agility", "intellect", "luck" }[i],
+        5 => "element",
+        < 8 => $"skill gene {(char)('A' + i - 6)}",
+        < 13 => $"hidden growth ({new[] { "STR", "VIT", "AGI", "INT", "LUK" }[i - 8]})",
+        13 => "breeding cooldown",
+        < 16 => "appearance",
+        _ => $"{TraitCallouts[(i - 16) / 2]} — {((i - 16) % 2 == 0 ? "expressed" : "recessive")}",
+    };
+
+    // --- Where this child's eight traits actually came from. --------------------------------
+    record Origin(string Trait, string From, string Kind);
+
+    static readonly Origin[] ChildOrigins =
+    [
+        new("Aura", "Tidecaller", ""),
+        new("Marking", "Emberfang", ""),
+        new("Eyes", "Tidecaller", ""),
+        new("Crest", "Emberfang", ""),
+        new("Sigil", "Emberfang", ""),
+        new("Stance", "Emberfang's hidden gene", "hidden"),
+        new("Affinity", "mutation — brand new", "mutation"),
+        new("Temperament", "Emberfang · Rare", "rare"),
+    ];
+
+    record FusionRow(string Trait, string Result, string Kind);
+
+    static readonly FusionRow[] FusionRows =
+    [
+        new("Affinity", "kept the Uncommon", "hidden"),
+        new("Temperament", "kept the Rare", "rare"),
+        new("Sigil", "took the lesser — it happens", "mutation"),
+        new("Stats", "base's, untouched", ""),
+    ];
+
+    // --- Mutation tier odds, read straight off GeneMixer.MutatedVariant's cutoffs. -----------
+    record Odd(string Label, string Tier, double Share);
+
+    static readonly Odd[] MutationOdds =
+    [
+        new("Common", "common", 176 / 256d * 100),
+        new("Uncommon", "uncommon", 56 / 256d * 100),
+        new("Rare", "rare", 18 / 256d * 100),
+        new("Epic", "epic", 4 / 256d * 100),
+        new("Legendary", "legendary", 2 / 256d * 100),
+    ];
+}

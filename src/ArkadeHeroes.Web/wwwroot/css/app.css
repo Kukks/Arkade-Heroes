@@ -179,12 +179,119 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .hero-art {
     aspect-ratio: 1; border-radius: var(--radius); border: 1px solid var(--line);
     background:
-        repeating-linear-gradient(45deg, rgba(53,240,208,.05) 0 12px, transparent 12px 24px),
-        radial-gradient(circle at 50% 40%, rgba(255,77,157,.14), transparent 60%),
+        radial-gradient(circle at 50% 38%, rgba(53,240,208,.10), transparent 62%),
+        radial-gradient(circle at 50% 40%, rgba(255,77,157,.12), transparent 60%),
         var(--bg-2);
-    display: grid; place-content: center;
-    font-family: var(--font-hud); color: var(--faint); letter-spacing: .2em; font-size: .72rem;
+    display: grid; place-content: center; gap: 1.4rem; padding: 1.2rem;
 }
+/* Three real creatures, drawn from fixed genomes — the landing art IS the game's art. */
+.showcase { display: flex; align-items: flex-end; justify-content: center; gap: 1.1rem; flex-wrap: wrap; }
+.showcase-hero { display: grid; justify-items: center; gap: .5rem; }
+.showcase-hero .hud { color: var(--faint); font-size: .62rem; letter-spacing: .14em; }
+/* The middle one sits proudest — a flat row of three reads as a spec sheet, not a roster. */
+.showcase-hero:nth-child(2) { transform: translateY(-14px); }
+.showcase-hero:nth-child(2) .hero-px { filter: drop-shadow(0 0 14px rgba(53,240,208,.35)); }
+.showcase-note {
+    text-align: center; color: var(--faint); font-size: .62rem; letter-spacing: .18em;
+}
+@media (max-width: 640px) { .showcase-hero:nth-child(2) { transform: none; } }
+
+/* --- Genome codex (landing explainer) ------------------------------------- */
+.codex { margin-top: 2.6rem; }
+.codex-strand { padding: 1rem .4rem .4rem; overflow-x: auto; }
+/* The callout labels stop being legible below this width, so on a phone the strand
+   scrolls sideways rather than shrinking into an unreadable smear. */
+.codex-svg { display: block; width: 100%; min-width: 720px; height: auto; }
+
+.cx-backbone { fill: none; stroke: var(--line); stroke-width: 2; }
+.cx-rung { stroke-width: 3; stroke-linecap: round; }
+.cx-rung.mech { stroke: var(--accent); opacity: .85; }
+.cx-rung.dom  { stroke: var(--accent-2); }
+.cx-rung.rec  { stroke: var(--accent-2); opacity: .38; }
+.cx-lead { fill: none; stroke-width: 1; }
+.cx-lead.mech  { stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.cx-lead.trait { stroke: color-mix(in srgb, var(--accent-2) 45%, var(--line)); }
+.cx-label {
+    font-family: var(--font-hud); font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
+}
+.cx-label.mech  { fill: var(--accent); }
+.cx-label.trait { fill: var(--accent-2); }
+
+.codex-legend {
+    display: grid; gap: .35rem; padding: .9rem 1rem 1rem;
+    font-size: .78rem; color: var(--muted);
+}
+.codex-legend b { color: var(--text); font-weight: 600; }
+.cx-key { display: inline-block; width: 22px; height: 3px; border-radius: 2px; margin-right: .6rem; vertical-align: middle; }
+.cx-key.mech { background: var(--accent); }
+.cx-key.dom  { background: var(--accent-2); }
+.cx-key.rec  { background: var(--accent-2); opacity: .38; }
+
+.codex-ops { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; margin-top: 1.1rem; }
+.codex-op h3 { margin: .3rem 0 1rem; font-size: 1.15rem; }
+.codex-op p.muted { font-size: .86rem; }
+
+/* base × sacrifice → result, in one line the eye can follow */
+.codex-reaction {
+    display: flex; align-items: center; justify-content: center; gap: .5rem; flex-wrap: wrap;
+    padding: 1rem .4rem; margin-bottom: .9rem; border-radius: var(--radius);
+    background: radial-gradient(420px 160px at 50% 50%, rgba(53,240,208,.07), transparent 70%), var(--bg-2);
+    border: 1px solid var(--line-soft);
+}
+.codex-slot { display: grid; justify-items: center; gap: .45rem; }
+.codex-slot .hud { font-size: .58rem; color: var(--faint); }
+/* What is consumed reads as consumed: desaturated and dimmed, not merely labelled. */
+.codex-slot.burn .hero-px { filter: grayscale(.75) brightness(.65); }
+.codex-slot.burn .hud { color: var(--danger); }
+.codex-slot.out .hero-px { filter: drop-shadow(0 0 12px rgba(53,240,208,.4)); }
+.codex-slot.out .hud { color: var(--accent); }
+.codex-glyph { font-family: var(--font-hud); color: var(--faint); font-size: .9rem; }
+.codex-glyph.arrow { color: var(--accent); }
+
+.codex-origins { display: grid; gap: .3rem; margin: .2rem 0 .1rem; }
+.codex-origin {
+    display: flex; align-items: baseline; gap: .5rem;
+    font-family: var(--font-hud); font-size: .7rem;
+    padding: .3rem .55rem; border-radius: var(--radius-sm); background: var(--bg-2);
+}
+.codex-origin .t { color: var(--muted); min-width: 6.6rem; }
+.codex-origin .o { color: var(--text); }
+.codex-origin .o.hidden   { color: var(--accent); }
+.codex-origin .o.mutation { color: var(--accent-2); }
+.codex-origin .o.rare     { color: var(--r-rare); }
+
+.cx-ink-hidden { color: var(--accent); }
+.cx-ink-mut    { color: var(--accent-2); }
+.cx-ink-rare   { color: var(--r-rare); }
+
+.codex-foot { font-size: .78rem; color: var(--faint); margin: .8rem 0 0; }
+
+/* Mutation-tier odds, drawn strictly to scale — the Legendary sliver IS the point, so no
+   segment gets a minimum width and no label is allowed to inflate one. */
+.codex-mutation { margin-top: 1.1rem; }
+.codex-odds { display: flex; gap: 2px; margin-top: .55rem; height: 14px; }
+.codex-odd { border-radius: 2px; min-width: 1px; }
+.codex-odd.common    { background: var(--r-common); }
+.codex-odd.uncommon  { background: var(--r-uncommon); }
+.codex-odd.rare      { background: var(--r-rare); }
+.codex-odd.epic      { background: var(--r-epic); }
+.codex-odd.legendary { background: var(--gold); }
+
+.codex-odd-keys {
+    display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; margin-top: .7rem;
+    font-family: var(--font-hud); font-size: .68rem; color: var(--muted);
+}
+.codex-odd-keys i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: .45rem; }
+.codex-odd-keys b { color: var(--text); font-weight: 600; margin-left: .2rem; }
+.codex-odd-keys .common i    { background: var(--r-common); }
+.codex-odd-keys .uncommon i  { background: var(--r-uncommon); }
+.codex-odd-keys .rare i      { background: var(--r-rare); }
+.codex-odd-keys .epic i      { background: var(--r-epic); }
+.codex-odd-keys .legendary i { background: var(--gold); }
+
+.codex-note { margin: 1.1rem 0 0; font-size: .76rem; color: var(--faint); text-align: center; }
+
+@media (max-width: 1000px) { .codex-ops { grid-template-columns: 1fr; } }
 
 /* --- Buttons -------------------------------------------------------------- */
 .btn {
@@ -803,6 +910,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
     padding: 1.2rem 1.6rem 2rem; border-top: 1px solid var(--line);
     font-size: .78rem;
+    /* Opaque. Without a background the page's grid backdrop showed straight through the footer
+       and its rules read as part of the text. --bg-2 matches the panels above it. */
+    background: var(--bg-2);
 }
 .footer a { color: var(--accent-2); }
 

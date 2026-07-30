@@ -5,10 +5,23 @@
 @inject IJSRuntime JS
 
 <img class="hero-px" style="width:@(Size)px;height:@(Size)px;image-rendering:pixelated;display:block"
-     src="@_src" alt="@($"{Hero.Name} — pixel portrait")" draggable="false" />
+     src="@_src" alt="@($"{DisplayName} — pixel portrait")" draggable="false" />
 
 @code {
-    [Parameter, EditorRequired] public HeroDto Hero { get; set; } = default!;
+    /// <summary>The hero to draw. Optional so a genome can be rendered without one — see
+    /// <see cref="Genome"/>, which the landing page uses to show real creatures before anybody
+    /// has signed in and there is no hero to fetch.</summary>
+    [Parameter] public HeroDto? Hero { get; set; }
+
+    /// <summary>A raw 64-char genome hex, used when no <see cref="Hero"/> is supplied. The renderer only
+    /// ever reads the genome, so demanding a whole HeroDto for a decorative sprite would mean inventing
+    /// stats, skills and provenance that nothing draws.</summary>
+    [Parameter] public string? Genome { get; set; }
+
+    /// <summary>Alt-text name when rendering a bare genome.</summary>
+    [Parameter] public string? Name { get; set; }
+
+    private string DisplayName => Hero?.Name ?? Name ?? "Hero";
 
     /// <summary>Rendered pixel size (square).</summary>
     [Parameter] public int Size { get; set; } = 112;
@@ -21,7 +34,7 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        var hex = Hero.GenomeHex ?? string.Empty;
+        var hex = Hero?.GenomeHex ?? Genome ?? string.Empty;
         var key = $"{hex}:{Size}";
         if (_cache.TryGetValue(key, out var cached)) { _src = cached; return; }
         try
