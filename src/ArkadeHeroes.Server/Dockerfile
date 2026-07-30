@@ -62,6 +62,34 @@ RUN dotnet publish src/ArkadeHeroes.Server/ArkadeHeroes.Server.csproj \
       --no-restore \
       --output /app/publish
 
+# ── The Blazor bundle, into this image's wwwroot ────────────────────────────
+# ONE container is the whole deployment: the server hosts the frontend, so the browser
+# loads the app and calls /api on the SAME origin. That is what makes the localhost-only
+# CORS policy a non-issue rather than something to widen for a public domain.
+#
+# wasm-tools relinks the .NET runtime for the browser and is by far the slowest step here,
+# so it sits in its own layer. emcc looks for `python`, not `python3`, hence the symlink —
+# the same recipe the standalone web image used, which this replaces.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 \
+ && ln -sf /usr/bin/python3 /usr/bin/python \
+ && rm -rf /var/lib/apt/lists/* \
+ && dotnet workload install wasm-tools
+
+# The Terms of Use, bundled into the app as wwwroot/terms.md by the csproj.
+COPY docs/TERMS.md docs/TERMS.md
+
+# No --no-restore: installing the wasm-tools workload changes what restore must resolve, so
+# the restore done above (before the workload existed) does not cover this project.
+RUN dotnet publish src/ArkadeHeroes.Web/ArkadeHeroes.Web.csproj \
+      --configuration Release \
+      --output /app/web
+
+# A Blazor WASM publish puts everything the browser needs under wwwroot/. Copying it into
+# the server's wwwroot is all the "hosting" that is needed: the server already serves static
+# files and rewrites a non-/api 404 to index.html.
+RUN mkdir -p /app/publish/wwwroot && cp -r /app/web/wwwroot/. /app/publish/wwwroot/
+
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
@@ -80,6 +108,11 @@ VOLUME ["/data"]
 
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
+
+# Copied from the source tree, not the build output — it is a deployment script, not a
+# compiled artifact. chmod because a checkout on Windows carries no execute bit.
+COPY --chown=$APP_UID:$APP_UID src/ArkadeHeroes.Server/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Non-root. The .NET 8+ runtime images ship a pre-created `app` user (uid/gid 1654)
 # and expose it as $APP_UID; use it rather than inventing another one.
@@ -100,4 +133,7 @@ EXPOSE 8080
 
 # /healthz is a plain liveness probe; docker-compose.yml health-checks /api/chain/info,
 # which additionally proves the chain service resolved and the game config is serving.
-ENTRYPOINT ["dotnet", "ArkadeHeroes.Server.dll"]
+# Injects ARK_NETWORK into the bundled frontend's appsettings.json, then execs the server.
+# `exec` matters: the server must be PID 1 so a container stop reaches it as SIGTERM rather
+# than being swallowed by a shell that never forwards it.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
