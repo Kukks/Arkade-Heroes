@@ -1,32 +1,33 @@
-# Arkade Heroes on Dokploy — MUTINYNET.
+# Arkade Heroes on Dokploy — MUTINYNET, built from source.
 #
-# Paste this into a Dokploy **Compose** service (Provider: Git → this repo, Compose Path:
-# deploy/dokploy/compose.yml). It PULLS pre-built images and never builds: the .NET build
-# needs the external/dotnet-sdk submodule and several GB of RAM, and CI already publishes
-# both images to GHCR on every push to main. Building on the app box buys nothing and
-# breaks the moment Dokploy clones without submodules.
+# Dokploy → Create **Compose** (not Application: an Application is one container, this is
+# three) → Provider **Git** → this repo → Compose Path `deploy/dokploy/compose.yml`.
 #
-# ── HOW CONTINUOUS DEPLOY WORKS HERE ──────────────────────────────────────────
-# TURN DOKPLOY'S GIT AUTODEPLOY **OFF** for this service.
+# ── TWO SETTINGS THAT ARE NOT OPTIONAL ───────────────────────────────────────
+# 1. **Enable Submodules: ON.** Both Dockerfiles `COPY external/dotnet-sdk/...` directly,
+#    so without the submodule the build fails at COPY. It fails loudly rather than
+#    producing a broken image, which is the good outcome — but it will not build at all.
+# 2. **Build Type: Dockerfile**, not Nixpacks. Nixpacks cannot build a .NET solution with
+#    two service Dockerfiles and will guess wrong.
 #
-# It fires on the PUSH, but the images it pulls are only published ~4 minutes later by
-# .github/workflows/docker-publish.yml. Left on, Dokploy redeploys against the PREVIOUS
-# `latest` and the site silently lags one commit behind — a stale deployment that reports
-# success, which is worse than a failed one because nothing tells you.
+# ── CONTINUOUS DEPLOY ────────────────────────────────────────────────────────
+# Dokploy's git **Autodeploy: ON** is exactly right here. Building from source has no
+# registry round-trip, so there is no window in which Dokploy could deploy an older image
+# than the commit that triggered it — push, build, run, in that order, from one clone.
 #
-# Instead, that workflow's `deploy` job calls Dokploy's deployment webhook and `needs` the
-# image build, so it cannot fire until both images are actually pushed. Wire it up as:
-#   Dokploy → this service → Deployments → copy the webhook URL
-#   GitHub  → repo Settings → Secrets → DOKPLOY_DEPLOY_WEBHOOK
-# With the secret unset the job skips and CI still passes, so forks are unaffected.
+# (The `deploy` job in .github/workflows/docker-publish.yml exists for the OTHER topology,
+# where Dokploy pulls pre-built images and the push/publish ordering does race. Leave
+# DOKPLOY_DEPLOY_WEBHOOK unset and that job skips harmlessly. CI still publishes images to
+# GHCR either way, which is useful for rollback: pin `image:` to a tag instead of `build:`
+# to pin a deployment to a known-good build.)
 #
-# Order then is: push → CI builds + pushes both images → webhook → Dokploy redeploys →
-# `pull_policy: always` fetches the new digest.
+# ── BUILD COST, HONESTLY ─────────────────────────────────────────────────────
+# The web image installs the wasm-tools workload and relinks the .NET runtime; on CI's
+# runners that leg alone is ~3-5 minutes, and a small VPS will be slower. Give the builder
+# real memory — Dokploy's own guidance is 4+ GB RAM and 2+ CPU, and .NET restore of this
+# solution is memory-hungry. If builds OOM, that is the first thing to raise.
 #
-# Pin to a version tag instead of `latest` for anything you care about being able to roll
-# back: `latest` cannot be rolled back to a known-good build, only forward.
-#
-# ── ONE DOMAIN, ON PURPOSE ────────────────────────────────────────────────────
+# ── ONE DOMAIN, ON PURPOSE ───────────────────────────────────────────────────
 # The server's CORS policy allows only localhost origins and has no config hook, so a
 # split web/api domain pair would be blocked in the browser. Routing BOTH under one host
 # makes the browser origin equal to the API origin and CORS is never consulted:
@@ -40,9 +41,14 @@
 services:
   # ── Game API ──────────────────────────────────────────────────────────────
   server:
-    image: ghcr.io/kukks/arkade-heroes-server:${TAG:-latest}
+    build:
+      # `../..` — NOT `.`. Compose resolves a build context relative to the COMPOSE FILE's
+      # directory, and both Dockerfiles expect the repo ROOT (they COPY ArkadeHeroes.slnx,
+      # src/ and external/dotnet-sdk/). A `.` here would hand them deploy/dokploy/ and the
+      # first COPY would fail.
+      context: ../..
+      dockerfile: src/ArkadeHeroes.Server/Dockerfile
     restart: unless-stopped
-    pull_policy: always
     volumes:
       # Holds game.db AND the treasury wallet's derived keys. Losing this volume loses the
       # treasury and every hero. Back it up before any destructive Dokploy action.
@@ -50,7 +56,8 @@ services:
     environment:
       # BOTH are required. appsettings.json ships "Urls": "http://localhost:5210", which
       # OUTRANKS ASPNETCORE_URLS — set only one and Kestrel binds localhost and the
-      # container is unreachable from Traefik.
+      # container is unreachable from Traefik. (The image sets Urls too; this is explicit
+      # so a future appsettings change cannot quietly re-break it.)
       ASPNETCORE_URLS: http://0.0.0.0:8080
       Urls: http://0.0.0.0:8080
       ASPNETCORE_ENVIRONMENT: Production
@@ -110,6 +117,7 @@ services:
 
   # ── Arkade Script emulator (covenant co-signing) ──────────────────────────
   emulator:
+    # Upstream Arkade image — pulled, not built. Nothing here to build from source.
     image: ghcr.io/arkade-os/emulator:v0.0.3
     restart: unless-stopped
     # Internal only — it co-signs covenants for the server and has no business being
@@ -119,9 +127,10 @@ services:
 
   # ── Blazor WASM frontend (static files behind nginx) ──────────────────────
   web:
-    image: ghcr.io/kukks/arkade-heroes-web:${TAG:-latest}
+    build:
+      context: ../..          # repo root, same reason as the server above
+      dockerfile: src/ArkadeHeroes.Web/Dockerfile
     restart: unless-stopped
-    pull_policy: always
     depends_on:
       - server
     environment:
@@ -131,7 +140,8 @@ services:
       API_BASE_URL: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN, e.g. https://heroes.example.com}
       # Which network the IN-BROWSER, non-custodial wallet dials. The wallet talks to arkd
       # directly, so this must match the server's chain above or players will be signing
-      # against a different network than the game is settling on.
+      # against a different network than the game is settling on. An unknown value refuses
+      # to start rather than defaulting.
       ARK_NETWORK: mutinynet
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
