@@ -324,6 +324,15 @@ public class GameService(
             throw new GameRuleException("The rename fee invoice has not been paid yet — pay it from your wallet, then confirm.");
         if (pending.FeeInvoiceId is not null)
             await store.RecordInflowAsync(pending.FeeInvoiceId, "rename", _options.HeroRenameFeeSats, ct);
+
+        // Keyed on the NAME, not the player: the name is the contended resource, and it is the thing the
+        // registry promises is globally unique. Without this the re-check below is a check-then-act — two
+        // confirms for the same name both read "free" before either assigns, and both then take it. That
+        // is not theoretical: released on one barrier, 64 concurrent confirms handed ONE name to TWO heroes,
+        // durably (each writes its own SaveHeroAsync), and at a non-zero rename fee both owners had paid
+        // for it. Different names still confirm in parallel — only same-name confirms serialize.
+        using var gate = await store.LockAsync($"rename:{pending.NewName.ToLowerInvariant()}", ct);
+
         // Re-check uniqueness at apply time — another hero may have claimed the name since the request.
         if (NameTaken(pending.NewName, heroId))
             throw new GameRuleException($"The name '{pending.NewName}' was claimed before you confirmed — pick another.");
