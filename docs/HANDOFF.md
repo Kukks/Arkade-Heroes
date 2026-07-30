@@ -1,7 +1,11 @@
 # Engineering handoff — Arkade Heroes autonomous build
 
 **Audience:** the next agent continuing this build autonomously via /loop.
-**Baseline:** current `main` (HEAD `af6ed6e` as of 2026-07-24), clean tree. Gate: **434 unit** (`dotnet test tests/ArkadeHeroes.Tests`, ~10s) + **53 regtest E2E** behind the live stack (E2E count last verified 2026-07-23; recent PRs added unit tests only). The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+**Baseline:** current `main` (HEAD `82dceb5` as of 2026-07-30). Gate: **715 unit** (`dotnet test tests/ArkadeHeroes.Tests`, ~28s in Release) + **54 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+
+**The gate is ALL GREEN, not a matching count.** Every merged PR moves these numbers, so a count that differs from the one above means THIS DOC is stale — it does not mean the world is broken. Only `Failed: > 0` is a red baseline. This file has already been wrong in both directions: it once claimed 434 in one paragraph and 400 in another while `main` was at neither, which is exactly the trap an agent told to "fix the world first" walks into. Trust the run; correct the doc.
+
+Provenance, so you know what to re-check: the 715 was captured by a Release run at `82dceb5` on 2026-07-30. The 54 E2E is the count recorded when the covenant marketplace fee landed (2026-07-28, ~7-8 min serial) and has NOT been re-run since — treat it as the last known figure rather than a verified one.
 **Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → the auto-memory backlog (`arkade-heroes-backlog.md`, the live prioritized queue) → `docs/DESIGN.md`.
 
 ---
@@ -16,7 +20,7 @@ Build **Arkade Heroes**: a CryptoKitties-inspired breeding/battling game on Arka
 4. **Never skip, weaken, or filter out failing tests.** Fix root causes.
 5. Covenant-first design: `contracts/*.ark` are the authoritative rules; runtime covenants are arg-free bytecode in `ArkadeCovenants` (see `contracts/README.md` for why).
 
-Loop protocol per iteration: keep the gate green → implement milestone (TDD; route sensitive money-path / concurrency / durability fixes to the `sensitive-bugfix` agent, then verify its "done" yourself — re-read the code, re-run the gate) → full unit gate (currently 400) + a live E2E for money-path changes → PR → gate on CI → merge → update auto-memory. Sats are REAL BTC: the treasury is finite and fee-funded, so the failure mode is INSOLVENCY, not inflation — every faucet must be gated behind a costlier action.
+Loop protocol per iteration: keep the gate green → implement milestone (TDD; route sensitive money-path / concurrency / durability fixes to the `sensitive-bugfix` agent, then verify its "done" yourself — re-read the code, re-run the gate) → full unit gate (count in §3 — all green is the bar, not a matching number) + a live E2E for money-path changes → PR → gate on CI → merge → update auto-memory. Sats are REAL BTC: the treasury is finite and fee-funded, so the failure mode is INSOLVENCY, not inflation — every faucet must be gated behind a costlier action.
 
 ## 2. Current state — what is live and proven (all on regtest unless noted)
 
@@ -32,22 +36,25 @@ The bullets above are the ORIGINAL MVP proof, still live. Everything this sectio
 
 ## 3. World verification runbook — run this BEFORE any work
 
-Expected outputs as of `main`@`af6ed6e`. If any check fails, fix the world first — do not code against a broken baseline.
+Expected outputs as of `main`@`82dceb5`. If any check FAILS, fix the world first — do not code against a broken baseline. A test COUNT that differs from the one recorded here is not a failure (see the note at the top).
 
 ```bash
-# 1. Repo state (clean tree; HEAD is bd901fa or a descendant — handoff-doc commits follow it)
+# 1. Repo state (HEAD is bd901fa or a descendant — handoff-doc commits follow it)
 git -C C:/Git/Arkade-Heroes log --oneline -8     # → recent squash-merges (#NN) on main
-git -C C:/Git/Arkade-Heroes status --short       # → (empty)
+git -C C:/Git/Arkade-Heroes status --short       # → " m external/dotnet-sdk" and NOTHING else
+# The submodule is PERSISTENTLY dirty and that is the expected clean state, not a problem to fix.
+# NEVER stage it: `git add external/dotnet-sdk` publishes an unrelated submodule bump. Stage only the
+# files your task touched, by explicit path — never `git add -A` and never `git add <dir>`.
 
 # 2. Regtest stack up? (start: `node regtest/regtest.mjs start --profile ark --profile emulator` from repo root)
 docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$'   # all four present
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 434/434, ~10s
+dotnet test tests/ArkadeHeroes.Tests --nologo    # → Passed! 715/715, ~28s (Release)
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~2 min)
-dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 53/53 (serial, ~2-3 min)
+dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 54/54 (serial, ~7-8 min)
 
 # 5. Chain plumbing probes
 node regtest/regtest.mjs rpc getblockcount                       # bitcoin-cli passthrough works
