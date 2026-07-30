@@ -307,6 +307,152 @@ public class StateDurabilityTests
     }
 
     [Fact]
+    public async Task ARestingHeroOffer_AndTheHeroItEscrows_SurviveARestart()
+    {
+        // The sharpest version of the strand. The hero asset is sitting in the offer covenant on-chain and the
+        // hero RECORD is durable (so the game still believes the seller owns it), but the row linking seller to
+        // offer id used to live only in memory. Losing it left the asset recoverable in principle — the
+        // covenant params are durable, so the reclaim leaf can still be rebuilt — and undiscoverable in
+        // practice: the market no longer listed it and the seller was never told the offer existed.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            string offerId, heroId, sellerId, offerAddress;
+            long fee;
+            using (var first = HostOn(dbPath))
+            {
+                var (seller, sellerPlayer) = await first.RegisterAsync("Durable-Hero-Seller");
+                sellerId = sellerPlayer.PlayerId;
+                heroId = (await seller.ClaimStartersAsync())[0].Id;
+
+                var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroId, 20_000));
+                offerId = offer.OfferId;
+                offerAddress = offer.OfferAddress;
+                fee = offer.ListingFeeSats;
+
+                // Deposit the hero into the covenant, then reconcile so the listing is durably `active` —
+                // this is the state where real value is escrowed.
+                await seller.Dev.FundOfferAsync(new { OfferId = offerId });
+                await seller.Offers.GetAsync(offerId);
+                Assert.Equal("active", first.Services.GetRequiredService<GameStore>().Offers[offerId].Status);
+            }
+
+            // ── restart: a brand-new host and GameStore over the same database ──
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var store = restarted.Services.GetRequiredService<GameStore>();
+
+            Assert.True(store.Offers.ContainsKey(offerId),
+                "an offer holding an escrowed asset must survive a restart — without the row nothing can name it to reclaim it");
+            var recovered = store.Offers[offerId];
+            Assert.Equal("hero", recovered.Kind);
+            Assert.Equal(heroId, recovered.HeroId);
+            Assert.Equal(sellerId, recovered.SellerId);
+            Assert.Equal("active", recovered.Status);
+            Assert.Equal(20_000, recovered.AskSats);
+            // The covenant's address and its reclaim timelock come back too: between them the seller can be
+            // shown WHERE the asset is and WHEN it unlocks.
+            Assert.Equal(offerAddress, recovered.OfferAddress);
+            Assert.True(recovered.RefundAfterUnixSeconds > 0);
+            // The fee the covenant will route to the treasury on a sale — losing it would under-book the sale.
+            Assert.Equal(fee, recovered.ListingFeeSats);
+
+            // And the pair is CONSISTENT again: the hero the game still credits to the seller is the same hero
+            // the surviving offer says is escrowed.
+            Assert.Equal(sellerId, store.Heroes[heroId].OwnerId);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task AnOfferAwaitingItsDeposit_SurvivesARestart()
+    {
+        // Persisting on CREATE, not on first deposit, is what makes this safe: the seller already holds the
+        // offer address, so they can deposit at any moment — including after a bounce. A row written only once
+        // the asset was seen would leave exactly that deposit with nothing to name it.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            string offerId;
+            using (var first = HostOn(dbPath))
+            {
+                var (seller, _) = await first.RegisterAsync("Durable-Item-Seller");
+                await seller.BuyItemAsync("rusty-blade");
+                // Listed and NOT deposited — still `pending`.
+                offerId = (await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000))).OfferId;
+                Assert.Equal("pending", first.Services.GetRequiredService<GameStore>().Offers[offerId].Status);
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            var store = restarted.Services.GetRequiredService<GameStore>();
+
+            Assert.True(store.Offers.ContainsKey(offerId),
+                "a listing the seller can still deposit into must survive a restart — otherwise that deposit strands");
+            Assert.Equal("pending", store.Offers[offerId].Status);
+            Assert.Equal("rusty-blade", store.Offers[offerId].ItemId);
+            // Rehydrated as NOT deposited — the flag is never stored, it is re-derived from the chain, and
+            // false is the conservative starting point for the free-to-sell check that reads it.
+            Assert.False(store.Offers[offerId].AssetDeposited);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task ASoldOffer_IsNotRehydrated_ThoughItsRowSurvivesAsAnAuditMarker()
+    {
+        // `closed` is TERMINAL, and terminal rows stay out of the live store — exactly as resolved brackets
+        // do. Rehydrating one would re-list a sale that already happened and hand the reconcile a second
+        // chance to book its fee. The row itself is kept, so this asserts the LOAD FILTER and not merely the
+        // absence of a write.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-{Guid.NewGuid():N}.db");
+        try
+        {
+            string offerId;
+            using (var first = HostOn(dbPath))
+            {
+                var (seller, _) = await first.RegisterAsync("Durable-Sold-Seller");
+                var (buyer, _) = await first.RegisterAsync("Durable-Sold-Buyer");
+                await seller.BuyItemAsync("rusty-blade");
+                offerId = (await seller.Offers.CreateItemAsync(new CreateOfferRequest("rusty-blade", 3_000))).OfferId;
+                await seller.Dev.FundOfferAsync(new { OfferId = offerId });
+                await buyer.Offers.ListAsync();                                 // reconcile → active
+                await buyer.Dev.FulfillOfferAsync(new { OfferId = offerId });    // the sale
+                await buyer.Offers.ListAsync();                                 // reconcile → closed
+                Assert.Equal("closed", first.Services.GetRequiredService<GameStore>().Offers[offerId].Status);
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+
+            Assert.False(restarted.Services.GetRequiredService<GameStore>().Offers.ContainsKey(offerId),
+                "a sold offer must not come back — it would re-list an item that has already changed hands");
+
+            // The durable row IS there, closed: the close was recorded, it is simply not rehydrated.
+            var dbFactory = restarted.Services.GetRequiredService<
+                Microsoft.EntityFrameworkCore.IDbContextFactory<
+                    ArkadeHeroes.Server.Persistence.GameStateDbContext>>();
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var row = await db.Offers.FindAsync(offerId);
+            Assert.NotNull(row);
+            Assert.Equal("closed", row!.Status);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task WithNoStatePathConfigured_NothingIsPersisted()
     {
         // The default: no database, no file, historical behaviour. Guards against persistence silently

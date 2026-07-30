@@ -111,6 +111,42 @@ public class PersistedHero
 }
 
 /// <summary>
+/// A durable marketplace offer. The offer COVENANT's params were always durable (the chain service stores them
+/// under <c>offer:{id}</c>), so a restart never destroyed the escrowed asset — but the game-side row linking
+/// seller to offer id lived only in memory, and without it nothing could NAME the offer to reclaim it: the
+/// market stopped listing it and the seller was never told it existed. Recoverable in principle and
+/// undiscoverable in practice is indistinguishable from lost. Hero offers made it sharper still — heroes are
+/// durable, so a restart left the game believing a seller owned a hero whose asset was in fact escrowed.
+///
+/// <c>CreatedAt</c> is stored because it is the market's sort key (and the "just changed hands" strip's); a
+/// rehydrated offer defaulting to boot time would silently reshuffle both.
+///
+/// <c>AssetDeposited</c> is deliberately NOT stored: it is a pure observation of the chain, re-derived on every
+/// reconcile, so a stored copy could only ever be a staler answer than the one the chain already gives. It
+/// rehydrates false, which is the CONSERVATIVE direction for the only rule that reads it — the free-to-sell
+/// check counts an undeposited offer as still reserving its unit, and that check reconciles first anyway.
+/// </summary>
+public class PersistedOffer
+{
+    public required string Id { get; set; }
+    public required string SellerId { get; set; }
+    /// <summary>"item" or "hero" — see <see cref="OfferListing.Kind"/>.</summary>
+    public required string Kind { get; set; }
+    public required string ItemId { get; set; }
+    public string? HeroId { get; set; }
+    public required long AskSats { get; set; }
+    public required string OfferAddress { get; set; }
+    public required string ItemAssetId { get; set; }
+    public required long OfferValueSats { get; set; }
+    public required long RefundAfterUnixSeconds { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+    public required string Status { get; set; }
+    /// <summary>Load-bearing on the money side: it is the cut the covenant routes to the treasury on a sale,
+    /// and the amount <c>ReconcileOfferAsync</c> books when it observes the offer close.</summary>
+    public required long ListingFeeSats { get; set; }
+}
+
+/// <summary>
 /// One treasury movement — a fee captured (<see cref="In"/>) or a payout made (<see cref="Out"/>). The ROWS
 /// are the record and the by-tag totals are GROUPED from them at boot, never stored: a stored total can drift
 /// from the movements it claims to summarise, a derived one cannot.
@@ -147,8 +183,10 @@ public class PersistedTreasuryFlow
 /// "#1" of a set — so the promise that #1 is forever needs disk, not just RAM. Heroes are here because the
 /// "reconcilable from the chain" story never materialized — IChainService can't enumerate a player's heroes
 /// back, so without a row a restart lost every character players own (and stranded every open bracket that
-/// named one). Offers and matches remain absent: offers ARE reconciled against on-chain truth, and a
-/// resolved match's replay is a receipt-signed public fact.
+/// named one). Offers joined them once it was clear that "reconciled against on-chain truth" is not the same
+/// as durable: reconcile can only re-check an offer it still has the ID of, so a lost row left the escrowed
+/// asset on-chain with nothing left able to name it. Matches remain absent — a resolved match's replay is a
+/// receipt-signed public fact.
 /// </summary>
 public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : DbContext(options)
 {
@@ -157,6 +195,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedPlayer> Players => Set<PersistedPlayer>();
     public DbSet<PersistedFancyFind> FancyFinds => Set<PersistedFancyFind>();
     public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
+    public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -167,6 +206,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedPlayer>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedFancyFind>().HasKey(x => x.HeroId);
         modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedOffer>().HasKey(x => x.Id);
         // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
         // collides is the "already counted" no-op, and that must never be able to eat a payout row.
         modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });

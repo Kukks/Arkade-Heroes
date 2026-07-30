@@ -47,6 +47,12 @@ public interface IGameStatePersistence
     /// live store — a rehydrated ghost would be a fightable, listable hero whose on-chain asset is retired.</summary>
     Task DeleteHeroAsync(string heroId, CancellationToken ct = default);
 
+    /// <summary>Durably record a marketplace offer — called the moment it is created (BEFORE the seller is
+    /// handed the address to deposit into) and again on each status transition. Without the row a restart keeps
+    /// the covenant's params but loses the only thing that names the offer, so the escrowed asset stops being
+    /// discoverable by the market or by its own seller.</summary>
+    Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default);
+
     /// <summary>Durably append one treasury movement — a fee captured or a payout made — so the by-tag totals
     /// can be grouped back out of the rows at boot. On the INFLOW side <paramref name="id"/> is the invoice id
     /// and the row IS the dedup marker: an id already stored is silently left alone, which is what stops an
@@ -65,6 +71,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveHeroAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default) => Task.CompletedTask;
 }
 
@@ -175,6 +182,34 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 Status = Durable(row.Status),
                 ItemAssetId = row.ItemAssetId,
                 DeliveryTxId = row.DeliveryTxId,
+            };
+        }
+
+        // Offers come back so the market can find them again — and, far more importantly, so their SELLER
+        // can. A `closed` offer is TERMINAL and is never rehydrated, exactly as a resolved bracket isn't:
+        // its row stays as an audit marker, but putting one back would re-list a sale that already happened
+        // and hand the reconcile a second chance to book its fee. Status is rehydrated as it was stored and
+        // is NOT trusted: every non-closed offer is re-reconciled against the chain before it is served
+        // (ListOffersAsync/GetOfferAsync/ListReclaimableAsync all reconcile first), because the chain — not
+        // this row — is the source of truth for whether the asset is still resting in the covenant.
+        foreach (var row in await db.Offers.AsNoTracking().Where(o => o.Status != "closed").ToListAsync(ct))
+        {
+            store.Offers[row.Id] = new OfferListing
+            {
+                Id = row.Id,
+                SellerId = row.SellerId,
+                Kind = row.Kind,
+                ItemId = row.ItemId,
+                HeroId = row.HeroId,
+                AskSats = row.AskSats,
+                OfferAddress = row.OfferAddress,
+                ItemAssetId = row.ItemAssetId,
+                OfferValueSats = row.OfferValueSats,
+                RefundAfterUnixSeconds = row.RefundAfterUnixSeconds,
+                CreatedAt = row.CreatedAt,
+                Status = row.Status,
+                ListingFeeSats = row.ListingFeeSats,
+                // AssetDeposited is deliberately left false — the next reconcile derives it from the chain.
             };
         }
 
@@ -415,6 +450,45 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         // be idempotent under a retry that re-runs the settle's in-memory tail.
         if (await db.Heroes.FindAsync([heroId], ct) is not { } row) return;
         db.Heroes.Remove(row);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.Offers.FindAsync([offer.Id], ct);
+        if (row is null)
+        {
+            db.Offers.Add(new PersistedOffer
+            {
+                Id = offer.Id,
+                SellerId = offer.SellerId,
+                Kind = offer.Kind,
+                ItemId = offer.ItemId,
+                HeroId = offer.HeroId,
+                AskSats = offer.AskSats,
+                OfferAddress = offer.OfferAddress,
+                ItemAssetId = offer.ItemAssetId,
+                OfferValueSats = offer.OfferValueSats,
+                RefundAfterUnixSeconds = offer.RefundAfterUnixSeconds,
+                CreatedAt = offer.CreatedAt,
+                Status = offer.Status,
+                ListingFeeSats = offer.ListingFeeSats,
+            });
+        }
+        else
+        {
+            // Status is the ONLY thing that ever moves. The rest is fixed at listing: the covenant is built
+            // from those values and its address is derived from them, so a row that disagreed with the
+            // deployed covenant would describe an offer that does not exist on-chain.
+            //
+            // Which is also why this needs no per-offer gate, where SaveHeroAsync needs one: the hero saves
+            // race over IDENTITY, so a loser's stale copy can revert an ownership change and durably mis-own
+            // a hero. Status carries no such fact — it is re-derived from the chain on the next reconcile, so
+            // the worst a lost race leaves is a row reading `active` for an offer memory has already closed,
+            // and a restart then reconciles it closed again (re-booking under the same once-only key).
+            row.Status = offer.Status;
+        }
         await db.SaveChangesAsync(ct);
     }
 
