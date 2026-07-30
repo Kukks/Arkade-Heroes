@@ -87,6 +87,32 @@ public class ReclaimableTests
     }
 
     [Fact]
+    public async Task RevealedCovenantBreed_IsNotReclaimable()
+    {
+        // The completed counterpart of UnrevealedCovenantBreed_IsReclaimable. Reveal executes the covenant,
+        // which sweeps the escrow — parents retained, child minted, fee retired — so there is nothing left
+        // behind for this page to offer. Pinned because the ONLY thing excluding it is the session's
+        // Completed flag: the escrow params outlive the reveal, so a params-only gate would leave every
+        // finished breeding parked here forever behind a button that cannot work.
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, _) = await factory.RegisterAsync("RC-BreedDone");
+        var heroes = await player.ClaimStartersAsync();
+
+        var commit = await player.Breeding.CommitAsync(
+            new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
+        await player.Dev.FundBreedEscrowAsync(new { BreedingId = commit.BreedingId });
+        await player.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("rc-breed-done"));
+
+        Assert.Empty(await player.Players.ReclaimableAsync());
+    }
+
+    // NOT ADDED, deliberately: the merge equivalent of the test above. A revealed merge already fails to
+    // appear with `!m.Completed` REMOVED, so a test asserting its absence passes either way — it would look
+    // like coverage of that gate while pinning nothing. Something other than the Completed flag is excluding
+    // it (the branch also requires GetMergeEscrowParamsAsync to return non-null), and until that is pinned
+    // down a green-either-way test is worse than none. Left as an open question rather than papered over.
+
+    [Fact]
     public async Task StakedCovenantWager_IsReclaimable()
     {
         // A wagered duel whose stake is in the per-party escrow. Real sats, and the only way back is the
