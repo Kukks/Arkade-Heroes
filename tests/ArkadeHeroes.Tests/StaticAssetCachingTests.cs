@@ -1,3 +1,5 @@
+using System.Net;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace ArkadeHeroes.Tests;
@@ -9,63 +11,90 @@ namespace ArkadeHeroes.Tests;
 /// always fetched — but <c>css/app.css</c> and <c>js/hero-render.js</c> keep the same url forever,
 /// and nothing told the browser to revalidate them.
 ///
-/// <para>These pin the header that fixes it. They are worth having because the failure is invisible
-/// from the server's side: every file was correct on disk, and only a browser that had visited
-/// before could see the bug.</para>
+/// <para>The test host normally has no published wwwroot, so there is nothing to fetch and nothing to
+/// assert. These build one — a temp web root holding a real stylesheet — so the actual middleware
+/// answers actual requests, and the fix is verified rather than merely present in the source.</para>
 /// </summary>
 public class StaticAssetCachingTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
     public StaticAssetCachingTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    /// <summary>
-    /// The test host has no published wwwroot, so there is no real app.css to fetch. What CAN be
-    /// asserted without one is that the policy is wired at all — the middleware is configured with an
-    /// OnPrepareResponse that sets the header — which is the thing that was missing.
-    /// </summary>
-    [Fact]
-    public async Task UnfingerprintedAssets_AreServedMustRevalidate()
+
+
+    /// <summary>A throwaway web root with one ordinary asset and one framework asset.</summary>
+    private static string NewWebRoot()
     {
-        var client = _factory.CreateClient();
-
-        // Any file the app itself serves out of wwwroot. In a test host these 404, and a 404 carries
-        // no cache header — so assert on the one asset that always exists instead: none. Rather than
-        // fake one, assert the SHAPE of the rule directly against the composed middleware below.
-        var response = await client.GetAsync("/css/app.css");
-
-        // If a wwwroot IS present (a developer running against a published layout), the header must
-        // be there. If it is not, the request 404s and there is nothing to check — the source-level
-        // assertion below is what guards the wiring in that case.
-        if (response.IsSuccessStatusCode)
-            Assert.Contains("no-cache", response.Headers.CacheControl?.ToString() ?? "");
+        var root = Path.Combine(Path.GetTempPath(), $"arkade-static-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "css"));
+        Directory.CreateDirectory(Path.Combine(root, "_framework"));
+        File.WriteAllText(Path.Combine(root, "css", "app.css"), "/* stand-in for the real stylesheet */");
+        File.WriteAllText(Path.Combine(root, "_framework", "probe.txt"), "stand-in for a fingerprinted asset");
+        return root;
     }
 
-    /// <summary>
-    /// The wiring itself, read out of Program.cs. Crude, and deliberately so: the behaviour cannot be
-    /// exercised in a test host that has no wwwroot, but the line going missing is precisely the
-    /// regression that broke a deploy, so it gets a tripwire rather than nothing.
-    /// </summary>
     [Fact]
-    public void TheServer_StillSetsACachePolicyOnItsOwnStaticFiles()
+    public async Task AnOrdinaryAsset_MustBeRevalidated_AndTheFrameworkIsNotOursToPolice()
     {
-        var path = Path.Combine(FindRepoRoot(), "src", "ArkadeHeroes.Server", "Program.cs");
-        var source = File.ReadAllText(path);
-
-        Assert.Contains("OnPrepareResponse", source);
-        Assert.Contains("\"no-cache\"", source);
-        // The framework must NOT be swept into the same rule: it is fingerprinted, so re-fetching it
-        // on every navigation would re-download the runtime for no reason.
-        Assert.Contains("/_framework", source);
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null)
+        var root = NewWebRoot();
+        try
         {
-            if (File.Exists(Path.Combine(dir, "ArkadeHeroes.slnx"))) return dir;
-            dir = Path.GetDirectoryName(dir);
+            using var factory = _factory.WithWebHostBuilder(b => b.UseWebRoot(root));
+            var client = factory.CreateClient();
+
+            // css/app.css keeps the same url across every deploy, so the browser has to be told to check.
+            var ordinary = await client.GetAsync("/css/app.css");
+            Assert.Equal(HttpStatusCode.OK, ordinary.StatusCode);
+            Assert.Contains("no-cache", ordinary.Headers.CacheControl?.ToString() ?? "",
+                StringComparison.OrdinalIgnoreCase);
+
+            // _framework is NOT ours to police. UseBlazorFrameworkFiles serves it before this
+            // middleware is reached — established by setting a probe header unconditionally in our
+            // OnPrepareResponse and finding it absent from the response below — and it applies its own
+            // policy, which is also no-cache and correctly so: blazor.boot.json has a fixed url and has
+            // to be revalidated for a new build to be discovered at all.
+            //
+            // So the assertion here is deliberately about REACHABILITY, not about the header: the
+            // framework must still be served, and our rule must not be what decides it. Asserting a
+            // value we do not own would be a test of Blazor's defaults dressed up as a test of ours.
+            var framework = await client.GetAsync("/_framework/probe.txt");
+            Assert.Equal(HttpStatusCode.OK, framework.StatusCode);
         }
-        throw new InvalidOperationException($"Could not locate ArkadeHeroes.slnx above {AppContext.BaseDirectory}");
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// The header has to survive a conditional request too: revalidation is only useful if the second
+    /// request comes back 304 rather than re-sending the bytes, and only correct if the policy is still
+    /// attached when it does.
+    /// </summary>
+    [Fact]
+    public async Task RevalidatingAnUnchangedAsset_Returns304_AndKeepsThePolicy()
+    {
+        var root = NewWebRoot();
+        try
+        {
+            using var factory = _factory.WithWebHostBuilder(b => b.UseWebRoot(root));
+            var client = factory.CreateClient();
+
+            var first = await client.GetAsync("/css/app.css");
+            var etag = first.Headers.ETag;
+            Assert.NotNull(etag);
+
+            var conditional = new HttpRequestMessage(HttpMethod.Get, "/css/app.css");
+            conditional.Headers.IfNoneMatch.Add(etag!);
+            var second = await client.SendAsync(conditional);
+
+            Assert.Equal(HttpStatusCode.NotModified, second.StatusCode);
+            Assert.Contains("no-cache", second.Headers.CacheControl?.ToString() ?? "",
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
     }
 }

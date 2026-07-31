@@ -107,10 +107,15 @@ app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx =>
     {
-        // _framework is content-fingerprinted by the SDK — a changed file is a changed url, so it
-        // is safe to leave cacheable. Everything else is not, and must be revalidated.
-        if (!ctx.Context.Request.Path.StartsWithSegments("/_framework"))
-            ctx.Context.Response.Headers.CacheControl = "no-cache";
+        // Our own assets keep the same url across every deploy, so the browser must be told to
+        // revalidate them. `no-cache` still permits storing the file — it just forbids reusing it
+        // without asking — so the steady state is a 304 and a deploy is picked up immediately.
+        //
+        // Nothing here needs to exclude _framework. UseBlazorFrameworkFiles serves those itself and
+        // never reaches this callback (verified: a probe header set unconditionally here is absent
+        // from a /_framework response). It sets its own no-cache, which is correct — blazor.boot.json
+        // has a fixed url and must be revalidated to find a new build at all.
+        ctx.Context.Response.Headers.CacheControl = "no-cache";
     },
 });
 

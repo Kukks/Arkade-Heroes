@@ -429,12 +429,18 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
    element, so currentColor carries it to the stroke, the fill and the arrowhead marker alike. */
 .el-ring-card { display: grid; justify-items: center; padding: 1.2rem; }
 .el-ring { width: 100%; max-width: 480px; height: auto; display: block; }
-.el-node circle { fill: color-mix(in srgb, currentColor 14%, var(--bg-2)); stroke: currentColor; stroke-width: 2; }
+.el-node circle { fill: color-mix(in srgb, currentcolor 14%, var(--bg-2)); stroke: currentcolor; stroke-width: 2; }
 .el-node text {
-    fill: currentColor; font-family: var(--font-hud); font-size: 15px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .06em;
+    fill: currentcolor; font-family: var(--font-hud); font-size: 20px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em;
 }
-.el-arrow line { stroke: currentColor; stroke-width: 2.5; opacity: .75; }
+.el-arrow line { stroke: currentcolor; stroke-width: 2.5; opacity: .75; }
+/* The svg scales uniformly, so a label's ON-SCREEN size is font-size x (rendered width / 560). On a
+   320px phone that factor is 0.57, which turned the first draft's 15px into an unreadable 8.6px.
+   Scale the type up as the ring shrinks, since this diagram replaced the text cards and is now the
+   only place those matchups are stated. */
+@media (max-width: 560px) { .el-node text { font-size: 26px; } }
+@media (max-width: 380px) { .el-node text { font-size: 30px; } }
 .el-ring-note { max-width: 56ch; text-align: center; }
 
 @media (max-width: 1000px) { .codex-ops { grid-template-columns: 1fr; } }
