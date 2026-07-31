@@ -2,16 +2,20 @@
 
   <PropertyGroup>
     <!--
-      Trimming off. Blazor WASM turns it on for Release publish, and the content pack cannot survive it:
-      ContentPackLoader binds items.json / dungeons.json through reflection-based System.Text.Json and then
-      REJECTS anything that fails to bind ("unknown field, or broken invariant — bad content must never load
-      silently"). Trimming removes the property metadata that binding needs, so the reject fires, throws out
-      of ContentPack.Default's initializer, and every static that touches it — Gauntlet.Content among them —
-      dies as TypeInitializationException.
+      Trimming off. NOT, as this comment used to claim, because trimming broke the content pack — that was
+      a guess and it was wrong on both halves. ContentPackLoader does not bind through reflection at all
+      (it reads JsonDocument by hand, and says why), and the trimmer never rewrites this app's assemblies
+      anyway: Blazor WebAssembly trims with TrimMode=partial, so only assemblies marked IsTrimmable — the
+      BCL — are linked. Publishing this project both ways and diffing the output shows every
+      ArkadeHeroes.*.wasm byte-identical between them, so trimming could not have removed a thing from the
+      pack. The TypeInitializationException it was turned off to fix was a static-initializer cycle in
+      ContentPackVersion, fixed there, and it reproduced with trimming already off.
 
-      Only in published builds, which is why a local build and the whole unit suite are clean. The cost is a
-      larger download; the alternative is a trimmer descriptor listing every content type by hand, which is
-      the same guarantee maintained by remembering to update it.
+      So this switch is now load-bearing for nothing, and turning it back on is worth doing — measured at
+      publish, it is ~9.9 MB off the bundle (60.9 MB → 50.9 MB). It is left off here only because that is a
+      separate change from a bug fix: a trimmed bundle boots and renders, but it has not been taken through
+      a funded flow, and this is an app that moves real sats. Re-enable it deliberately, with a browser pass
+      over the money paths, rather than as a side effect of this fix.
     -->
     <PublishTrimmed>false</PublishTrimmed>
     <TargetFramework>net10.0</TargetFramework>

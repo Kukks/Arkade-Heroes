@@ -45,8 +45,28 @@ public static class ContentPackVersion
     private const string Tag = "arkade-contentpack-v1";
 
     /// <summary>The id of <see cref="ContentPack.Default"/> — the content this build compiled in, and the
-    /// one id a client can always resolve offline from its own embedded pack.</summary>
-    public static string Default { get; } = Compute(ContentPack.Default);
+    /// one id a client can always resolve offline from its own embedded pack.
+    ///
+    /// COMPUTED ON FIRST READ, and deliberately not from a static field initializer. An initializer here
+    /// gives this type a static constructor, and <see cref="ContentPack"/>'s own static constructor reaches
+    /// this type on its way through <see cref="ContentValidation.Seal"/> → <see cref="ItemCanon"/>. That is
+    /// a cycle: our constructor would read <see cref="ContentPack.Default"/> while the initializer that
+    /// assigns it is still running, get null, and throw — taking down every type that touches the content
+    /// pack, <c>Gauntlet</c> and <c>Trials</c> included.
+    ///
+    /// Whether the cycle FIRES is a property of the runtime, which is why it shipped: with an initializer
+    /// the type is <c>beforefieldinit</c>, and that only promises the constructor runs before the first
+    /// static FIELD access. CoreCLR defers it past the <see cref="ItemCanon"/> call, so the server and the
+    /// whole test suite never see it. Mono — what Blazor WebAssembly runs — does not, so it fired in the
+    /// browser and nowhere else. Reading the value lazily removes the constructor, so neither order can
+    /// cycle: reaching <see cref="ItemCanon"/> now initializes nothing at all, and asking for
+    /// <see cref="Default"/> first simply completes the pack's initializer before hashing it.
+    ///
+    /// A torn read costs at worst a second identical hash — <see cref="Compute"/> is pure and
+    /// deterministic — so no lock is needed for a value that cannot differ between racers.</summary>
+    public static string Default => _default ??= Compute(ContentPack.Default);
+
+    private static string? _default;
 
     /// <summary>The version id of <paramref name="pack"/>: 64 lowercase hex chars.</summary>
     public static string Compute(ContentPack pack)
