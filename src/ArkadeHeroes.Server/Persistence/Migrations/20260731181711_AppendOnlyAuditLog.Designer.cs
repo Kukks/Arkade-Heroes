@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ArkadeHeroes.Server.Persistence.Migrations
 {
     [DbContext(typeof(GameStateDbContext))]
-    [Migration("20260731174241_AppendOnlyAuditLog")]
+    [Migration("20260731181711_AppendOnlyAuditLog")]
     partial class AppendOnlyAuditLog
     {
         /// <inheritdoc />
@@ -162,6 +162,36 @@ namespace ArkadeHeroes.Server.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Heroes");
+                });
+
+            modelBuilder.Entity("ArkadeHeroes.Server.Persistence.PersistedHeroSale", b =>
+                {
+                    b.Property<string>("OfferId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AskSats")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BuyerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HeroId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ListingFeeSats")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SellerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SoldAtUnixSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("OfferId");
+
+                    b.ToTable("HeroSales");
                 });
 
             modelBuilder.Entity("ArkadeHeroes.Server.Persistence.PersistedItemPurchase", b =>

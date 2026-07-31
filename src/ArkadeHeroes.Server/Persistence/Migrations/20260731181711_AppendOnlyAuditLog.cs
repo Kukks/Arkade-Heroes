@@ -71,14 +71,14 @@ namespace ArkadeHeroes.Server.Persistence.Migrations
             // APPEND-ONLY, ENFORCED BY THE DATABASE — not by the absence of an update method in C#.
             //
             // "Immutable" that rests on nobody writing the wrong code is a convention, and a convention is
-            // exactly what an audit log cannot be: the whole value of the record is that it says what it
-            // said at the time. These triggers make UPDATE and DELETE on the log fail loudly for EVERY
+            // exactly what an audit log cannot be: the whole value of the record is that it still says what
+            // it said at the time. These triggers make UPDATE and DELETE on the log fail loudly for EVERY
             // writer — the application, a future migration, a hand-run sqlite3 session, a compromised
-            // process that still has the file — rather than for the ones that remembered.
+            // process that still has the file — rather than only for the ones that remembered.
             //
             // The cost is deliberate and worth naming: a later migration that needs to reshape these tables
             // must DROP the trigger first, which is a visible, reviewable line in a diff rather than a
-            // silent rewrite of history. DROP TABLE still works (it takes the triggers with it), so a clean
+            // silent rewrite of history. DROP TABLE still works (it takes its triggers with it), so a clean
             // teardown is unaffected.
             foreach (var table in new[] { "AuditEvents", "AuditEventSubjects" })
             {
