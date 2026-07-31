@@ -231,6 +231,28 @@ public class GameWallet(
         while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
             selected.Add(btc[i++]);
         if (i < btc.Count) selected.Add(btc[i]);
+
+        // A settlement round can consolidate the whole wallet into ONE VTXO that carries the sats
+        // AND every hero the player owns. After that there is no pure-BTC coin left, so no fee could
+        // ever be paid again — recruit, breed, stake and buy all fail with "not enough spendable
+        // sats" while the balance pill still shows the full amount. Fall back to spending a carrier:
+        // the SDK's asset packet assigns every unspent input asset to the change output, so the
+        // heroes ride home to the player's own change address. Only take a carrier that leaves change
+        // at or above dust — below dust the change output moves to vout 0 while asset change still
+        // points at the LAST output, which would hand the player's heroes to the recipient.
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
+        {
+            var dust = (await transport.GetServerInfoAsync()).Dust.Satoshi;
+            foreach (var carrier in spendable
+                         .Where(c => !selected.Contains(c) && c.Assets is { Count: > 0 })
+                         .OrderByDescending(c => c.TxOut.Value.Satoshi))
+            {
+                if (selected.Sum(c => c.TxOut.Value.Satoshi) + carrier.TxOut.Value.Satoshi < required + dust) continue;
+                selected.Add(carrier);
+                break;
+            }
+        }
+
         if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
         {
             // Distinguish the settlement-lag case (funds are present but a freshly-received VTXO
