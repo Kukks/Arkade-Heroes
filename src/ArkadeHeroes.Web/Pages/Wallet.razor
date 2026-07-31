@@ -6,6 +6,7 @@
 @inject IJSRuntime JS
 @inject FaucetService Faucet
 @inject WalletCredentialStore Credentials
+@inject NavigationManager Nav
 @implements IDisposable
 
 <PageTitle>Wallet · Arkade Heroes</PageTitle>
@@ -271,6 +272,35 @@ else // Ready
         }
     </div>
 
+    @* Signing out means forgetting the wallet, because the wallet is the account — clearing the session
+       alone would sign straight back in on the next load. So it is gated on the phrase, not on a click. *@
+    <div class="card" style="margin-top:1.1rem;border-color:var(--bad,#8a3d3d)">
+        <h3>Sign out</h3>
+        <p class="muted" style="margin:.4rem 0 .9rem">
+            This removes the wallet from this browser. Your heroes and sats stay on the network and come
+            back with your recovery phrase — but <b>only</b> with it. There is no other copy and no reset.
+        </p>
+        @if (!_signOutArmed)
+        {
+            <button class="btn ghost" @onclick="() => _signOutArmed = true">Sign out of this browser</button>
+        }
+        else
+        {
+            <p class="muted" style="margin:0 0 .6rem">
+                Type <b>SIGN OUT</b> to confirm you have your 12 words somewhere safe.
+            </p>
+            <input class="wallet-input" @bind="_signOutConfirm" @bind:event="oninput"
+                   placeholder="SIGN OUT" disabled="@_busy" />
+            <div class="btn-row" style="margin-top:.7rem">
+                <button class="btn ghost" @onclick="CancelSignOut">Cancel</button>
+                <button class="btn primary" @onclick="SignOutAsync"
+                        disabled="@(_busy || _signOutConfirm.Trim() != "SIGN OUT")">
+                    Forget this wallet
+                </button>
+            </div>
+        }
+    </div>
+
     @if (_showAssets)
     {
         <div class="modal-backdrop" @onclick="() => _showAssets = false">
@@ -339,6 +369,40 @@ else // Ready
     /// <summary>Whether the wallet covers a claim. Unknown price (config read failed) counts as affordable —
     /// better to let the server refuse than to grey out a button over a missing number.</summary>
     bool CanAffordClaim => _claimFeeSats is not { } fee || State.BalanceSats >= fee;
+
+    // ── Sign out ─────────────────────────────────────────────────────────────
+    bool _signOutArmed;
+    string _signOutConfirm = "";
+
+    void CancelSignOut()
+    {
+        _signOutArmed = false;
+        _signOutConfirm = "";
+    }
+
+    /// <summary>
+    /// Forgets the wallet and reloads into a clean shell. The reload is deliberate: it is the only way to
+    /// be sure nothing survives in memory — the SDK's bearer token, cached DTOs, this page's own fields —
+    /// which on a shared machine is the entire point of the button.
+    /// </summary>
+    async Task SignOutAsync()
+    {
+        if (_activeId is not { } id) return;
+        _busy = true;
+        try
+        {
+            await WalletSvc.ForgetAsync(id);
+            State.SetPlayer(null);
+            State.SetBackupPending(false);
+            State.SetActiveWallet(null, null);
+            Nav.NavigateTo("", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
 
     // ── Faucet ───────────────────────────────────────────────────────────────
     bool _faucetBusy;

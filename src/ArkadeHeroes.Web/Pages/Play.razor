@@ -61,8 +61,10 @@
         [
             new("Spar", "spar", "⚔", "A friendly bout against another hero. The real combat engine, "
                 + "replayed in your browser — no wager, no consequences.", Free),
+            // Not free — Gauntlet.Fee scales the entry cost with the hero's level. Labelling it Free was
+            // the one thing this page exists to get right: the chip is the whole point of the redesign.
             new("Gauntlet", "gauntlet", "🌀", "Five escalating waves of ghosts, alone. A quick read on "
-                + "whether a hero's build actually holds up.", Free),
+                + "whether a hero's build actually holds up. Entry costs sats, scaled to the hero's level.", Sats),
             new("Trials", "trials", "🏔", "The endless ladder. Waves keep coming and keep getting "
                 + "worse — the question is only how deep you get.", Free),
         ]),

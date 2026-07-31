@@ -100,6 +100,17 @@ public class GameWallet(
         }
     }
 
+    /// <summary>
+    /// Removes a wallet from this browser. Irreversible from here: the recovery phrase is the only way
+    /// back, and this deletes the copy that was holding the keys.
+    ///
+    /// <para>This is what signing out has to mean when the wallet IS the account. Clearing the session
+    /// alone would be theatre — the next page load finds the wallet still sitting in storage and signs
+    /// straight back in, which is worse than no sign-out at all on a shared machine.</para>
+    /// </summary>
+    public Task<bool> ForgetAsync(string walletId, CancellationToken ct = default) =>
+        walletStorage.DeleteWallet(walletId, ct);
+
     /// <summary>The wallet's VTXOs (its coins and hero/asset carriers), newest first by default.</summary>
     public async Task<IReadOnlyCollection<ArkVtxo>> GetVtxosAsync(string walletId, int skip = 0, int take = 50)
         => await vtxoStorage.GetVtxos(walletIds: [walletId], skip: skip, take: take);
