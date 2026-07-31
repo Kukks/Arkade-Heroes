@@ -61,4 +61,31 @@ public class SquadMatchLoopTests
         var replay = await alice.Squad.ReplayAsync(open.MatchId);
         Assert.True(FairnessAudit.VerifySquad(open.MatchId, "squad-nonce", replay.CommitmentHex, replay).Ok);
     }
+
+    /// <summary>
+    /// The board's 50-row cap must drop the OLDEST rows, not arbitrary ones. Listing took 50 straight off
+    /// an unordered dictionary, so once more than 50 squad matches existed a freshly-opened one could be
+    /// among the rows cut — a player opens a match and it is simply invisible to the opponent.
+    /// </summary>
+    [Fact]
+    public async Task List_ReturnsTheNewestFifty_NotAnArbitraryFifty()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Squad-List-A");
+        var (bob, _) = await factory.RegisterAsync("Squad-List-B");
+        var mine = await Lineup(alice);
+        var theirs = await Lineup(bob);
+
+        // Friendly (wager 0) so opening bills nothing, and the same two lineups throughout: the ONLY
+        // thing that differs between these matches is when each was opened. Ten more than the cap, so
+        // the ten oldest are exactly the rows that have to fall off.
+        var opened = new List<string>();
+        for (var i = 0; i < 60; i++)
+            opened.Add((await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 0, "invoice"))).MatchId);
+
+        var listed = await alice.Squad.ListAsync();
+
+        Assert.Equal(50, listed.Count);
+        Assert.Equal(opened.Skip(10).Reverse().ToList(), listed.Select(m => m.MatchId).ToList());
+    }
 }
