@@ -158,7 +158,23 @@ else
             }
             else
             {
-                <p class="muted">A gen-0 starter — blank on traits. Breed it to earn heritable traits.</p>
+                @* Trait-blank is not the same fact for a recruit as for a bred hero, and this branch used
+                   to state the recruit's version for both — telling the owner of a gen-3 child it was a
+                   gen-0 starter. Only generation settles it. A bred hero with no traits is ORDINARY:
+                   traits arrive by mutation, and the odds are deliberately long (see /codex), so most
+                   children inherit nothing visible from either parent. *@
+                @if (h.Generation == 0)
+                {
+                    <p class="muted">A recruit — blank on traits. Breed it and its line can mutate some.</p>
+                }
+                else
+                {
+                    <p class="muted">
+                        No traits, expressed or carried — generation @h.Generation. Nothing mutated in this
+                        one, which is the common outcome; traits are rare by design. Breeding it again is
+                        another roll.
+                    </p>
+                }
             }
             @* Innate combat passives each expressed cosmetic trait grants — shown ONLY when the published
                config has InnateAbilities on (default off ⇒ hidden ⇒ no player-visible change today). *@
