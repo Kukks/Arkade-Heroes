@@ -35,6 +35,9 @@ public class PersistedPlayer
     public required string Id { get; set; }
     public required string Name { get; set; }
     public required bool StarterClaimed { get; set; }
+    /// <summary>The starter claim's fee-invoice. Stored because it is paid before the heroes exist:
+    /// losing it across a restart would re-bill a player who has already paid.</summary>
+    public string? StarterFeeInvoiceId { get; set; }
     public string? LoginPubKeyHex { get; set; }
     public required int StreakCount { get; set; }
     public int? LastClaimDay { get; set; }

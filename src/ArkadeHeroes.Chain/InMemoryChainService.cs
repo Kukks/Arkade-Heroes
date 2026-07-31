@@ -68,6 +68,11 @@ public class InMemoryChainService : IChainService
         return Task.FromResult(new FeeInvoice(invoiceId, address, amountSats, memo));
     }
 
+    public Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default)
+        => Task.FromResult(_invoices.TryGetValue(invoiceId, out var invoice)
+            ? new FeeInvoice(invoiceId, invoice.PayToAddress, invoice.AmountSats, invoice.Memo)
+            : null);
+
     public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default)
         => Task.FromResult(_invoices.TryGetValue(invoiceId, out var invoice)
                            && invoice.PaidSats >= invoice.AmountSats);

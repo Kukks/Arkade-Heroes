@@ -327,8 +327,21 @@ public class NArkChainService(
         var invoiceId = $"inv-{Guid.NewGuid():N}";
         await SetKvAsync($"invoiceScript:{invoiceId}", script, ct);
         await SetKvAsync($"invoiceAmount:{invoiceId}", amountSats.ToString(), ct);
+        // The address as well as the script: paying needs the address, and an outstanding invoice has to be
+        // re-showable so a player who lost the response isn't billed a second time for the same thing.
+        await SetKvAsync($"invoiceAddress:{invoiceId}", address, ct);
+        await SetKvAsync($"invoiceMemo:{invoiceId}", memo, ct);
         logger.LogInformation("Invoice {InvoiceId} ({Memo}): {Amount} sats → {Address}", invoiceId, memo, amountSats, address);
         return new FeeInvoice(invoiceId, address, amountSats, memo);
+    }
+
+    public async Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default)
+    {
+        var address = await GetKvAsync($"invoiceAddress:{invoiceId}", ct);
+        var amountText = await GetKvAsync($"invoiceAmount:{invoiceId}", ct);
+        if (address is null || amountText is null) return null;
+        return new FeeInvoice(invoiceId, address, long.Parse(amountText),
+            await GetKvAsync($"invoiceMemo:{invoiceId}", ct) ?? "");
     }
 
     public async Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default)

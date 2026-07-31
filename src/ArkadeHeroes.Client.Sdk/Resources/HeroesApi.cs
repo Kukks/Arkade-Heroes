@@ -5,6 +5,9 @@ namespace ArkadeHeroes.Client.Sdk;
 /// <summary>Hero roster, starters, and per-hero actions (equip/unequip/transfer).</summary>
 public sealed class HeroesApi(ArkadeHeroesClient client)
 {
+    /// <summary>Bills the starter claim. Pay <see cref="StarterQuoteResponse.Fee"/> before claiming.</summary>
+    public Task<StarterQuoteResponse> RequestStartersAsync() => client.PostAsync<StarterQuoteResponse>("/api/heroes/starter/quote");
+
     public Task<StarterResponse> ClaimStartersAsync() => client.PostAsync<StarterResponse>("/api/heroes/starter");
 
     /// <summary>The signed-in player's heroes, rarity-ordered. Pass skip/take to page; omit for all.</summary>

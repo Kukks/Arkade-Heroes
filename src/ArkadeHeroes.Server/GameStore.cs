@@ -11,6 +11,11 @@ public class Player
     public required string Name { get; init; }
     public required string Token { get; init; }
     public bool StarterClaimed { get; set; }
+    /// <summary>The fee-invoice billed for the starter claim, once requested. Durable on purpose: the
+    /// player pays this with real sats BEFORE any hero is minted, so a restart in that window must not
+    /// forget what was already paid for — otherwise the next request bills them a second time for heroes
+    /// they have already bought.</summary>
+    public string? StarterFeeInvoiceId { get; set; }
     /// <summary>The wallet's stable x-only login pubkey (hex), when registered — enables "sign in with your wallet" resume.</summary>
     public string? LoginPubKeyHex { get; set; }
 

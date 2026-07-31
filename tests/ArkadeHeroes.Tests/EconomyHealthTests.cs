@@ -19,7 +19,7 @@ public class EconomyHealthTests
     [Fact]
     public async Task Health_TalliesDailyPayoutOnce_AndReflectsBalance()
     {
-        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen();
+        using var factory = new WebApplicationFactory<Program>().WithDailyFaucetOpen().WithFreeStarters();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         chain.FundTreasury(50_000);
 

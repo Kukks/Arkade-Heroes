@@ -16,7 +16,7 @@ public class TreasuryReserveFloorTests
     public async Task Daily_NeverDrainsBelowTheReserveFloor()
     {
         const long Floor = 10_000;
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters().WithWebHostBuilder(b =>
             b.ConfigureServices(s => s.Configure<GameOptions>(o =>
             {
                 o.TreasuryReserveFloorSats = Floor;
@@ -37,7 +37,7 @@ public class TreasuryReserveFloorTests
     public async Task Daily_ReserveSeasonPot_HoldsBackTheSeasonPotFromEmission()
     {
         const long SeasonPot = 25_000;   // GameConfig.Default.SeasonPotBaseSats, no accrual yet
-        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters().WithWebHostBuilder(b =>
             b.ConfigureServices(s => s.Configure<GameOptions>(o =>
             {
                 o.ReserveSeasonPot = true;

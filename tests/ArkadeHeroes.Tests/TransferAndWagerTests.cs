@@ -45,8 +45,10 @@ public class TransferAndWagerTests : IClassFixture<WebApplicationFactory<Program
     [Fact]
     public async Task WageredMatchInvoicesStakesAndPaysWinner()
     {
-        var (alice, _) = await _factory.RegisterAsync("W-Alice");
-        var (bob, _) = await _factory.RegisterAsync("W-Bob");
+        // Exact stake arithmetic below, so the starter claim must not move the balances first.
+        using var factory = _factory.WithFreeStarters();
+        var (alice, _) = await factory.RegisterAsync("W-Alice");
+        var (bob, _) = await factory.RegisterAsync("W-Bob");
         var aliceHeroes = await alice.ClaimStartersAsync();
         var bobHeroes = await bob.ClaimStartersAsync();
         const long wager = 5_000;

@@ -201,7 +201,8 @@ public class TournamentServerTests
     [Fact]
     public async Task Refund_UnresolvableTournament_ReturnsEveryPaidBuyIn_Once()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        // Nets the treasury against its own start, so a paid starter claim must not add to it.
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         var store = factory.Services.GetRequiredService<GameStore>();
         var treasuryStart = await chain.TreasuryBalanceAsync();
@@ -269,7 +270,8 @@ public class TournamentServerTests
     [Fact]
     public async Task Refund_OnlyRefundsPaidBuyIns()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        // Nets the treasury against its own start, so a paid starter claim must not add to it.
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         var store = factory.Services.GetRequiredService<GameStore>();
         var treasuryStart = await chain.TreasuryBalanceAsync();
@@ -394,8 +396,9 @@ public class TournamentServerTests
     /// <summary>Delegates to the real InMemory sim but counts SETTLED tournament-refund payouts (memo tag
     /// <c>tournament-refund:</c>) — the deterministic stand-in for "the sats actually left the treasury"
     /// (mirrors DailyDurabilityGuardTests' payout probe).</summary>
-    private sealed class RefundProbeChain(InMemoryChainService inner) : IChainService
+    private sealed class RefundProbeChain(InMemoryChainService inner) : IChainService, ISimulatedChain
     {
+        public InMemoryChainService Simulator => inner;
         private int _refundPayoutsPaid;
         public InMemoryChainService Inner => inner;
         public int RefundPayoutsPaid => Volatile.Read(ref _refundPayoutsPaid);
@@ -414,6 +417,7 @@ public class TournamentServerTests
         public Task<string> GetPlayerAddressAsync(string playerId, CancellationToken ct = default) => inner.GetPlayerAddressAsync(playerId, ct);
         public Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default) => inner.GetAddressBalanceSatsAsync(playerId, ct);
         public Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default) => inner.CreateFeeInvoiceAsync(memo, amountSats, ct);
+        public Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default) => inner.GetFeeInvoiceAsync(invoiceId, ct);
         public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default) => inner.IsInvoicePaidAsync(invoiceId, ct);
         public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default) => inner.DeliverItemAssetAsync(toPlayerId, itemId, itemName, ct);
         public Task<long> TreasuryBalanceAsync(CancellationToken ct = default) => inner.TreasuryBalanceAsync(ct);

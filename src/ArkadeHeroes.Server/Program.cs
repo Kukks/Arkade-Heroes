@@ -267,6 +267,16 @@ api.MapGet("/players/{playerId}", async (string playerId, GameStore store, IChai
 
 // ── Heroes ─────────────────────────────────────────────────────────────────
 
+// Starter heroes are bought, not given — this bills them. Pay the returned invoice from your own
+// wallet, then POST /heroes/starter to mint.
+api.MapPost("/heroes/starter/quote", async (HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var fee = await game.RequestStartersAsync(player, ct);
+    return Results.Ok(new StarterQuoteResponse(
+        game.StarterClaimFeeSats, GameService.StarterHeroCount, fee?.ToDto()));
+});
+
 api.MapPost("/heroes/starter", async (HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
@@ -998,7 +1008,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/pay-invoice", (PayInvoiceDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        ((InMemoryChainService)chain).PayInvoiceFromPlayer(player.Id, request.InvoiceId);
+        Sim(chain).PayInvoiceFromPlayer(player.Id, request.InvoiceId);
         return Results.Ok(new { paid = true });
     });
 
@@ -1006,7 +1016,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     // has no fee income yet). In NArk the treasury is a real funded address, so this doesn't exist.
     dev.MapPost("/fund-treasury", (FundTreasuryDevRequest request, IChainService chain) =>
     {
-        ((InMemoryChainService)chain).FundTreasury(request.Sats);
+        Sim(chain).FundTreasury(request.Sats);
         return Results.Ok(new { funded = true });
     });
 
@@ -1021,14 +1031,14 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/transfer-asset", (TransferAssetDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        ((InMemoryChainService)chain).TransferAssetFromPlayer(player.Id, request.ToPlayerId, request.AssetId);
+        Sim(chain).TransferAssetFromPlayer(player.Id, request.ToPlayerId, request.AssetId);
         return Results.Ok(new { transferred = true });
     });
 
     dev.MapPost("/stake-escrow", (StakeEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        ((InMemoryChainService)chain).StakeEscrowFromPlayer(player.Id, request.MatchId);
+        Sim(chain).StakeEscrowFromPlayer(player.Id, request.MatchId);
         return Results.Ok(new { staked = true });
     });
 
@@ -1037,7 +1047,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
         var player = game.Authenticate(BearerToken(http));
         try
         {
-            ((InMemoryChainService)chain).RefundEscrowFromPlayer(player.Id, request.MatchId);
+            Sim(chain).RefundEscrowFromPlayer(player.Id, request.MatchId);
         }
         catch (InvalidOperationException ex)
         {
@@ -1051,7 +1061,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/fund-breed-escrow", (FundBreedEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).FundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
+        try { Sim(chain).FundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { funded = true });
     });
@@ -1059,7 +1069,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/fund-merge-escrow", (FundMergeEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).FundMergeEscrowFromPlayer(player.Id, request.MergeId); }
+        try { Sim(chain).FundMergeEscrowFromPlayer(player.Id, request.MergeId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { funded = true });
     });
@@ -1067,7 +1077,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/fund-deathmatch-escrow", (FundDeathMatchEscrowDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).FundDeathMatchEscrowFromPlayer(player.Id, request.DeathMatchId, request.Role); }
+        try { Sim(chain).FundDeathMatchEscrowFromPlayer(player.Id, request.DeathMatchId, request.Role); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { funded = true });
     });
@@ -1075,7 +1085,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/refund-merge", (RefundMergeDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).RefundMergeEscrowFromPlayer(player.Id, request.MergeId); }
+        try { Sim(chain).RefundMergeEscrowFromPlayer(player.Id, request.MergeId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { refunded = true });
     });
@@ -1083,7 +1093,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/refund-breed", (RefundBreedDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).RefundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
+        try { Sim(chain).RefundBreedEscrowFromPlayer(player.Id, request.BreedingId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { refunded = true });
     });
@@ -1091,7 +1101,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/reclaim-deathmatch", (ReclaimDeathMatchDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).ReclaimDeathMatchFromPlayer(player.Id, request.DeathMatchId); }
+        try { Sim(chain).ReclaimDeathMatchFromPlayer(player.Id, request.DeathMatchId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { reclaimed = true });
     });
@@ -1101,7 +1111,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/fund-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).FundOfferFromSeller(player.Id, request.OfferId); }
+        try { Sim(chain).FundOfferFromSeller(player.Id, request.OfferId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { funded = true });
     });
@@ -1109,7 +1119,7 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/fulfill-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).FulfillOfferFromBuyer(player.Id, request.OfferId); }
+        try { Sim(chain).FulfillOfferFromBuyer(player.Id, request.OfferId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { fulfilled = true });
     });
@@ -1117,13 +1127,21 @@ if (!chainMode.Equals("NArk", StringComparison.OrdinalIgnoreCase))
     dev.MapPost("/reclaim-offer", (OfferDevRequest request, HttpContext http, GameService game, IChainService chain) =>
     {
         var player = game.Authenticate(BearerToken(http));
-        try { ((InMemoryChainService)chain).ReclaimOfferToSeller(player.Id, request.OfferId); }
+        try { Sim(chain).ReclaimOfferToSeller(player.Id, request.OfferId); }
         catch (InvalidOperationException ex) { throw new GameRuleException(ex.Message); }
         return Results.Ok(new { reclaimed = true });
     });
 }
 
 app.Run();
+
+static InMemoryChainService Sim(IChainService chain) =>
+    // The dev endpoints drive the simulator directly — paying an invoice the way a player's own wallet
+    // would. Tests decorate IChainService to inject failures, and a decorator cannot be cast to the
+    // simulator, so ask it for the one underneath before giving up.
+    chain as InMemoryChainService
+    ?? (chain as ISimulatedChain)?.Simulator
+    ?? throw new InvalidOperationException("The dev endpoints need the in-memory chain simulator.");
 
 static string? BearerToken(HttpContext http)
 {

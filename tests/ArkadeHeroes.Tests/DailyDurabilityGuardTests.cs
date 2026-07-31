@@ -147,8 +147,9 @@ public class DailyDurabilityGuardTests
     /// <summary>Delegates to the real InMemory sim but counts SETTLED daily-faucet payouts (memo tag
     /// `daily:{day}`) and can fault the next one — the deterministic stand-ins for "the sats actually left
     /// the treasury" and "the payout failed cleanly before any sat moved".</summary>
-    private sealed class PayoutProbeChain(InMemoryChainService inner) : IChainService
+    private sealed class PayoutProbeChain(InMemoryChainService inner) : IChainService, ISimulatedChain
     {
+        public InMemoryChainService Simulator => inner;
         private int _dailyPayoutsPaid;
         public InMemoryChainService Inner => inner;
         public int DailyPayoutsPaid => Volatile.Read(ref _dailyPayoutsPaid);
@@ -174,6 +175,7 @@ public class DailyDurabilityGuardTests
         public Task<string> GetPlayerAddressAsync(string playerId, CancellationToken ct = default) => inner.GetPlayerAddressAsync(playerId, ct);
         public Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default) => inner.GetAddressBalanceSatsAsync(playerId, ct);
         public Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default) => inner.CreateFeeInvoiceAsync(memo, amountSats, ct);
+        public Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default) => inner.GetFeeInvoiceAsync(invoiceId, ct);
         public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default) => inner.IsInvoicePaidAsync(invoiceId, ct);
         public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default) => inner.DeliverItemAssetAsync(toPlayerId, itemId, itemName, ct);
         public Task<long> TreasuryBalanceAsync(CancellationToken ct = default) => inner.TreasuryBalanceAsync(ct);

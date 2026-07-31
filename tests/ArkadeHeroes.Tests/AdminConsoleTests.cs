@@ -26,7 +26,9 @@ public class AdminConsoleTests
 
     /// <summary>A factory with the console switched on. Nothing else about the server changes.</summary>
     static WebApplicationFactory<Program> Enabled() =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseSetting("Game:AdminToken", Token));
+        new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseSetting("Game:AdminToken", Token))
+            // The overview asserts an exact treasury total; a paid starter claim would add to it.
+            .WithFreeStarters();
 
     /// <summary>A raw request to an admin route, optionally carrying a token — the SDK always sends one,
     /// and "sends none at all" is exactly the case that has to be covered.</summary>
