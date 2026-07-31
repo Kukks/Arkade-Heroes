@@ -56,13 +56,17 @@ else
             </label>
         </div>
         <div class="spar-actions">
+            @* No "_aId == _bId" here. #198 removed the self-fight ban from BattleEngine and from the match
+               rule and rewrote this page's copy to say a hero may face itself — but left the button that
+               enforced the old rule greyed out, so the page stated the new rule in the one state where it
+               refused to honour it. MirrorMatchTests is the standing proof that the engine resolves it. *@
             <button class="btn primary" @onclick="DoFight"
-                    disabled="@(_fighting || string.IsNullOrEmpty(_aId) || string.IsNullOrEmpty(_bId) || _aId == _bId)">
+                    disabled="@(_fighting || string.IsNullOrEmpty(_aId) || string.IsNullOrEmpty(_bId))">
                 @(_fighting ? "Fighting…" : _done ? "Rematch" : "Fight!")
             </button>
             @if (_aId == _bId && !string.IsNullOrEmpty(_aId))
             {
-                <span class="mini">pick any two — a hero may even face itself</span>
+                <span class="mini">mirror match — a hero may face itself</span>
             }
         </div>
     </div>
@@ -125,15 +129,25 @@ else
     {
         _a = _heroes.FirstOrDefault(h => h.Id == _aId);
         _b = _heroes.FirstOrDefault(h => h.Id == _bId);
+        // A mirror match is two FIGHTERS, and everything downstream tells them apart by hero id — the
+        // engine names a winner with one, and BattleArena decides which corner an event belongs to by
+        // comparing ActorId/TargetId against A.Id. Two corners sharing an id would replay the whole bout
+        // as red hitting blue and crown red every time: a fight reported wrongly rather than refused,
+        // which is worse than the disabled button this replaces. So blue fights under its own id.
+        if (_b is not null && _aId == _bId) _b = _b with { Id = MirrorId(_b.Id) };
         _fight = null;
         _done = false;
     }
+
+    /// <summary>The blue corner's id in a mirror match. Derived from the hero's own so it stays stable
+    /// across re-renders, and suffixed so it can never collide with a real hero id.</summary>
+    static string MirrorId(string heroId) => $"{heroId}#mirror";
 
     // Run the deterministic fight locally and hand the result to the arena as a fresh instance — the
     // shared BattleArena component detects the new Fight and replays it blow by blow.
     void DoFight()
     {
-        if (_a is null || _b is null || _aId == _bId) return;
+        if (_a is null || _b is null) return;
         _fighting = true;
         _done = false;
         try

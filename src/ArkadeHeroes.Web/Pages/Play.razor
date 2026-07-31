@@ -83,8 +83,12 @@
         [
             new("Breed", "breed", "🧬", "Two heroes, one heir. It inherits from both, sometimes surfaces "
                 + "a hidden trait, and occasionally mutates into something neither carried.", Sats),
+            // "Permanent" is the loudest chip, so it wins the label — but a chip is not the whole cost,
+            // and a card that says only "the sacrifice is gone" leaves out the sats. Fusing charges
+            // MergeFeeSats on top of the hero it burns; the card says so, the way Gauntlet's does.
             new("Fuse", "merge", "🔥", "Feed one hero to another to concentrate its rarest traits. The "
-                + "sacrifice is gone, and chasing rarity risks a sterile result.", Gone),
+                + "sacrifice is gone, it costs a fee on top, and chasing rarity risks a sterile "
+                + "result.", Gone),
             new("Gear", "gear", "🗡", "The equipment catalogue — what each item does and which builds it "
                 + "counters.", Free),
         ]),

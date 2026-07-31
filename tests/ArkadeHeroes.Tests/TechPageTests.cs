@@ -78,6 +78,35 @@ public class TechPageTests
         }
     }
 
+    /// <summary>
+    /// The page prints a worked example script — "the simplest one we use" — above the opcode table. The
+    /// table is pinned; the sample was not, so it could name an opcode the covenants do not have while
+    /// sitting under a heading that says this is what the game runs.
+    /// </summary>
+    [Fact]
+    public void TheWorkedExampleScript_UsesOnlyOpcodesTheCovenantsHave()
+    {
+        var sample = Regex.Match(Page.Value, @"<pre class=""tech-code""><code>(?<body>.*?)</code></pre>",
+                                 RegexOptions.Singleline);
+        Assert.True(sample.Success, "The tech page no longer shows a worked example script.");
+
+        // Bare-word tokens in the sample that LOOK like opcodes: all caps, and not one of the script's
+        // placeholders (which the page writes in angle brackets) or a bare numeric argument.
+        var named = Regex.Matches(sample.Groups["body"].Value, @"\b[A-Z]{3,}\b")
+            .Select(m => m.Value).Distinct().ToArray();
+        Assert.NotEmpty(named);
+
+        var real = CovenantOpcodes()
+            .Select(kv => kv.Key["Op".Length..].ToUpperInvariant())
+            .ToHashSet();
+
+        foreach (var op in named)
+            Assert.True(real.Contains(op),
+                $"The example script uses {op}, which ArkadeCovenants does not declare. The heading over "
+                + "this block says it is a script the game uses — an invented opcode there is a lie about "
+                + "the one thing the page is for.");
+    }
+
     [Fact]
     public void ThePageDoesNotClaimAVerifiableRandomFunction()
     {

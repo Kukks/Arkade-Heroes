@@ -39,7 +39,11 @@
                     @(_starting ? "Summoning…" : "Play →")
                 </button>
             </div>
-            <p class="muted play-note">No signup, no email. Pick a name and your first two heroes are summoned.</p>
+            @* The count is DERIVED from StarterPolicy, never written out. This line promised "your first
+               two heroes" for as long as a claim minted a pair, and kept promising it after the claim
+               became ONE hero you buy as often as you like — so the first sentence a stranger reads
+               before spending real sats offered them twice what the spend delivers. *@
+            <p class="muted play-note">No signup, no email. Pick a name and @StarterBlurb.</p>
         }
         @* Outside the signed-in/out branch: a partial-failure (registered, but the starter
            mint didn't land) flips IsSignedIn, so the error must survive that switch. *@
@@ -144,6 +148,18 @@
     string _name = "";
     bool _starting;
     string? _playError;
+
+    /// <summary>
+    /// What pressing Play actually mints, phrased off <see cref="StarterPolicy.HeroCount"/> — the same
+    /// constant the server's starter claim loops over. Recruiting repeats, so this is the FIRST purchase,
+    /// not a one-time handout; the copy below says "first" rather than "free" for that reason.
+    ///
+    /// <para>Named without the claim method, deliberately: AccountPageTests scans these sources for it to
+    /// keep the buy button on exactly one page, and a passing mention here would read as a second one.</para>
+    /// </summary>
+    static string StarterBlurb => StarterPolicy.HeroCount == 1
+        ? "your first hero is summoned"
+        : $"your first {StarterPolicy.HeroCount} heroes are summoned";
 
     protected override async Task OnInitializedAsync()
     {

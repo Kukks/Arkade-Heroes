@@ -108,4 +108,52 @@ public class AchievementsTests
         // …and does NOT transfer to the buyer, who merely holds the hero and discovered nothing.
         Assert.DoesNotContain("Trailblazer", (await buyer.Players.AchievementsAsync()).Badges);
     }
+
+    /// <summary>
+    /// The other side of the Trailblazer exception: every OTHER badge is a read of the roster you hold
+    /// right now, so it goes away when the hero does.
+    ///
+    /// <para>/achievements used to tell players "nothing can be taken away", which is the opposite of
+    /// this. Pinned as behaviour rather than as prose so the page's copy has something to be checked
+    /// against — <c>PageClaimTests.TheAchievementsPage_DoesNotClaimBadgesArePermanent</c> is the half
+    /// that reads the page.</para>
+    /// </summary>
+    [Fact]
+    public async Task ABadgeEarnedByOwning_IsLostWhenTheHeroLeavesTheRoster()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (player, playerDto) = await factory.RegisterAsync("Ach-Revoke");
+        var (other, otherDto) = await factory.RegisterAsync("Ach-Revoke-Other");
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        static Genome Legendary() { var g = new byte[32]; g[16 + (int)TraitCategory.Aura * 2] = 255; return new Genome(g); }
+
+        for (var i = 0; i < 5; i++)
+            store.Heroes[$"rev-{i}"] = new Hero
+            {
+                Id = $"rev-{i}", OwnerId = playerDto.PlayerId, Name = $"R{i}", Level = 1,
+                Genome = i == 0 ? Legendary() : new Genome(new byte[32]),
+                Generation = i < 3 ? 1 : 0,
+            };
+
+        var earned = await player.Players.AchievementsAsync();
+        Assert.Contains("Collector", earned.Badges);
+        Assert.Contains("Breeder", earned.Badges);
+        Assert.Contains("Legend-keeper", earned.Badges);
+
+        // Sell the Legendary and one bred hero; burn a third (a fusion sacrifice, a lost death-match).
+        store.Heroes["rev-0"].OwnerId = otherDto.PlayerId;
+        store.Heroes["rev-1"].OwnerId = otherDto.PlayerId;
+        store.Heroes.TryRemove("rev-2", out _);
+
+        var after = await player.Players.AchievementsAsync();
+        Assert.Equal(2, after.HeroesOwned);
+        Assert.DoesNotContain("Collector", after.Badges);      // below five owned
+        Assert.DoesNotContain("Breeder", after.Badges);        // below three bred heroes owned
+        Assert.DoesNotContain("Legend-keeper", after.Badges);  // the Legendary is somebody else's now
+
+        // And they land on whoever holds the heroes, which is the same fact from the other end: these
+        // badges track holdings, not deeds.
+        Assert.Contains("Legend-keeper", (await other.Players.AchievementsAsync()).Badges);
+    }
 }
