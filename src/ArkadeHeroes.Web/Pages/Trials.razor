@@ -5,6 +5,7 @@
 @inject ArkadeHeroesClient Api
 @inject GameSession Session
 @inject WalletState State
+@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>Trials · Arkade Heroes</PageTitle>
@@ -75,7 +76,18 @@ else
         }
     </div>
 
-    @if (_outcome is not null)
+    @* The descent runs first and alone: the score, the title and the depth the run ended at are all in
+       the summary below, so showing it while the hero is still climbing down would answer the only
+       question the crawl is asking. *@
+    @if (_outcome is not null && _crawling)
+    {
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Descending…</h3>
+            <span class="hud">under @_outcome.Run.Affix</span>
+        </div>
+        <CrawlTrack Rungs="_rungs" Focus="_focus" Revealed="_revealed" Label="how deep can you go" OnSkip="SkipCrawl" />
+    }
+    else if (_outcome is not null)
     {
         <div class="page-head" style="margin-top:1.8rem">
             <h3 style="margin:0">@(_outcome.Run.Title ?? "Run over")</h3>
@@ -122,19 +134,9 @@ else
             <h3 style="margin:0">The ladder</h3>
             <span class="hud">click any wave to watch it</span>
         </div>
-        <div class="grid cols">
-            @foreach (var wv in _outcome.Run.Waves)
-            {
-                <div class="card" style="text-align:center">
-                    <div class="chip mono">Wave @wv.Wave</div>
-                    <div style="margin:.45rem 0 .3rem">ghost L@(wv.GhostLevel)</div>
-                    <div class="status-line" style="justify-content:center">
-                        <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "survived" : "fell here")
-                    </div>
-                    <button class="btn ghost sm" style="margin-top:.5rem" @onclick="() => Watch(wv)">Watch ▶</button>
-                </div>
-            }
-        </div>
+        @* The same rail the descent ran down, opened out — the shape of the run is the record of it, and a
+           grid of identical cards was never that. Every wave keeps its own replay. *@
+        <CrawlTrack Rungs="_rungs" Focus="@(_rungs.Count - 1)" Revealed="_rungs.Count" Settled="true" OnWatch="WatchIndex" />
     }
 }
 
@@ -148,6 +150,11 @@ else
     private string? _error;
     private TrialsOutcome? _outcome;
     private TrialsWaveDto? _watching;   // the wave currently replaying in the arena (null = none)
+    private List<CrawlTrack.CrawlRung> _rungs = new();
+    private bool _crawling;             // true while the run is descending the rail, before the summary
+    private int _focus;                 // the rung the descent is standing on
+    private int _revealed;              // rungs whose outcome has been stamped
+    private int _crawlId;               // guards a stale descent from stepping a newer run's
     // The affix is a pure function of the clock, so the browser derives this week's rule itself — no extra
     // call. The run's OWN pinned affix (_outcome.Run.Affix) stays authoritative once a run resolves.
     private readonly TrialsAffix _weekAffix = TrialsRules.AffixFor(DateTimeOffset.UtcNow);
@@ -189,6 +196,11 @@ else
         {
             _outcome = await Session.RunTrialsAsync(_heroId, s => { _status = s; StateHasChanged(); });
             _status = null;
+            _rungs = _outcome.Run.Waves
+                .Select(w => new CrawlTrack.CrawlRung(w.Wave, w.GhostLevel, w.Won)).ToList();
+            // Held inside the try so the button stays "Descending…" for the whole descent — a second run
+            // started underneath one already running is a race nobody asked for.
+            await DescendAsync();
         }
         catch (Exception ex)
         {
@@ -201,9 +213,75 @@ else
         }
     }
 
-    // An endless run can be dozens of waves, so the summary reveals immediately and the player picks
-    // which wave to watch rather than sitting through a forced wave-by-wave cinematic.
-    void Watch(TrialsWaveDto wave) { _watching = wave; StateHasChanged(); }
+    /// <summary>
+    /// The descent. The run is already decided — every wave came back resolved in one call — so this is
+    /// pacing, not scoring: rung by rung down the rail, with each outcome landing a beat AFTER the rung
+    /// does, so a wave gets a moment of being unresolved instead of arriving pre-answered.
+    ///
+    /// <para>An endless run can be dozens of waves, which is why the fights are not replayed blow by blow
+    /// the way the Gauntlet's five are — the arena is still one click away on any rung.</para>
+    /// </summary>
+    async Task DescendAsync()
+    {
+        if (_rungs.Count == 0) return;
+        var run = ++_crawlId;
+
+        // Under reduced motion there is nothing left of a descent that is made of waiting.
+        if (await Motion.PrefersReducedAsync(JS) || run != _crawlId) { Settle(); return; }
+
+        _crawling = true;
+        _focus = 0;
+        _revealed = 0;
+        StateHasChanged();
+        await Task.Delay(420);              // a beat at the mouth of the shaft
+        if (run != _crawlId) return;
+
+        for (var i = 0; i < _rungs.Count; i++)
+        {
+            _focus = i;
+            StateHasChanged();
+            var (beat, hold) = PaceFor(i, _rungs.Count);
+            await Task.Delay(beat);         // the fight, happening in the dark
+            if (run != _crawlId) return;
+            _revealed = i + 1;              // ...and then its mark
+            StateHasChanged();
+            await Task.Delay(hold);
+            if (run != _crawlId) return;
+        }
+
+        _crawling = false;
+        StateHasChanged();
+    }
+
+    // Quick through the shallows every hero clears, slowing over the last three rungs: a ladder that stops
+    // abruptly reads as a glitch, and one that stops slowly reads as a fight the hero nearly won.
+    static (int Beat, int Hold) PaceFor(int i, int count)
+    {
+        var fromEnd = count - 1 - i;
+        if (fromEnd == 0) return (700, 850);
+        if (fromEnd == 1) return (300, 150);
+        if (fromEnd == 2) return (230, 120);
+        var beat = Math.Max(60, 175 - i * 7);
+        return (beat, Math.Max(40, beat / 2));
+    }
+
+    void SkipCrawl() { _crawlId++; Settle(); StateHasChanged(); }
+
+    // Everywhere the descent was going to end up, ended up.
+    void Settle()
+    {
+        _crawling = false;
+        _focus = Math.Max(0, _rungs.Count - 1);
+        _revealed = _rungs.Count;
+    }
+
+    // The rail hands back the rung's index; the wave behind it is the one to replay.
+    void WatchIndex(int index)
+    {
+        if (_outcome is null || index < 0 || index >= _outcome.Run.Waves.Count) return;
+        _watching = _outcome.Run.Waves[index];
+        StateHasChanged();
+    }
 
     void StopWatching() { _watching = null; StateHasChanged(); }
 
@@ -216,7 +294,11 @@ else
         StateHasChanged();
     });
 
-    public void Dispose() => State.OnChange -= OnState;
+    public void Dispose()
+    {
+        State.OnChange -= OnState;
+        _crawlId++;   // strand a descent still in flight when the page goes away
+    }
 
     /// <summary>
     /// Re-attempts the roster read a few times, backing off. Deliberately bounded: past a few seconds the

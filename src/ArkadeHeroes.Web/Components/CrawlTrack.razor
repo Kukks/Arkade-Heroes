@@ -1,0 +1,97 @@
+@* The descent rail — one rung per resolved wave of a dungeon run.
+
+   Both dungeon modes resolve server-side in a single call and hand back a LIST of waves. Printing that
+   list is honest but flat: it reads as a receipt, not a descent. This replays the same data as a shaft
+   the player sinks through — the rail scrolls UP past a fixed focus band so the eye reads the hero going
+   DOWN, and each wave's outcome stamps as its fight lands instead of all of them arriving at once.
+
+   Presentation only. Nothing here decides anything: the caller owns the pacing and simply moves Focus and
+   Revealed, so the Gauntlet can drive it off its arena replay finishing while the Trials drives it off a
+   timer, and both read as the same descent. *@
+
+<div class="crawl @(Settled ? "crawl-settled" : "")">
+    <div class="crawl-hud">
+        <span class="crawl-depth">depth <b class="crawl-depth-n mono" @key="Focus">@Depth</b>@TotalSuffix</span>
+        @if (Label is not null)
+        {
+            <span class="hud">@Label</span>
+        }
+        @if (OnSkip.HasDelegate && !Settled)
+        {
+            <button class="btn ghost sm crawl-skip" @onclick="() => OnSkip.InvokeAsync()">Skip ▶▶</button>
+        }
+    </div>
+
+    <div class="crawl-shaft" style="--focus:@Focus">
+        <ol class="crawl-rail">
+            @for (var i = 0; i < Shown; i++)
+            {
+                var rung = Rungs[i];
+                var index = i;
+                <li class="crawl-rung @RungCss(i)">
+                    <span class="crawl-node"></span>
+                    <span class="crawl-w mono">W@rung.Wave</span>
+                    <span class="crawl-foe">@FoeText(i, rung)</span>
+                    <span class="crawl-mark mono">@Mark(i)</span>
+                    @if (OnWatch.HasDelegate && i < Revealed)
+                    {
+                        <button class="btn ghost sm crawl-watch" @onclick="() => OnWatch.InvokeAsync(index)">Watch ▶</button>
+                    }
+                </li>
+            }
+            @* Drawn for as long as the run is still descending, even standing on the last rung there is:
+               the player does not know it is the last one, and a shaft that visibly bottoms out gives the
+               score away before the final fight has resolved. *@
+            @if (!Settled)
+            {
+                <li class="crawl-deeper mono">▾ ▾ ▾</li>
+            }
+        </ol>
+    </div>
+</div>
+
+@code {
+    /// <summary>One wave as the rail draws it: its number, the foe's level, and whether it was survived.</summary>
+    public record CrawlRung(int Wave, int GhostLevel, bool Won);
+
+    [Parameter, EditorRequired] public IReadOnlyList<CrawlRung> Rungs { get; set; } = [];
+
+    /// <summary>The rung the descent is standing on — the rail scrolls to hold it on the focus band.</summary>
+    [Parameter] public int Focus { get; set; }
+
+    /// <summary>How many rungs have had their outcome stamped. Everything past this is still in the dark.</summary>
+    [Parameter] public int Revealed { get; set; }
+
+    /// <summary>The ladder's full length, where it has one (the Gauntlet's five). The Trials are endless,
+    /// so they leave this null and the readout shows depth alone.</summary>
+    [Parameter] public int? Total { get; set; }
+
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>Settled: the descent is over, so the shaft opens out into the whole ladder as its record.</summary>
+    [Parameter] public bool Settled { get; set; }
+
+    /// <summary>Offered while descending — jump to the end rather than sit through the rest.</summary>
+    [Parameter] public EventCallback OnSkip { get; set; }
+
+    /// <summary>Fired with a rung's index when its "Watch" is pressed (only offered on revealed rungs).</summary>
+    [Parameter] public EventCallback<int> OnWatch { get; set; }
+
+    // While descending, only two rungs past the focus are drawn. A run's wave list stops at the wave that
+    // ended it, so rendering all of it would spell out the final depth before the player got there.
+    private int Shown => Settled ? Rungs.Count : Math.Min(Rungs.Count, Focus + 3);
+
+    private string Depth => Rungs.Count == 0 ? "00" : Rungs[Math.Clamp(Focus, 0, Rungs.Count - 1)].Wave.ToString("00");
+
+    private string TotalSuffix => Total is int t ? $" / {t:00}" : "";
+
+    private string RungCss(int i) =>
+        i < Revealed ? (Rungs[i].Won ? "is-clear" : "is-fall")
+        : i == Focus ? "is-live"
+        : "is-deep";
+
+    private string Mark(int i) => i < Revealed ? (Rungs[i].Won ? "✓" : "✗") : i == Focus ? "▸" : "·";
+
+    // A foe you have not reached is a foe you have not seen — the level lands with the rung.
+    private string FoeText(int i, CrawlRung rung) => i <= Focus ? $"ghost L{rung.GhostLevel}" : "ghost L??";
+}

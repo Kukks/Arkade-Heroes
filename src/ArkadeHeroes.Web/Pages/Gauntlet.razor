@@ -2,6 +2,7 @@
 @inject ArkadeHeroesClient Api
 @inject GameSession Session
 @inject WalletState State
+@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>Gauntlet · Arkade Heroes</PageTitle>
@@ -67,62 +68,71 @@ else
         }
     </div>
 
-    @if (_outcome is not null)
+    @* The verdict waits for the descent. This heading used to sit above the wave-by-wave replay saying
+       "Run over · 3 / 5 waves", which answered the whole cinematic before its first bell rang. *@
+    @if (_outcome is not null && _replaying && _waveIndex < _outcome.Run.Waves.Count)
+    {
+        var w = _outcome.Run.Waves[_waveIndex];
+        <div class="page-head" style="margin-top:1.8rem">
+            <h3 style="margin:0">Descending…</h3>
+            <span class="hud">five escalating ghost waves</span>
+        </div>
+        <CrawlTrack Rungs="_rungs" Focus="_waveIndex" Revealed="_revealed" Total="5"
+                    Label="five waves down" OnSkip="SkipReplay" />
+        <div class="crawl-stage">
+            <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
+            @if (_descending)
+            {
+                <div class="crawl-veil">
+                    <b>DESCENDING</b>
+                    <span>wave @_descendTo · deeper</span>
+                </div>
+            }
+        </div>
+    }
+    else if (_outcome is not null)
     {
         <div class="page-head" style="margin-top:1.8rem">
             <h3 style="margin:0">@(_outcome.Run.WavesCleared == 5 ? "Gauntlet cleared!" : "Run over")</h3>
             <span class="hud">@_outcome.Run.WavesCleared / 5 waves</span>
         </div>
 
-        @if (_replaying && _waveIndex < _outcome.Run.Waves.Count)
-        {
-            var w = _outcome.Run.Waves[_waveIndex];
-            <div class="status-line" style="justify-content:center;gap:.7rem;margin-bottom:.5rem">
-                <span class="chip mono">Wave @w.Wave / 5</span>
-                <span class="muted">ghost L@(w.GhostLevel)</span>
-                <button class="btn ghost sm" @onclick="SkipReplay">Skip ▶▶</button>
-            </div>
-            <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
-        }
-        else
-        {
-            <div class="grid cols">
-                @foreach (var wv in _outcome.Run.Waves)
-                {
-                    <div class="card" style="text-align:center">
-                        <div class="chip mono">Wave @wv.Wave</div>
-                        <div style="margin:.45rem 0 .3rem">ghost L@(wv.GhostLevel)</div>
-                        <div class="status-line" style="justify-content:center">
-                            <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
-                        </div>
+        <div class="grid cols">
+            @foreach (var wv in _outcome.Run.Waves)
+            {
+                <div class="card" style="text-align:center">
+                    <div class="chip mono">Wave @wv.Wave</div>
+                    <div style="margin:.45rem 0 .3rem">ghost L@(wv.GhostLevel)</div>
+                    <div class="status-line" style="justify-content:center">
+                        <span class="dot @(wv.Won ? "ok" : "bad")"></span> @(wv.Won ? "cleared" : "defeated")
                     </div>
-                }
-            </div>
+                </div>
+            }
+        </div>
 
-            <div class="card" style="margin-top:1.2rem">
-                <div class="status-line">
-                    <span class="dot ok"></span>
-                    <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
-                </div>
-                @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
-                {
-                    <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
-                }
-                @if (_outcome.Run.ItemAwarded is not null)
-                {
-                    <div class="gear-tile" style="margin:.9rem auto 0;max-width:140px"><ItemSprite ItemId="@_outcome.Run.ItemAwarded" Size="104" /></div>
-                    <div class="status-line" style="justify-content:center;margin-top:.4rem">
-                        <span class="dot ok"></span> Full clear! Won <b>@_outcome.Run.ItemAwarded</b> — equip it from a hero's page.
-                    </div>
-                }
-                <div class="status-line" style="margin-top:.7rem">
-                    <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
-                    <span class="mono" style="font-size:.78rem">
-                        @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
-                    </span>
-                </div>
+        <div class="card" style="margin-top:1.2rem">
+            <div class="status-line">
+                <span class="dot ok"></span>
+                <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
             </div>
-        }
+            @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
+            {
+                <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
+            }
+            @if (_outcome.Run.ItemAwarded is not null)
+            {
+                <div class="gear-tile" style="margin:.9rem auto 0;max-width:140px"><ItemSprite ItemId="@_outcome.Run.ItemAwarded" Size="104" /></div>
+                <div class="status-line" style="justify-content:center;margin-top:.4rem">
+                    <span class="dot ok"></span> Full clear! Won <b>@_outcome.Run.ItemAwarded</b> — equip it from a hero's page.
+                </div>
+            }
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
+                <span class="mono" style="font-size:.78rem">
+                    @(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")
+                </span>
+            </div>
+        </div>
     }
 }
 
@@ -137,6 +147,11 @@ else
     private GauntletOutcome? _outcome;
     private int _waveIndex;      // the wave currently animating in the arena
     private bool _replaying;     // true while the run replays wave-by-wave, before the summary reveals
+    private int _revealed;       // rungs of the rail whose outcome has been stamped
+    private bool _descending;    // the beat between two waves, while the veil carries the player down
+    private int _descendTo;      // the wave number the veil is carrying them to
+    private int _replayId;       // guards a stale descent beat from stepping a newer run's replay
+    private List<CrawlTrack.CrawlRung> _rungs = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -174,7 +189,12 @@ else
         {
             _outcome = await Session.RunGauntletAsync(_heroId, s => { _status = s; StateHasChanged(); });
             _status = null;
+            _replayId++;
             _waveIndex = 0;
+            _revealed = 0;
+            _descending = false;
+            _rungs = _outcome.Run.Waves
+                .Select(w => new CrawlTrack.CrawlRung(w.Wave, w.GhostLevel, w.Won)).ToList();
             _replaying = _outcome.Run.Waves.Count > 0;   // cinematic wave-by-wave replay before the summary
             await LoadAsync();   // the hero may have leveled up — refresh the roster
         }
@@ -189,17 +209,56 @@ else
         }
     }
 
-    // The arena fires this when a wave's replay finishes: advance to the next wave, or — after the
-    // last one — reveal the run summary + rewards.
-    void NextWave()
+    // The arena fires this when a wave's replay finishes: stamp the wave on the rail, then take the beat
+    // that carries the player down to the next one — or, after the last, reveal the summary + rewards.
+    // The wait is what sells the descent, so it is the first thing a reduced-motion player loses.
+    async Task NextWave()
     {
-        if (_outcome is null) return;
-        if (_waveIndex + 1 < _outcome.Run.Waves.Count) _waveIndex++;
-        else _replaying = false;
+        if (_outcome is null || !_replaying) return;
+        var run = _replayId;
+        _revealed = _waveIndex + 1;
+        StateHasChanged();
+
+        var still = !await Motion.PrefersReducedAsync(JS);
+        if (run != _replayId) return;
+
+        if (_waveIndex + 1 >= _outcome.Run.Waves.Count)
+        {
+            if (still) await Task.Delay(760);   // let the last mark land before the summary takes the page
+            if (run != _replayId) return;
+            _replaying = false;
+            StateHasChanged();
+            return;
+        }
+
+        if (!still)
+        {
+            _waveIndex++;
+            StateHasChanged();
+            return;
+        }
+
+        _descendTo = _outcome.Run.Waves[_waveIndex + 1].Wave;
+        _descending = true;
+        StateHasChanged();
+        await Task.Delay(620);                  // the veil is across; swap the fight behind it
+        if (run != _replayId) return;
+        _waveIndex++;
+        StateHasChanged();
+        await Task.Delay(480);                  // ...and it wipes clear on the next wave's opening bell
+        if (run != _replayId) return;
+        _descending = false;
         StateHasChanged();
     }
 
-    void SkipReplay() { _replaying = false; StateHasChanged(); }
+    void SkipReplay()
+    {
+        _replayId++;                            // strand any descent beat still in flight
+        _revealed = _outcome?.Run.Waves.Count ?? 0;
+        _descending = false;
+        _replaying = false;
+        StateHasChanged();
+    }
 
     void OnState() => InvokeAsync(async () =>
     {
@@ -210,7 +269,11 @@ else
         StateHasChanged();
     });
 
-    public void Dispose() => State.OnChange -= OnState;
+    public void Dispose()
+    {
+        State.OnChange -= OnState;
+        _replayId++;   // strand any descent beat still in flight when the page goes away
+    }
 
     /// <summary>
     /// Re-attempts the roster read a few times, backing off. Deliberately bounded: past a few seconds the
