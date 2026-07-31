@@ -1345,49 +1345,58 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
    Purely a cover, so it degrades correctly: hidden under reduced motion, the card beneath is already the
    finished, static card that the existing rule leaves un-animated. */
 .crawl-seal {
-    position: absolute; inset: 0; z-index: 9; overflow: hidden;
+    position: absolute; inset: 0; z-index: 9; overflow: hidden; border-radius: var(--radius);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem;
-    background:
-        repeating-linear-gradient(0deg, rgba(0,0,0,.24) 0 2px, transparent 2px 4px),
-        radial-gradient(120% 90% at 50% 45%, #0d141f, #05080d 70%);
-    border-radius: var(--radius);
 }
+/* Two real halves. A pod that spends its whole life advertising a seam has to actually part ON it, and
+   clipping a single element inwards does the opposite — the shell collapses into the seam, which reads as
+   the thing being swallowed rather than opened. Each half carries the seam-edge light, so the glow leaves
+   with the shell it belongs to. */
+.crawl-shell {
+    position: absolute; left: 0; right: 0; height: 50%; z-index: 1;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.24) 0 2px, transparent 2px 4px), #070b12;
+}
+.crawl-shell.up { top: 0; box-shadow: inset 0 -20px 28px -20px var(--flare, var(--accent)); }
+.crawl-shell.dn { bottom: 0; box-shadow: inset 0 20px 28px -20px var(--flare, var(--accent)); }
 /* Something is in there. Without it the shell is a black slab with a caption, and a sealed box the eye
    reads as empty is not suspense — it is a loading state. */
 .crawl-seal::before {
-    content: ""; position: absolute; inset: 0;
+    content: ""; position: absolute; inset: 0; z-index: 2;
     background: radial-gradient(56% 32% at 50% 50%, var(--flare, var(--accent)), transparent 72%);
     animation: crawl-quicken 2.4s ease-in-out infinite;
 }
 @keyframes crawl-quicken { 0%,100% { opacity: .10; transform: scale(.94); } 50% { opacity: .26; transform: scale(1.03); } }
 /* The seam: a hairline of the hero's own flare colour, breathing while the shell holds. */
 .crawl-seal::after {
-    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); z-index: 3;
     background: linear-gradient(90deg, transparent, var(--flare, var(--accent)), transparent);
     box-shadow: 0 0 22px 3px var(--flare, var(--accent));
     animation: crawl-seam 1.5s ease-in-out infinite;
 }
 @keyframes crawl-seam { 0%,100% { opacity: .35; transform: translateY(-50%) scaleX(.55); } 50% { opacity: 1; transform: translateY(-50%) scaleX(1); } }
 .crawl-seal b {
-    position: relative; z-index: 1; font-family: var(--font-hud); font-size: .66rem; letter-spacing: .32em;
+    position: relative; z-index: 4; font-family: var(--font-hud); font-size: .66rem; letter-spacing: .32em;
     color: var(--flare, var(--accent)); text-shadow: 0 0 16px var(--flare, var(--accent));
     animation: crawl-seal-pulse 1.5s ease-in-out infinite;
 }
 .crawl-seal i {
-    position: relative; z-index: 1; font-style: normal; font-family: var(--font-hud);
+    position: relative; z-index: 4; font-style: normal; font-family: var(--font-hud);
     font-size: .58rem; letter-spacing: .18em; color: var(--faint);
 }
 @keyframes crawl-seal-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
-/* Opening: the shell splits on the seam and the two halves are driven off, top and bottom. Clip-path does
-   the splitting on one element, so the card underneath is never covered by a stray half. */
-.crawl-seal.crawl-open { animation: crawl-crack .48s cubic-bezier(.16,1,.3,1) forwards; }
+/* Opening: the halves take a breath inwards and are then driven off, top and bottom, while the seam they
+   parted on flares out and the summon underneath is already playing. */
+.crawl-seal.crawl-open .crawl-shell.up { animation: crawl-part-up .48s cubic-bezier(.5,0,.3,1) forwards; }
+.crawl-seal.crawl-open .crawl-shell.dn { animation: crawl-part-dn .48s cubic-bezier(.5,0,.3,1) forwards; }
+@keyframes crawl-part-up { 0% { transform: translateY(0); } 18% { transform: translateY(4%); } 100% { transform: translateY(-101%); } }
+@keyframes crawl-part-dn { 0% { transform: translateY(0); } 18% { transform: translateY(-4%); } 100% { transform: translateY(101%); } }
 .crawl-seal.crawl-open::after { animation: crawl-seam-blow .48s ease-out forwards; }
-@keyframes crawl-crack {
-    0%   { clip-path: inset(0 0 0 0); }
-    22%  { clip-path: inset(0 0 0 0); filter: brightness(2.6); }
-    100% { clip-path: inset(50% 0 50% 0); filter: brightness(3.4); opacity: 0; }
+@keyframes crawl-seam-blow { 0% { opacity: 1; } 55% { opacity: 1; transform: translateY(-50%) scaleY(7); } 100% { opacity: 0; transform: translateY(-50%) scaleY(16); } }
+/* The caption and the glow belong to the shell, so they leave with it rather than hanging over the hero. */
+.crawl-seal.crawl-open::before, .crawl-seal.crawl-open b, .crawl-seal.crawl-open i {
+    animation: crawl-seal-out .26s ease-out forwards;
 }
-@keyframes crawl-seam-blow { 0% { opacity: 1; } 60% { opacity: 1; transform: translateY(-50%) scaleY(6); } 100% { opacity: 0; transform: translateY(-50%) scaleY(14); } }
+@keyframes crawl-seal-out { to { opacity: 0; } }
 /* The card holds still until the shell breaks — then the existing summon plays as it is uncovered. */
 .hero-card.reveal.crawl-sealed { animation: none; }
 .hero-card.reveal.crawl-sealed::before { animation: none; opacity: 0; }

@@ -7,6 +7,8 @@
     @if (_stage is not RevealStage.Open)
     {
         <span class="crawl-seal @(_stage is RevealStage.Opening ? "crawl-open" : "")">
+            <span class="crawl-shell up"></span>
+            <span class="crawl-shell dn"></span>
             <b>@SealLabel</b>
             <i>@SealNote</i>
         </span>
