@@ -16,7 +16,9 @@
     <Project Path="src/ArkadeHeroes.Web/ArkadeHeroes.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ArkadeHeroes.Tests.Browser/ArkadeHeroes.Tests.Browser.csproj" />
     <Project Path="tests/ArkadeHeroes.Tests.E2E/ArkadeHeroes.Tests.E2E.csproj" />
+    <Project Path="tests/ArkadeHeroes.Tests.Web/ArkadeHeroes.Tests.Web.csproj" />
     <Project Path="tests/ArkadeHeroes.Tests/ArkadeHeroes.Tests.csproj" />
   </Folder>
 </Solution>

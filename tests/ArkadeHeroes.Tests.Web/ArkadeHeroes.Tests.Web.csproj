@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="bunit" Version="2.8.6" />
+    <PackageReference Include="NSubstitute" Version="6.0.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!--
+    The reference that is the whole point: ArkadeHeroes.Web is where the pages live, and until this
+    project existed nothing referenced it, so no test could RENDER one. The existing suites work around
+    that by reading .razor files back as text (see AccountPageTests / TechPageTests, which say so) —
+    that pins where an action lives, never what a component actually draws.
+
+    A BlazorWebAssembly project referenced from a plain net10.0 test project builds and loads fine: the
+    output is an ordinary managed assembly, and the browser-only machinery (WasmBuildNative, the runtime
+    pack, static web assets) is publish-side and simply does not run here.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Web\ArkadeHeroes.Web.csproj" />
+  </ItemGroup>
+
+</Project>

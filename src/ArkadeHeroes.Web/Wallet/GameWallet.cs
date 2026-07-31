@@ -18,6 +18,13 @@ namespace ArkadeHeroes.Web.Wallet;
 /// generate/import a mnemonic, derive the receive address, read balance + VTXOs. The keys
 /// (the BIP-39 mnemonic) live only in the tab's SQLite store (Bit.Besql → browser storage) —
 /// they never reach the game server.
+///
+/// <para>The READ methods below are <c>virtual</c> so a renderer outside a browser can substitute this
+/// facade (see ArkadeHeroes.Tests.Web). They are the ones a page calls just to DRAW itself, and every one
+/// of them bottoms out in NArk types — a server info record, a derived contract — that cannot be built
+/// without a live Ark server. Without this seam no test can render the pages that own a wallet, which is
+/// how a Send form that could only fail reached players. The keyword is the whole seam: there is one
+/// implementation, WASM dispatches it the same way, and nothing here is overridden in the app.</para>
 /// </summary>
 public class GameWallet(
     IWalletStorage walletStorage,
@@ -27,14 +34,14 @@ public class GameWallet(
     IContractService contractService)
 {
     /// <summary>All wallets held in this browser (the game uses at most one).</summary>
-    public async Task<IReadOnlySet<ArkWalletInfo>> GetWalletsAsync()
+    public virtual async Task<IReadOnlySet<ArkWalletInfo>> GetWalletsAsync()
         => await walletStorage.LoadAllWallets();
 
     /// <summary>The single active wallet, or null if the player hasn't created one yet.</summary>
-    public async Task<ArkWalletInfo?> GetActiveWalletAsync()
+    public virtual async Task<ArkWalletInfo?> GetActiveWalletAsync()
         => (await walletStorage.LoadAllWallets()).FirstOrDefault();
 
-    public async Task<bool> HasWalletAsync()
+    public virtual async Task<bool> HasWalletAsync()
         => (await walletStorage.LoadAllWallets()).Count > 0;
 
     /// <summary>
@@ -79,7 +86,7 @@ public class GameWallet(
     /// The player's Arkade receive address — where heroes and funds are sent. Derives (and
     /// persists) the wallet's receive contract so incoming VTXOs to it become discoverable.
     /// </summary>
-    public async Task<string> GetReceiveAddressAsync(string walletId, CancellationToken ct = default)
+    public virtual async Task<string> GetReceiveAddressAsync(string walletId, CancellationToken ct = default)
     {
         var serverInfo = await transport.GetServerInfoAsync();
         var contract = await contractService.DeriveContract(walletId, NextContractPurpose.Receive);
@@ -87,7 +94,7 @@ public class GameWallet(
     }
 
     /// <summary>Spendable balance in sats (sum of unlocked, in-bounds VTXOs). 0 on any sync error.</summary>
-    public async Task<long> GetBalanceAsync(string walletId)
+    public virtual async Task<long> GetBalanceAsync(string walletId)
     {
         try
         {
@@ -112,7 +119,7 @@ public class GameWallet(
         walletStorage.DeleteWallet(walletId, ct);
 
     /// <summary>The wallet's VTXOs (its coins and hero/asset carriers), newest first by default.</summary>
-    public async Task<IReadOnlyCollection<ArkVtxo>> GetVtxosAsync(string walletId, int skip = 0, int take = 50)
+    public virtual async Task<IReadOnlyCollection<ArkVtxo>> GetVtxosAsync(string walletId, int skip = 0, int take = 50)
         => await vtxoStorage.GetVtxos(walletIds: [walletId], skip: skip, take: take);
 
     /// <summary>
@@ -120,7 +127,7 @@ public class GameWallet(
     /// grouped across all of the wallet's VTXO carriers. Mirrors SelfCustodyWallet.GetAssetsAsync.
     /// Returns empty on any sync error (the balance card degrades to sats-only).
     /// </summary>
-    public async Task<IReadOnlyList<(string AssetId, ulong Amount)>> GetAssetsAsync(string walletId)
+    public virtual async Task<IReadOnlyList<(string AssetId, ulong Amount)>> GetAssetsAsync(string walletId)
     {
         try
         {
