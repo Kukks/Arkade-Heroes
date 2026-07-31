@@ -69,6 +69,84 @@ else
         }
     </div>
 
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Stud service</h3>
+        <span class="hud">breed with another player's hero — they must agree first</span>
+    </div>
+    <div class="card">
+        <p class="muted" style="margin-top:0">
+            Offer another owner sats to breed their hero with yours. Nothing is charged and nothing is minted
+            until they accept — and when they do, the fee goes to them, and the foal comes to you.
+        </p>
+        <div class="breed-picks">
+            <label>Your hero
+                <select @bind="_studMineId">
+                    <option value="">— pick —</option>
+                    @foreach (var h in _fertile)
+                    {
+                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    }
+                </select>
+            </label>
+            <span class="breed-plus">+</span>
+            <label>Their hero id
+                <input @bind="_studTheirsId" placeholder="hero-…" />
+            </label>
+            <label>Stud fee (sats)
+                <input type="number" min="0" @bind="_studFeeSats" />
+            </label>
+        </div>
+        <button class="btn" style="margin-top:1.1rem" @onclick="ProposeStud"
+                disabled="@(_studBusy || string.IsNullOrEmpty(_studMineId) || string.IsNullOrWhiteSpace(_studTheirsId))">
+            @(_studBusy ? "Working…" : "Propose")
+        </button>
+        @if (_studStatus is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_studStatus</div>
+        }
+        @if (_studError is not null)
+        {
+            <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_studError</div>
+        }
+    </div>
+
+    @if (_incoming.Count > 0)
+    {
+        <div class="card" style="margin-top:1rem">
+            <h4 style="margin-top:0">Asked of your heroes</h4>
+            @foreach (var p in _incoming)
+            {
+                <div class="status-line" style="margin-top:.6rem">
+                    <span class="dot wait"></span>
+                    @HeroName(p.StudHeroId) with @p.ProposerHeroId — @p.StudFeeSats sats to you
+                    <button class="btn primary" style="margin-left:.6rem" disabled="@_studBusy"
+                            @onclick="() => AcceptStud(p.ProposalId)">Accept</button>
+                    <button class="btn" style="margin-left:.4rem" disabled="@_studBusy"
+                            @onclick="() => DeclineStud(p.ProposalId)">Decline</button>
+                </div>
+            }
+        </div>
+    }
+
+    @if (_outgoing.Count > 0)
+    {
+        <div class="card" style="margin-top:1rem">
+            <h4 style="margin-top:0">Your proposals</h4>
+            @foreach (var p in _outgoing)
+            {
+                <div class="status-line" style="margin-top:.6rem">
+                    <span class="dot @(p.Status == "accepted" ? "good" : "wait")"></span>
+                    @HeroName(p.ProposerHeroId) with @p.StudHeroId — @p.StudFeeSats sats — @p.Status
+                    @if (p.Status == "accepted")
+                    {
+                        <button class="btn primary" style="margin-left:.6rem" disabled="@_studBusy"
+                                @onclick="() => PayAndBreedStud(p.ProposalId)">Pay &amp; breed</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+
     @if (_child is not null)
     {
         <div class="page-head" style="margin-top:1.8rem">
@@ -92,6 +170,21 @@ else
     private HeroDto? _child;
     private string? _pendingBreedingId;   // set when a reveal times out — enables "Retry reveal"
 
+    // ── Stud service: breeding with another player's hero, behind their consent ──
+    private string _studMineId = "";
+    private string _studTheirsId = "";
+    private long _studFeeSats;
+    private bool _studBusy;
+    private string? _studStatus;
+    private string? _studError;
+    private string? _playerId;
+    /// <summary>Proposals against MY heroes, still awaiting my answer — the consent inbox.</summary>
+    private List<StudProposalDto> _incoming = new();
+    /// <summary>Proposals I made that are still live — "accepted" ones are mine to pay and reveal.</summary>
+    private List<StudProposalDto> _outgoing = new();
+
+    private string HeroName(string heroId) => _mine.FirstOrDefault(h => h.Id == heroId)?.Name ?? heroId;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnState;
@@ -107,9 +200,75 @@ else
             _mine = await Api.Heroes.MineAsync();
             _fertile = _mine.Where(h => !h.IsSterile).ToList();
             _heroesLoaded = true;
+            await LoadStudAsync();
         }
         catch { /* token may not be set yet on a fresh page load; OnState retries once signed in */ }
         finally { _loading = false; }
+    }
+
+    /// <summary>Splits the public proposal feed into the two lists that mean something to this player: the
+    /// ones asked OF their heroes (theirs to consent to) and the ones they asked of others.</summary>
+    async Task LoadStudAsync()
+    {
+        _playerId ??= (await Api.Players.MeAsync()).PlayerId;
+        var all = await Api.Stud.ListAsync();
+        _incoming = all.Where(p => p.StudOwnerPlayerId == _playerId && p.Status == "proposed").ToList();
+        _outgoing = all.Where(p => p.ProposerPlayerId == _playerId && p.Status is "proposed" or "accepted").ToList();
+    }
+
+    async Task ProposeStud()
+    {
+        _studBusy = true; _studError = null; _studStatus = "Sending the proposal…";
+        try
+        {
+            await Api.Stud.ProposeAsync(new StudProposeRequest(_studMineId, _studTheirsId.Trim(), _studFeeSats));
+            _studTheirsId = "";
+            _studStatus = "Proposed — waiting on the other owner.";
+            await LoadStudAsync();
+        }
+        catch (Exception ex) { _studError = ex.Message; _studStatus = null; }
+        finally { _studBusy = false; }
+    }
+
+    async Task AcceptStud(string proposalId)
+    {
+        _studBusy = true; _studError = null; _studStatus = "Accepting…";
+        try
+        {
+            // Consent only. The invoices this creates are the PROPOSER's to pay — nothing leaves this wallet.
+            await Api.Stud.AcceptAsync(proposalId);
+            _studStatus = "Accepted — the stud fee arrives when they breed.";
+            await LoadStudAsync();
+        }
+        catch (Exception ex) { _studError = ex.Message; _studStatus = null; }
+        finally { _studBusy = false; }
+    }
+
+    async Task DeclineStud(string proposalId)
+    {
+        _studBusy = true; _studError = null; _studStatus = "Declining…";
+        try
+        {
+            await Api.Stud.DeclineAsync(proposalId);
+            _studStatus = "Declined.";
+            await LoadStudAsync();
+        }
+        catch (Exception ex) { _studError = ex.Message; _studStatus = null; }
+        finally { _studBusy = false; }
+    }
+
+    async Task PayAndBreedStud(string proposalId)
+    {
+        _studBusy = true; _studError = null; _child = null;
+        try
+        {
+            _child = await Session.PayAndRevealStudAsync(proposalId,
+                s => { _studStatus = s; StateHasChanged(); });
+            _studStatus = null;
+            await LoadAsync();
+        }
+        catch (Exception ex) { _studError = ex.Message; _studStatus = null; }
+        finally { _studBusy = false; }
     }
 
     async Task DoBreed()

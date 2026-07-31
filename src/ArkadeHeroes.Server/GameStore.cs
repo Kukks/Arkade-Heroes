@@ -97,6 +97,52 @@ public class BreedingSession
     public string? ChildHeroId { get; set; }
 }
 
+/// <summary>
+/// A stud-service breed proposal: one player asks to breed THEIR hero with ANOTHER player's, optionally
+/// offering that owner a stud fee in sats. Shaped like <see cref="DeathMatchSession"/> — proposed → accepted
+/// → completed — because it needs the same thing that flow needs: a counterparty who has to say yes.
+///
+/// <para><see cref="Accepted"/> is the whole point. Ordinary breeding requires the caller to own both
+/// parents, so consent is implicit; here the second parent belongs to someone else, and until they accept
+/// nothing is billed (the invoices below are created at ACCEPT, not at proposal), nothing is owed, and
+/// nothing can mint. The proposal is an offer, not an obligation.</para>
+///
+/// <para>Durable, unlike the other breed sessions, because it is the only one where a fee is owed to
+/// ANOTHER PLAYER: losing this row across a restart would strand the proposer's paid sats with nothing left
+/// able to name who they were owed to.</para>
+/// </summary>
+public class StudProposal
+{
+    public required string Id { get; init; }
+    /// <summary>The proposer — pays both fees, and receives the child.</summary>
+    public required string ProposerPlayerId { get; init; }
+    /// <summary>The stud's owner — consents, and receives the stud fee. Pinned at proposal time.</summary>
+    public required string StudOwnerPlayerId { get; init; }
+    public required string ProposerHeroId { get; init; }
+    public required string StudHeroId { get; init; }
+    /// <summary>Committed at PROPOSAL, so the stud's owner consents to a breed whose randomness is already sealed.</summary>
+    public required byte[] ServerSeed { get; init; }
+    public required string CommitmentHex { get; init; }
+    /// <summary>What the proposer offers the stud's owner (sats); 0 = a favour, not a sale.</summary>
+    public required long StudFeeSats { get; init; }
+    /// <summary>The escalating breed fee, priced at ACCEPT off the parents' combined breed count then.</summary>
+    public long BreedFeeSats { get; set; }
+    /// <summary>Treasury fee invoice for the breed itself. Null until the stud's owner accepts.</summary>
+    public string? BreedFeeInvoiceId { get; set; }
+    /// <summary>Treasury invoice for the stud fee, which the reveal then pays OUT to the stud's owner.
+    /// Null until accepted, and null thereafter when no stud fee was offered.</summary>
+    public string? StudFeeInvoiceId { get; set; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    /// <summary>The consent gate: set only by the stud's owner, and only once.</summary>
+    public bool Accepted { get; set; }
+    public bool Declined { get; set; }
+    public bool Completed { get; set; }
+    /// <summary>Latched (durably, BEFORE the sat moves) the moment the stud fee is paid out — so a reveal
+    /// retried after a crash finishes the breed without paying the stud's owner a second time.</summary>
+    public bool StudFeePaid { get; set; }
+    public string? ChildHeroId { get; set; }
+}
+
 /// <summary>A hero merge (fusion) awaiting its escrow deposit. Base + sacrifice + fee are deposited into the escrow; reveal retires the inputs and mints the fused hero.</summary>
 public class MergeSession
 {
@@ -408,6 +454,8 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
     }
 
     public ConcurrentDictionary<string, BreedingSession> Breedings { get; } = new();
+    /// <summary>Cross-owner breed proposals awaiting (or holding) the stud owner's consent.</summary>
+    public ConcurrentDictionary<string, StudProposal> StudProposals { get; } = new();
     // The Fancy discovery race: who FIRST bred a hero expressing each named Fancy set, plus how many have
     // ever been found. Pure bookkeeping — it never gates or changes an outcome, it just records the race.
     public ConcurrentDictionary<string, FancyDiscovery> FancyDiscoveries { get; } = new();

@@ -526,6 +526,9 @@ public class GameService(
             new("trials", store.Trials.Values.Count(t => !t.Completed), store.Trials.Count),
             new("gauntlet", store.Gauntlets.Values.Count(g => !g.Completed), store.Gauntlets.Count),
             new("breeding", store.Breedings.Values.Count(b => !b.Completed), store.Breedings.Count),
+            // A stud proposal is "still in play" until it is bred or refused — an accepted one may be
+            // holding the proposer's paid fees, which is exactly what an operator wants counted.
+            new("stud", store.StudProposals.Values.Count(s => !s.Completed && !s.Declined), store.StudProposals.Count),
             new("merge", store.Merges.Values.Count(m => !m.Completed), store.Merges.Count),
         };
 
@@ -1070,6 +1073,261 @@ public class GameService(
             session.ParentAId, session.ParentBId, child.Id);
 
         return (child, serverSeedHex, entropyHex, receipt);
+    }
+
+    // ── Stud service: propose → the stud's owner CONSENTS → reveal ─────
+    //
+    // Ordinary breeding requires the caller to own BOTH parents, so consent never had to be modelled. A
+    // stud service is the cross-owner case, and it is shaped exactly like the death-match's open → accept
+    // → settle for the same reason: the second hero belongs to someone who has to say yes. The difference
+    // is where the value moves — a death-match burns a hero, a stud pays its owner in sats.
+
+    /// <summary>
+    /// Proposes breeding one of the caller's heroes with ANOTHER player's, optionally offering that owner a
+    /// stud fee. Nothing is billed and nothing is minted here: this is an offer, and its counterparty has
+    /// not agreed to anything yet. The seed is committed NOW so the stud's owner is consenting to a breed
+    /// whose randomness is already sealed, rather than to one the proposer could still re-roll.
+    /// </summary>
+    public async Task<StudProposal> ProposeStudAsync(
+        Player player, string myHeroId, string studHeroId, long studFeeSats, CancellationToken ct)
+    {
+        RequireAcceptedTerms(player);
+        if (studFeeSats < 0) throw new GameRuleException("A stud fee cannot be negative.");
+        var mine = GetOwnedHero(player, myHeroId);
+        var stud = GetHero(studHeroId);
+        if (mine.Id == stud.Id)
+            throw new GameRuleException("A hero cannot stud with itself.");
+        // The whole point of the flow: the stud belongs to someone else. Owning both is ordinary breeding,
+        // which needs no proposal and no fee routed back to yourself.
+        if (stud.OwnerId == player.Id)
+            throw new GameRuleException("You own both heroes — breed them directly instead of proposing a stud.");
+
+        if (Sterility.IsSterile(mine.Genome, _config))
+            throw new GameRuleException($"{mine.Name} is sterile — it cannot breed.");
+        if (Sterility.IsSterile(stud.Genome, _config))
+            throw new GameRuleException($"{stud.Name} is sterile — it cannot breed.");
+        if (BreedingService.Validate(mine, stud, DateTimeOffset.UtcNow) is { } error)
+            throw new GameRuleException(error);
+
+        var seed = CommitReveal.NewSeed();
+        var proposal = new StudProposal
+        {
+            Id = NewId("stud"),
+            ProposerPlayerId = player.Id,
+            StudOwnerPlayerId = stud.OwnerId,
+            ProposerHeroId = myHeroId,
+            StudHeroId = studHeroId,
+            ServerSeed = seed,
+            CommitmentHex = CommitReveal.Commit(seed),
+            StudFeeSats = studFeeSats,
+        };
+        store.StudProposals[proposal.Id] = proposal;
+        await persistence.SaveStudProposalAsync(proposal, ct);
+        return proposal;
+    }
+
+    /// <summary>
+    /// The stud owner's CONSENT — the gate the whole flow hangs on, and the only place the invoices are
+    /// created. Before this returns, the proposer has been billed nothing and the stud's owner is owed
+    /// nothing; after it, the proposer may pay and reveal exactly once.
+    /// </summary>
+    public async Task<(StudProposal Proposal, FeeInvoice BreedFeeInvoice, FeeInvoice? StudFeeInvoice)> AcceptStudAsync(
+        Player player, string proposalId, CancellationToken ct)
+    {
+        RequireAcceptedTerms(player);
+        if (!store.StudProposals.TryGetValue(proposalId, out var proposal))
+            throw new GameRuleException($"Unknown stud proposal '{proposalId}'.");
+        // Per-proposal gate: the accepted-check → invoice → accepted-set must be one atomic step, or two
+        // concurrent accepts of one consent bill the proposer twice. The SAME key the reveal takes, so an
+        // accept can never interleave with the reveal it authorises.
+        using var gate = await store.LockAsync($"stud:{proposalId}", ct);
+        if (proposal.StudOwnerPlayerId != player.Id)
+            throw new GameRuleException("Only the stud's owner can accept this proposal.");
+        if (proposal.Accepted) throw new GameRuleException("Stud proposal already accepted.");
+        if (proposal.Declined) throw new GameRuleException("Stud proposal already declined.");
+        if (proposal.Completed) throw new GameRuleException("Stud proposal already bred.");
+        // Consent has to come from whoever owns the hero NOW — a stud sold since the proposal was made
+        // took its owner's say-so with it.
+        var stud = GetOwnedHero(player, proposal.StudHeroId);
+        var mine = GetHero(proposal.ProposerHeroId);
+
+        // Re-validate at consent: cooldowns and breed counts move between proposal and acceptance, and it
+        // is this moment — not the proposal — that the fees are priced off and the breed is authorised.
+        if (Sterility.IsSterile(mine.Genome, _config))
+            throw new GameRuleException($"{mine.Name} is sterile — it cannot breed.");
+        if (Sterility.IsSterile(stud.Genome, _config))
+            throw new GameRuleException($"{stud.Name} is sterile — it cannot breed.");
+        if (BreedingService.Validate(mine, stud, DateTimeOffset.UtcNow) is { } error)
+            throw new GameRuleException(error);
+
+        // TWO invoices, deliberately: the breed fee is the treasury's to keep and the stud fee is only
+        // passing through on its way to the stud's owner. One invoice could carry both amounts but not
+        // both meanings — the inflow tally dedups by invoice id, so a single id can be booked under a
+        // single tag exactly once, and "breed income" and "sats owed onward" would become one number.
+        var breedFee = BreedingPolicy.FeeSats(_config.BreedingFeeSats, mine.BreedCount + stud.BreedCount, _config);
+        var breedInvoice = await chain.CreateFeeInvoiceAsync($"stud-breed:{proposal.Id}", breedFee, ct);
+        var studInvoice = proposal.StudFeeSats > 0
+            ? await chain.CreateFeeInvoiceAsync($"stud-fee:{proposal.Id}", proposal.StudFeeSats, ct)
+            : null;
+
+        proposal.BreedFeeSats = breedFee;
+        proposal.BreedFeeInvoiceId = breedInvoice.InvoiceId;
+        proposal.StudFeeInvoiceId = studInvoice?.InvoiceId;
+        proposal.Accepted = true;
+        // Durable NOW, before the proposer is handed anything to pay: the invoice ids are the only link
+        // between sats about to leave a wallet and the consent that justified them.
+        await persistence.SaveStudProposalAsync(proposal, ct);
+        return (proposal, breedInvoice, studInvoice);
+    }
+
+    /// <summary>
+    /// Re-reads the invoices an accepted proposal bills. Needed because the accept response lands in the
+    /// STUD OWNER's browser while the sats are the PROPOSER's to send — without this the party who owes the
+    /// money has no way to learn what it is. Either party may read it; neither is billed by looking.
+    /// </summary>
+    public async Task<(StudProposal Proposal, FeeInvoice BreedFeeInvoice, FeeInvoice? StudFeeInvoice)> GetStudInvoicesAsync(
+        Player player, string proposalId, CancellationToken ct)
+    {
+        if (!store.StudProposals.TryGetValue(proposalId, out var proposal))
+            throw new GameRuleException($"Unknown stud proposal '{proposalId}'.");
+        if (proposal.ProposerPlayerId != player.Id && proposal.StudOwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this proposal's parties can see its invoices.");
+        // Nothing is billed before consent, so there is nothing here to show — and saying so plainly is the
+        // point: an un-accepted proposal has no price yet.
+        if (!proposal.Accepted)
+            throw new GameRuleException("The stud's owner hasn't accepted this proposal yet — nothing is billed until they do.");
+        var breedInvoice = await chain.GetFeeInvoiceAsync(proposal.BreedFeeInvoiceId!, ct)
+            ?? throw new GameRuleException("This proposal's breeding fee invoice is no longer available.");
+        var studInvoice = proposal.StudFeeInvoiceId is { } id ? await chain.GetFeeInvoiceAsync(id, ct) : null;
+        return (proposal, breedInvoice, studInvoice);
+    }
+
+    /// <summary>The stud owner's refusal — terminal, and the counterpart to <see cref="AcceptStudAsync"/>.
+    /// Nothing to unwind: a declined proposal was never billed.</summary>
+    public async Task<StudProposal> DeclineStudAsync(Player player, string proposalId, CancellationToken ct)
+    {
+        if (!store.StudProposals.TryGetValue(proposalId, out var proposal))
+            throw new GameRuleException($"Unknown stud proposal '{proposalId}'.");
+        using var gate = await store.LockAsync($"stud:{proposalId}", ct);
+        if (proposal.StudOwnerPlayerId != player.Id)
+            throw new GameRuleException("Only the stud's owner can decline this proposal.");
+        if (proposal.Completed) throw new GameRuleException("Stud proposal already bred.");
+        // An acceptance has already priced fees the proposer may have paid against — it is not the stud
+        // owner's to take back unilaterally.
+        if (proposal.Accepted) throw new GameRuleException("Stud proposal already accepted.");
+        proposal.Declined = true;
+        await persistence.SaveStudProposalAsync(proposal, ct);
+        return proposal;
+    }
+
+    /// <summary>
+    /// The proposer reveals: both fees must be paid, the stud's owner is paid theirs, and the child mints
+    /// to the proposer. The stud's owner is paid in sats, not in offspring.
+    /// </summary>
+    public async Task<(Hero Child, string ServerSeedHex, string EntropyHex, long StudFeePaidSats, Shared.ProgressionReceiptDto Receipt)> RevealStudAsync(
+        Player player, string proposalId, string nonce, CancellationToken ct)
+    {
+        if (!store.StudProposals.TryGetValue(proposalId, out var proposal) || proposal.ProposerPlayerId != player.Id)
+            throw new GameRuleException($"Unknown stud proposal '{proposalId}'.");
+        // Per-proposal gate: consent-check → completed-check → payout → mint → complete-set must be one
+        // atomic step, or two concurrent reveals of one acceptance both pass the guards and mint twice off
+        // a single consent.
+        using var gate = await store.LockAsync($"stud:{proposalId}", ct);
+
+        // ── THE CONSENT GATE ──────────────────────────────────────────────
+        // Everything below this line spends the proposer's sats and mints a hero out of a stud that is not
+        // theirs. None of it may happen on the proposer's say-so alone.
+        if (!proposal.Accepted)
+            throw new GameRuleException("The stud's owner hasn't accepted this proposal yet.");
+        if (proposal.Declined)
+            throw new GameRuleException("The stud's owner declined this proposal.");
+        // One acceptance buys one breed: the latch is what stops a paid consent being replayed for a
+        // second free child.
+        if (proposal.Completed) throw new GameRuleException("Stud proposal already bred.");
+        if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
+
+        if (!await chain.IsInvoicePaidAsync(proposal.BreedFeeInvoiceId!, ct))
+            throw new GameRuleException("The breeding fee invoice has not been paid yet — pay it from your wallet, then reveal.");
+        if (proposal.StudFeeInvoiceId is { } studInvoiceId && !await chain.IsInvoicePaidAsync(studInvoiceId, ct))
+            throw new GameRuleException("The stud fee invoice has not been paid yet — pay it from your wallet, then reveal.");
+
+        // Both fees are now in the treasury (paid Receive invoices) — tally them, deduped by invoice id.
+        // The stud fee is booked as income here and as an outflow again below: it really does land in the
+        // treasury before it is forwarded, and a ledger that showed only the payout would read as a gift.
+        await store.RecordInflowAsync(proposal.BreedFeeInvoiceId!, "breed", proposal.BreedFeeSats, ct);
+        if (proposal.StudFeeInvoiceId is { } paidStudInvoiceId)
+            await store.RecordInflowAsync(paidStudInvoiceId, "stud", proposal.StudFeeSats, ct);
+
+        var parentA = GetOwnedHero(player, proposal.ProposerHeroId);
+        var parentB = GetHero(proposal.StudHeroId);
+        // The consent came from the owner at accept time. A stud sold since then is a hero whose current
+        // owner never agreed to this, and whose cooldown this breed would spend.
+        if (parentB.OwnerId != proposal.StudOwnerPlayerId)
+            throw new GameRuleException($"{parentB.Name} has changed hands since its owner consented — this proposal no longer holds.");
+        var now = DateTimeOffset.UtcNow;
+        if (BreedingService.Validate(parentA, parentB, now) is { } error)
+            throw new GameRuleException(error);
+
+        // The stud fee is REAL BITCOIN owed to another player, so it moves BEFORE the mint and behind its
+        // own durable latch (the daily-claim pattern): consume the latch first, then pay. Paying after the
+        // mint instead would leave the only ordering where a fault strands the stud's owner unpaid with the
+        // child already minted — and latching after the payout would let a crash in between pay twice.
+        if (proposal.StudFeeSats > 0 && !proposal.StudFeePaid)
+        {
+            proposal.StudFeePaid = true;
+            await persistence.SaveStudProposalAsync(proposal, ct);
+            try
+            {
+                await chain.PayoutAsync(proposal.StudOwnerPlayerId, proposal.StudFeeSats, $"stud-fee:{proposal.Id}", ct);
+                await store.RecordOutflowAsync("stud", proposal.StudFeeSats, ct);
+            }
+            catch
+            {
+                // A cleanly failed payout releases the latch IN MEMORY ONLY, so the proposer can retry in
+                // this process. Never re-persist the release: if the payout actually settled before
+                // throwing, the durable latch is the one thing keeping a restart from paying it twice.
+                proposal.StudFeePaid = false;
+                throw;
+            }
+        }
+
+        var entropy = CommitReveal.DeriveEntropy(proposal.ServerSeed, proposal.ProposerHeroId, proposal.StudHeroId, nonce);
+        var policy = new BreedingPolicy(_options.BreedingCooldownBaseUnit);
+        var outcome = BreedingService.Breed(parentA, parentB, entropy, policy, _config);
+        var serverSeedHex = Convert.ToHexString(proposal.ServerSeed).ToLowerInvariant();
+        var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+
+        // The child mints to the PROPOSER — that is what the stud fee bought.
+        var child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
+            proposal.ProposerHeroId, proposal.StudHeroId, serverSeedHex, nonce, entropyHex, ct);
+
+        // Chain FIRST, latch + in-memory effects after (the breed-reveal pattern): if the mint faults, the
+        // proposal stays open and both parents untouched, so the already-paid fees can be retried instead
+        // of stranded behind a Completed flag. The stud-fee latch above makes that retry safe — it pays
+        // the stud's owner once, however many times the mint is attempted.
+        proposal.Completed = true;
+        proposal.ChildHeroId = child.Id;
+        await persistence.SaveStudProposalAsync(proposal, ct);
+        parentA.BreedCount++;
+        parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
+        parentB.BreedCount++;
+        parentB.BreedCooldownUntil = now + outcome.ParentBCooldown;
+        // Parent breed-counts + cooldowns are progression — flushed, not saved inline (the CHILD's mint
+        // above already saved durably), exactly as the ordinary breed reveal treats them.
+        store.MarkHeroDirty(parentA.Id);
+        store.MarkHeroDirty(parentB.Id);
+
+        // Typed "breeding" like any other breed, because it is one: the same client-side
+        // FairnessAudit.VerifyBreeding recompute applies, and the quests, season pass and Breeder badge
+        // that count bred heroes have no reason to treat this child as a lesser one.
+        var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
+                "breeding", proposal.Id, proposal.ProposerHeroId, proposal.StudHeroId, child.Id,
+                serverSeedHex, nonce, proposal.CommitmentHex,
+                0, 0, parentA.Level, parentB.Level,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
+            proposal.ProposerHeroId, proposal.StudHeroId, child.Id);
+
+        return (child, serverSeedHex, entropyHex, proposal.StudFeePaid ? proposal.StudFeeSats : 0, receipt);
     }
 
     // ── PvE gauntlet (F1): open (commit + fee invoice) → client pays → run ──

@@ -216,6 +216,58 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     }
 
     /// <summary>
+    /// Pay an accepted stud proposal and take the child — the proposer's half of the stud service. Accepting
+    /// is the STUD OWNER's call and has already happened by the time this runs (it is what created these
+    /// invoices); this pays the breed fee and the stud fee with plain non-custodial sends, then reveals.
+    ///
+    /// <para>The breed fee goes first: it is the treasury's own charge, and failing it costs nothing. The
+    /// stud fee is the one the server forwards to the other player, so it is sent second — a proposer who
+    /// cannot cover both has not paid for a service they won't receive.</para>
+    /// </summary>
+    public async Task<HeroDto> PayAndRevealStudAsync(string proposalId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        // Read the bill rather than carry it: the accept response was handed to the stud's owner, and this
+        // browser may only ever have seen the proposal in a list.
+        onProgress?.Invoke("Reading the stud terms…");
+        var bill = await api.Stud.InvoicesAsync(proposalId);
+        if (bill.BreedFeeInvoice.AmountSats > 0)
+        {
+            onProgress?.Invoke("Paying the breeding fee…");
+            await DepositAndSettleAsync(w.Id, bill.BreedFeeInvoice.PayToAddress, null, bill.BreedFeeInvoice.AmountSats);
+        }
+        if (bill.StudFeeInvoice is { AmountSats: > 0 } studFee)
+        {
+            onProgress?.Invoke("Paying the stud fee…");
+            await DepositAndSettleAsync(w.Id, studFee.PayToAddress, null, studFee.AmountSats);
+        }
+
+        // Reveal — retry while the payments settle into arkd's indexer (the reveal's gate), the same shape
+        // the gauntlet and item claim use. ONE nonce across the retries, so a settling payment can't turn
+        // into a different child.
+        onProgress?.Invoke("Minting the foal…");
+        var nonce = RandomNonce();
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                return (await api.Stud.RevealAsync(proposalId, new StudRevealRequest(nonce))).Hero;
+            }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("not been paid", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Payment still settling — retrying ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        throw new RevealPendingException(proposalId,
+            $"Paid on-chain, but the payments haven't settled for the reveal yet — you can retry in a moment. ({last?.Message})");
+    }
+
+    /// <summary>
     /// Merge (fuse) two heroes under covenant enforcement from the browser wallet: commit, deposit
     /// the base + sacrifice + fee into the escrow (same plain-send pattern as breed), then reveal.
     /// The server burns both inputs and mints ONE trait-concentrated fused hero to the player.

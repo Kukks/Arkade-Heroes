@@ -53,6 +53,12 @@ public interface IGameStatePersistence
     /// discoverable by the market or by its own seller.</summary>
     Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default);
 
+    /// <summary>Durably record a stud proposal — at proposal, at the stud owner's CONSENT (which is when the
+    /// invoices are created), at the stud-fee payout latch, and at completion. Called on every one of those
+    /// transitions because each is a step a restart must not be able to undo or repeat: an un-consented
+    /// proposal must not come back consented, and a stud fee already paid must not come back unpaid.</summary>
+    Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default);
+
     /// <summary>Durably append one treasury movement — a fee captured or a payout made — so the by-tag totals
     /// can be grouped back out of the rows at boot. On the INFLOW side <paramref name="id"/> is the invoice id
     /// and the row IS the dedup marker: an id already stored is silently left alone, which is what stops an
@@ -72,6 +78,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveHeroProgressionAsync(Hero hero, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default) => Task.CompletedTask;
 }
 
@@ -211,6 +218,33 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 Status = row.Status,
                 ListingFeeSats = row.ListingFeeSats,
                 // AssetDeposited is deliberately left false — the next reconcile derives it from the chain.
+            };
+        }
+
+        // Stud proposals come back so a consent already given — and, far more importantly, a stud fee
+        // already PAID against it — survives the restart. Completed and declined rows are TERMINAL and are
+        // never rehydrated, exactly as a resolved bracket or a closed offer isn't: their rows stay as audit
+        // markers, but putting a completed one back would hand a stale client a second chance to reveal it,
+        // and a reveal is a mint. StudFeePaid rehydrates EXACTLY as stored — it is the once-only payout
+        // latch, and reviving a paid proposal with it cleared would pay the stud's owner twice.
+        foreach (var row in await db.StudProposals.AsNoTracking().Where(s => !s.Completed && !s.Declined).ToListAsync(ct))
+        {
+            store.StudProposals[row.Id] = new StudProposal
+            {
+                Id = row.Id,
+                ProposerPlayerId = row.ProposerPlayerId,
+                StudOwnerPlayerId = row.StudOwnerPlayerId,
+                ProposerHeroId = row.ProposerHeroId,
+                StudHeroId = row.StudHeroId,
+                ServerSeed = row.ServerSeed,
+                CommitmentHex = row.CommitmentHex,
+                StudFeeSats = row.StudFeeSats,
+                BreedFeeSats = row.BreedFeeSats,
+                BreedFeeInvoiceId = row.BreedFeeInvoiceId,
+                StudFeeInvoiceId = row.StudFeeInvoiceId,
+                CreatedAt = row.CreatedAt,
+                Accepted = row.Accepted,
+                StudFeePaid = row.StudFeePaid,
             };
         }
 
@@ -491,6 +525,51 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             // the worst a lost race leaves is a row reading `active` for an offer memory has already closed,
             // and a restart then reconciles it closed again (re-booking under the same once-only key).
             row.Status = offer.Status;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.StudProposals.FindAsync([proposal.Id], ct);
+        if (row is null)
+        {
+            db.StudProposals.Add(new PersistedStudProposal
+            {
+                Id = proposal.Id,
+                ProposerPlayerId = proposal.ProposerPlayerId,
+                StudOwnerPlayerId = proposal.StudOwnerPlayerId,
+                ProposerHeroId = proposal.ProposerHeroId,
+                StudHeroId = proposal.StudHeroId,
+                ServerSeed = proposal.ServerSeed,
+                CommitmentHex = proposal.CommitmentHex,
+                StudFeeSats = proposal.StudFeeSats,
+                BreedFeeSats = proposal.BreedFeeSats,
+                BreedFeeInvoiceId = proposal.BreedFeeInvoiceId,
+                StudFeeInvoiceId = proposal.StudFeeInvoiceId,
+                CreatedAt = proposal.CreatedAt,
+                Accepted = proposal.Accepted,
+                Declined = proposal.Declined,
+                Completed = proposal.Completed,
+                StudFeePaid = proposal.StudFeePaid,
+                ChildHeroId = proposal.ChildHeroId,
+            });
+        }
+        else
+        {
+            // Only the state machine and what ACCEPT stamps on it ever move. The parties, the heroes, the
+            // stud fee and the committed seed are fixed at proposal: they are what the stud's owner
+            // consented to, so a row allowed to rewrite them could re-price or re-target a breed the
+            // counterparty already agreed to.
+            row.BreedFeeSats = proposal.BreedFeeSats;
+            row.BreedFeeInvoiceId = proposal.BreedFeeInvoiceId;
+            row.StudFeeInvoiceId = proposal.StudFeeInvoiceId;
+            row.Accepted = proposal.Accepted;
+            row.Declined = proposal.Declined;
+            row.Completed = proposal.Completed;
+            row.StudFeePaid = proposal.StudFeePaid;
+            row.ChildHeroId = proposal.ChildHeroId;
         }
         await db.SaveChangesAsync(ct);
     }

@@ -24,6 +24,7 @@ public sealed class ArkadeHeroesClient
         Players = new PlayersApi(this);
         Heroes = new HeroesApi(this);
         Breeding = new BreedingApi(this);
+        Stud = new StudApi(this);
         Merge = new MergeApi(this);
         DeathMatch = new DeathMatchApi(this);
         Gauntlet = new GauntletApi(this);
@@ -47,6 +48,8 @@ public sealed class ArkadeHeroesClient
     public PlayersApi Players { get; }
     public HeroesApi Heroes { get; }
     public BreedingApi Breeding { get; }
+    /// <summary>Breeding with another player's hero, behind their consent — see <see cref="StudApi"/>.</summary>
+    public StudApi Stud { get; }
     public MergeApi Merge { get; }
     public DeathMatchApi DeathMatch { get; }
     public GauntletApi Gauntlet { get; }

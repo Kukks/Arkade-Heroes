@@ -117,6 +117,39 @@ public record BreedRevealResponse(
     HeroDto Hero, string ServerSeedHex, string EntropyHex, string FeePaymentRef,
     ProgressionReceiptDto? Receipt = null);
 
+// ── Stud service (cross-owner breeding: propose → consent → reveal) ────────
+
+/// <summary>Asks the owner of <see cref="StudHeroId"/> to breed it with <see cref="MyHeroId"/>, offering
+/// them <see cref="StudFeeSats"/> for the service (0 = a favour). Nothing is billed until they accept.</summary>
+public record StudProposeRequest(string MyHeroId, string StudHeroId, long StudFeeSats = 0);
+
+/// <summary>The sealed proposal. No invoice here on purpose — a proposal the counterparty hasn't accepted
+/// costs nothing. <see cref="CommitmentHex"/> is the breed's seed, committed before they consent.</summary>
+public record StudProposeResponse(
+    string ProposalId, string CommitmentHex, string StudHeroId, string StudOwnerPlayerId, long StudFeeSats);
+
+/// <summary>What an accepted proposal bills the PROPOSER — returned by the stud owner's consent (which is
+/// what creates these), and re-readable by either party from <c>GET /api/stud/{id}/invoices</c>, since the
+/// accept response lands in the stud owner's browser while the sats are the proposer's to send.
+/// <see cref="StudFeeInvoice"/> is null when no stud fee was offered; the breed fee is always billed.</summary>
+public record StudAcceptResponse(
+    string ProposalId, FeeInvoiceDto BreedFeeInvoice, FeeInvoiceDto? StudFeeInvoice, long StudFeeSats);
+
+public record StudRevealRequest(string Nonce);
+
+/// <summary>The child (minted to the proposer) plus the audit trail — verifiable with the same
+/// <c>FairnessAudit.VerifyBreeding</c> recompute as any other breed. <see cref="StudFeePaidSats"/> is what
+/// actually reached the stud's owner.</summary>
+public record StudRevealResponse(
+    HeroDto Hero, string ServerSeedHex, string EntropyHex, long StudFeePaidSats,
+    ProgressionReceiptDto? Receipt = null);
+
+/// <summary>One stud proposal on the discovery list. Status = proposed (awaiting consent) | accepted (the
+/// proposer may pay + reveal) | declined | completed.</summary>
+public record StudProposalDto(
+    string ProposalId, string ProposerPlayerId, string StudOwnerPlayerId,
+    string ProposerHeroId, string StudHeroId, long StudFeeSats, string Status, string? ChildHeroId);
+
 // ── Merge / fusion (two-phase commit–reveal, escrow-funded) ────────────────
 
 /// <summary>Consume base + sacrifice to mint one trait-concentrated hero. Mode "treasury" (rung 1, server-executed) or "covenant".</summary>

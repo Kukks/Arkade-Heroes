@@ -335,6 +335,56 @@ api.MapPost("/breeding/{breedingId}/reveal", async (string breedingId, BreedReve
     return Results.Ok(new BreedRevealResponse(child.ToDto(), serverSeedHex, entropyHex, "paid-at-commit", receipt));
 });
 
+// ── Stud service (propose → the stud owner consents → pay → reveal) ────────
+
+api.MapPost("/stud/propose", async (StudProposeRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var proposal = await game.ProposeStudAsync(player, request.MyHeroId, request.StudHeroId, request.StudFeeSats, ct);
+    return Results.Ok(new StudProposeResponse(proposal.Id, proposal.CommitmentHex,
+        proposal.StudHeroId, proposal.StudOwnerPlayerId, proposal.StudFeeSats));
+});
+
+api.MapPost("/stud/{id}/accept", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (proposal, breedFee, studFee) = await game.AcceptStudAsync(player, id, ct);
+    return Results.Ok(new StudAcceptResponse(proposal.Id, breedFee.ToDto(), studFee?.ToDto(), proposal.StudFeeSats));
+});
+
+// What an accepted proposal bills, re-readable by either party. The PROPOSER pays, but the accept response
+// is handed to the STUD OWNER — so without this the side that owes the sats can't find out what they are.
+api.MapGet("/stud/{id}/invoices", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (proposal, breedFee, studFee) = await game.GetStudInvoicesAsync(player, id, ct);
+    return Results.Ok(new StudAcceptResponse(proposal.Id, breedFee.ToDto(), studFee?.ToDto(), proposal.StudFeeSats));
+});
+
+api.MapPost("/stud/{id}/decline", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var proposal = await game.DeclineStudAsync(player, id, ct);
+    return Results.Ok(ToStudDto(proposal));
+});
+
+api.MapPost("/stud/{id}/reveal", async (string id, StudRevealRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (child, serverSeedHex, entropyHex, studFeePaid, receipt) = await game.RevealStudAsync(player, id, request.Nonce, ct);
+    return Results.Ok(new StudRevealResponse(child.ToDto(), serverSeedHex, entropyHex, studFeePaid, receipt));
+});
+
+// Stud discovery: the proposals a browser needs to SEE an incoming request for its own hero — the rest of
+// the stud API is by-id. Public like /deathmatch; the client filters to its own heroes. No fee invoice or
+// seed is exposed here, only the offer and its state.
+api.MapGet("/stud", (GameStore store) =>
+    Results.Ok(store.StudProposals.Values
+        .OrderByDescending(s => s.CreatedAt)
+        .Take(50)
+        .Select(ToStudDto)
+        .ToList()));
+
 // ── Merge / fusion (commit → deposit base+sacrifice+fee → reveal) ───────────
 
 api.MapPost("/merge/commit", async (MergeCommitRequest request, HttpContext http, GameService game, CancellationToken ct) =>
@@ -1158,6 +1208,13 @@ static TournamentDto ToTournamentDto(TournamentSession t) => new(
     t.Id, t.OpenerPlayerId, t.BuyInSats, t.Size, t.Entrants.Count, t.Status,
     t.Entrants.Select(e => new TournamentEntrantDto(e.PlayerId, e.HeroId)).ToList(),
     t.Result?.ChampionId, t.Prizes.Count > 0 ? t.Prizes[0] : 0, t.EntrantsCommitmentHex);
+
+// Status is DERIVED from the proposal's flags rather than stored, so it can't drift from them: completed
+// wins over declined wins over accepted, matching the order the flow can only move through.
+static StudProposalDto ToStudDto(StudProposal s) => new(
+    s.Id, s.ProposerPlayerId, s.StudOwnerPlayerId, s.ProposerHeroId, s.StudHeroId, s.StudFeeSats,
+    s.Completed ? "completed" : s.Declined ? "declined" : s.Accepted ? "accepted" : "proposed",
+    s.ChildHeroId);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,

@@ -65,6 +65,38 @@ public class PersistedTournament
 }
 
 /// <summary>
+/// A durable stud proposal — the cross-owner breed and the one flow where sats are owed to ANOTHER PLAYER.
+/// That is why it is here and the other breed sessions are not: the proposer pays the stud fee into the
+/// treasury at accept and the reveal pays it out to the stud's owner, so a lost row would leave paid sats in
+/// the treasury with nothing left able to name who they belong to.
+///
+/// <c>Accepted</c> and <c>StudFeePaid</c> are the load-bearing fields. The first is CONSENT: it must not be
+/// possible for a restart to promote an un-consented proposal, nor to lose a consent already given and paid
+/// against. The second is the once-only payout latch, written BEFORE the sat moves — losing it would let a
+/// reveal retried after a crash pay the stud's owner twice out of a treasury that cannot print.
+/// </summary>
+public class PersistedStudProposal
+{
+    public required string Id { get; set; }
+    public required string ProposerPlayerId { get; set; }
+    public required string StudOwnerPlayerId { get; set; }
+    public required string ProposerHeroId { get; set; }
+    public required string StudHeroId { get; set; }
+    public required byte[] ServerSeed { get; set; }
+    public required string CommitmentHex { get; set; }
+    public required long StudFeeSats { get; set; }
+    public required long BreedFeeSats { get; set; }
+    public string? BreedFeeInvoiceId { get; set; }
+    public string? StudFeeInvoiceId { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+    public required bool Accepted { get; set; }
+    public required bool Declined { get; set; }
+    public required bool Completed { get; set; }
+    public required bool StudFeePaid { get; set; }
+    public string? ChildHeroId { get; set; }
+}
+
+/// <summary>
 /// A durable Fancy find: which set a hero expresses, its edition number, and who found it. Append-only and
 /// assigned-once — a hero is stamped exactly once and its row is never updated or deleted, so there is no
 /// "how does this leave the durable set" question the money rows have. One row per stamped hero is the full
@@ -199,6 +231,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedFancyFind> FancyFinds => Set<PersistedFancyFind>();
     public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
     public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
+    public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -210,6 +243,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedFancyFind>().HasKey(x => x.HeroId);
         modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedOffer>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedStudProposal>().HasKey(x => x.Id);
         // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
         // collides is the "already counted" no-op, and that must never be able to eat a payout row.
         modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });
