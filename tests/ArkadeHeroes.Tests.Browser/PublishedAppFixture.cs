@@ -81,16 +81,24 @@ public sealed class PublishedAppFixture : IAsyncLifetime
 
     private static string ResolvePublishedWwwroot()
     {
+        var repoRoot = FindRepoRoot();
+
         if (Environment.GetEnvironmentVariable(PublishDirVariable) is { Length: > 0 } supplied)
         {
-            var given = Path.Combine(supplied, "wwwroot");
+            // Resolved against the REPOSITORY ROOT when relative, not against the working directory: the
+            // test host runs from its own output folder, so `-o published-web` next to the solution — the
+            // obvious thing to write, and what CI wrote — pointed at nothing and every test failed on a
+            // missing wwwroot. An absolute value is returned untouched.
+            var root = Path.IsPathRooted(supplied) ? supplied : Path.Combine(repoRoot, supplied);
+            var given = Path.Combine(root, "wwwroot");
             if (!Directory.Exists(given))
                 throw new DirectoryNotFoundException(
-                    $"{PublishDirVariable} is set to '{supplied}' but there is no wwwroot in it.");
+                    $"{PublishDirVariable} is set to '{supplied}' (resolved to '{root}') but there is no " +
+                    "wwwroot in it. Publish the frontend there first: " +
+                    $"dotnet publish src/ArkadeHeroes.Web -c Release -o {supplied}");
             return given;
         }
 
-        var repoRoot = FindRepoRoot();
         var output = Path.Combine(Path.GetTempPath(), "arkade-heroes-browser-suite-publish");
 
         var publish = Process.Start(new ProcessStartInfo("dotnet")
