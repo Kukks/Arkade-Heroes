@@ -1,5 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
+  <ItemGroup>
+    <!--
+      So a test can shorten the wallet's retry backoff instead of waiting out the real one. The knob is
+      internal rather than public because it is not something the app should be setting.
+    -->
+    <InternalsVisibleTo Include="ArkadeHeroes.Tests.Web" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!--
       Trimming off. NOT, as this comment used to claim, because trimming broke the content pack — that was

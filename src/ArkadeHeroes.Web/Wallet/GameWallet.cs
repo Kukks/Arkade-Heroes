@@ -94,17 +94,35 @@ public class GameWallet(
         return contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
     }
 
-    /// <summary>Spendable balance in sats (sum of unlocked, in-bounds VTXOs). 0 on any sync error.</summary>
+    /// <summary>
+    /// What the player can spend RIGHT NOW, in sats. 0 on any sync error.
+    ///
+    /// <para>This used to sum every available coin, which is not the same set the spend path will take:
+    /// a spend also requires <c>CanSpendOffchain</c>, so a freshly-received coin that hasn't settled into
+    /// a batch yet counted towards the pill but could not pay for anything. The player read a number and
+    /// then got told they were short — see <see cref="GetBalanceBreakdownAsync"/> for the other half,
+    /// which is what the wallet page shows so the missing sats are accounted for rather than hidden.</para>
+    /// </summary>
     public virtual async Task<long> GetBalanceAsync(string walletId)
+        => (await GetBalanceBreakdownAsync(walletId)).Spendable;
+
+    /// <summary>
+    /// The balance split into what a spend can actually reach and what is still settling — the same
+    /// <c>CanSpendOffchain</c> test coin selection applies, so the two numbers add up to everything the
+    /// wallet holds and neither one lies. Both 0 on any sync error.
+    /// </summary>
+    public virtual async Task<(long Spendable, long Settling)> GetBalanceBreakdownAsync(string walletId)
     {
         try
         {
+            var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
             var coins = await spendingService.GetAvailableCoins(walletId);
-            return coins.Sum(c => c.Amount.Satoshi);
+            var spendable = coins.Where(c => c.CanSpendOffchain(now)).Sum(c => c.Amount.Satoshi);
+            return (spendable, coins.Sum(c => c.Amount.Satoshi) - spendable);
         }
         catch
         {
-            return 0;
+            return (0, 0);
         }
     }
 
@@ -235,10 +253,16 @@ public class GameWallet(
     }
 
     /// <summary>
-    /// True when the failure says the inputs are no longer the wallet's to spend — arkd refused the
-    /// transaction outright, so nothing was broadcast and a fresh selection is safe. Matched on the
-    /// arkd error codes and the SDK's own locked-VTXO exception rather than on any failure, so a
-    /// genuinely broken send is never quietly re-tried.
+    /// True when the failure is arkd REFUSING the transaction because the inputs are no longer the
+    /// wallet's to spend, or the SDK refusing to build it at all.
+    ///
+    /// <para>Deliberately narrow, because a retry that re-selects DIFFERENT coins would pay twice if the
+    /// first transaction had actually landed. Every signal matched here is raised before a transaction
+    /// can exist: <c>VTXO_ALREADY_SPENT</c> and <c>VTXO_ALREADY_REGISTERED</c> are arkd's codes for a
+    /// submission it rejected, and <see cref="AlreadyLockedVtxoException"/> / "temporarily locked" come
+    /// from the SDK's own per-input lock, taken before anything is submitted. Bare phrases like
+    /// "already spent" are NOT matched: they could just as easily surface from the bookkeeping the SDK
+    /// does AFTER a successful submit, and a false positive there is a double payment.</para>
     /// </summary>
     private static bool IsStaleCoinState(Exception ex)
     {
@@ -248,8 +272,6 @@ public class GameWallet(
             var m = e.Message;
             if (m.Contains("VTXO_ALREADY_SPENT", StringComparison.OrdinalIgnoreCase)
                 || m.Contains("VTXO_ALREADY_REGISTERED", StringComparison.OrdinalIgnoreCase)
-                || m.Contains("already spent", StringComparison.OrdinalIgnoreCase)
-                || m.Contains("already registered", StringComparison.OrdinalIgnoreCase)
                 || m.Contains("temporarily locked", StringComparison.OrdinalIgnoreCase))
                 return true;
         }
@@ -314,13 +336,21 @@ public class GameWallet(
         }
 
         long required = outputs.Sum(o => o.Value.Satoshi);
+        var dust = (await transport.GetServerInfoAsync()).Dust.Satoshi;
         var btc = spendable
             .Where(c => !selected.Contains(c) && c.Assets is null or { Count: 0 })
             .OrderByDescending(c => c.TxOut.Value.Satoshi).ToList();
+        // Take BTC coins until the change this leaves is a real VTXO (at or above dust), not merely
+        // until the outputs are covered. Aiming at required + dust is the same bar the carrier fallback
+        // below uses, and for the same reason: the SDK moves sub-dust change to vout 0 while asset
+        // change still points at the LAST output, so a spend whose inputs carry assets must never end
+        // up with sub-dust change. It also replaces the old "always grab one spare coin" rule, which
+        // took a coin the spend did not need and left the SDK's one-MINUTE per-input lock sitting on
+        // it — that spare is exactly the coin a retry reaches for after losing a race, and it was
+        // locked by the attempt that failed.
         var i = 0;
-        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
+        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required + dust && i < btc.Count)
             selected.Add(btc[i++]);
-        if (i < btc.Count) selected.Add(btc[i]);
 
         // A settlement round can consolidate the whole wallet into ONE VTXO that carries the sats
         // AND every hero the player owns. After that there is no pure-BTC coin left, so no fee could
@@ -332,7 +362,6 @@ public class GameWallet(
         // points at the LAST output, which would hand the player's heroes to the recipient.
         if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
         {
-            var dust = (await transport.GetServerInfoAsync()).Dust.Satoshi;
             foreach (var carrier in spendable
                          .Where(c => !selected.Contains(c) && c.Assets is { Count: > 0 })
                          .OrderByDescending(c => c.TxOut.Value.Satoshi))

@@ -20,7 +20,16 @@ public class WalletState : IDisposable
 
     public string? ActiveWalletId { get; private set; }
     public string? ActiveAddress { get; private set; }
+
+    /// <summary>What a spend can actually reach right now, in sats — the number the HUD shows.</summary>
     public long BalanceSats { get; private set; }
+
+    /// <summary>
+    /// Sats the wallet holds that no spend can touch yet, because the coin hasn't settled into a batch.
+    /// Shown alongside the balance rather than folded into it: the pill used to include these, so it
+    /// promised money the very next action would refuse to spend.
+    /// </summary>
+    public long SettlingSats { get; private set; }
 
     /// <summary>The game player this wallet is signed in as, or null (wallet exists but no game session).</summary>
     public PlayerDto? Player { get; private set; }
@@ -75,8 +84,9 @@ public class WalletState : IDisposable
             do
             {
                 _balanceRefreshWanted = false;
-                var sats = await _wallet.GetBalanceAsync(id);
-                if (sats != BalanceSats) UpdateBalance(sats);   // UpdateBalance raises OnChange
+                var (sats, settling) = await _wallet.GetBalanceBreakdownAsync(id);
+                if (sats != BalanceSats || settling != SettlingSats)
+                    UpdateBalance(sats, settling);   // UpdateBalance raises OnChange
             }
             while (_balanceRefreshWanted);
         }
@@ -91,9 +101,13 @@ public class WalletState : IDisposable
         OnChange?.Invoke();
     }
 
-    public void UpdateBalance(long sats)
+    /// <summary>Sets the spendable balance, leaving the settling figure as last read.</summary>
+    public void UpdateBalance(long sats) => UpdateBalance(sats, SettlingSats);
+
+    public void UpdateBalance(long sats, long settling)
     {
         BalanceSats = sats;
+        SettlingSats = settling;
         OnChange?.Invoke();
     }
 

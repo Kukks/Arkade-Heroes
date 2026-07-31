@@ -19,12 +19,19 @@
             <a href="market" class="@(Section == "market" ? "active" : "")">Market</a>
         </nav>
         <span class="spacer"></span>
-        <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@(Wallet.Connected ? Wallet.ActiveAddress : "Set up automatically when you press Play")">
+        <a class="pill @(Wallet.Connected ? "on" : "")" href="wallet" title="@PillTitle">
             <span class="dot"></span>
             @if (Wallet.Connected)
             {
                 <span class="mono">@Wallet.ShortAddress</span>
                 <b class="bal">@Wallet.BalanceSats.ToString("N0") sat</b>
+                @* Settling sats are the wallet's, but no spend can reach them yet. Named, not hidden and
+                   not added in: folding them into the balance is what let the pill promise money the next
+                   action refused to spend. *@
+                @if (Wallet.SettlingSats > 0)
+                {
+                    <span class="settling">+@Wallet.SettlingSats.ToString("N0") settling</span>
+                }
             }
             else
             {
@@ -76,6 +83,14 @@
 @code {
     private string _path = "";
     private (string Label, string Href, NavLinkMatch Match)[] _subnav = [];
+
+    // The pill's tooltip says why the two numbers differ, since the shortfall is the thing a player
+    // would otherwise only discover by having a spend refused.
+    private string PillTitle => !Wallet.Connected
+        ? "Set up automatically when you press Play"
+        : Wallet.SettlingSats > 0
+            ? $"{Wallet.ActiveAddress} — {Wallet.SettlingSats:N0} sat still settling into a batch and not yet spendable"
+            : Wallet.ActiveAddress ?? "";
 
     // The active top-level section, so the parent nav item stays lit across its sub-pages.
     private string Section => _path switch

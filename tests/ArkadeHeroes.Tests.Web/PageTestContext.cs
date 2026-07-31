@@ -92,7 +92,12 @@ public class PageTestContext : BunitContext
     /// Give the browser a loaded wallet holding <paramref name="balanceSats"/>. This is what makes a page
     /// that owns a wallet reach its READY view instead of its "create a wallet" one.
     /// </summary>
-    public PageTestContext WithWallet(long balanceSats)
+    /// <param name="balanceSats">What a spend can actually reach — the number the HUD and the form gate on.</param>
+    /// <param name="settlingSats">
+    /// Sats the wallet holds that no spend can touch yet. Separate because the two are separate on the
+    /// real wallet: the pill used to add them together and promise money the next action would refuse.
+    /// </param>
+    public PageTestContext WithWallet(long balanceSats, long settlingSats = 0)
     {
         var info = new ArkWalletInfo("wallet-1", Secret: null, Destination: null,
             WalletType.SingleKey, AccountDescriptor: null, LastUsedIndex: 0);
@@ -102,9 +107,10 @@ public class PageTestContext : BunitContext
         Wallet.GetWalletsAsync().Returns(new HashSet<ArkWalletInfo> { info });
         Wallet.GetReceiveAddressAsync("wallet-1").Returns(TestAddress);
         Wallet.GetBalanceAsync("wallet-1").Returns(balanceSats);
+        Wallet.GetBalanceBreakdownAsync("wallet-1").Returns((balanceSats, settlingSats));
         Wallet.GetVtxosAsync("wallet-1").Returns(Array.Empty<NArk.Abstractions.VTXOs.ArkVtxo>());
         Wallet.GetAssetsAsync("wallet-1").Returns(Array.Empty<(string AssetId, ulong Amount)>());
-        State.UpdateBalance(balanceSats);
+        State.UpdateBalance(balanceSats, settlingSats);
         return this;
     }
 }
