@@ -415,4 +415,43 @@ public class PageStateContractTests
             $"{page}: RunAction must start with `if ({flag}) return;`. Without it the disabled attribute is "
             + "the only protection, and it lands a render too late to stop a double-click from paying twice.");
     }
+
+    // ── 6. An expression glued to a letter must be parenthesised ───────────────
+
+    /// <summary>
+    /// Razor treats <c>word@word.word</c> as an EMAIL ADDRESS and emits it verbatim instead of evaluating
+    /// it. So <c>L@o.Hero.Level</c> renders as the literal text "L@o.Hero.Level", and it compiles clean —
+    /// there is no warning, no build error, and no unit test that would notice, because the markup is
+    /// valid. Only a human looking at the running page sees it.
+    ///
+    /// <para>This has now shipped twice. #124 found it on six pages at once (hero levels, as
+    /// <c>L@o.Hero.Level</c>); it came back on the dungeon crawl as <c>W@rung.Wave</c>, where every rung of
+    /// the shaft read "W@rung.Wave" instead of its depth. Both were caught by eye in a browser, which is
+    /// exactly the review that does not happen reliably.</para>
+    ///
+    /// <para>The rule is the fix both times: an expression that follows a letter gets parentheses —
+    /// <c>L@(o.Hero.Level)</c>, <c>W@(rung.Wave)</c>. That is unambiguous to the parser and reads no worse.
+    /// This scans the markup of every page AND component, since the crawl lives in Components.</para>
+    /// </summary>
+    [Fact]
+    public void NoExpressionIsGluedToALetterWhereRazorWouldReadItAsAnEmailAddress()
+    {
+        // The shape Razor's email heuristic swallows: an identifier character, then @, then a dotted
+        // identifier chain. Razor only applies it when the character BEFORE the @ is part of a word, which
+        // is why `ghost L@(wv.GhostLevel)` is safe once parenthesised and `> @foo.Bar` was never at risk.
+        var suspect = new Regex(@"(?<![@\w.])\w@[A-Za-z_]\w*(\.\w+)+");
+        var offenders = new List<string>();
+
+        foreach (var (name, text) in Pages().Concat(Components()))
+        {
+            // Razor comments and email addresses in prose are not rendered expressions.
+            var markup = Regex.Replace(Markup(text), @"@\*[\s\S]*?\*@", "");
+            foreach (Match m in suspect.Matches(markup))
+                offenders.Add($"{name}: {m.Value}");
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Razor will render these verbatim as email addresses instead of evaluating them — "
+            + "parenthesise the expression (L@(o.Hero.Level)):\n  " + string.Join("\n  ", offenders));
+    }
 }
