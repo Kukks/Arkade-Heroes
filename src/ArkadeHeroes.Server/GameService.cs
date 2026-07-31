@@ -1552,8 +1552,8 @@ public class GameService(
         RequireAcceptedTerms(player);
         var challenger = GetOwnedHero(player, challengerHeroId);
         var defender = GetHero(defenderHeroId);
-        if (challenger.Id == defender.Id)
-            throw new GameRuleException("A hero cannot fight itself.");
+        // Self-duels allowed: a hero fighting itself is a legitimate way to see the engine work. A
+        // WAGERED one is still refused below — staking against yourself is not a match, it is a fee.
         if (wagerSats < 0)
             throw new GameRuleException("Wager cannot be negative.");
         if (wagerSats > 0 && defender.OwnerId == player.Id)

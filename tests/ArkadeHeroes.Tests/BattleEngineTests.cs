@@ -82,13 +82,7 @@ public class BattleEngineTests
             new[] { BattleEventKind.Defeated, BattleEventKind.TimeoutDecision });
     }
 
-    [Fact]
-    public void SelfFightIsRejected()
-    {
-        var hero = MakeHero("same", 100);
-        Assert.Throws<ArgumentException>(() =>
-            BattleEngine.Fight(hero, MakeHero("same", 120), new byte[32]));
-    }
+
 
     [Fact]
     public void ElementRingMultipliers()
