@@ -65,6 +65,18 @@ public interface IGameStatePersistence
     /// line of a hero's history, never money.</summary>
     Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default);
 
+    /// <summary>Durably record one hero's DESTRUCTION, at the burn site and BEFORE
+    /// <see cref="DeleteHeroAsync"/> erases the hero — so the two can never both be missing. Keyed by the
+    /// hero, so a retried settle re-running the in-memory tail overwrites nothing and invents no second
+    /// death. Books no sats and gates nothing: a lost row costs a name on a page, never money.</summary>
+    Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default);
+
+    /// <summary>Durably record a bid on a hero — at the bid, at the owner's CONSENT (which is when the
+    /// invoice is created), at each payout latch, and at every terminal transition. Called on all of them
+    /// for the reason the stud proposal is: an un-consented bid must not come back consented, and sats
+    /// already paid out — to the owner or back to the bidder — must not come back unpaid.</summary>
+    Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default);
+
     /// <summary>Durably append one treasury movement — a fee captured or a payout made — so the by-tag totals
     /// can be grouped back out of the rows at boot. On the INFLOW side <paramref name="id"/> is the invoice id
     /// and the row IS the dedup marker: an id already stored is silently left alone, which is what stops an
@@ -86,6 +98,8 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default) => Task.CompletedTask;
 }
 
@@ -265,6 +279,42 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 CreatedAt = row.CreatedAt,
                 Accepted = row.Accepted,
                 StudFeePaid = row.StudFeePaid,
+            };
+        }
+
+        // Tombstones come back UNFILTERED, exactly as sales do and for the same reason: a headstone is a
+        // historical fact, not a live position. It holds nothing and gates nothing, and it is the ONLY
+        // thing that can name a hero whose row was erased — so filtering any of it out would restore the
+        // hole it exists to close. There is no terminal state to skip; death is the terminal state.
+        foreach (var row in await db.HeroTombstones.AsNoTracking().ToListAsync(ct))
+            store.LoadTombstone(new HeroTombstone(
+                row.HeroId, row.Name, row.OwnerId, row.Generation, row.Level, row.GenomeHex,
+                row.Reason, row.SessionId, row.ReplacedByHeroId, row.DestroyedAtUnixSeconds,
+                row.ParentAId, row.ParentBId));
+
+        // Bids come back only while LIVE, on the same ruling stud proposals get. A settled or refunded bid
+        // is terminal and its sats have already moved; rehydrating one would hand a stale client a second
+        // chance to settle it, and a settle both pays a player and moves a hero. Declined and withdrawn
+        // rows never billed anything, so they have nothing to strand. SellerPaid and RefundPaid rehydrate
+        // EXACTLY as stored — they are the once-only payout latches, and reviving a paid bid with either
+        // cleared would pay out twice from a treasury that cannot print.
+        foreach (var row in await db.HeroBids.AsNoTracking()
+                     .Where(b => !b.Settled && !b.Refunded && !b.Declined && !b.Withdrawn).ToListAsync(ct))
+        {
+            store.HeroBids[row.Id] = new HeroBid
+            {
+                Id = row.Id,
+                BidderPlayerId = row.BidderPlayerId,
+                OwnerPlayerId = row.OwnerPlayerId,
+                HeroId = row.HeroId,
+                BidSats = row.BidSats,
+                FeeSats = row.FeeSats,
+                BidInvoiceId = row.BidInvoiceId,
+                CreatedAt = row.CreatedAt,
+                Accepted = row.Accepted,
+                SellerPaid = row.SellerPaid,
+                RefundPaid = row.RefundPaid,
+                ReclaimAfterUnixSeconds = row.ReclaimAfterUnixSeconds,
             };
         }
 
@@ -573,6 +623,76 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             // writable: the price, the parties and the moment are what the trade WAS, and a row able to
             // restate them could rewrite a hero's history after the fact.
             row.BuyerId = sale.BuyerId;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        // Insert-once and NEVER update. A hero dies once, and the first write is the one that had the hero
+        // still in hand to read its name, level and genome off — a retried settle re-running this after the
+        // row was erased could only carry less. Idempotent for exactly that retry.
+        if (await db.HeroTombstones.FindAsync([stone.HeroId], ct) is not null) return;
+        db.HeroTombstones.Add(new PersistedHeroTombstone
+        {
+            HeroId = stone.HeroId,
+            Name = stone.Name,
+            OwnerId = stone.OwnerId,
+            Generation = stone.Generation,
+            Level = stone.Level,
+            GenomeHex = stone.GenomeHex,
+            Reason = stone.Reason,
+            SessionId = stone.SessionId,
+            ReplacedByHeroId = stone.ReplacedByHeroId,
+            DestroyedAtUnixSeconds = stone.DestroyedAtUnixSeconds,
+            ParentAId = stone.ParentAId,
+            ParentBId = stone.ParentBId,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.HeroBids.FindAsync([bid.Id], ct);
+        if (row is null)
+        {
+            db.HeroBids.Add(new PersistedHeroBid
+            {
+                Id = bid.Id,
+                BidderPlayerId = bid.BidderPlayerId,
+                OwnerPlayerId = bid.OwnerPlayerId,
+                HeroId = bid.HeroId,
+                BidSats = bid.BidSats,
+                FeeSats = bid.FeeSats,
+                BidInvoiceId = bid.BidInvoiceId,
+                CreatedAt = bid.CreatedAt,
+                Accepted = bid.Accepted,
+                Declined = bid.Declined,
+                Withdrawn = bid.Withdrawn,
+                Settled = bid.Settled,
+                Refunded = bid.Refunded,
+                SellerPaid = bid.SellerPaid,
+                RefundPaid = bid.RefundPaid,
+                ReclaimAfterUnixSeconds = bid.ReclaimAfterUnixSeconds,
+            });
+        }
+        else
+        {
+            // Only the state machine and what ACCEPT stamps on it ever move, exactly as for a stud proposal.
+            // The parties, the hero and the bid amount are fixed at proposal: they are what the owner
+            // consented to, and a row able to rewrite them could re-price a sale already agreed.
+            row.FeeSats = bid.FeeSats;
+            row.BidInvoiceId = bid.BidInvoiceId;
+            row.Accepted = bid.Accepted;
+            row.Declined = bid.Declined;
+            row.Withdrawn = bid.Withdrawn;
+            row.Settled = bid.Settled;
+            row.Refunded = bid.Refunded;
+            row.SellerPaid = bid.SellerPaid;
+            row.RefundPaid = bid.RefundPaid;
+            row.ReclaimAfterUnixSeconds = bid.ReclaimAfterUnixSeconds;
         }
         await db.SaveChangesAsync(ct);
     }

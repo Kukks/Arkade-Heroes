@@ -331,9 +331,21 @@ api.MapGet("/heroes/mine", (HttpContext http, int? skip, int? take, GameService 
 api.MapGet("/heroes/{heroId}", (string heroId, GameService game) =>
     Results.Ok(game.GetHero(heroId).ToDto()));
 
+// A DESTROYED hero's headstone. Heroes are hard-deleted when they die — a death-match loser, a fusion's
+// inputs, both sides of an absorb — so there is no hero row for /heroes/{id} to return and no HeroDto to
+// shape. This is the shape a dead hero has instead, and it is why the page can say "destroyed" rather than
+// "couldn't load this hero". Public, like the timeline: a hero's fate is part of its lineage's provenance.
+// 404 when the id is simply unknown — that is a different fact from "this one died".
+api.MapGet("/heroes/{heroId}/tombstone", (string heroId, GameStore store) =>
+    store.HeroTombstones.TryGetValue(heroId, out var stone)
+        ? Results.Ok(ToTombstoneDto(stone))
+        : Results.NotFound());
+
 // Everything that ever happened to one hero, newest first — how it was born, what it fought, what it was
-// traded for, what it was fused from. Public: a hero's provenance is what a buyer is really appraising,
-// so it should not need an account to read. 404 for a hero that doesn't exist (or was burned).
+// traded for, what it was fused from, and how it died. Public: a hero's provenance is what a buyer is
+// really appraising, so it should not need an account to read. Served for a DESTROYED hero too, off its
+// headstone — that is the page a player lands on after losing a death-match, and it is the one history
+// that must not 404. Only an id nothing has ever heard of does.
 api.MapGet("/heroes/{heroId}/timeline", (string heroId, GameService game) =>
 {
     try { return Results.Ok(game.HeroTimeline(heroId)); }
@@ -413,6 +425,67 @@ api.MapGet("/stud", (GameStore store) =>
         .Take(50)
         .Select(ToStudDto)
         .ToList()));
+
+// ── Bids: buy a hero that is NOT for sale (propose → the owner consents → deliver → settle) ──
+//
+// Shaped like /stud above, and for the same reason: the counterparty owns the thing. Nothing is billed
+// until the owner accepts, so an ignored or refused bid costs the bidder nothing at all.
+
+api.MapPost("/bids", async (PlaceBidRequest request, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(ToBidDto(await game.ProposeBidAsync(player, request.HeroId, request.BidSats, ct)));
+});
+
+// THE CONSENT. The only place the invoice is created — before this the bidder owes nothing.
+api.MapPost("/bids/{id}/accept", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (bid, invoice) = await game.AcceptBidAsync(player, id, ct);
+    return Results.Ok(new BidInvoiceResponse(ToBidDto(bid), invoice.ToDto(), false, bid.BidSats - bid.FeeSats));
+});
+
+// What an accepted bid bills, re-readable by either party — and whether it is FUNDED. The BIDDER pays, but
+// the accept response is handed to the OWNER, so without this the side that owes the money can't find out
+// what it is, and the side about to send a hero can't find out whether the money arrived.
+api.MapGet("/bids/{id}/invoice", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (bid, invoice, funded) = await game.GetBidInvoiceAsync(player, id, ct);
+    return Results.Ok(new BidInvoiceResponse(ToBidDto(bid), invoice.ToDto(), funded, bid.BidSats - bid.FeeSats));
+});
+
+api.MapPost("/bids/{id}/decline", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(ToBidDto(await game.DeclineBidAsync(player, id, ct)));
+});
+
+api.MapPost("/bids/{id}/withdraw", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(ToBidDto(await game.WithdrawBidAsync(player, id, ct)));
+});
+
+// The close: the owner is paid and the hero's record follows the asset. Either party may call it — both
+// want it run, and a one-sided trigger would let whoever holds it hold the other side hostage.
+api.MapPost("/bids/{id}/settle", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok((await game.SettleBidAsync(player, id, ct)).ToDto());
+});
+
+// The bidder's exit from an accepted bid the owner never honoured. Either party, and only past the window.
+api.MapPost("/bids/{id}/refund", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (bid, refunded) = await game.RefundBidAsync(player, id, ct);
+    return Results.Ok(new BidRefundResponse(ToBidDto(bid), refunded));
+});
+
+// Bid discovery: how an owner ever learns someone wants their hero, and how a bidder tracks their own.
+// Public like /stud and /deathmatch; the client filters. No invoice is exposed here, only the offers.
+api.MapGet("/bids", (GameService game) => Results.Ok(game.ListBids().Select(ToBidDto).ToList()));
 
 // ── Merge / fusion (commit → deposit base+sacrifice+fee → reveal) ───────────
 
@@ -1286,6 +1359,16 @@ static StudProposalDto ToStudDto(StudProposal s) => new(
     s.Id, s.ProposerPlayerId, s.StudOwnerPlayerId, s.ProposerHeroId, s.StudHeroId, s.StudFeeSats,
     s.Completed ? "completed" : s.Declined ? "declined" : s.Accepted ? "accepted" : "proposed",
     s.ChildHeroId);
+
+// Status comes off HeroBid.Status, which derives it from the flags rather than storing it, so the wire
+// state can never drift from the state machine that gates the money.
+static BidDto ToBidDto(HeroBid b) => new(
+    b.Id, b.HeroId, b.BidderPlayerId, b.OwnerPlayerId, b.BidSats, b.FeeSats, b.Status,
+    b.ReclaimAfterUnixSeconds);
+
+static HeroTombstoneDto ToTombstoneDto(HeroTombstone t) => new(
+    t.HeroId, t.Name, t.OwnerId, t.Generation, t.Level, t.GenomeHex, t.Reason, t.SessionId,
+    t.ReplacedByHeroId, t.DestroyedAtUnixSeconds, t.ParentAId, t.ParentBId);
 
 static MatchDto ToMatchDto(MatchSession session) => new(
     session.Id, session.ChallengerHeroId, session.DefenderHeroId,

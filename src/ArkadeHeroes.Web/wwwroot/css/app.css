@@ -637,8 +637,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 .hpbar > i.warn { background: linear-gradient(90deg, #c99a1e, var(--gold)); }
 .hpbar > i.xp   { background: linear-gradient(90deg, var(--accent), var(--gold)); }
 
-/* Slim XP-to-next bar under a hero's name — same primitive as the combat HP bar. */
-.xpbar { height: 6px; margin-top: .6rem; max-width: 320px; }
+/* Slim XP-to-next bar under a hero's name — same primitive as the combat HP bar, with one override the
+   combat bar doesn't need. .hpbar's track is rgba(0,0,0,.35), which works in the arena because a fighter's
+   bar is nearly always FILLED and the fill supplies the contrast. A fresh hero has 0 xp, so this bar is
+   never filled at all — and an unfilled track measured 1.02:1 against the page (composited rgb(5,7,11)
+   over rgb(8,11,17)) inside a groove only 3.5px tall. That renders as an empty hairline: a stray rule
+   under the chips rather than a meter waiting to fill. --line is the token the design already uses for
+   visible-but-quiet structure — it is this bar's own border colour — so the track becomes the same weight
+   as the frame around it (1.53:1) instead of a void inside it, and the groove gets enough height to read
+   as one. Scoped to .xpbar: the arena's .hpbar is untouched. */
+.xpbar { height: 8px; margin-top: .6rem; max-width: 320px; background: var(--line); }
 .hpbar > i.low  { background: linear-gradient(90deg, #c13b3b, var(--danger)); }
 .f-hp { font-size: .66rem; color: var(--muted); }
 .f-hp span { opacity: .55; }
@@ -783,7 +791,18 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 .hero-body { padding: .85rem .9rem 1rem; display: grid; gap: .6rem; }
 .hero-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .hero-name { font-weight: 600; font-size: 1.02rem; }
-.tier { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; padding: .22rem .45rem; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+/* The rarity badge. `inline-flex` + `align-items: center` is load-bearing, not decoration: every place
+   this is used sits inside a flex row (.chips, .hero-head, .offer-head, .acct-name), so the badge is a
+   flex ITEM and stretches to the row's tallest child — and its own glyphs, at .58rem inside a box sized
+   for .72rem chips, then sat pinned to the TOP of that box. Measured on the hero detail page: the tier's
+   text centre-line was 3.20px above every chip's beside it. Making it a flex CONTAINER too centres its
+   glyphs inside whatever height it is stretched to (measured residual: 0.39px, the optical difference
+   between the two font sizes). */
+.tier { font-family: var(--font-hud); font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; padding: .22rem .45rem; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; display: inline-flex; align-items: center; }
+/* In a CHIP row it is one of the chips, so it takes the row's corner radius (6px) rather than its own
+   4px — the two rounding values sat side by side in the same pill row. Scoped, because the same badge
+   next to a hero's NAME is deliberately tighter than the chips it never appears with. */
+.chips > .tier { border-radius: var(--radius-sm); }
 .statline { display: flex; flex-wrap: wrap; gap: .45rem .9rem; font-size: .68rem; color: var(--muted); }
 
 /* --- Ranks: leaderboard table --------------------------------------------- */
@@ -901,6 +920,23 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 }
 .detail-portrait::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); background: repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 2px, transparent 2px 4px); }
 .detail-headings h1 { font-size: 2.2rem; margin: .1em 0 .4em; }
+
+/* --- A destroyed hero ------------------------------------------------------
+   Death is permanent here — a death-match burns the loser, a fusion burns its inputs — and the hero's
+   record is erased with its on-chain asset. This is the headstone that stands where the hero was. It
+   reads deliberately DIMMER than a living hero rather than louder: the page is a fact about something
+   that is gone, not an alert. */
+.detail-hero.destroyed .detail-portrait { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
+/* Desaturated and dimmed, so the portrait reads as a memory of the hero rather than as the hero. */
+.detail-hero.destroyed .hero-px { filter: grayscale(.85) brightness(.72); }
+.hero-destroyed-mark {
+    position: absolute; top: .5rem; right: .6rem; z-index: 1;
+    color: var(--danger); background: rgba(8,11,17,.62);
+    border-radius: 4px; padding: .05rem .4rem; font-size: .8rem;
+}
+.destroyed-name { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.chip.destroyed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.destroyed-note { color: var(--muted); font-size: .86rem; max-width: 46rem; margin: .9rem 0 .2rem; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
 .stat-grid > div { display: flex; flex-direction: column; gap: .1rem; padding: .55rem .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); }

@@ -143,6 +143,78 @@ public class StudProposal
     public string? ChildHeroId { get; set; }
 }
 
+/// <summary>
+/// A BID on a hero that is not for sale: one player offers its owner sats for it, and the owner may accept
+/// or refuse. The mirror image of <see cref="OfferListing"/>, which only ever runs owner → market; this is
+/// the buyer-initiated direction the marketplace had no shape for.
+///
+/// <para>Shaped like <see cref="StudProposal"/>, deliberately and for the same reason: the counterparty
+/// owns the thing, so nothing may happen on the bidder's say-so alone. <see cref="Accepted"/> is the gate,
+/// and — exactly as in the stud flow — NOTHING IS BILLED UNTIL IT IS SET. A bid the owner ignores or
+/// declines costs the bidder not one sat, because no invoice ever existed to pay.</para>
+///
+/// <para>What the stud flow did not need and this does is an EXIT after consent. A stud reveal is executed
+/// by the server, so an accepted proposal always completes; a hero, by the non-custodial mandate, can only
+/// be delivered by the OWNER's own wallet (see <c>ConfirmTransferAsync</c>), so an accepted bid can be paid
+/// for and then simply never honoured. <see cref="ReclaimAfterUnixSeconds"/> is that exit: past it, either
+/// party may unwind the bid and the bidder's sats go home. It is a SERVER-CLOCK window, not a covenant
+/// timelock — the sats sit in the treasury under an invoice, not behind a reclaim leaf — but it is
+/// surfaced through the same <see cref="Shared.ReclaimWindow"/> vocabulary the covenant escrows use, so a
+/// player reads one kind of "stranded, unlocks in ~Nh" rather than two.</para>
+///
+/// <para>Durable for the reason the stud proposal is: it is the only other flow where sats owed to ANOTHER
+/// PLAYER sit in the treasury between two calls. <see cref="SellerPaid"/> and <see cref="RefundPaid"/> are
+/// the once-only payout latches, each written BEFORE its sat moves.</para>
+/// </summary>
+public class HeroBid
+{
+    public required string Id { get; init; }
+    /// <summary>The bidder — pays the bid, and receives the hero.</summary>
+    public required string BidderPlayerId { get; init; }
+    /// <summary>The hero's owner when the bid was made — consents, and is paid. Pinned, like a stud's owner:
+    /// a hero sold on since has an owner who was never offered anything.</summary>
+    public required string OwnerPlayerId { get; init; }
+    public required string HeroId { get; init; }
+    /// <summary>What the bidder offers, in sats. The bidder pays exactly this; the owner nets it less
+    /// <see cref="FeeSats"/>, matching how a listing's ask is split.</summary>
+    public required long BidSats { get; init; }
+    /// <summary>The marketplace cut, priced at ACCEPT off the same knob a listing uses. 0 until then.</summary>
+    public long FeeSats { get; set; }
+    /// <summary>Treasury invoice for the bid. Null until the owner accepts — that is the whole point.</summary>
+    public string? BidInvoiceId { get; set; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    /// <summary>The consent gate: set only by the hero's owner, and only once.</summary>
+    public bool Accepted { get; set; }
+    /// <summary>Owner's refusal (only possible before consent) — terminal.</summary>
+    public bool Declined { get; set; }
+    /// <summary>Bidder's retraction (only possible before consent) — terminal.</summary>
+    public bool Withdrawn { get; set; }
+    /// <summary>The hero was delivered and paid for — terminal.</summary>
+    public bool Settled { get; set; }
+    /// <summary>The accepted bid was unwound past its window — terminal.</summary>
+    public bool Refunded { get; set; }
+    /// <summary>Latched durably BEFORE the owner's proceeds move, so a settle retried after a crash finishes
+    /// the sale without paying them twice.</summary>
+    public bool SellerPaid { get; set; }
+    /// <summary>The same latch for the other direction — the bidder's refund.</summary>
+    public bool RefundPaid { get; set; }
+    /// <summary>When an accepted-but-undelivered bid may be unwound. 0 until accepted.</summary>
+    public long ReclaimAfterUnixSeconds { get; set; }
+
+    /// <summary>The one-word state the wire and the UI both read. Terminal states win over the gate.</summary>
+    public string Status =>
+        Settled ? "settled"
+        : Refunded ? "refunded"
+        : Declined ? "declined"
+        : Withdrawn ? "withdrawn"
+        : Accepted ? "accepted"
+        : "proposed";
+
+    /// <summary>True while this bid still ties up the hero or the bidder's sats — the set an owner may hold
+    /// only one of at a time, and the set a restart must rehydrate.</summary>
+    public bool IsLive => !Settled && !Refunded && !Declined && !Withdrawn;
+}
+
 /// <summary>A hero merge (fusion) awaiting its escrow deposit. Base + sacrifice + fee are deposited into the escrow; reveal retires the inputs and mints the fused hero.</summary>
 public class MergeSession
 {
@@ -356,6 +428,30 @@ public sealed record HeroSale(
     string OfferId, string HeroId, string SellerId, string? BuyerId,
     long AskSats, long ListingFeeSats, long SoldAtUnixSeconds);
 
+/// <summary>
+/// A destroyed hero's headstone — the durable record that a hero EXISTED and is now gone.
+///
+/// <para>A burn is the one state change that leaves nothing behind to inspect: the hero row is erased on
+/// purpose at every burn site (a rehydrated ghost would be a fightable, listable hero whose on-chain asset
+/// is retired), so before this existed the only trace of a destroyed hero outside the in-memory receipt
+/// ledger was an <c>hero.burned</c> entry in the ADMIN-ONLY audit log. The result was a hero page that
+/// 400'd, a lineage link to nowhere, and a timeline that could say "a burned hero (a1b2c3…d4e5)" but never
+/// name it. This is the narrow, public, purpose-built row that fixes that — the same relationship
+/// <see cref="HeroSale"/> has to the audit log's transfer entries.</para>
+///
+/// <para>Written at the burn site BEFORE the hero row is deleted, so the two can never both be missing.
+/// Append-only in practice and keyed by the hero: a hero burns exactly once, for all time, so a re-run of
+/// a retried settle overwrites an identical row rather than inventing a second death.</para>
+/// </summary>
+/// <param name="Reason">"merge-input" | "deathmatch-loser" | "deathmatch-absorb-winner" |
+/// "deathmatch-absorb-loser" — the same vocabulary the <c>hero.burned</c> audit payload uses.</param>
+/// <param name="ReplacedByHeroId">What rose from it (a fusion's child, an absorb's new hero), when
+/// anything did. Null for a classic death-match loser, which simply ends.</param>
+public sealed record HeroTombstone(
+    string HeroId, string Name, string OwnerId, int Generation, int Level,
+    string GenomeHex, string Reason, string SessionId, string? ReplacedByHeroId,
+    long DestroyedAtUnixSeconds, string? ParentAId = null, string? ParentBId = null);
+
 /// <summary>A pending hero rename in the unique-name registry: the player pays the treasury fee, then
 /// confirms to apply the claimed name. In-memory like the rest; a restart drops it with the fee marker.</summary>
 public class RenameSession
@@ -554,6 +650,30 @@ public class GameStore(
 
     /// <summary>Rehydrate one durable sale at boot, exactly as stored.</summary>
     public void LoadHeroSale(HeroSale sale) => HeroSales[sale.OfferId] = sale;
+
+    /// <summary>
+    /// Destroyed heroes, keyed by the hero that died — the ONLY thing left of a burned hero once its row is
+    /// erased, and therefore the only way anything can name one. Read by the hero page, the lineage block
+    /// and the provenance timeline; gates nothing.
+    /// </summary>
+    public ConcurrentDictionary<string, HeroTombstone> HeroTombstones { get; } = new();
+
+    /// <summary>Records a destruction, once. A hero burns exactly once for all time, so a retried settle
+    /// re-writing the same row is a no-op rather than a second death — and the FIRST word stands, because a
+    /// retry re-reads the already-erased hero and would carry less than the original did.</summary>
+    /// <returns>The row to persist when this call created it, or null when one was already there.</returns>
+    public HeroTombstone? RecordTombstone(HeroTombstone stone) =>
+        HeroTombstones.TryAdd(stone.HeroId, stone) ? stone : null;
+
+    /// <summary>Rehydrate one durable tombstone at boot, exactly as stored.</summary>
+    public void LoadTombstone(HeroTombstone stone) => HeroTombstones[stone.HeroId] = stone;
+
+    /// <summary>
+    /// Live bids on heroes, keyed by bid id. Durable like <see cref="StudProposals"/> and for the same
+    /// reason: an accepted bid may be holding the bidder's paid sats in the treasury, and losing the row
+    /// would leave nothing able to name who they belong to.
+    /// </summary>
+    public ConcurrentDictionary<string, HeroBid> HeroBids { get; } = new();
 
     /// <summary>
     /// Heroes that were RESTORED from disk at boot rather than minted by this process.

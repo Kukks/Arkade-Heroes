@@ -6,7 +6,7 @@
 @inject GameSession Session
 @implements IDisposable
 
-<PageTitle>@(_hero?.Name ?? "Hero") · Arkade Heroes</PageTitle>
+<PageTitle>@(_hero?.Name ?? _grave?.Name ?? "Hero")@(_grave is null ? "" : " (destroyed)") · Arkade Heroes</PageTitle>
 
 <div class="page-head">
     <a href="heroes" class="hud back">← roster</a>
@@ -15,6 +15,58 @@
 @if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading the hero…</div>
+}
+else if (_grave is { } g)
+{
+    @* A DESTROYED hero. Its row was erased at the burn site — death is permanent here and the on-chain
+       asset is retired — so everything below is read off the headstone written the moment it died. This
+       page exists at all because "Couldn't load this hero" was the only answer the arena had for a hero
+       that lost a death-match, and that reads as a bug rather than as the game's central stake. *@
+    <section class="detail-hero destroyed">
+        <div class="detail-portrait">
+            <HeroSprite Genome="@g.GenomeHex" Name="@g.Name" Size="210" />
+            <span class="hero-gen mono">GEN·@g.Generation</span>
+            <span class="hero-destroyed-mark mono" title="destroyed — this hero no longer exists">✖</span>
+        </div>
+        <div class="detail-headings">
+            <div class="hud">destroyed · @DestroyedWhen(g)</div>
+            <h1 class="destroyed-name">@g.Name</h1>
+            <div class="chips">
+                <span class="chip destroyed">✖ destroyed</span>
+                <span class="chip">lvl <b>@g.Level</b></span>
+                <span class="chip">gen <b>@g.Generation</b></span>
+            </div>
+            <p class="destroyed-note">@DestroyedBlurb(g)</p>
+            @if (g.ReplacedByHeroId is { } into)
+            {
+                <a class="btn ghost" style="margin-top:.4rem" href="heroes/@into">→ What rose from it</a>
+            }
+            @if (g.Reason.StartsWith("deathmatch"))
+            {
+                <a class="btn ghost" style="margin-top:.4rem;margin-left:.4rem" href="watch/@g.SessionId">▶ Replay the match</a>
+            }
+        </div>
+    </section>
+
+    <div class="card">
+        <h3>Lineage</h3>
+        <div class="kv">
+            <div><span>generation</span><b>@g.Generation</b></div>
+            @if (g.ParentAId is not null)
+            {
+                <div><span>parent A</span><a href="heroes/@g.ParentAId" class="mono">@Short(g.ParentAId)</a></div>
+            }
+            @if (g.ParentBId is not null)
+            {
+                <div><span>parent B</span><a href="heroes/@g.ParentBId" class="mono">@Short(g.ParentBId)</a></div>
+            }
+            @if (g.ParentAId is null && g.ParentBId is null)
+            {
+                <div><span>origin</span><b>gen-0 starter</b></div>
+            }
+            <div><span>genome</span><code class="mono genome">@g.GenomeHex</code></div>
+        </div>
+    </div>
 }
 else if (_error || _hero is null)
 {
@@ -88,6 +140,121 @@ else
         </div>
     </section>
 
+    @* ── Bids ─────────────────────────────────────────────────────────────
+       The marketplace only ever ran owner → market, so a hero nobody listed had no price and no door.
+       This is that door. Nothing is billed by bidding: the invoice appears only if the owner accepts,
+       so an ignored or refused bid costs the bidder nothing at all. *@
+    @if (State.IsSignedIn && !IsMine(h))
+    {
+        <div class="card">
+            <div class="page-head" style="margin-bottom:.8rem">
+                <h3 style="margin:0">Make an offer</h3>
+                <span class="hud">@h.Name isn't for sale — offer its owner sats for it anyway</span>
+            </div>
+            @if (MyBidOn(h) is { } mine)
+            {
+                <div class="chips" style="margin-bottom:.8rem">
+                    <span class="chip">your bid <b>@mine.BidSats.ToString("N0")</b> sat</span>
+                    <span class="chip @BidChipClass(mine.Status)">@BidStatusLabel(mine)</span>
+                    @if (mine.Status == "accepted" && mine.FeeSats > 0)
+                    {
+                        <span class="chip">owner nets <b>@((mine.BidSats - mine.FeeSats).ToString("N0"))</b> sat</span>
+                    }
+                </div>
+                <p class="muted" style="margin:0 0 .8rem">@BidBlurb(mine, h)</p>
+                <div class="sell-picks">
+                    @if (mine.Status == "proposed")
+                    {
+                        <button class="btn ghost" @onclick="() => DoWithdrawBid(mine.BidId)" disabled="@_bidBusy">Withdraw</button>
+                    }
+                    else if (mine.Status == "accepted")
+                    {
+                        <button class="btn primary" @onclick="() => DoFundBid(mine.BidId)" disabled="@_bidBusy">
+                            @(_bidBusy ? "…" : $"Pay {mine.BidSats:N0} sat & claim")
+                        </button>
+                        <button class="btn ghost" @onclick="() => DoUnwindBid(mine.BidId)" disabled="@_bidBusy"
+                                title="Only works once the delivery window has passed — your sats come straight back.">
+                            Unwind & refund me
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="sell-picks">
+                    @* Per-keystroke binding: the button below is disabled while the amount is empty, and
+                       @bind's default onchange only fires on blur — so a player who types and goes straight
+                       for the button hits a dead one. Same reasoning as the rename field above. *@
+                    <input class="ask-input" type="number" min="1" placeholder="sats" @bind="_bidSats" @bind:event="oninput" />
+                    <button class="btn primary" @onclick="() => DoPlaceBid(h.Id)" disabled="@(_bidBusy || _bidSats <= 0)">
+                        @(_bidBusy ? "…" : "Offer to buy")
+                    </button>
+                </div>
+                <p class="muted" style="margin:.7rem 0 0">
+                    Nothing is charged now. If the owner accepts, you'll be invoiced then — and if they
+                    never deliver, you can unwind the bid and take your sats back.
+                </p>
+            }
+            @if (_bidStatus is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot wait"></span> @_bidStatus</div>
+            }
+            @if (_bidError is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_bidError</div>
+            }
+            @if (_bidDone is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot ok"></span> @_bidDone</div>
+            }
+        </div>
+    }
+    @if (IsMine(h) && IncomingBids(h).Count > 0)
+    {
+        <div class="card">
+            <div class="page-head" style="margin-bottom:.8rem">
+                <h3 style="margin:0">Offers on @h.Name</h3>
+                <span class="hud">someone wants to buy this hero · accepting is what bills them</span>
+            </div>
+            @foreach (var b in IncomingBids(h))
+            {
+                <div class="equip-row">
+                    <div class="equip-meta">
+                        <span class="equip-slot">@BidStatusLabel(b)</span>
+                        <b class="equip-name">@b.BidSats.ToString("N0") sat</b>
+                    </div>
+                    <span class="chip mono">@Short(b.BidderPlayerId)</span>
+                    @if (b.Status == "proposed")
+                    {
+                        <button class="btn primary" @onclick="() => DoAcceptBid(b.BidId)" disabled="@_bidBusy">Accept</button>
+                        <button class="btn ghost" @onclick="() => DoDeclineBid(b.BidId)" disabled="@_bidBusy">Decline</button>
+                    }
+                    else if (b.Status == "accepted")
+                    {
+                        @* One button, not two: the hero is the irreversible leg, so the funded check and the
+                           send are the same action — a "send" that can run against an unpaid bid is a way to
+                           give a hero away for nothing. *@
+                        <button class="btn primary" @onclick="() => DoDeliverBid(b.BidId)" disabled="@_bidBusy">
+                            @(_bidBusy ? "…" : $"Send hero & collect {(b.BidSats - b.FeeSats):N0} sat")
+                        </button>
+                    }
+                </div>
+            }
+            @if (_bidStatus is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot wait"></span> @_bidStatus</div>
+            }
+            @if (_bidError is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot bad"></span> @_bidError</div>
+            }
+            @if (_bidDone is not null)
+            {
+                <div class="status-line" style="margin-top:.6rem"><span class="dot ok"></span> @_bidDone</div>
+            }
+        </div>
+    }
+
     <div class="wallet-grid">
         <div class="card">
             <h3>Stats</h3>
@@ -113,15 +280,15 @@ else
                 <div class="hud" style="margin:.9rem 0 .4rem">build shape · what an opponent's charm keys off</div>
                 <div class="chips">
                     <span class="chip" title="@ShapeBlurb(shape)">shape <b>@(Lower(shape))</b></span>
-                    @foreach (var g in counterGear)
+                    @foreach (var gear in counterGear)
                     {
-                        @if (ShapeOf(g.Counters) is { } countered)
+                        @if (ShapeOf(gear.Counters) is { } countered)
                         {
-                            <span class="chip" title="@(g.Name): stronger against a @(Lower(countered)) build, weaker against a @(Lower(CombatShapes.WeakTo(countered))) one, and neutral otherwise — only the matchup decides.">counters <b>@(Lower(countered))</b></span>
+                            <span class="chip" title="@(gear.Name): stronger against a @(Lower(countered)) build, weaker against a @(Lower(CombatShapes.WeakTo(countered))) one, and neutral otherwise — only the matchup decides.">counters <b>@(Lower(countered))</b></span>
                         }
-                        else if (g.VarianceBonus > 0)
+                        else if (gear.VarianceBonus > 0)
                         {
-                            <span class="chip ghost" title="@(g.Name): a wider, mean-preserving damage roll — it buys no edge at all, only less certainty. Worth bringing as the underdog and leaving at home as the favourite.">wildcard <b>+@(g.VarianceBonus)% roll</b></span>
+                            <span class="chip ghost" title="@(gear.Name): a wider, mean-preserving damage roll — it buys no edge at all, only less certainty. Worth bringing as the underdog and leaving at home as the favourite.">wildcard <b>+@(gear.VarianceBonus)% roll</b></span>
                         }
                     }
                     @* Only claim "none" when the catalog actually loaded — with it missing we do not KNOW. *@
@@ -259,13 +426,16 @@ else
             <h3 style="margin-top:1.2rem">Lineage</h3>
             <div class="kv">
                 <div><span>generation</span><b>@h.Generation</b></div>
+                @* A parent that has since been destroyed is still linked — its headstone is a real page —
+                   but it is NAMED and marked, because "this hero's mother was burned into a fusion" is
+                   lineage, not an error. The name comes off the headstone or not at all. *@
                 @if (h.ParentAId is not null)
                 {
-                    <div><span>parent A</span><a href="heroes/@h.ParentAId" class="mono">@Short(h.ParentAId)</a></div>
+                    <div><span>parent A</span>@ParentLink(h.ParentAId)</div>
                 }
                 @if (h.ParentBId is not null)
                 {
-                    <div><span>parent B</span><a href="heroes/@h.ParentBId" class="mono">@Short(h.ParentBId)</a></div>
+                    <div><span>parent B</span>@ParentLink(h.ParentBId)</div>
                 }
                 @if (h.ParentAId is null && h.ParentBId is null)
                 {
@@ -300,72 +470,6 @@ else
                 <div><span>server seed</span><code class="mono genome">@h.Provenance.ServerSeedHex</code></div>
             }
         </div>
-    </div>
-
-    <div class="card">
-        <div class="page-head" style="margin-bottom:.8rem">
-            <h3 style="margin:0">Provenance</h3>
-            <span class="hud">everything that ever happened to this hero</span>
-        </div>
-        @if (_timelineError is not null)
-        {
-            <div class="status-line"><span class="dot bad"></span> @_timelineError</div>
-        }
-        else if (_timeline is null)
-        {
-            <div class="status-line"><span class="dot wait"></span> reading its history…</div>
-        }
-        else
-        {
-            @if (_timeline.Caveat is not null)
-            {
-                <p class="tl-caveat">@_timeline.Caveat</p>
-            }
-            <ol class="tl">
-                @foreach (var e in _timeline.Events)
-                {
-                    <li class="tl-row tl-@e.Kind">
-                        <span class="tl-mark" title="@e.Kind">@Glyph(e.Kind)</span>
-                        <div class="tl-body">
-                            <div class="tl-line">
-                                <b>@e.Summary</b>
-                                @if (e.Outcome is not null)
-                                {
-                                    <span class="chip @(e.Outcome == "won" ? "ok" : "bad")">@e.Outcome</span>
-                                }
-                                @if (e.Sats > 0)
-                                {
-                                    <span class="chip mono">@e.Sats.ToString("N0") sat</span>
-                                }
-                            </div>
-                            <div class="tl-meta mono">
-                                <span>@When(e.UnixSeconds)</span>
-                                @if (e.Detail is not null)
-                                {
-                                    <span>@e.Detail</span>
-                                }
-                                @foreach (var rel in e.Related)
-                                {
-                                    @if (rel.Name is not null)
-                                    {
-                                        <a href="heroes/@rel.HeroId">@rel.Name</a>
-                                    }
-                                    else
-                                    {
-                                        @* No link: this hero was burned, so there is no page to open. *@
-                                        <span class="tl-gone" title="burned — its record was erased with its on-chain asset">@Short(rel.HeroId) · burned</span>
-                                    }
-                                }
-                                @if (e.WatchMatchId is not null)
-                                {
-                                    <a href="watch/@e.WatchMatchId">replay ↗</a>
-                                }
-                            </div>
-                        </div>
-                    </li>
-                }
-            </ol>
-        }
     </div>
 
     <div class="card">
@@ -415,10 +519,91 @@ else
     </div>
 }
 
+@* The provenance card, shared by the living-hero page and the headstone. A destroyed hero's history is
+   the one a player most wants to read — it is how the death itself is recorded — so it renders for both
+   rather than only where a HeroDto happens to exist. It sits OUTSIDE the branch above for exactly that
+   reason: one card, one place, two callers. *@
+@if (!_loading && (_hero is not null || _grave is not null))
+{
+    <div class="card">
+        <div class="page-head" style="margin-bottom:.8rem">
+            <h3 style="margin:0">Provenance</h3>
+            <span class="hud">everything that ever happened to this hero</span>
+        </div>
+        @if (_timelineError is not null)
+        {
+            <div class="status-line"><span class="dot bad"></span> @_timelineError</div>
+        }
+        else if (_timeline is null)
+        {
+            <div class="status-line"><span class="dot wait"></span> reading its history…</div>
+        }
+        else
+        {
+            @if (_timeline.Caveat is not null)
+            {
+                <p class="tl-caveat">@_timeline.Caveat</p>
+            }
+            <ol class="tl">
+                @foreach (var e in _timeline.Events)
+                {
+                    <li class="tl-row tl-@e.Kind">
+                        <span class="tl-mark" title="@e.Kind">@Glyph(e.Kind)</span>
+                        <div class="tl-body">
+                            <div class="tl-line">
+                                <b>@e.Summary</b>
+                                @if (e.Outcome is not null)
+                                {
+                                    <span class="chip @(e.Outcome == "won" ? "ok" : "bad")">@e.Outcome</span>
+                                }
+                                @if (e.Sats > 0)
+                                {
+                                    <span class="chip mono">@e.Sats.ToString("N0") sat</span>
+                                }
+                            </div>
+                            <div class="tl-meta mono">
+                                <span>@When(e.UnixSeconds)</span>
+                                @if (e.Detail is not null)
+                                {
+                                    <span>@e.Detail</span>
+                                }
+                                @foreach (var rel in e.Related)
+                                {
+                                    @* A destroyed hero still gets a LINK now — its headstone is a real page, and
+                                       "where did it go" is the question this line raises. Only one with no name at
+                                       all (destroyed before headstones existed) stays unlinked: there is genuinely
+                                       nothing on the other end of it. *@
+                                    @if (rel.Destroyed && rel.Name is not null)
+                                    {
+                                        <a href="heroes/@rel.HeroId" class="tl-gone" title="destroyed — this hero no longer exists">@rel.Name · destroyed</a>
+                                    }
+                                    else if (rel.Name is not null)
+                                    {
+                                        <a href="heroes/@rel.HeroId">@rel.Name</a>
+                                    }
+                                    else
+                                    {
+                                        <span class="tl-gone" title="destroyed — its record was erased with its on-chain asset, before headstones were kept">@Short(rel.HeroId) · destroyed</span>
+                                    }
+                                }
+                                @if (e.WatchMatchId is not null)
+                                {
+                                    <a href="watch/@e.WatchMatchId">replay ↗</a>
+                                }
+                            </div>
+                        </div>
+                    </li>
+                }
+            </ol>
+        }
+    </div>
+}
+
 @code {
     [Parameter] public string Id { get; set; } = "";
 
     private HeroDto? _hero;
+    private HeroTombstoneDto? _grave;
     private HeroTimelineDto? _timeline;
     private string? _timelineError;
     private List<ProgressionReceiptDto> _receipts = new();
@@ -439,6 +624,16 @@ else
     private IReadOnlyList<(TraitCategory Category, RarityTier Tier)> _passives = [];
     private bool _gearCounters;
     private CombatShape? _shape;
+    private List<BidDto> _bids = new();
+    private long _bidSats;
+    private bool _bidBusy;
+    private string? _bidStatus;
+    private string? _bidError;
+    private string? _bidDone;
+    // Headstones for heroes this page NAMES but does not show — a burned parent in the lineage block, a
+    // destroyed opponent in the timeline. Fetched per id and cached, because a page can name several and
+    // most heroes are alive (a 404 here is the ordinary answer, not a failure).
+    private readonly Dictionary<string, HeroTombstoneDto?> _graves = new();
 
     protected override void OnInitialized() => State.OnChange += OnState;
 
@@ -446,6 +641,23 @@ else
     {
         _loading = true;
         _error = false;
+        _grave = null;
+        _graves.Clear();
+        // A DESTROYED hero has no row for /heroes/{id} to return, so the whole all-or-nothing load below
+        // would fail and the page would say "couldn't load this hero" about a hero that was permanently
+        // burned in front of its owner. Ask for the headstone FIRST: if there is one, this is a grave, and
+        // the grave branch renders instead. Cheap — a 404 is the ordinary answer for a living hero.
+        try { _grave = await Api.Heroes.TombstoneAsync(Id); }
+        catch { _grave = null; }
+        if (_grave is not null)
+        {
+            _timeline = null;
+            _timelineError = null;
+            try { _timeline = await Api.Heroes.TimelineAsync(Id); }
+            catch { _timelineError = "Couldn't load this hero's history — the rest of the page is unaffected."; }
+            _loading = false;
+            return;
+        }
         try
         {
             // All-or-nothing on purpose — do NOT relax this into independent loads the way
@@ -484,6 +696,11 @@ else
                 try { _catalog = await Api.Items.ShopAsync(); }
                 catch { /* the equip picker is optional chrome */ }
             }
+            await LoadBidsAsync();
+            // Name any DESTROYED parent in the lineage block. Optional chrome: a failure leaves the short
+            // id, which is what the block showed before headstones existed.
+            foreach (var parent in new[] { _hero?.ParentAId, _hero?.ParentBId }.OfType<string>())
+                await LoadGraveAsync(parent);
         }
         catch
         {
@@ -521,7 +738,7 @@ else
         "born" => "✦",
         "bred" or "bred-with" => "❖",
         "fused" or "absorbed" => "⬢",
-        "burned" => "✖",
+        "burned" or "destroyed" => "✖",
         "duel" or "squad" or "spar" => "⚔",
         "deathmatch" => "☠",
         "gauntlet" => "⚑",
@@ -628,4 +845,169 @@ else
     private void OnState() => InvokeAsync(StateHasChanged);
 
     public void Dispose() => State.OnChange -= OnState;
+
+    // ── Destroyed heroes ───────────────────────────────────────────────────
+
+    // Heroes are HARD DELETED when they die, so there is no row to read a name off — the headstone is it.
+    // A living or unknown hero 404s here and caches as null, which is why the miss is not an error.
+    private async Task LoadGraveAsync(string heroId)
+    {
+        if (_graves.ContainsKey(heroId)) return;
+        try { _graves[heroId] = await Api.Heroes.TombstoneAsync(heroId); }
+        catch { _graves[heroId] = null; }
+    }
+
+    // A parent link that tells the truth about a parent that no longer exists. Still a LINK — a headstone
+    // is a real page, and "what happened to it" is precisely the question a burned parent raises.
+    private RenderFragment ParentLink(string heroId) => builder =>
+    {
+        var grave = _graves.GetValueOrDefault(heroId);
+        builder.OpenElement(0, "a");
+        builder.AddAttribute(1, "href", $"heroes/{heroId}");
+        builder.AddAttribute(2, "class", grave is null ? "mono" : "mono tl-gone");
+        if (grave is not null) builder.AddAttribute(3, "title", "destroyed — this hero no longer exists");
+        builder.AddContent(4, grave is null ? Short(heroId) : $"{grave.Name} · destroyed");
+        builder.CloseElement();
+    };
+
+    private static string DestroyedWhen(HeroTombstoneDto g) => When(g.DestroyedAtUnixSeconds);
+
+    // The reason codes, in the arena's own voice. The vocabulary matches what the server writes at the
+    // burn site, so the two can't drift into describing different deaths.
+    private static string DestroyedBlurb(HeroTombstoneDto g) => g.Reason switch
+    {
+        "merge-input" => "Burned as an input to a fusion. Its traits went into the hero that was forged from it; "
+            + "the hero itself is gone, and its on-chain asset was retired with it.",
+        "deathmatch-loser" => "Lost a death-match. Death is permanent here — the loser's hero is burned by the "
+            + "covenant itself, its record erased, and its on-chain asset retired. It cannot be recovered.",
+        "deathmatch-absorb-winner" => "Won its death-match, and was consumed by the absorb that followed. Both "
+            + "heroes were burned to mint the one that rose from them.",
+        "deathmatch-absorb-loser" => "Lost a death-match in absorb mode. Both heroes were burned to mint the one "
+            + "that rose from them.",
+        _ => "Permanently destroyed. Its record was erased and its on-chain asset retired.",
+    };
+
+    // ── Bids ───────────────────────────────────────────────────────────────
+
+    private async Task LoadBidsAsync()
+    {
+        try { _bids = await Api.Bids.ListAsync(); }
+        catch { /* the bid panel is optional chrome — never fail the hero page over it */ }
+    }
+
+    /// <summary>This player's own live bid on this hero, if any. Terminal ones are filtered out: a settled
+    /// or refused bid is history, and showing it as "your bid" would block placing a fresh one.</summary>
+    private BidDto? MyBidOn(HeroDto h) => _bids.FirstOrDefault(b =>
+        b.HeroId == h.Id && b.BidderPlayerId == State.Player?.PlayerId
+        && b.Status is "proposed" or "accepted");
+
+    /// <summary>Live bids from OTHERS on a hero this player owns — the owner's inbox.</summary>
+    private List<BidDto> IncomingBids(HeroDto h) => _bids
+        .Where(b => b.HeroId == h.Id && b.Status is "proposed" or "accepted")
+        .OrderByDescending(b => b.BidSats)
+        .ToList();
+
+    private static string BidStatusLabel(BidDto b) => b.Status switch
+    {
+        "proposed" => "awaiting the owner",
+        "accepted" => "accepted · awaiting delivery",
+        "settled" => "settled",
+        "refunded" => "unwound · refunded",
+        "declined" => "declined",
+        "withdrawn" => "withdrawn",
+        _ => b.Status,
+    };
+
+    private static string BidChipClass(string status) => status switch
+    {
+        "accepted" or "settled" => "ok",
+        "declined" or "withdrawn" or "refunded" => "bad",
+        _ => "",
+    };
+
+    private static string BidBlurb(BidDto b, HeroDto h) => b.Status switch
+    {
+        "proposed" => $"{h.Name}'s owner hasn't answered yet. You have been charged nothing — an offer is not a payment.",
+        "accepted" => "Accepted. Pay the bid and the hero is yours once its owner sends it; if they never do, "
+            + "unwind the bid after its delivery window and every sat comes back to you.",
+        _ => "",
+    };
+
+    private async Task DoPlaceBid(string heroId)
+    {
+        _bidBusy = true; _bidError = null; _bidDone = null;
+        try
+        {
+            await Api.Bids.PlaceAsync(new PlaceBidRequest(heroId, _bidSats));
+            _bidDone = "Offer sent. Nothing has been charged — you'll be invoiced only if the owner accepts.";
+            _bidSats = 0;
+            await LoadBidsAsync();
+        }
+        catch (Exception ex) { _bidError = ex.Message; }
+        finally { _bidBusy = false; _bidStatus = null; }
+    }
+
+    private async Task DoWithdrawBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            await Api.Bids.WithdrawAsync(bidId);
+            return "Offer withdrawn.";
+        });
+
+    private async Task DoAcceptBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            var accepted = await Api.Bids.AcceptAsync(bidId);
+            return $"Accepted — the bidder has been invoiced {accepted.Bid.BidSats:N0} sat. "
+                 + $"Send the hero once it reads funded and you'll collect {accepted.SellerNetSats:N0} sat.";
+        });
+
+    private async Task DoDeclineBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            await Api.Bids.DeclineAsync(bidId);
+            return "Offer declined. Nothing was billed.";
+        });
+
+    private async Task DoFundBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            var hero = await Session.FundBidAsync(bidId, s => { _bidStatus = s; StateHasChanged(); });
+            return hero is null
+                ? "Paid. Waiting for the owner to send the hero — your sats are recoverable if they never do."
+                : $"{hero.Name} is yours.";
+        });
+
+    private async Task DoDeliverBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            var hero = await Session.DeliverBidHeroAsync(bidId, s => { _bidStatus = s; StateHasChanged(); });
+            return $"{hero.Name} was delivered and you've been paid.";
+        });
+
+    private async Task DoUnwindBid(string bidId) =>
+        await BidActionAsync(async () =>
+        {
+            var res = await Api.Bids.RefundAsync(bidId);
+            return res.RefundedSats > 0
+                ? $"Unwound — {res.RefundedSats:N0} sat is on its way back to you."
+                : "Unwound. Nothing had been paid, so there was nothing to return.";
+        });
+
+    // One busy/error/reload wrapper for every bid action: they all change what the page must show next
+    // (a bid's state, and possibly the hero's owner), so all of them re-read rather than patch locally.
+    private async Task BidActionAsync(Func<Task<string>> action)
+    {
+        _bidBusy = true; _bidError = null; _bidDone = null;
+        try { _bidDone = await action(); }
+        catch (Exception ex) { _bidError = ex.Message; }
+        finally
+        {
+            _bidStatus = null;
+            _bidBusy = false;
+            await LoadBidsAsync();
+            // A settle moves the hero itself, so the page's own subject may have changed hands.
+            try { _hero = await Api.Heroes.GetAsync(Id); } catch { /* leave what we have */ }
+        }
+    }
 }

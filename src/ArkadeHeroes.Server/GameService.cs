@@ -335,7 +335,12 @@ public class GameService(
     /// </summary>
     public Shared.HeroTimelineDto HeroTimeline(string heroId)
     {
-        var hero = GetHero(heroId);   // unknown hero → the endpoint's 404
+        // A DESTROYED hero still has a history, and it is the history that matters most: this is the page a
+        // player lands on after a death-match. Its row is erased, so the headstone stands in for it — the
+        // one thing that survives the burn. Only an id nothing has ever heard of is a 404.
+        var hero = store.Heroes.GetValueOrDefault(heroId);
+        var grave = hero is null ? store.HeroTombstones.GetValueOrDefault(heroId) : null;
+        if (hero is null && grave is null) throw new GameRuleException($"Unknown hero '{heroId}'.");
         var events = new List<Shared.HeroTimelineEventDto>();
 
         // Copy under the SAME lock IssueReceipt appends beneath: the value is a plain List, so enumerating
@@ -353,7 +358,24 @@ public class GameService(
             if (BuildFightEvent(r, heroId) is { } e) events.Add(e);
         }
 
-        events.Add(BirthEvent(hero, birth));
+        // Read the identity facts from whichever record exists, EXPLICITLY. `hero?.ParentAId ?? grave!.…`
+        // would look equivalent and throw on every gen-0 starter: its ParentAId is legitimately null, so
+        // the `??` falls through to the headstone that a living hero does not have.
+        var generation = hero is not null ? hero.Generation : grave!.Generation;
+        var parentAId = hero is not null ? hero.ParentAId : grave!.ParentAId;
+        var parentBId = hero is not null ? hero.ParentBId : grave!.ParentBId;
+        events.Add(BirthEvent(generation, parentAId, parentBId, birth));
+
+        // The DEATH, from the headstone rather than from a receipt. The receipt ledger already renders a
+        // "burned" line for a fusion or an absorb, but it is in memory and a classic death-match loser never
+        // gets one on its OWN page at all (the receipt names the winner as the result). This is the durable
+        // fact, and it is the one thing a destroyed hero's page must not be able to omit.
+        if (grave is not null)
+            events.Add(new Shared.HeroTimelineEventDto("destroyed", grave.DestroyedAtUnixSeconds,
+                DestructionSummary(grave), DestructionRelated(grave),
+                WatchMatchId: grave.Reason.StartsWith("deathmatch", StringComparison.Ordinal) ? grave.SessionId : null,
+                Outcome: "lost",
+                Detail: $"level {grave.Level} at the time · this hero no longer exists"));
 
         foreach (var sale in store.HeroSales.Values.Where(s => s.HeroId == heroId))
         {
@@ -392,7 +414,8 @@ public class GameService(
     /// back to the durable lineage columns, which know the parents but NOT when: nothing in the system
     /// stamps a hero with its birth time, so the event carries 0 and the page says the moment is unknown
     /// instead of printing the epoch.</summary>
-    private Shared.HeroTimelineEventDto BirthEvent(Hero hero, Shared.ProgressionReceiptDto? birth)
+    private Shared.HeroTimelineEventDto BirthEvent(
+        int generation, string? parentAId, string? parentBId, Shared.ProgressionReceiptDto? birth)
     {
         var at = birth?.UnixSeconds ?? 0;
         if (birth is { Type: "merge" })
@@ -412,20 +435,39 @@ public class GameService(
             return new Shared.HeroTimelineEventDto("bred", at,
                 $"Bred from {Display(birth.HeroAId)} and {Display(birth.HeroBId)}.",
                 [Ref(birth.HeroAId), Ref(birth.HeroBId)],
-                Detail: $"generation {hero.Generation}");
+                Detail: $"generation {generation}");
 
         // No birth receipt. The lineage columns are durable, so they still answer WHAT — just not when.
-        if (hero.ParentAId is { } pa && hero.ParentBId is { } pb)
+        if (parentAId is { } pa && parentBId is { } pb)
             return new Shared.HeroTimelineEventDto("bred", 0,
                 $"Descended from {Display(pa)} and {Display(pb)}.",
                 [Ref(pa), Ref(pb)],
-                Detail: $"generation {hero.Generation} · the moment was not recorded");
+                Detail: $"generation {generation} · the moment was not recorded");
 
         return new Shared.HeroTimelineEventDto("born", 0,
             "Recruited into the arena as a gen-0 founder.",
             [],
             Detail: "no parents — the moment was not recorded");
     }
+
+    /// <summary>The player-facing line for a destruction, in the vocabulary the reason codes carry.</summary>
+    private string DestructionSummary(HeroTombstone grave) => grave.Reason switch
+    {
+        "merge-input" => grave.ReplacedByHeroId is { } into
+            ? $"Burned as a fusion input — {Display(into)} was forged from it."
+            : "Burned as a fusion input.",
+        "deathmatch-absorb-winner" => grave.ReplacedByHeroId is { } into
+            ? $"Won its death-match and was consumed by the absorb — {Display(into)} rose from it."
+            : "Won its death-match and was consumed by the absorb.",
+        "deathmatch-absorb-loser" => grave.ReplacedByHeroId is { } into
+            ? $"Lost a death-match and was burned into the absorb — {Display(into)} rose from it."
+            : "Lost a death-match and was burned into the absorb.",
+        "deathmatch-loser" => "Lost a death-match and was permanently destroyed.",
+        _ => "Permanently destroyed.",
+    };
+
+    private Shared.TimelineHeroRefDto[] DestructionRelated(HeroTombstone grave) =>
+        grave.ReplacedByHeroId is { } into ? [Ref(into)] : [];
 
     /// <summary>One non-birth receipt as a timeline line, or null when it names this hero only in a role
     /// the hero's own page has nothing to say about.</summary>
@@ -516,21 +558,59 @@ public class GameService(
     private static string? XpDetail(long swing) =>
         swing == 0 ? null : swing > 0 ? $"+{swing:N0} xp" : $"{swing:N0} xp";
 
-    /// <summary>A hero reference for the wire: its id always, its name only when it still exists. A hero
-    /// burned in a fusion or a death-match has had its record erased, so a null name is the truth about it
-    /// rather than a lookup that failed.</summary>
+    /// <summary>
+    /// A hero reference for the wire: its id always, its name whenever anything can still stand behind one,
+    /// and whether it is DESTROYED.
+    ///
+    /// <para>Name and Destroyed are independent on purpose. A live hero is named and not destroyed; a
+    /// destroyed hero with a headstone is named AND destroyed; a destroyed hero from before headstones
+    /// existed is destroyed with no name at all. Encoding "gone" as a null name — as this used to — made
+    /// the third case indistinguishable from the second and left the page unable to say who died.</para>
+    /// </summary>
     private Shared.TimelineHeroRefDto Ref(string heroId) =>
-        new(heroId, store.Heroes.TryGetValue(heroId, out var h) ? h.Name : null);
+        store.Heroes.TryGetValue(heroId, out var h) ? new(heroId, h.Name)
+        : store.HeroTombstones.TryGetValue(heroId, out var stone) ? new(heroId, stone.Name, true)
+        : new(heroId, null, true);
 
-    /// <summary>How a hero reads inside a summary line: its name while it exists, and a shortened id once
-    /// it doesn't. Never a placeholder name — a burned hero's name is gone, and inventing one would put a
-    /// fact on the page that nothing in the system can stand behind.</summary>
+    /// <summary>How a hero reads inside a summary line: its name while it exists, its name and its fate once
+    /// it doesn't, and a shortened id when even that is gone. Still never a placeholder — a name here comes
+    /// off a headstone written at the burn site, or it is not printed.</summary>
     private string Display(string heroId) =>
         string.IsNullOrEmpty(heroId) ? "an unrecorded hero"
         : store.Heroes.TryGetValue(heroId, out var h) ? h.Name
-        : $"a burned hero ({Short(heroId)})";
+        : store.HeroTombstones.TryGetValue(heroId, out var stone) ? $"{stone.Name} (destroyed)"
+        : $"a destroyed hero ({Short(heroId)})";
 
     private static string Short(string id) => id.Length <= 12 ? id : $"{id[..6]}…{id[^4..]}";
+
+    /// <summary>
+    /// Lays a headstone for a hero about to be erased — the ONE call every burn site makes before removing
+    /// the hero, and the only reason a destroyed hero can be named afterwards at all.
+    ///
+    /// <para>Best-effort on the durable write, like the audit log and for the same reason: this sits inside
+    /// merge and death-match settles whose chain work is already done, and a throw here would abort a flow
+    /// that has burned assets on-chain. The in-memory row lands regardless, so the running process can
+    /// always name the hero; only a RESTART would lose it, and losing it costs a name on a page, never
+    /// money. Named at warning so a persistent fault leaves a greppable trail.</para>
+    /// </summary>
+    private async Task RecordTombstoneAsync(
+        Hero hero, string reason, string sessionId, string? replacedByHeroId, CancellationToken ct)
+    {
+        var stone = new HeroTombstone(
+            hero.Id, hero.Name, hero.OwnerId, hero.Generation, hero.Level, hero.Genome.ToHex(),
+            reason, sessionId, replacedByHeroId, DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            hero.ParentAId, hero.ParentBId);
+        // TryAdd semantics: a hero dies once, so a retried settle re-running this tail keeps the FIRST
+        // headstone, which is the one written while the hero was still whole.
+        if (store.RecordTombstone(stone) is not { } fresh) return;
+        try { await persistence.SaveHeroTombstoneAsync(fresh, ct); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Hero {HeroId} ({HeroName}) was destroyed ({Reason}) but its headstone "
+                + "could not be persisted — after a restart nothing will be able to name it.",
+                hero.Id, hero.Name, reason);
+        }
+    }
 
     // ── Unique-name registry: claim a custom, globally-unique hero name (a treasury sats sink) ──
 
@@ -798,6 +878,9 @@ public class GameService(
             // holding the proposer's paid fees, which is exactly what an operator wants counted.
             new("stud", store.StudProposals.Values.Count(s => !s.Completed && !s.Declined), store.StudProposals.Count),
             new("merge", store.Merges.Values.Count(m => !m.Completed), store.Merges.Count),
+            // Same ruling as stud: a bid is in play until it settles or unwinds, and an ACCEPTED one may be
+            // holding the bidder's paid sats waiting on a hero that was never delivered.
+            new("bid", store.HeroBids.Values.Count(b => b.IsLive), store.HeroBids.Count),
         };
 
         // Brackets, unfinished ones first — those are the only ones a refund can ever apply to, and the
@@ -2024,6 +2107,10 @@ public class GameService(
         // Both inputs are consumed: drop their server-side records (their assets are
         // on-chain-retired to the treasury by ExecuteMergeAsync) — and their durable rows with them,
         // or a restart resurrects two heroes whose assets no longer exist.
+        // The headstone goes down FIRST, while both heroes are still in hand to be read: after the removal
+        // below there is nothing left to name them with.
+        await RecordTombstoneAsync(baseHero, "merge-input", session.Id, fused.Id, ct);
+        await RecordTombstoneAsync(sacrificeHero, "merge-input", session.Id, fused.Id, ct);
         store.Heroes.TryRemove(session.BaseId, out _);
         store.Heroes.TryRemove(session.SacrificeId, out _);
         store.RecordBurn(); store.RecordBurn();
@@ -2258,6 +2345,9 @@ public class GameService(
                 // inside the identity event rather than let a crash rehydrate the evolution nameless at level 1.
                 await persistence.SaveHeroAsync(absorbed, ct);
                 // BOTH input heroes are burned on-chain — drop their server records and their durable rows.
+                // Headstones first, while both are still readable (see the merge burn).
+                await RecordTombstoneAsync(winner, "deathmatch-absorb-winner", session.Id, absorbed.Id, ct);
+                await RecordTombstoneAsync(loser, "deathmatch-absorb-loser", session.Id, absorbed.Id, ct);
                 store.Heroes.TryRemove(winner.Id, out _);
                 store.Heroes.TryRemove(loser.Id, out _);
                 store.RecordBurn(); store.RecordBurn();
@@ -2306,6 +2396,9 @@ public class GameService(
 
         session.Completed = true;
         session.WinnerHeroId = result.WinnerId;
+        // The headstone first, while the loser is still readable (see the merge burn) — nothing is
+        // replacedBy here: a classic death-match loser simply ends.
+        await RecordTombstoneAsync(loser, "deathmatch-loser", session.Id, null, ct);
         store.Heroes.TryRemove(loser.Id, out _);
         store.RecordBurn();
         // The loser is burned on-chain — erase its durable row too, or a restart resurrects it.
@@ -3735,6 +3828,26 @@ public class GameService(
                     p.RefundAfterUnixSeconds));
             }
 
+        // An accepted BID is the one row here that is not a covenant escrow: the bidder's sats sit in the
+        // treasury under an invoice, and POST /api/bids/{id}/refund is what recovers them rather than a
+        // reclaim leaf. It belongs on this list anyway, because it is the same question the page exists to
+        // answer — "something of mine is tied up with no way forward, when can I get it back?" — and a
+        // player should not have to know which mechanism holds their sats to find them.
+        //
+        // Listed for BOTH parties: the bidder needs their money back, and the owner needs the hero freed
+        // from a funded bidder who went quiet. Only past acceptance, because nothing is billed before it.
+        foreach (var bid in store.HeroBids.Values
+                     .Where(b => b.Accepted && b.IsLive && !b.SellerPaid
+                                 && (b.BidderPlayerId == player.Id || b.OwnerPlayerId == player.Id)).ToList())
+        {
+            var name = store.Heroes.TryGetValue(bid.HeroId, out var h) ? h.Name : "a hero";
+            items.Add(new Shared.ReclaimableDto("bid", bid.Id,
+                bid.BidderPlayerId == player.Id
+                    ? $"An accepted bid on {name} — your {bid.BidSats} sats are held against a hero that hasn't arrived."
+                    : $"An accepted bid on {name} — unwind it to free the hero if the bidder has gone quiet.",
+                bid.ReclaimAfterUnixSeconds));
+        }
+
         // Soonest-unlockable first, tie-broken on the unique id so the order is total (see #113).
         return items.OrderBy(i => i.ReclaimAfterUnixSeconds)
             .ThenBy(i => i.Id, StringComparer.Ordinal).ToList();
@@ -3863,4 +3976,418 @@ public class GameService(
             $"offer-closed:{offer.Id}");
         return hero;
     }
+
+    // ── Bids: buy a hero that is NOT for sale (propose → the owner CONSENTS → deliver → settle) ──
+    //
+    // The marketplace only ever ran one way: an owner lists, a buyer fulfils. A hero nobody has listed had no
+    // price and no door. This is that door, and it is shaped exactly like the stud service — propose →
+    // accept → the value moves — because it needs the same thing: a counterparty who owns the asset and has
+    // to say yes. NOTHING IS BILLED UNTIL THE OWNER ACCEPTS, so a bid that is ignored or refused costs the
+    // bidder not one sat, because no invoice ever existed to pay.
+    //
+    // Where it must differ from stud is the tail. A stud reveal is executed BY THE SERVER, so an accepted
+    // proposal always completes. A hero moves only by its owner's own wallet (the non-custodial mandate —
+    // see ConfirmTransferAsync), so an accepted bid can be funded and then simply never honoured. That is
+    // the one way this flow can strand real sats, and RefundBidAsync is its exit: past a timelock window,
+    // either party unwinds the bid and the money goes home.
+
+    /// <summary>
+    /// Bids on ANOTHER player's hero. Nothing is billed and nothing moves: this is an offer, and its
+    /// counterparty has not agreed to anything yet.
+    /// </summary>
+    public async Task<HeroBid> ProposeBidAsync(Player player, string heroId, long bidSats, CancellationToken ct)
+    {
+        RequireAcceptedTerms(player);
+        var hero = GetHero(heroId);
+        // The whole point of the flow: the hero belongs to someone else. Bidding on your own would route a
+        // payment to yourself through a treasury that takes a cut of it.
+        if (hero.OwnerId == player.Id)
+            throw new GameRuleException("You already own this hero.");
+        // Priced through the SAME knob a listing's ask is, and refused on the same boundary — an amount at
+        // or below the fee would net the owner nothing or less, and no honest sale looks like that.
+        var fee = MarketplaceFeeFor(bidSats, hero.Name);
+
+        var live = store.HeroBids.Values.Where(b => b.IsLive).ToList();
+        if (live.Any(b => b.BidderPlayerId == player.Id && b.HeroId == heroId))
+            throw new GameRuleException($"You already have a live bid on {hero.Name} — withdraw it first to bid again.");
+        var cap = _options.MaxOpenBidsPerPlayer;
+        if (cap > 0 && live.Count(b => b.BidderPlayerId == player.Id) >= cap)
+            throw new GameRuleException($"You already have {cap} live bids — settle or withdraw one before bidding again.");
+
+        var bid = new HeroBid
+        {
+            Id = NewId("bid"),
+            BidderPlayerId = player.Id,
+            // Pinned, like a stud's owner: a hero sold on before the bid is answered has an owner who was
+            // never offered anything, and AcceptBidAsync re-checks that this is still who holds it.
+            OwnerPlayerId = hero.OwnerId,
+            HeroId = heroId,
+            BidSats = bidSats,
+        };
+        store.HeroBids[bid.Id] = bid;
+        // Durable at PROPOSAL even though nothing is owed yet: the owner may accept against this row minutes
+        // later, and the accept is what creates the invoice. A bid lost across a restart is an offer the
+        // owner answered that nothing can name.
+        await persistence.SaveHeroBidAsync(bid, ct);
+        await AuditAsync(Persistence.AuditEventType.BidPlaced, player.Id, [bid.Id, heroId, hero.OwnerId],
+            new
+            {
+                bidId = bid.Id, heroId, heroName = hero.Name, ownerPlayerId = hero.OwnerId,
+                bidSats, projectedFeeSats = fee,
+            },
+            $"bid-placed:{bid.Id}");
+        return bid;
+    }
+
+    /// <summary>
+    /// The owner's CONSENT — the gate the whole flow hangs on, and the only place the invoice is created.
+    /// Before this returns the bidder has been billed nothing; after it, they may fund the bid and the owner
+    /// may deliver the hero.
+    /// </summary>
+    public async Task<(HeroBid Bid, FeeInvoice Invoice)> AcceptBidAsync(
+        Player player, string bidId, CancellationToken ct)
+    {
+        RequireAcceptedTerms(player);
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        // Per-bid gate: the accepted-check → invoice → accepted-set must be one atomic step, or two
+        // concurrent accepts of one bid bill the bidder twice. The SAME key settle and refund take, so an
+        // accept can never interleave with the settle it authorises.
+        using var gate = await store.LockAsync($"bid:{bidId}", ct);
+        if (bid.OwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this hero's owner can accept a bid on it.");
+        if (bid.Accepted) throw new GameRuleException("This bid is already accepted.");
+        if (bid.Declined) throw new GameRuleException("This bid was already declined.");
+        if (bid.Withdrawn) throw new GameRuleException("This bid was withdrawn by its bidder.");
+        // Consent has to come from whoever owns the hero NOW — one sold since the bid was made took its
+        // owner's say-so with it (the stud flow's rule, for the same reason).
+        var hero = GetOwnedHero(player, bid.HeroId);
+        if (string.IsNullOrEmpty(hero.AssetId))
+            throw new GameRuleException($"{hero.Name} has no on-chain asset, so it cannot be sold.");
+        // A hero resting in a live listing is ALREADY escrowed in an offer covenant — its owner cannot hand
+        // it to a bidder as well, and accepting would promise the same hero to two buyers.
+        if (store.Offers.Values.Any(o => o.Kind == "hero" && o.HeroId == bid.HeroId && o.Status is "pending" or "active"))
+            throw new GameRuleException($"{hero.Name} is listed for sale — cancel the listing before accepting a bid.");
+        // One live acceptance per hero, for the same reason: a second accepted bid would be a second
+        // funded claim on one hero. The outstanding one has to resolve first — settled, or refunded past
+        // its window, which either party can trigger.
+        if (store.HeroBids.Values.Any(b => b.Id != bid.Id && b.HeroId == bid.HeroId && b.Accepted && b.IsLive))
+            throw new GameRuleException(
+                $"Another bid on {hero.Name} is already accepted and awaiting delivery — settle or unwind it first.");
+
+        // Priced at CONSENT, off the same knob a listing uses: it is this moment, not the bid, that the sale
+        // is authorised at. Re-checked here because the fee is configurable and may have moved since.
+        var fee = MarketplaceFeeFor(bid.BidSats, hero.Name);
+        var invoice = await chain.CreateFeeInvoiceAsync($"bid:{bid.Id}", bid.BidSats, ct);
+        bid.FeeSats = fee;
+        bid.BidInvoiceId = invoice.InvoiceId;
+        bid.Accepted = true;
+        // The bidder's exit, stamped now: past this the sats they are about to send can always come home,
+        // however the owner behaves. A SERVER-clock window (these sats rest in the treasury under an
+        // invoice, not behind a covenant reclaim leaf) — but the same duration the escrow refunds use, and
+        // surfaced through the same ReclaimWindow vocabulary, so a player reads one kind of wait.
+        bid.ReclaimAfterUnixSeconds = DateTimeOffset.UtcNow.Add(_options.WagerEscrowRefundAfter).ToUnixTimeSeconds();
+        // Durable NOW, before the bidder is handed anything to pay: the invoice id is the only link between
+        // sats about to leave a wallet and the consent that justified them, and ReclaimAfter is the only
+        // thing that can bring them back.
+        await persistence.SaveHeroBidAsync(bid, ct);
+        // THE CONSENT. Who agreed, to what, at what price, and which invoice that agreement created.
+        await AuditAsync(Persistence.AuditEventType.BidAccepted, player.Id,
+            [bid.Id, bid.HeroId, bid.BidderPlayerId],
+            new
+            {
+                bidId = bid.Id, heroId = bid.HeroId, heroName = hero.Name,
+                bidderPlayerId = bid.BidderPlayerId, ownerPlayerId = bid.OwnerPlayerId,
+                bidSats = bid.BidSats, feeSats = fee, sellerNetSats = bid.BidSats - fee,
+                bidInvoiceId = invoice.InvoiceId, reclaimAfterUnixSeconds = bid.ReclaimAfterUnixSeconds,
+            },
+            $"bid-accepted:{bid.Id}");
+        return (bid, invoice);
+    }
+
+    /// <summary>
+    /// What an accepted bid bills, plus whether it is FUNDED yet. Either party may read it; neither is
+    /// billed by looking. The accept response lands in the OWNER's browser while the sats are the BIDDER's
+    /// to send, so without this the side that owes the money has no way to learn what it is — and the owner
+    /// has no way to learn it arrived, which is the fact they must not deliver the hero without.
+    /// </summary>
+    public async Task<(HeroBid Bid, FeeInvoice Invoice, bool Funded)> GetBidInvoiceAsync(
+        Player player, string bidId, CancellationToken ct)
+    {
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        if (bid.BidderPlayerId != player.Id && bid.OwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this bid's parties can see its invoice.");
+        // Nothing is billed before consent, so there is nothing to show — and saying so plainly is the
+        // point: an un-accepted bid has no price yet.
+        if (!bid.Accepted)
+            throw new GameRuleException("This hero's owner hasn't accepted the bid yet — nothing is billed until they do.");
+        var invoice = await chain.GetFeeInvoiceAsync(bid.BidInvoiceId!, ct)
+            ?? throw new GameRuleException("This bid's invoice is no longer available.");
+        return (bid, invoice, await chain.IsInvoicePaidAsync(bid.BidInvoiceId!, ct));
+    }
+
+    /// <summary>The owner's refusal — terminal, and the counterpart to <see cref="AcceptBidAsync"/>. Nothing
+    /// to unwind: a declined bid was never billed.</summary>
+    public async Task<HeroBid> DeclineBidAsync(Player player, string bidId, CancellationToken ct)
+    {
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        using var gate = await store.LockAsync($"bid:{bidId}", ct);
+        if (bid.OwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this hero's owner can decline a bid on it.");
+        if (bid.Settled) throw new GameRuleException("This bid is already settled.");
+        if (bid.Withdrawn) throw new GameRuleException("This bid was withdrawn by its bidder.");
+        // An acceptance has already created an invoice the bidder may have paid, and may have been
+        // delivered against — it is not the owner's to take back unilaterally. The reclaim window is the
+        // exit from an accepted bid, and it refunds rather than merely cancelling.
+        if (bid.Accepted) throw new GameRuleException(
+            "This bid is already accepted — it can only be settled, or unwound after its reclaim window.");
+        bid.Declined = true;
+        await persistence.SaveHeroBidAsync(bid, ct);
+        await AuditAsync(Persistence.AuditEventType.BidDeclined, player.Id,
+            [bid.Id, bid.HeroId, bid.BidderPlayerId],
+            new
+            {
+                bidId = bid.Id, heroId = bid.HeroId, bidderPlayerId = bid.BidderPlayerId,
+                ownerPlayerId = bid.OwnerPlayerId, bidSats = bid.BidSats,
+            },
+            $"bid-declined:{bid.Id}");
+        return bid;
+    }
+
+    /// <summary>The bidder's retraction — the mirror of a decline, and shut for the mirror reason once the
+    /// owner has consented. Nothing to unwind: an un-accepted bid was never billed.</summary>
+    public async Task<HeroBid> WithdrawBidAsync(Player player, string bidId, CancellationToken ct)
+    {
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        using var gate = await store.LockAsync($"bid:{bidId}", ct);
+        if (bid.BidderPlayerId != player.Id)
+            throw new GameRuleException("Only the bidder can withdraw this bid.");
+        if (bid.Settled) throw new GameRuleException("This bid is already settled.");
+        if (bid.Declined) throw new GameRuleException("This bid was already declined.");
+        // The owner may have consented and shipped the hero on the strength of it. Yanking the offer from
+        // under a delivery in flight is exactly what the reclaim window exists to replace.
+        if (bid.Accepted) throw new GameRuleException(
+            "This hero's owner has already accepted — pay and settle, or unwind after the reclaim window.");
+        bid.Withdrawn = true;
+        await persistence.SaveHeroBidAsync(bid, ct);
+        await AuditAsync(Persistence.AuditEventType.BidWithdrawn, player.Id,
+            [bid.Id, bid.HeroId, bid.OwnerPlayerId],
+            new
+            {
+                bidId = bid.Id, heroId = bid.HeroId, bidderPlayerId = bid.BidderPlayerId,
+                ownerPlayerId = bid.OwnerPlayerId, bidSats = bid.BidSats,
+            },
+            $"bid-withdrawn:{bid.Id}");
+        return bid;
+    }
+
+    /// <summary>
+    /// Closes an accepted, funded, DELIVERED bid: the owner is paid, and the hero's record follows the asset
+    /// to the bidder. Callable by either party — both have every reason to want it run, and letting one side
+    /// alone hold the trigger would let them hold the other's money or hero hostage by going quiet.
+    /// </summary>
+    public async Task<Hero> SettleBidAsync(Player player, string bidId, CancellationToken ct)
+    {
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        if (bid.BidderPlayerId != player.Id && bid.OwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this bid's parties can settle it.");
+        // Per-bid gate: consent-check → paid-check → payout → transfer → settled-set must be one atomic
+        // step, or two concurrent settles of one bid both pass the guards and pay the owner twice. The SAME
+        // key accept and refund take, so a settle can never interleave with the refund that would undo it.
+        using var gate = await store.LockAsync($"bid:{bidId}", ct);
+
+        // ── THE CONSENT GATE ──────────────────────────────────────────────
+        // Everything below this line moves a hero out of someone's roster and sats out of the treasury.
+        // None of it may happen on the bidder's say-so alone.
+        if (!bid.Accepted)
+            throw new GameRuleException("This hero's owner hasn't accepted this bid yet.");
+        if (bid.Declined) throw new GameRuleException("This bid was declined.");
+        if (bid.Withdrawn) throw new GameRuleException("This bid was withdrawn.");
+        if (bid.Refunded) throw new GameRuleException("This bid was already unwound and the bidder refunded.");
+        // One acceptance buys one hero: the latch is what stops a paid consent being replayed for a second
+        // payout out of a treasury that cannot print.
+        if (bid.Settled) throw new GameRuleException("This bid is already settled.");
+
+        if (!await chain.IsInvoicePaidAsync(bid.BidInvoiceId!, ct))
+            throw new GameRuleException("The bid invoice has not been paid yet — pay it from your wallet, then settle.");
+
+        var hero = GetHero(bid.HeroId);
+        // Non-custodial: the owner's own wallet performs the asset spend. We only verify the chain now shows
+        // the BIDDER holding it — the same proof ClaimPurchasedHeroAsync and ConfirmTransferAsync demand,
+        // and the only evidence that the owner actually honoured the bid.
+        if (!await chain.VerifyHeroOwnershipAsync(bid.BidderPlayerId, hero.AssetId ?? hero.Id, ct))
+            throw new GameRuleException(
+                "The chain does not show the bidder holding this hero yet — the owner must send the hero asset from their wallet first.");
+
+        // The bid is now in the treasury (a paid Receive invoice) — tally it, deduped by invoice id. It is
+        // booked as income here and as an outflow again below: it really does land in the treasury before
+        // it is forwarded, and a ledger that showed only the payout would read as a gift.
+        await store.RecordInflowAsync(bid.BidInvoiceId!, "bid", bid.BidSats, ct);
+
+        // The owner's proceeds are REAL BITCOIN owed to another player, so they move BEFORE the hero record
+        // does and behind their own durable latch (the stud-fee pattern): consume the latch first, then pay.
+        // Paying after the transfer would leave the one ordering where a fault strands the seller unpaid
+        // with the hero already gone — and latching after the payout would let a crash in between pay twice.
+        var proceeds = bid.BidSats - bid.FeeSats;
+        if (proceeds > 0 && !bid.SellerPaid)
+        {
+            bid.SellerPaid = true;
+            await persistence.SaveHeroBidAsync(bid, ct);
+            try
+            {
+                await chain.PayoutAsync(bid.OwnerPlayerId, proceeds, $"bid:{bid.Id}", ct);
+                await store.RecordOutflowAsync("bid", proceeds, ct);
+            }
+            catch
+            {
+                // A cleanly failed payout releases the latch IN MEMORY ONLY, so the settle can be retried in
+                // this process. Never re-persist the release: if the payout actually settled before
+                // throwing, the durable latch is the one thing keeping a restart from paying it twice.
+                bid.SellerPaid = false;
+                throw;
+            }
+        }
+
+        // Item assets stay in the seller's wallet, so the loadout can't travel — the transfer rule.
+        var sellerId = bid.OwnerPlayerId;
+        var strippedGear = hero.Equipment.Slots.Values.ToList();
+        foreach (var slot in hero.Equipment.Slots.Keys.ToList())
+            hero.Equipment.Unequip(slot);
+        hero.OwnerId = bid.BidderPlayerId;
+        // TRANSFER is an identity event: the buyer's ownership goes durable now, not at the next flush.
+        await persistence.SaveHeroAsync(hero, ct);
+        bid.Settled = true;
+        await persistence.SaveHeroBidAsync(bid, ct);
+
+        // The same sale, kept as history, under the bid that settled it — the marketplace row a hero's page
+        // reads. Both parties are known here (unlike a listing proven only by the covenant's treasury leg),
+        // so the buyer is never null on a bid.
+        var sale = new HeroSale(bid.Id, hero.Id, sellerId, bid.BidderPlayerId,
+            bid.BidSats, bid.FeeSats, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (store.RecordHeroSale(sale) is { } toPersist)
+        {
+            try { await persistence.SaveHeroSaleAsync(toPersist, ct); }
+            catch (Exception ex)
+            {
+                // History, not money: the sats have moved and the hero has changed hands durably above.
+                // Losing this row costs a line on a page, so it is named and absorbed rather than thrown.
+                logger?.LogWarning(ex, "Hero {HeroId} sold for {Sats} sat under bid {BidId}, but the sale "
+                    + "row could not be persisted — its price will be missing from the hero's history.",
+                    hero.Id, bid.BidSats, bid.Id);
+            }
+        }
+
+        await AuditAsync(Persistence.AuditEventType.HeroTransferred, bid.BidderPlayerId,
+            [hero.Id, sellerId, bid.Id],
+            new
+            {
+                heroId = hero.Id, fromPlayerId = sellerId, toPlayerId = bid.BidderPlayerId,
+                assetId = hero.AssetId, strippedGear, reason = "bid-settled", bidId = bid.Id,
+                salePriceSats = bid.BidSats,
+            });
+        await AuditAsync(Persistence.AuditEventType.BidSettled, player.Id,
+            [bid.Id, hero.Id, sellerId, bid.BidderPlayerId],
+            new
+            {
+                bidId = bid.Id, heroId = hero.Id, heroName = hero.Name, sellerId,
+                buyerId = bid.BidderPlayerId, bidSats = bid.BidSats, feeSats = bid.FeeSats,
+                sellerNetSats = proceeds, bidInvoiceId = bid.BidInvoiceId, settledByPlayerId = player.Id,
+            },
+            $"bid-settled:{bid.Id}");
+        return hero;
+    }
+
+    /// <summary>
+    /// Unwinds an accepted bid the owner never honoured, and sends the bidder's sats home. The one exit an
+    /// accepted bid has, and the reason a bidder is never out of pocket for a hero they did not receive.
+    ///
+    /// <para>Open to EITHER party, and only past the window. The bidder needs it to recover their money; the
+    /// owner needs it to free a hero a funded bidder has gone quiet on. It is the same shape the stranded
+    /// tournament refund uses — mark terminal durably FIRST, then pay, behind a once-only latch — because
+    /// the failure it must not have is the same one: paying the same sats back twice.</para>
+    /// </summary>
+    public async Task<(HeroBid Bid, long RefundedSats)> RefundBidAsync(
+        Player player, string bidId, CancellationToken ct)
+    {
+        if (!store.HeroBids.TryGetValue(bidId, out var bid))
+            throw new GameRuleException($"Unknown bid '{bidId}'.");
+        if (bid.BidderPlayerId != player.Id && bid.OwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this bid's parties can unwind it.");
+        using var gate = await store.LockAsync($"bid:{bidId}", ct);
+
+        if (!bid.Accepted)
+            throw new GameRuleException("This bid was never accepted, so nothing was ever billed — withdraw or decline it instead.");
+        if (bid.Settled) throw new GameRuleException("This bid is already settled.");
+        if (bid.Refunded) throw new GameRuleException("This bid was already unwound.");
+        // THE anti-double-spend gate. Once the owner's proceeds have left the treasury the sale is
+        // committed and only a settle may finish it — refunding here would pay BOTH sides out of a treasury
+        // that cannot print. A settle that faulted after the payout is resumable; this is not its exit.
+        if (bid.SellerPaid)
+            throw new GameRuleException("This bid's seller has already been paid — settle it rather than unwinding it.");
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (!Shared.ReclaimWindow.IsUnlocked(bid.ReclaimAfterUnixSeconds, now))
+            throw new GameRuleException(
+                $"This bid is still within its delivery window — it {Shared.ReclaimWindow.Describe(bid.ReclaimAfterUnixSeconds, now)}.");
+
+        var paid = await chain.IsInvoicePaidAsync(bid.BidInvoiceId!, ct);
+        if (paid)
+        {
+            // The owner DID deliver — the sale is real even though nobody ran the settle, so this is a
+            // settle waiting to happen and refunding it would take a paid-for hero back off the bidder.
+            // Checked only when funded: an unpaid bid has nothing to give back either way.
+            var hero = store.Heroes.GetValueOrDefault(bid.HeroId);
+            if (hero is not null
+                && await chain.VerifyHeroOwnershipAsync(bid.BidderPlayerId, hero.AssetId ?? hero.Id, ct))
+                throw new GameRuleException(
+                    "The chain shows the bidder already holding this hero — settle the bid instead of unwinding it.");
+        }
+
+        // Terminal FIRST and durable, before a single sat moves: a crash mid-refund must not let a restart
+        // pay it again (the stranded-bracket refund's ordering, for its reason).
+        bid.Refunded = true;
+        await persistence.SaveHeroBidAsync(bid, ct);
+
+        long refunded = 0;
+        if (paid && !bid.RefundPaid)
+        {
+            bid.RefundPaid = true;
+            await persistence.SaveHeroBidAsync(bid, ct);
+            try
+            {
+                await chain.PayoutAsync(bid.BidderPlayerId, bid.BidSats, $"bid-refund:{bid.Id}", ct);
+                await store.RecordOutflowAsync("bid-refund", bid.BidSats, ct);
+                refunded = bid.BidSats;
+            }
+            catch
+            {
+                // In-memory release only, exactly as in the settle's payout: a durable release would let a
+                // restart refund sats that may already have gone out.
+                bid.RefundPaid = false;
+                throw;
+            }
+        }
+
+        await AuditAsync(Persistence.AuditEventType.BidRefunded, player.Id,
+            [bid.Id, bid.HeroId, bid.BidderPlayerId, bid.OwnerPlayerId],
+            new
+            {
+                bidId = bid.Id, heroId = bid.HeroId, bidderPlayerId = bid.BidderPlayerId,
+                ownerPlayerId = bid.OwnerPlayerId, bidSats = bid.BidSats, refundedSats = refunded,
+                wasFunded = paid, bidInvoiceId = bid.BidInvoiceId, unwoundByPlayerId = player.Id,
+                reclaimAfterUnixSeconds = bid.ReclaimAfterUnixSeconds,
+            },
+            $"bid-refunded:{bid.Id}");
+        return (bid, refunded);
+    }
+
+    /// <summary>Every live bid, newest first — the discovery path a browser needs to SEE an incoming bid on
+    /// its own hero. Public like /stud and /deathmatch; the client filters to itself. No invoice is exposed
+    /// here, only the offer and its state.</summary>
+    public IReadOnlyList<HeroBid> ListBids() =>
+        store.HeroBids.Values.OrderByDescending(b => b.CreatedAt).ToList();
 }

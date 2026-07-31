@@ -367,6 +367,92 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return resting;
     }
 
+    /// <summary>
+    /// The BIDDER's half of an accepted bid: pay the bid invoice from this wallet, then try to close it.
+    ///
+    /// <para>Paying is the whole of what this browser can do on its own — the hero moves from the OWNER's
+    /// wallet, so the settle can only succeed once they have sent it. One attempt is made anyway (the owner
+    /// may already have delivered against an earlier funding attempt) and a refusal for the missing hero is
+    /// swallowed: the bid is now funded and waiting, which is the honest state to report.</para>
+    ///
+    /// <para>Safe to re-run. The invoice is for a fixed amount at a fixed address, and the server's paid
+    /// check is "has this address received at least the amount" — so a retry after a partial failure tops
+    /// the same invoice up rather than buying anything twice.</para>
+    /// </summary>
+    /// <returns>The hero when the owner had already delivered and the settle closed it; null when the bid
+    /// is funded and still waiting on them.</returns>
+    public async Task<HeroDto?> FundBidAsync(string bidId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        // Read the bill rather than carry it: the accept response was handed to the hero's OWNER, and this
+        // browser may only ever have seen the bid in a list.
+        onProgress?.Invoke("Reading the bid terms…");
+        var bill = await api.Bids.InvoiceAsync(bidId);
+        if (!bill.Funded && bill.Invoice.AmountSats > 0)
+        {
+            onProgress?.Invoke("Paying your bid into escrow…");
+            await DepositAndSettleAsync(w.Id, bill.Invoice.PayToAddress, null, bill.Invoice.AmountSats);
+        }
+
+        onProgress?.Invoke("Checking whether the hero has arrived…");
+        try { return await api.Bids.SettleAsync(bidId); }
+        catch (ArkadeHeroesApiException ex) when (
+            ex.Message.Contains("does not show", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("has not been paid", StringComparison.OrdinalIgnoreCase))
+        {
+            // Expected, and not an error: the owner hasn't sent the hero yet (or the payment is still
+            // settling into the indexer). The sats are escrowed and recoverable past the bid's window.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The OWNER's half: send the hero to the bidder from this wallet, then close the bid — which is what
+    /// pays the owner.
+    ///
+    /// <para>Refuses to send unless the bid reads FUNDED first. That check is the whole reason this is one
+    /// method rather than two buttons: the hero is the irreversible leg, and shipping it against an unpaid
+    /// bid would hand it over for nothing.</para>
+    /// </summary>
+    public async Task<HeroDto> DeliverBidHeroAsync(string bidId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Checking the bid is funded…");
+        var bill = await api.Bids.InvoiceAsync(bidId);
+        if (!bill.Funded)
+            throw new GameWalletException(
+                "The bidder hasn't paid yet — don't send the hero until this reads funded.");
+
+        // The bidder's REGISTERED address, which is the one the server checks on settle. Sending to any
+        // other derivation would leave the hero in their wallet but invisible to the game-side close.
+        var bidder = await api.Players.GetAsync(bill.Bid.BidderPlayerId);
+        var hero = await api.Heroes.GetAsync(bill.Bid.HeroId);
+
+        onProgress?.Invoke("Sending the hero to the bidder…");
+        await DepositAndSettleAsync(w.Id, bidder.ArkadeAddress, hero.AssetId ?? hero.Id, 0);
+
+        // Close it — retrying while the transfer settles into arkd's indexer (the settle's gate), the same
+        // shape the hero purchase uses. Every attempt is idempotent behind the server's once-only latches.
+        onProgress?.Invoke("Collecting your sats…");
+        ArkadeHeroesApiException? last = null;
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try { return await api.Bids.SettleAsync(bidId); }
+            catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("does not show", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+                onProgress?.Invoke($"Waiting for the hero to sync ({attempt + 1}/20)…");
+                await Task.Delay(3000);
+            }
+        }
+        throw new GameWalletException(
+            $"The hero was sent, but it hasn't synced for the settle yet — retry in a moment and you'll be paid. ({last?.Message})");
+    }
+
     /// <summary>Claims a custom, globally-unique name for a hero: requests the rename (the server bills a
     /// treasury fee-invoice), pays it from the wallet, then confirms — returning the renamed hero.</summary>
     public async Task<HeroDto> RenameHeroAsync(string heroId, string name, Action<string>? onProgress = null)
@@ -955,6 +1041,18 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// </summary>
     public async Task ReclaimAsync(ReclaimableDto item, Action<string>? onProgress = null)
     {
+        // A BID is the one row on this page that isn't a covenant escrow: an accepted bid's sats rest in
+        // the treasury under an invoice, so unwinding it is a server call, not a script-pinned spend. It is
+        // handled BEFORE the wallet and emulator are demanded below, because it needs neither — and
+        // refusing to recover a player's sats because the arena isn't advertising an emulator would be a
+        // refusal with no reason behind it.
+        if (item.Kind == "bid")
+        {
+            onProgress?.Invoke("Unwinding the bid and returning the sats…");
+            await api.Bids.RefundAsync(item.Id);
+            return;
+        }
+
         var w = await wallet.GetActiveWalletAsync()
             ?? throw new GameWalletException("Create a wallet first.");
         var info = await api.Chain.InfoAsync();

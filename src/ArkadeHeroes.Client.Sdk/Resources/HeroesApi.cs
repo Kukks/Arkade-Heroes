@@ -27,8 +27,13 @@ public sealed class HeroesApi(ArkadeHeroesClient client)
     }
     public Task<HeroDto> GetAsync(string heroId) => client.GetAsync<HeroDto>($"/api/heroes/{heroId}");
 
-    /// <summary>This hero's full provenance, newest first — birth, fights, trades, fusions.</summary>
+    /// <summary>This hero's full provenance, newest first — birth, fights, trades, fusions, and its death.
+    /// Served for a DESTROYED hero too, off its headstone; only an unknown id 404s.</summary>
     public Task<HeroTimelineDto> TimelineAsync(string heroId) => client.GetAsync<HeroTimelineDto>($"/api/heroes/{heroId}/timeline");
+
+    /// <summary>A DESTROYED hero's headstone — what <see cref="GetAsync"/> cannot return, because a dead
+    /// hero's row is erased. 404s (and so throws) for a hero that is alive or simply unknown.</summary>
+    public Task<HeroTombstoneDto> TombstoneAsync(string heroId) => client.GetAsync<HeroTombstoneDto>($"/api/heroes/{heroId}/tombstone");
 
     public Task<EquipResponse> EquipAsync(string heroId, EquipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/equip", req);
     public Task<EquipResponse> UnequipAsync(string heroId, UnequipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/unequip", req);
