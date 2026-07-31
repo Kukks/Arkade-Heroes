@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Playwright" Version="1.61.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -23,6 +24,22 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!--
+    The SERVER, so the browser can be pointed at a REAL game API instead of a dead port.
+
+    ArkadeHeroesWalkTests boots ArkadeHeroes.Server's own Program on Kestrel with the published bundle as
+    its wwwroot — the exact topology the shipped container runs, one origin serving both the app and /api.
+    Client.Sdk comes with it so a test can seed the server through the same typed client the console uses,
+    then assert the BROWSER draws what the server actually holds. Neither reference touches the bundle: the
+    browser still sees only what it downloads.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Server\ArkadeHeroes.Server.csproj" />
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Client.Sdk\ArkadeHeroes.Client.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Core\ArkadeHeroes.Core.csproj" />
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Shared\ArkadeHeroes.Shared.csproj" />
   </ItemGroup>
 
   <!--

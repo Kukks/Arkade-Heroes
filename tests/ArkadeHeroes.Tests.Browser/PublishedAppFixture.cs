@@ -37,8 +37,18 @@ public sealed class PublishedAppFixture : IAsyncLifetime
     {
         var wwwroot = ResolvePublishedWwwroot();
 
-        _host = Host.CreateDefaultBuilder()
-            .ConfigureWebHostDefaults(web => web
+        // A bare HostBuilder, NOT Host.CreateDefaultBuilder: this is a static-file server for a test and it
+        // must not be configurable by its surroundings. CreateDefaultBuilder layers appsettings.json from
+        // the working directory over everything set here — including UseUrls — and the working directory is
+        // this assembly's output folder, where MSBuild deposits the appsettings.json of every referenced
+        // project. ArkadeHeroes.Server's pins `"Urls": "http://localhost:5210"`, so adding a reference to it
+        // anywhere in this project silently moved this fixture off port 5198 and onto the API's dev port,
+        // where a developer running the server locally is already listening. Every test then failed on an
+        // address-in-use naming a port nothing here had asked for.
+        _host = new HostBuilder()
+            .ConfigureWebHost(web => web
+                .UseKestrel()
+                .UseContentRoot(AppContext.BaseDirectory)
                 .UseUrls(BaseUrl)
                 .Configure(app =>
                 {
