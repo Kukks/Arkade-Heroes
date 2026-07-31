@@ -121,13 +121,14 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
         await RegtestHelper.ArkSend(boot.TreasuryAddress, 400_000); // the winner + a fresh loser or two + the absorbed mint
         await WaitForTreasuryAsync(boot.TreasuryAddress, 400_000);
 
-        var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
-        await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
-
-        // Alice pays an absorb death-match fee (3x MatchFee, and her hero is level 20) on EVERY
-        // attempt below, and the settle refuses until it clears — so fund her for all of them.
+        // Alice buys her hero, then pays an absorb death-match fee (3x MatchFee, and her hero is level 20)
+        // on EVERY attempt below, and the settle refuses until it clears — so fund her for all of them.
         await RegtestHelper.ArkSend(_alice.Address, 300_000);
         await _alice.WaitForBalanceAsync(300_000, TimeSpan.FromSeconds(60));
+
+        var aliceHero = (await alice.RecruitAsync(_alice)).Single();
+        await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
+
         var store = _factory.Services.GetRequiredService<GameStore>();
         store.Heroes[aliceHero.Id].Level = 20; // Alice reliably wins the deterministic fight
 
@@ -136,10 +137,10 @@ public class CovenantDeathMatchAbsorbE2ETests : IAsyncLifetime
         {
             var bobWallet = await NewWalletAsync();
             var bob = await RegisterAsync($"DMA-Bob{attempt}", bobWallet);
-            // The defender owes his own per-character fee too — a fresh wallet has nothing.
+            // The defender buys his own hero and owes his own per-character fee too — a fresh wallet has nothing.
             await RegtestHelper.ArkSend(bobWallet.Address, 50_000);
             await bobWallet.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
-            var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
+            var bobHero = (await bob.RecruitAsync(bobWallet)).Single();
             await bobWallet.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
             store.Heroes[bobHero.Id] = WithTrait(store.Heroes[bobHero.Id], TraitCategory.Aura, 255); // Bob has a Legendary Aura to absorb
 

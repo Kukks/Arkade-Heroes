@@ -80,7 +80,8 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
 
         var client = new ArkadeHeroesClient(_factory.CreateClient());
         await client.Players.RegisterAsync(new RegisterPlayerRequest(name, wallet.Address));
-        var heroes = (await client.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        // Bought, not given: the wallet funded just above pays for the hero as well as the fee under test.
+        var heroes = await client.RecruitAsync(wallet);
         return (client, wallet, heroes);
     }
 

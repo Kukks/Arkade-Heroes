@@ -79,17 +79,20 @@ public class CovenantMergeFlowE2ETests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        // Starters: two heroes minted straight into Alice's wallet — the base + the sacrifice.
-        var heroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        // Fund Alice's wallet: she buys her own heroes, then pays the merge fee out of the same sats.
+        await RegtestHelper.ArkSend(_alice.Address, 50_000);
+        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+
+        // Starters: a recruit mints ONE hero, so the base + the sacrifice is two purchases — quote, pay,
+        // claim, twice — minted straight into Alice's wallet.
+        var heroes = await alice.RecruitAsync(_alice, 2);
         Assert.Equal(2, heroes.Count);
         var baseHero = heroes[0];
         var sacrificeHero = heroes[1];
         await _alice.WaitForAssetAsync(baseHero.AssetId!, TimeSpan.FromSeconds(30));
         await _alice.WaitForAssetAsync(sacrificeHero.AssetId!, TimeSpan.FromSeconds(30));
 
-        // Fund Alice's wallet for the fee, and commit a covenant merge.
-        await RegtestHelper.ArkSend(_alice.Address, 50_000);
-        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+        // Commit a covenant merge.
         var commit = await alice.Merge.CommitAsync(
             new MergeCommitRequest(baseHero.Id, sacrificeHero.Id, "covenant"));
         Assert.False(string.IsNullOrEmpty(commit.EscrowAddress));
