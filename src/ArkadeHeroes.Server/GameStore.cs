@@ -392,6 +392,10 @@ public class SquadMatchSession
     public required IReadOnlyList<string> DefenderLineup { get; init; }
     public required byte[] ServerSeed { get; init; }
     public required string CommitmentHex { get; init; }
+    /// <summary>When the match was opened — what the <c>GET /api/squad</c> board orders on, exactly as
+    /// <see cref="MatchSession.CreatedAt"/> does for duels. This was the one session type without it, and
+    /// the board consequently took 50 rows off an unordered dictionary instead of the newest 50.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public long WagerSats { get; init; }
     public string Mode { get; init; } = "covenant";
     public string? EscrowChallengerAddress { get; set; }

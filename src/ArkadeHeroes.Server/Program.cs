@@ -752,10 +752,18 @@ api.MapPost("/squad/{matchId}/resolve", async (string matchId, FightRequest requ
     return Results.Ok(new SquadResolveResponse(result.ToDto(challSnaps, defSnaps), serverSeedHex, entropyHex, winnerPayout, receipts));
 });
 
+// Newest first, like every other board here. Without the ordering this took 50 rows straight off an
+// unordered dictionary, so past 50 squad matches a freshly-opened one could be among the rows cut —
+// the opponent it was opened against would never see it. Id last for a TOTAL order, so the page is
+// stable across two calls even if two matches share a creation instant.
 api.MapGet("/squad", (string? status, GameStore store) =>
     Results.Ok(store.SquadMatches.Values
         .Where(m => status is null || m.Status == status)
-        .Select(ToSquadMatchDto).Take(50).ToList()));
+        .OrderByDescending(m => m.CreatedAt)
+        .ThenBy(m => m.Id, StringComparer.Ordinal)
+        .Take(50)
+        .Select(ToSquadMatchDto)
+        .ToList()));
 
 // Public spectator replay of a resolved squad match (VerifySquad re-runs the best-of-3 from the revealed seed).
 api.MapGet("/squad/{matchId}/replay", (string matchId, GameStore store) =>
