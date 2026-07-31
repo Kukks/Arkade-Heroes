@@ -1,0 +1,70 @@
+@inject ArkadeHeroesClient Api
+@inject WalletState State
+@implements IDisposable
+
+@* A challenge you cannot see is not a challenge.
+   Opening a duel named a specific defender and then said nothing to them — the only way to find out you
+   had been challenged was to visit the duel page on a hunch. This rides the shell, so it reaches you
+   wherever you are. Rendered only when something is actually waiting; silence when there is nothing. *@
+@if (_waiting.Count > 0)
+{
+    @* Same treatment as the backup nudge — it is the shell's one established "this needs you" strip, and a
+       second bespoke banner style would just be a competing one. *@
+    <div class="backup-nudge" role="status">
+        <span class="dot bad"></span>
+        <span>
+            @_waiting.Count duel@(_waiting.Count == 1 ? "" : "s") waiting on you.
+            @if (_waiting.Any(m => m.WagerSats > 0))
+            {
+                <text>Sats are staked.</text>
+            }
+        </span>
+        <a class="btn ghost sm" href="duel">Answer →</a>
+    </div>
+}
+
+@code {
+    private List<MatchDto> _waiting = new();
+    private Timer? _poll;
+
+    /// <summary>
+    /// Polled rather than pushed. There is no live channel to the server, and adding one for a badge would
+    /// be a lot of machinery for a number that can be a minute stale without hurting anyone. Thirty seconds
+    /// is well inside the pace of a duel someone is waiting on.
+    /// </summary>
+    private static readonly TimeSpan PollEvery = TimeSpan.FromSeconds(30);
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnStateChanged;
+        await RefreshAsync();
+        _poll = new Timer(async _ => await InvokeAsync(RefreshAsync), null, PollEvery, PollEvery);
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (State.Player is not { } me) { Clear(); return; }
+        try
+        {
+            // Open matches that named ME as the defender — someone chose this player and is waiting.
+            var open = await Api.Matches.ListAsync("open");
+            _waiting = open.Where(m => m.DefenderPlayerId == me.PlayerId).ToList();
+        }
+        catch
+        {
+            // An unreachable server must not put a false alarm on every page. Show nothing instead.
+            Clear();
+        }
+        StateHasChanged();
+    }
+
+    private void Clear() => _waiting = new();
+
+    private void OnStateChanged() => InvokeAsync(RefreshAsync);
+
+    public void Dispose()
+    {
+        State.OnChange -= OnStateChanged;
+        _poll?.Dispose();
+    }
+}

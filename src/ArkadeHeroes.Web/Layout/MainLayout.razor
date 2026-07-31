@@ -43,6 +43,10 @@
         </nav>
     }
 
+    @* Someone challenged you. Rides the shell so it finds you wherever you are — a duel you never see is
+       a duel that quietly expires. *@
+    <ChallengeAlert />
+
     @if (Wallet.BackupPending)
     {
         @* Non-custodial safety: the wallet was auto-created during "Play"; nudge to back it up. *@
