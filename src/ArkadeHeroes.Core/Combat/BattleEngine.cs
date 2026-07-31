@@ -25,8 +25,10 @@ public static class BattleEngine
         var maxTurns = cfg.Combat.MaxTurns;
         var rng = new DeterministicRng(matchSeed);
 
-        // advantageA/B default to 1.0 (a no-op) for every caller except SquadBattle with team synergy on — a
-        // per-side whole-lineup damage multiplier applied like affinity below, so a plain fight is unchanged.
+        // advantageA/B default to 1.0 (a no-op). Two callers pass anything else: SquadBattle with team
+        // synergy on (a per-side whole-lineup multiplier), and the gauntlet, which hands the GHOST a
+        // handicap on the waves where the ladder's level floor ate the authored offset (Dungeon.
+        // GhostHandicap). Both are applied like affinity below, so a plain fight is unchanged.
         var fighterA = new FighterState(a, cfg, advantageA);
         var fighterB = new FighterState(b, cfg, advantageB);
 
@@ -320,7 +322,8 @@ public static class BattleEngine
         public int BurnPerTurn { get; set; }       // active brand ON this fighter (set by an attacker's Sigil)
         public int BurnTurnsLeft { get; set; }
 
-        /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy.</summary>
+        /// <summary>A whole-fight damage multiplier (1.0 = none) set by the caller — squad team synergy, or
+        /// the gauntlet's handicap on a ghost whose authored level offset the floor ate.</summary>
         public double Advantage { get; }
 
         /// <summary>This hero's EQUIPPED items, resolved once — the counter multiplier and the variance span
