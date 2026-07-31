@@ -18,7 +18,9 @@ public static class BattleEngine
     public static BattleResult Fight(Hero a, Hero b, ReadOnlySpan<byte> matchSeed, GameConfig? config = null,
         double advantageA = 1.0, double advantageB = 1.0)
     {
-        if (a.Id == b.Id) throw new ArgumentException("A hero cannot fight itself.");
+        // A hero MAY fight itself. Each side gets its own FighterState, so a mirror match shares no
+        // mutable state — both sides roll from the same deterministic seed and the RNG separates them,
+        // exactly as it separates two identical twins. Refusing it was a rule with nothing behind it.
         var cfg = config ?? GameConfig.Default;
         var maxTurns = cfg.Combat.MaxTurns;
         var rng = new DeterministicRng(matchSeed);
