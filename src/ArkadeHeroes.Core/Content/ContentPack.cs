@@ -63,11 +63,64 @@ public sealed record Dungeon(
     /// <summary>The total weight of the drop table; 0 means this dungeon drops nothing.</summary>
     public int TotalDropWeight => Drops.Sum(d => d.Weight);
 
+    /// <summary>What one floor-eaten level is worth as a cut to the ghost's damage.
+    ///
+    /// Deliberately bigger than a level's own share of the stat curve (~6-8%): a level moves a ghost's HP,
+    /// defense, speed and crit as well as its damage, so buying the same difference on the damage axis
+    /// ALONE costs more. Calibrated against the ladder's measured outcome rather than derived — at this
+    /// value a level-1 hero's rate of clearing NOTHING lands inside the band its neighbouring levels
+    /// already sit in, which is exactly the intent: the entry cohort joins the ladder, it is not handed an
+    /// easier one.</summary>
+    public const double GhostHandicapPerClampedLevel = 0.15;
+
+    /// <summary>Floor on <see cref="GhostHandicap"/>. Nothing in the shipped ladder comes near it — the
+    /// deepest clamp today is a single level — but waves are AUTHORED, and an offset of -7 would otherwise
+    /// walk the multiplier down to zero and out the other side into negative damage.</summary>
+    public const double MinGhostHandicap = 0.25;
+
     /// <summary>The ghost's level for a wave: the hero's level plus the wave's authored offset, floored at
     /// 1. An unknown wave floors to 1 rather than throwing — the ladder is bounded by
     /// <see cref="WaveCount"/> and every caller iterates it.</summary>
     public int GhostLevel(int heroLevel, int wave) =>
         Math.Max(1, heroLevel + (WaveAt(wave)?.LevelOffset ?? 0));
+
+    /// <summary>
+    /// How many levels of a wave's authored offset the level-1 FLOOR ate — 0 for every hero the offset can
+    /// actually reach.
+    ///
+    /// A ladder authored as "one level below the runner" has nowhere to land on a level-1 hero, because
+    /// there is no level 0. The floor in <see cref="GhostLevel"/> is right on its own terms — a hero below
+    /// level 1 is not a thing this game has — but silently dropping the authored intent is not. It left the
+    /// ENTRY cohort, and only the entry cohort, without the soft opener every other cohort is given, and
+    /// with one fewer distinct rung than the ladder was written to have. This is that shortfall, measured,
+    /// so <see cref="GhostHandicap"/> can pay it back on an axis that still has room below a level-1 peer.
+    /// </summary>
+    public int ClampedLevels(int heroLevel, int wave) =>
+        Math.Max(0, 1 - (heroLevel + (WaveAt(wave)?.LevelOffset ?? 0)));
+
+    /// <summary>
+    /// How hard a wave's ghost hits, as a multiplier on its damage — exactly 1.0 unless the level floor ate
+    /// part of the authored offset (<see cref="ClampedLevels"/>).
+    ///
+    /// This is the only axis on which "easier than a level-1 peer" can be SAID. It cannot be said by
+    /// retuning the authored ladder, because <c>max(1, 1 + offset)</c> is 1 for every offset at or below 0
+    /// — no level offset reaches under the floor. And it must not be said by dropping the floor to 0: the
+    /// stat curve refuses a level below 1 outright, and a level-0 ghost would also fall under the first
+    /// gene-skill unlock, so it would arrive a whole SKILL short rather than one level weaker — a cliff,
+    /// not a rung.
+    ///
+    /// So the shortfall is paid on the damage axis the engine already has: the same per-side multiplier
+    /// squad synergy rides (<c>BattleEngine.Fight</c>'s <c>advantageB</c>). That adds no draw to the RNG
+    /// stream and no field to the authored schema, and because an unclamped wave returns exactly 1.0 — and
+    /// multiplying a double by exactly 1.0 is exact — every cohort the floor never touched resolves
+    /// BIT-FOR-BIT as it did before this existed.
+    ///
+    /// LINEAR and floored rather than compounded, so only IEEE-754 basic operations appear here and the
+    /// value is bit-identical on the server and in the browser that re-derives it. <c>Math.Pow</c> is not
+    /// guaranteed to agree across platforms, and a replay that disagrees renders "SERVER CHEATED".
+    /// </summary>
+    public double GhostHandicap(int heroLevel, int wave) =>
+        Math.Max(MinGhostHandicap, 1.0 - GhostHandicapPerClampedLevel * ClampedLevels(heroLevel, wave));
 
     /// <summary>The gear the wave's ghost brings, or empty.</summary>
     public IReadOnlyList<string> GhostGear(int wave) => WaveAt(wave)?.GhostGear ?? [];

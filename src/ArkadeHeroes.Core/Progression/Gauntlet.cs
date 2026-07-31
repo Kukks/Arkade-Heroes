@@ -73,6 +73,11 @@ public static class Gauntlet
     /// <summary>The ghost's equipment for a wave: waves 1-3 naked, wave 4 mid gear, wave 5 top gear.</summary>
     public static IReadOnlyList<string> GhostGear(int wave) => Content.GhostGear(wave);
 
+    /// <summary>The ghost's damage multiplier for a wave — exactly 1.0 everywhere except the waves where
+    /// the level floor ate part of the authored offset, which on today's ladder is a level-1 hero's wave 1.
+    /// See <see cref="Dungeon.GhostHandicap"/> for why the opener has to be expressed this way.</summary>
+    public static double GhostHandicap(int heroLevel, int wave) => Content.GhostHandicap(heroLevel, wave);
+
     /// <summary>The deterministic ghost for a wave — a gen-0 hero derived entirely from the run entropy
     /// (so the client re-derives the same opponents; the server cannot substitute a weaker foe).</summary>
     public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave, int heroLevel)
@@ -104,7 +109,10 @@ public static class Gauntlet
         {
             var ghost = GhostFor(entropyArr, wave, hero.Level);
             var fightSeed = CommitReveal.DeriveEntropy(entropyArr, "gauntlet-fight", wave.ToString());
-            var result = BattleEngine.Fight(hero, ghost, fightSeed, cfg);
+            // The ghost carries a handicap only where the level floor ate the authored offset — exactly 1.0
+            // (a no-op) on every other wave and for every hero above the floor.
+            var result = BattleEngine.Fight(hero, ghost, fightSeed, cfg,
+                advantageB: Content.GhostHandicap(hero.Level, wave));
             var won = result.WinnerId == hero.Id;
             waves.Add(new GauntletWave(wave, ghost.Level, won, result));
             if (!won) break;
