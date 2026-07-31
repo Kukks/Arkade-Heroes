@@ -1,8 +1,18 @@
 @using ArkadeHeroes.Core.Progression
+@implements IDisposable
 @* A single hero as a holographic rarity card: pixel-creature portrait in a
    tier-framed, foil-sheened tile, with rarity pips + expressed-trait badges. *@
 
 <a class="@CardClass" href="@($"heroes/{Hero.Id}")" style="--tier:var(--r-@(TierKey));--flare:@FlareColor">
+    @if (_stage is not RevealStage.Open)
+    {
+        <span class="crawl-seal @(_stage is RevealStage.Opening ? "crawl-open" : "")">
+            <span class="crawl-shell up"></span>
+            <span class="crawl-shell dn"></span>
+            <b>@SealLabel</b>
+            <i>@SealNote</i>
+        </span>
+    }
     <div class="hero-tile tier-@TierIndex">
         <HeroSprite Hero="Hero" Size="118" />
         <span class="hero-foil"></span>
@@ -80,10 +90,62 @@
         "Legendary" => 4, "Epic" => 3, "Rare" => 2, "Uncommon" => 1, _ => 0,
     };
 
-    private string CardClass => $"hero-card{(Reveal ? " reveal" : "")}{(Fuse ? " fuse" : "")}";
+    private string CardClass =>
+        $"hero-card{(Reveal ? " reveal" : "")}{(Fuse ? " fuse" : "")}{(_stage is RevealStage.Sealed ? " crawl-sealed" : "")}";
 
     // Summon-reveal flare: fusion burns hot-red; a birth glows in the hero's rarity colour.
     private string FlareColor => Fuse ? "var(--danger)" : $"var(--r-{TierKey})";
+
+    // ── The seal ──────────────────────────────────────────────────────────────────────────────────────
+    // The summon flare on its own was a flourish, not a reveal: the finished card was already on screen,
+    // playing an entrance over a hero the player could read the whole time. Nothing was ever hidden, so
+    // there was nothing to uncover. The card now arrives sealed — the shell holds for a beat, splits, and
+    // only then does the existing summon play, on a hero you are seeing for the first time.
+    private enum RevealStage { Sealed, Opening, Open }
+
+    private const int SealHold = 1000;    // the shell holds, breathing on its seam
+    private const int SealCrack = 480;    // matches @keyframes crawl-crack, so the card is uncovered as it blows
+
+    private RevealStage _stage = RevealStage.Open;
+    private string? _sealedFor;   // the hero this card has already unsealed — a second breed reuses the instance
+    private bool _sealing;
+    private int _sealRun;
+
+    private string SealLabel => Fuse ? "FUSING" : "HATCHING";
+    private string SealNote => Fuse ? "two burned · one forming" : "genome settling";
+
+    protected override void OnParametersSet()
+    {
+        if (!Reveal || _sealedFor == Hero.Id) return;
+        _sealedFor = Hero.Id;
+        _stage = RevealStage.Sealed;
+        _sealing = false;
+        _sealRun++;               // strands a sequence still running for the previous hero
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Guarded on the stage rather than firstRender: the sprite resolves asynchronously, so this fires
+        // again while the shell is still closed, and a second sequence would race the first.
+        if (_stage is not RevealStage.Sealed || _sealing) return;
+        _sealing = true;
+        var run = _sealRun;
+
+        await Task.Delay(SealHold);
+        if (run != _sealRun) return;
+        _stage = RevealStage.Opening;
+        StateHasChanged();
+
+        await Task.Delay(SealCrack);
+        if (run != _sealRun) return;
+        _stage = RevealStage.Open;
+        _sealing = false;
+        StateHasChanged();
+    }
+
+    // Navigating away mid-seal would otherwise leave a delay to wake up and render into a card that is no
+    // longer on the page. Same guard the arena uses for a replay it is torn down in the middle of.
+    public void Dispose() => _sealRun++;
 
     private static string Abbrev(string category) =>
         category.Length <= 3 ? category.ToUpperInvariant() : category[..3].ToUpperInvariant();

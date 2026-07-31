@@ -1202,3 +1202,214 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
     .acct-top { grid-template-columns: 1fr; }
     .acct-portrait { max-width: 160px; }
 }
+
+/* --- Dungeon crawl: the descent rail --------------------------------------
+   The Gauntlet and the Trials both resolve in ONE server call and hand back a list of waves. Printing
+   that list is honest, but it reads as a receipt: every fight arrives at once, already over. The rail
+   replays the same data as a shaft — it scrolls UP past a fixed focus band, so the eye reads the hero
+   going DOWN, and each wave's mark stamps as its fight lands.
+   Namespaced `crawl-` throughout: this extends the arena's vocabulary above rather than starting a second
+   one, so it borrows the same tokens, the same phosphor and the same stamp-and-slam grammar. */
+/* Narrow and centred deliberately: a shaft is a shaft. Stretched to the content width, the rungs read as
+   table rows and a tick ends up stranded half a screen from the wave it belongs to. */
+.crawl {
+    max-width: 620px; margin: 1.2rem auto 0; padding: .9rem 1rem 1rem;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--surface), var(--bg-2)); box-shadow: var(--shadow);
+}
+.crawl-hud { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .7rem; }
+.crawl-depth { font-family: var(--font-hud); font-size: .64rem; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+.crawl-depth b { display: inline-block; color: var(--accent); font-size: 1.05rem; letter-spacing: .02em; }
+.crawl-skip { margin-left: auto; }
+/* The depth digit is re-keyed every step, so it re-enters rather than silently swapping underneath you. */
+.crawl-depth-n { animation: crawl-tick .42s cubic-bezier(.16,1,.3,1); }
+@keyframes crawl-tick {
+    0%   { opacity: 0; transform: translateY(-70%) scale(1.35); color: var(--text); }
+    55%  { opacity: 1; }
+    100% { transform: none; }
+}
+
+/* The shaft: a five-rung window with both ends masked off into the dark. --focus is written per render by
+   the component and is the only thing that moves the rail. */
+.crawl-shaft {
+    --crawl-rung: 46px;
+    position: relative; overflow: hidden; height: calc(var(--crawl-rung) * 5);
+    border-radius: var(--radius-sm);
+    background: radial-gradient(130% 80% at 50% -25%, rgba(53,240,208,.07), transparent 62%), var(--bg-2);
+    -webkit-mask: linear-gradient(180deg, transparent, #000 16%, #000 76%, transparent);
+    mask: linear-gradient(180deg, transparent, #000 16%, #000 76%, transparent);
+}
+/* The focus band — the fixed line the hero is always standing on. One slot down, not the middle: a descent
+   should be mostly the dark it is heading into, and starting the focus lower left the shaft opening on two
+   empty slots above wave one, which is the first thing anyone sees. */
+.crawl-shaft::after {
+    content: ""; position: absolute; left: 0; right: 0; z-index: 2; pointer-events: none;
+    top: var(--crawl-rung); height: var(--crawl-rung);
+    border-top: 1px solid rgba(53,240,208,.16); border-bottom: 1px solid rgba(53,240,208,.16);
+    background: linear-gradient(90deg, rgba(53,240,208,.07), transparent 55%);
+}
+.crawl-rail {
+    list-style: none; margin: 0; padding: var(--crawl-rung) 0 0; position: relative;
+    transform: translateY(calc(var(--focus, 0) * var(--crawl-rung) * -1));
+    transition: transform .55s cubic-bezier(.3,.7,.3,1);
+}
+/* The line you are climbing down — drawn per rung rather than as one run down the rail, so it stops where
+   the rungs stop. Run down the whole rail it hung in the empty slots above wave one like a dropped thread. */
+.crawl-rung::before, .crawl-deeper::before {
+    content: ""; position: absolute; left: 13px; top: 0; bottom: 0; width: 2px;
+    background: linear-gradient(180deg, rgba(53,240,208,.05), rgba(53,240,208,.16), rgba(53,240,208,.05));
+}
+.crawl-deeper::before { background: linear-gradient(180deg, rgba(53,240,208,.16), transparent); }
+
+.crawl-rung {
+    position: relative; display: flex; align-items: center; gap: .7rem;
+    height: var(--crawl-rung); padding: 0 .75rem 0 2.1rem;
+    font-size: .78rem; color: var(--muted);
+    transition: color .3s ease, opacity .3s ease;
+}
+.crawl-node {
+    position: absolute; left: 7px; width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid var(--line); background: var(--bg);
+}
+.crawl-w { color: var(--text); min-width: 2.4rem; font-size: .72rem; }
+.crawl-foe { font-size: .74rem; }
+.crawl-mark { margin-left: auto; font-size: .9rem; }
+.btn.crawl-watch { padding: .26rem .55rem; font-size: .58rem; }
+
+/* Not reached yet: the dark below. */
+.crawl-rung.is-deep { opacity: .32; }
+/* Standing on it — the fight is happening, and the outcome is not in. */
+.crawl-rung.is-live { color: var(--text); }
+.crawl-rung.is-live .crawl-node { border-color: var(--accent); box-shadow: 0 0 14px 1px rgba(53,240,208,.55); animation: crawl-beat 1s ease-in-out infinite; }
+.crawl-rung.is-live .crawl-mark { color: var(--accent); }
+@keyframes crawl-beat { 50% { transform: scale(1.4); } }
+/* Survived. */
+.crawl-rung.is-clear { color: var(--text); }
+.crawl-rung.is-clear .crawl-node { border-color: var(--ok); background: var(--ok); box-shadow: 0 0 11px 0 rgba(91,224,138,.5); }
+.crawl-rung.is-clear .crawl-mark { color: var(--ok); animation: crawl-stamp .42s cubic-bezier(.16,1,.3,1) backwards; }
+/* Where the run ended. Borrows the arena's slam: this should land the way the K.O. banner lands. */
+.crawl-rung.is-fall { color: #ffd0d0; animation: crawl-thud .34s steps(3) 1; }
+.crawl-rung.is-fall .crawl-node { border-color: var(--danger); background: var(--danger); box-shadow: 0 0 16px 1px rgba(255,90,90,.6); }
+.crawl-rung.is-fall .crawl-mark { color: var(--danger); font-size: 1.15rem; animation: crawl-stamp .52s cubic-bezier(.16,1,.3,1) backwards; }
+@keyframes crawl-stamp {
+    0%   { opacity: 0; transform: scale(2.4); filter: blur(3px); }
+    55%  { opacity: 1; filter: blur(0); }
+    72%  { transform: scale(.9); }
+    100% { transform: scale(1); }
+}
+@keyframes crawl-thud { 0%,100% { transform: translateX(0); } 30% { transform: translateX(-4px); } 70% { transform: translateX(3px); } }
+
+/* What is still below you. Lives on the rail rather than the shaft so it always sits one rung under the
+   deepest thing known, and stays put even on the last rung there is. */
+.crawl-deeper {
+    position: relative; height: var(--crawl-rung); display: flex; align-items: center; padding-left: 2.1rem;
+    color: var(--faint); font-size: .66rem; letter-spacing: .45em;
+    animation: crawl-lure 1.9s ease-in-out infinite;
+}
+@keyframes crawl-lure { 0%,100% { opacity: .22; } 50% { opacity: .7; } }
+
+/* Settled: the descent is over, so the shaft opens out into the whole ladder as its record. */
+.crawl-settled .crawl-shaft { height: auto; max-height: 24rem; overflow-y: auto; -webkit-mask: none; mask: none; }
+.crawl-settled .crawl-shaft::after { display: none; }
+.crawl-settled .crawl-rail { padding-top: 0; transform: none; transition: none; }
+
+/* The between-wave beat. The arena stays mounted underneath while this wipes UP across it and the rail
+   advances — the same direction the shaft scrolls, because the world moving up is the hero moving down.
+   The next wave mounts behind it and is already ringing its bell as the veil clears. */
+.crawl-stage { position: relative; }
+.crawl-stage > .arena { margin-top: 0; }
+.crawl-veil {
+    position: absolute; inset: 0; z-index: 20; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
+    background: linear-gradient(180deg, rgba(8,11,17,.96), rgba(4,6,10,.99));
+    border-radius: var(--radius);
+    animation: crawl-veil 1.1s cubic-bezier(.45,0,.55,1) forwards;
+}
+.crawl-veil::before {
+    content: ""; position: absolute; inset: -8px 0; pointer-events: none;
+    background: repeating-linear-gradient(180deg, rgba(53,240,208,.035) 0 2px, transparent 2px 6px);
+    animation: crawl-rush .3s linear infinite;
+}
+.crawl-veil b {
+    position: relative; font-family: var(--font-hud); font-size: .82rem; letter-spacing: .34em;
+    color: var(--accent); text-shadow: 0 0 20px rgba(53,240,208,.6);
+}
+.crawl-veil span { position: relative; font-family: var(--font-hud); font-size: .62rem; letter-spacing: .16em; color: var(--muted); }
+@keyframes crawl-veil { 0% { transform: translateY(100%); } 18%,64% { transform: translateY(0); } 100% { transform: translateY(-100%); } }
+@keyframes crawl-rush { to { transform: translateY(-6px); } }
+
+/* --- The reveal, given something to reveal --------------------------------
+   A bred or fused hero used to simply appear, already finished, and play its summon flare over itself —
+   which is a flourish, not a reveal, because nothing was ever hidden. The seal is the missing half: the
+   card is delivered sealed and pulsing, and the summon underneath only starts as the shell splits.
+   Purely a cover, so it degrades correctly: hidden under reduced motion, the card beneath is already the
+   finished, static card that the existing rule leaves un-animated. */
+.crawl-seal {
+    position: absolute; inset: 0; z-index: 9; overflow: hidden; border-radius: var(--radius);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem;
+}
+/* Two real halves. A pod that spends its whole life advertising a seam has to actually part ON it, and
+   clipping a single element inwards does the opposite — the shell collapses into the seam, which reads as
+   the thing being swallowed rather than opened. Each half carries the seam-edge light, so the glow leaves
+   with the shell it belongs to. */
+.crawl-shell {
+    position: absolute; left: 0; right: 0; height: 50%; z-index: 1;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.24) 0 2px, transparent 2px 4px), #070b12;
+}
+.crawl-shell.up { top: 0; box-shadow: inset 0 -20px 28px -20px var(--flare, var(--accent)); }
+.crawl-shell.dn { bottom: 0; box-shadow: inset 0 20px 28px -20px var(--flare, var(--accent)); }
+/* Something is in there. Without it the shell is a black slab with a caption, and a sealed box the eye
+   reads as empty is not suspense — it is a loading state. */
+.crawl-seal::before {
+    content: ""; position: absolute; inset: 0; z-index: 2;
+    background: radial-gradient(56% 32% at 50% 50%, var(--flare, var(--accent)), transparent 72%);
+    animation: crawl-quicken 2.4s ease-in-out infinite;
+}
+@keyframes crawl-quicken { 0%,100% { opacity: .10; transform: scale(.94); } 50% { opacity: .26; transform: scale(1.03); } }
+/* The seam: a hairline of the hero's own flare colour, breathing while the shell holds. */
+.crawl-seal::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); z-index: 3;
+    background: linear-gradient(90deg, transparent, var(--flare, var(--accent)), transparent);
+    box-shadow: 0 0 22px 3px var(--flare, var(--accent));
+    animation: crawl-seam 1.5s ease-in-out infinite;
+}
+@keyframes crawl-seam { 0%,100% { opacity: .35; transform: translateY(-50%) scaleX(.55); } 50% { opacity: 1; transform: translateY(-50%) scaleX(1); } }
+.crawl-seal b {
+    position: relative; z-index: 4; font-family: var(--font-hud); font-size: .66rem; letter-spacing: .32em;
+    color: var(--flare, var(--accent)); text-shadow: 0 0 16px var(--flare, var(--accent));
+    animation: crawl-seal-pulse 1.5s ease-in-out infinite;
+}
+.crawl-seal i {
+    position: relative; z-index: 4; font-style: normal; font-family: var(--font-hud);
+    font-size: .58rem; letter-spacing: .18em; color: var(--faint);
+}
+@keyframes crawl-seal-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+/* Opening: the halves take a breath inwards and are then driven off, top and bottom, while the seam they
+   parted on flares out and the summon underneath is already playing. */
+.crawl-seal.crawl-open .crawl-shell.up { animation: crawl-part-up .48s cubic-bezier(.5,0,.3,1) forwards; }
+.crawl-seal.crawl-open .crawl-shell.dn { animation: crawl-part-dn .48s cubic-bezier(.5,0,.3,1) forwards; }
+@keyframes crawl-part-up { 0% { transform: translateY(0); } 18% { transform: translateY(4%); } 100% { transform: translateY(-101%); } }
+@keyframes crawl-part-dn { 0% { transform: translateY(0); } 18% { transform: translateY(-4%); } 100% { transform: translateY(101%); } }
+.crawl-seal.crawl-open::after { animation: crawl-seam-blow .48s ease-out forwards; }
+@keyframes crawl-seam-blow { 0% { opacity: 1; } 55% { opacity: 1; transform: translateY(-50%) scaleY(7); } 100% { opacity: 0; transform: translateY(-50%) scaleY(16); } }
+/* The caption and the glow belong to the shell, so they leave with it rather than hanging over the hero. */
+.crawl-seal.crawl-open::before, .crawl-seal.crawl-open b, .crawl-seal.crawl-open i {
+    animation: crawl-seal-out .26s ease-out forwards;
+}
+@keyframes crawl-seal-out { to { opacity: 0; } }
+/* The card holds still until the shell breaks — then the existing summon plays as it is uncovered. */
+.hero-card.reveal.crawl-sealed { animation: none; }
+.hero-card.reveal.crawl-sealed::before { animation: none; opacity: 0; }
+.hero-card.reveal.crawl-sealed .hero-tile::before { animation: none; opacity: 0; }
+
+@media (max-width: 640px) {
+    .crawl-foe { display: none; }   /* the ghost's level is on the arena too; the rung keeps number + mark */
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .crawl-rail { transition: none; }
+    .crawl-depth-n, .crawl-rung.is-live .crawl-node, .crawl-rung.is-clear .crawl-mark,
+    .crawl-rung.is-fall, .crawl-rung.is-fall .crawl-mark, .crawl-deeper { animation: none; }
+    /* Neither of these is ever the only way to see something — the rail and the card say it all without. */
+    .crawl-veil, .crawl-seal { display: none; }
+}
