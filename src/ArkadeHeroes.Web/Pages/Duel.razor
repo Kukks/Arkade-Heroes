@@ -113,7 +113,7 @@ else
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
 
-    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any())
+    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any() && !AwaitingOpponent.Any())
     {
         <div class="card muted">No open matches. Challenge a rival above — or wait for someone to challenge you.</div>
     }
@@ -147,6 +147,23 @@ else
                 }
             </div>
         }
+        @* Both sides can now see an accepted duel. The defender's copy is read-only — the challenger
+           runs the fight — but it exists, which is the part that was missing. *@
+        @if (AwaitingOpponent.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Accepted — waiting for the challenger to fight</div>
+                @foreach (var m in AwaitingOpponent)
+                {
+                    <div class="match-row muted">
+                        <span>Your <b>@Name(m.DefenderHeroId)</b> vs <b>@Name(m.ChallengerHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <span class="chip">accepted</span>
+                    </div>
+                }
+            </div>
+        }
+
         @if (Waiting.Any())
         {
             <div class="card">
@@ -222,6 +239,20 @@ else
     private IEnumerable<MatchDto> ToAccept => _matches.Where(m => m.Status == "open" && MineIds.Contains(m.DefenderHeroId));
     private IEnumerable<MatchDto> ToResolve => _matches.Where(m => m.Status == "accepted" && MineIds.Contains(m.ChallengerHeroId));
     private IEnumerable<MatchDto> Waiting => _matches.Where(m => m.Status == "open" && MineIds.Contains(m.ChallengerHeroId));
+
+    /// <summary>
+    /// Accepted matches where I am the DEFENDER — the bucket that did not exist.
+    ///
+    /// <para>ToAccept covers open+defender and ToResolve covers accepted+CHALLENGER, so the instant a
+    /// defender accepted, their match belonged to no bucket and vanished from their page while the
+    /// challenger kept it and gained the "duel" button. Accepting appeared to do nothing, and the two
+    /// players saw different games.</para>
+    ///
+    /// <para>Read-only on purpose: the challenger runs the fight, so the defender's job here is to see
+    /// that their acceptance landed and what it staked.</para>
+    /// </summary>
+    private IEnumerable<MatchDto> AwaitingOpponent =>
+        _matches.Where(m => m.Status == "accepted" && MineIds.Contains(m.DefenderHeroId));
 
     protected override async Task OnInitializedAsync()
     {
