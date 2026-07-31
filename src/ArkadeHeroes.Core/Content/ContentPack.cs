@@ -78,11 +78,17 @@ public sealed record Dungeon(
     /// walk the multiplier down to zero and out the other side into negative damage.</summary>
     public const double MinGhostHandicap = 0.25;
 
+    /// <summary>The level the CONTENT asks a wave's ghost to be — hero level plus authored offset, before
+    /// the floor has its say. Not public: it can be zero or negative, which is a question about authoring
+    /// intent rather than a level anything may be resolved at. <see cref="GhostLevel"/> and
+    /// <see cref="ClampedLevels"/> are the two halves of the answer, and they read it from here rather than
+    /// each spelling the floor out, so the two can never drift apart on where it sits.</summary>
+    private int AuthoredGhostLevel(int heroLevel, int wave) => heroLevel + (WaveAt(wave)?.LevelOffset ?? 0);
+
     /// <summary>The ghost's level for a wave: the hero's level plus the wave's authored offset, floored at
     /// 1. An unknown wave floors to 1 rather than throwing — the ladder is bounded by
     /// <see cref="WaveCount"/> and every caller iterates it.</summary>
-    public int GhostLevel(int heroLevel, int wave) =>
-        Math.Max(1, heroLevel + (WaveAt(wave)?.LevelOffset ?? 0));
+    public int GhostLevel(int heroLevel, int wave) => Math.Max(1, AuthoredGhostLevel(heroLevel, wave));
 
     /// <summary>
     /// How many levels of a wave's authored offset the level-1 FLOOR ate — 0 for every hero the offset can
@@ -94,9 +100,11 @@ public sealed record Dungeon(
     /// ENTRY cohort, and only the entry cohort, without the soft opener every other cohort is given, and
     /// with one fewer distinct rung than the ladder was written to have. This is that shortfall, measured,
     /// so <see cref="GhostHandicap"/> can pay it back on an axis that still has room below a level-1 peer.
+    ///
+    /// By construction <c>GhostLevel == AuthoredGhostLevel + ClampedLevels</c> for every input: what the
+    /// floor added is exactly what this reports, so nothing the content asked for goes unaccounted.
     /// </summary>
-    public int ClampedLevels(int heroLevel, int wave) =>
-        Math.Max(0, 1 - (heroLevel + (WaveAt(wave)?.LevelOffset ?? 0)));
+    public int ClampedLevels(int heroLevel, int wave) => Math.Max(0, 1 - AuthoredGhostLevel(heroLevel, wave));
 
     /// <summary>
     /// How hard a wave's ghost hits, as a multiplier on its damage — exactly 1.0 unless the level floor ate

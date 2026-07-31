@@ -94,6 +94,21 @@ public class GauntletRampTests
     }
 
     [Fact]
+    public void NothingTheContentAsksForGoesUnaccounted()
+    {
+        // The invariant the two halves are built on, and which Dungeon's own docs claim: whatever the floor
+        // ADDED to reach a legal level is exactly what ClampedLevels reports back. Pinned rather than
+        // trusted, because a drift between the two would silently under- or over-pay the handicap.
+        for (var level = 1; level <= 12; level++)
+            for (var wave = 1; wave <= Gauntlet.WaveCount; wave++)
+            {
+                var authored = level + Gauntlet.Content.Waves[wave - 1].LevelOffset;
+                Assert.Equal(Gauntlet.GhostLevel(level, wave),
+                    authored + Gauntlet.Content.ClampedLevels(level, wave));
+            }
+    }
+
+    [Fact]
     public void TheEntryCohortSeesAFullSetOfDistinctRungs_LikeEveryOtherCohort()
     {
         // The consequence stated as a whole-ladder shape. This is the assertion that used to record the
