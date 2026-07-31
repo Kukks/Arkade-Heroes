@@ -54,9 +54,14 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     }
 
     /// <summary>
-    /// Buy the one-time starter heroes for the signed-in player: quote the fee, pay it from the player's
-    /// own wallet, then claim. A hero costs what breeding one costs — including the first — so this is a
-    /// real payment, not a formality, and the heroes only exist once it lands.
+    /// Buy starter heroes for the signed-in player: quote the fee, pay it from the player's own wallet,
+    /// then claim. A hero costs what breeding one costs — including the first — so this is a real payment,
+    /// not a formality, and the heroes only exist once it lands.
+    ///
+    /// <para>NOT one-time, and not a batch: one call buys
+    /// <see cref="ArkadeHeroes.Core.Genetics.StarterPolicy.HeroCount"/> hero(es),
+    /// and it can be called again as often as the player will pay. The supply control is that recruits are
+    /// the worst heroes in the game, not that there is a limit on them.</para>
     /// </summary>
     public async Task<IReadOnlyList<HeroDto>> ClaimStartersAsync(Action<string>? onProgress = null)
     {

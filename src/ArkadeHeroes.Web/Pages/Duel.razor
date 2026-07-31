@@ -40,10 +40,17 @@ else
 {
     <div class="card">
         <h3 style="margin-top:0">Challenge a rival</h3>
+        @* "An underdog risks nothing" was false and this page already knew it. Matchmaking.Favor calls a
+           hero "underdog" from THREE levels down, while XpIfLose only reaches zero at four — so an
+           underdog by the chip's own definition can still be charged XP for losing. The freeShot flag
+           below is the honest test (Favor == underdog AND XpIfYouLose == 0); the prose now defers to it
+           instead of stating the strong version of what it means. *@
         <p class="muted" style="margin-top:0">
             Both of you stake the wager into your own covenant escrow and pay a small match fee. The
             deterministic duel is resolved by the challenger; the emulator sweeps the whole pot to the
-            winner. XP is a conserved transfer — an <b>underdog risks nothing</b> but stands to win big.
+            winner. XP is a conserved transfer: beating a higher hero takes a lot off it, and beating a
+            much weaker one takes nothing. Past a wide enough gap losing costs the underdog no XP at
+            all — the opponents below say <b>free shot</b> when that is actually true of them.
         </p>
         <label>Your champion
             <select @bind="_myHeroId" @bind:after="OnHeroPicked">

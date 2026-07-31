@@ -13,9 +13,16 @@
     <a class="btn ghost" href="play">All modes →</a>
 </div>
 
+@* This used to end "and nothing can be taken away", which is the opposite of how the badges work.
+   GameService.PlayerAchievements recomputes every one of them from the roster you hold RIGHT NOW —
+   heroes owned, bred heroes owned, a Legendary owned, a Fancy owned, a bracket won by a hero you still
+   own — so selling, fusing or losing a hero takes the badge with it. Only Trailblazer was deliberately
+   made permanent, and the server says so in as many words at the line that records it. *@
 <p class="muted codex-intro">
-    Every badge is counted from things that really happened — heroes bred, bouts won, creatures
-    collected. Nothing here is awarded by hand, and nothing can be taken away.
+    Every badge is counted from things that really happened — nothing here is awarded by hand. Most of
+    them read your roster as it stands, so a badge you earned by owning something goes away again if you
+    sell it, fuse it, or lose it in a death-match. <b>Trailblazer</b> is the exception: being first to
+    breed a named set is a deed, and it stays yours even after the hero does not.
 </p>
 
 <AchievementsCard />

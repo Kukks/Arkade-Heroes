@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using ArkadeHeroes.Core;
 using ArkadeHeroes.Core.Combat;
@@ -155,6 +156,88 @@ public class CodexReferenceTests
         Assert.Equal(actual, flagged);
         Assert.True(rows[^1].IsAffinity && rows[^2].IsAffinity,
             "The affinities are the last two categories in the genome and should be published last.");
+    }
+
+    [Fact]
+    public void TheSkillUnlockLevels_IncludeTheOneEveryHeroStartsWith()
+    {
+        // The page says the first technique is "known from level 1". That is GeneSkillALevel, and it was
+        // the ONE unlock number the page stated without pinning — a retune to 3 would leave every new
+        // player told their hero already has a second move.
+        Assert.Equal(1, GameConfig.Default.Combat.GeneSkillALevel);
+        Assert.Contains("known from level 1", Page.Value);
+    }
+
+    // ── Mutation: the odds bar, and how often it fires at all ───────────────────
+
+    /// <summary>The (tier, count-out-of-256) rows a page publishes in its mutation-odds bar.</summary>
+    private static Dictionary<string, int> PublishedMutationOdds(string source) =>
+        Regex.Matches(source, @"new\(""(?<tier>\w+)"",\s*""\w+"",\s*(?<n>\d+)\s*/\s*256d\s*\*\s*100\)")
+            .ToDictionary(m => m.Groups["tier"].Value, m => int.Parse(m.Groups["n"].Value));
+
+    /// <summary>
+    /// What <c>GeneMixer.MutatedVariant</c> actually rolls, tallied over every possible roll byte and
+    /// graded by the same <see cref="Traits.TierOf"/> the rest of the game grades by. Private, so read by
+    /// reflection — the alternative is copying its cutoffs into the test, which pins the page against a
+    /// second hand-written copy rather than against the code.
+    /// </summary>
+    private static Dictionary<string, int> ActualMutationOdds()
+    {
+        var roll = typeof(GeneMixer).GetMethod(
+                       "MutatedVariant", BindingFlags.NonPublic | BindingFlags.Static)
+                   ?? throw new InvalidOperationException(
+                       "GeneMixer.MutatedVariant is gone. The mutation bars on /codex and the landing "
+                       + "explainer are read off its cutoffs, so they now describe nothing.");
+
+        return Enumerable.Range(0, 256)
+            .Select(r => (byte)roll.Invoke(null, [(byte)r])!)
+            .GroupBy(v => Traits.TierOf(v).ToString())
+            .ToDictionary(g => g.Key, g => g.Count());
+    }
+
+    [Theory]
+    [InlineData("Pages", "Codex.razor")]
+    [InlineData("Components", "GenomeCodex.razor")]
+    public void TheMutationOdds_MatchWhatAMutationActuallyRolls(string folder, string file)
+    {
+        // Both surfaces draw the same bar from their own copy of the numbers, and both were written by
+        // hand off MutatedVariant's cutoffs. Neither was checked against it until now.
+        var published = PublishedMutationOdds(Source(folder, file));
+        var actual = ActualMutationOdds();
+
+        Assert.Equal(5, published.Count);
+        Assert.Equal(256, published.Values.Sum());
+        foreach (var (tier, count) in published)
+        {
+            Assert.True(actual.TryGetValue(tier, out var real),
+                $"{file} publishes a '{tier}' slice of the mutation bar, but no roll produces that tier.");
+            Assert.Equal(real, count);
+        }
+    }
+
+    [Theory]
+    [InlineData("Pages", "Codex.razor")]
+    [InlineData("Components", "GenomeCodex.razor")]
+    public void TheMutationRate_IsTheOneTheBreedingPoolActuallyUses(string folder, string file)
+    {
+        // "About one trait in forty-three" is GeneConfig.TraitMutationThreshold read out loud: a category
+        // mutates when its roll byte lands at or above the threshold, so 256 - threshold values out of
+        // 256 fire. Written as a WORD in the copy, which is precisely why nothing caught it drifting.
+        var threshold = GameConfig.Default.Gene.TraitMutationThreshold;
+        var oneIn = (int)Math.Round(256.0 / (256 - threshold));
+
+        // If this moves, both sentences have to be REWRITTEN — they spell the number as a word, so there
+        // is nothing to renumber. /codex says "one trait in forty-three"; the landing explainer says
+        // "one in forty-three"; the shared tail is what both have to keep true.
+        Assert.Equal(43, oneIn);
+        Assert.Contains("in forty-three", Source(folder, file));
+    }
+
+    private static string Source(string folder, string file)
+    {
+        var path = Path.Combine(FindRepoRoot(), "src", "ArkadeHeroes.Web", folder, file);
+        if (!File.Exists(path)) throw new InvalidOperationException($"Expected {file} at {path}.");
+        return File.ReadAllText(path);
     }
 
     private static string FindRepoRoot()
