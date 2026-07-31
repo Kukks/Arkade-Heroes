@@ -1,6 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!--
+      So the wallet's coin selection can be tested as the pure function it is. It decides which VTXOs
+      carry a player's heroes into a spend, and that is worth asserting directly rather than only
+      through a live arkd. Internal rather than public because nothing outside the wallet should call it.
+    -->
+    <InternalsVisibleTo Include="ArkadeHeroes.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Core\ArkadeHeroes.Core.csproj" />
     <ProjectReference Include="..\..\external\dotnet-sdk\NArk\NArk.csproj" />
     <ProjectReference Include="..\..\external\dotnet-sdk\NArk.Storage.EfCore\NArk.Storage.EfCore.csproj" />
