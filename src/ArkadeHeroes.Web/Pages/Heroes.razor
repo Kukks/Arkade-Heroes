@@ -23,10 +23,8 @@
     }
 </div>
 
-@if (State.IsSignedIn)
-{
-    <AchievementsCard />
-}
+@* The badges moved to /achievements — a card wedged above the roster pushed the actual heroes down
+   the page, by however many you happened to own. *@
 
 @if (_loading)
 {

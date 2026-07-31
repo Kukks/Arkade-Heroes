@@ -80,7 +80,9 @@
         "market" or "sell" => "market",
         "wallet" => "wallet",
         var p when p == "heroes" || p.StartsWith("heroes/")
-                   || p is "spar" or "gauntlet" or "trials" or "duel" or "deathmatch" or "breed" or "merge" or "gear" or "leaderboard" or "daily" or "squad" or "tournaments" or "reclaim" => "heroes",
+                   || p is "play" or "spar" or "gauntlet" or "trials" or "duel" or "deathmatch" or "breed"
+                        or "merge" or "gear" or "leaderboard" or "daily" or "squad" or "tournaments"
+                        or "reclaim" or "achievements" => "heroes",
         _ => "",
     };
 
@@ -143,23 +145,18 @@
         _path = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/').ToLowerInvariant();
         _subnav = Section switch
         {
+            // Six, not fourteen. The old row listed every mode as an equal-looking word, so Spar (free
+            // practice) and Death-match (destroys a hero forever) read the same. /play now groups them
+            // by intent and states the stake on each, and the nav just points at it.
             "heroes" =>
             [
                 ("Roster", "heroes", NavLinkMatch.All),
-                ("Daily", "daily", NavLinkMatch.Prefix),
-                ("Spar", "spar", NavLinkMatch.Prefix),
-                ("Gauntlet", "gauntlet", NavLinkMatch.Prefix),
-                ("Trials", "trials", NavLinkMatch.Prefix),
-                ("Duel", "duel", NavLinkMatch.Prefix),
-                ("Squad", "squad", NavLinkMatch.Prefix),
-                ("Tournaments", "tournaments", NavLinkMatch.Prefix),
-                ("Death-match", "deathmatch", NavLinkMatch.Prefix),
+                ("Play", "play", NavLinkMatch.Prefix),
                 ("Breed", "breed", NavLinkMatch.Prefix),
-                ("Merge", "merge", NavLinkMatch.Prefix),
-                ("Gear", "gear", NavLinkMatch.Prefix),
+                ("Achievements", "achievements", NavLinkMatch.Prefix),
                 ("Ranks", "leaderboard", NavLinkMatch.Prefix),
-                // Sits beside Breed and Merge on purpose: those two flows create two of the three escrow
-                // kinds it recovers, so a run that died halfway is one tab from where it was started.
+                // Kept in the top row despite the trim: it is the page you need when something has gone
+                // wrong, which is the worst time to go looking for it two clicks deep.
                 ("Recover", "reclaim", NavLinkMatch.Prefix),
             ],
             "market" =>
