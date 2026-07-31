@@ -68,15 +68,18 @@ Fund each player's address from the faucet (address shown by `wallet`/`register`
 node regtest/regtest.mjs ark send --to <alice tark1…> --amount 100000 --password secret
 node regtest/regtest.mjs ark send --to <bob tark1…>   --amount 100000 --password secret
 ```
-Then claim starters in each client:
+Then buy starters in each client. A recruit is BOUGHT — it quotes a fee, pays it from the
+wallet you just funded, and mints ONE generation-0 hero — so run it twice for Alice, who
+needs a breedable pair below:
 ```
-starter               # two generation-0 heroes minted straight into your wallet
+starter               # quote → pay → one generation-0 hero, minted into your wallet
+starter               # again (Alice only): breeding needs two parents
 mine                  # list them (note the two hero numbers, e.g. 1 and 2)
 ```
 
 ## 3. Covenant breeding (Alice)
 
-Breed Alice's two starters under the covenant — the parents are retained and
+Breed Alice's two recruits under the covenant — the parents are retained and
 the child is minted under the species with an oracle-attested genome; an invalid
 breed is unsignable:
 ```
