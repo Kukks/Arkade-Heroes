@@ -1,0 +1,291 @@
+@page "/account"
+@inject ArkadeHeroesClient Api
+@inject WalletState State
+@implements IDisposable
+
+@* Everything you own, in one place, with what you can do to each of it.
+
+   The roster shows heroes as cards you can browse; this page is the OWNER's view of the same
+   creatures — the stats that decide a fight, the actions that spend them, and what each one has
+   already been through. Duel history in particular lived only on /duel, mixed in with the open
+   matches, and was attached to the page rather than to the hero it happened to. *@
+
+<PageTitle>Account · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>Your account</h2>
+    <span class="hud">your heroes, their record, and what you can spend them on</span>
+    <span class="spacer"></span>
+    @if (_loaded)
+    {
+        <span class="chip mono">@_heroes.Count hero@(_heroes.Count == 1 ? "" : "s")</span>
+        <span class="chip mono">@State.BalanceSats.ToString("N0") sats</span>
+    }
+</div>
+
+@if (!State.IsSignedIn)
+{
+    <div class="card muted">
+        Press <a href="/">Play</a> on the home page — your wallet is set up automatically — or
+        <a href="wallet">sign in with a recovery phrase</a> you already have.
+    </div>
+}
+else if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> reading your account…</div>
+}
+@* An empty roster and a roster we failed to read are different facts. Only _loaded tells them
+   apart — a swallowed read would otherwise tell a player with a full stable to go and recruit. *@
+else if (!_loaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your account.</div>
+        <p class="muted" style="margin:.7rem 0 0">Reload the page — the arena may be briefly unreachable.</p>
+    </div>
+}
+else if (_heroes.Count == 0)
+{
+    <div class="card muted">
+        <p style="margin:0 0 .8rem">You don't own any heroes yet.</p>
+        <a class="btn primary" href="heroes?mine=1">Recruit your first hero</a>
+    </div>
+}
+else
+{
+    <div class="card acct-signed">
+        <div class="status-line"><span class="dot ok"></span> Signed in as <b>@State.Player!.Name</b></div>
+        <p class="muted" style="margin:.6rem 0 0">
+            Every hero below is an Arkade asset held by your own wallet — breeding, selling and staking
+            it all move real sats. <a href="heroes?mine=1">Recruit another</a> ·
+            <a href="wallet">wallet and recovery phrase</a>.
+        </p>
+        @* Said once, up front, rather than implied per hero: the arena serves the newest matches across
+           ALL players, capped, so an old fight of yours can simply have fallen out of that window. A hero
+           row reading "no finished duels" must not be taken for "this hero has never fought" — its own
+           page carries the full, uncapped receipt chain. *@
+        <p class="muted" style="margin:.5rem 0 0;font-size:.82rem">
+            Duel history is read from the arena's recent matches, so older fights drop off it. Each hero's
+            own page keeps the complete signed record.
+        </p>
+    </div>
+
+    @foreach (var h in _heroes)
+    {
+        <div class="card acct-hero">
+            <div class="acct-top">
+                <a class="acct-portrait" href="heroes/@h.Id" title="@h.Name — full detail sheet">
+                    <HeroSprite Hero="h" Size="104" />
+                    <span class="hero-gen mono">GEN·@h.Generation</span>
+                </a>
+                <div class="acct-ident">
+                    <div class="acct-name">
+                        <a href="heroes/@h.Id">@h.Name</a>
+                        <span class="tier tag-@TierKey(h)">@Tier(h)</span>
+                        @if (h.FancyTitle is not null)
+                        {
+                            <span class="chip" title="Fancy — a rare genome trait combination">✦ @h.FancyTitle</span>
+                        }
+                    </div>
+                    <div class="chips">
+                        <span class="chip">lvl <b>@h.Level</b></span>
+                        <span class="chip">@h.Element</span>
+                        @if (h.Rarity is not null)
+                        {
+                            <span class="chip">rarity <b>@h.Rarity.Score</b></span>
+                        }
+                        <span class="chip">bred <b>@h.BreedCount</b>×</span>
+                        @if (h.IsSterile)
+                        {
+                            <span class="chip bad" title="sterile — this hero cannot breed">sterile</span>
+                        }
+                        @if (Fought(h.Id) > 0)
+                        {
+                            <span class="chip" title="wins and losses among the arena's recent matches — not a lifetime record">@Won(h.Id)W · @(Fought(h.Id) - Won(h.Id))L</span>
+                        }
+                    </div>
+                    @if (h.Rarity is { Expressed.Count: > 0 })
+                    {
+                        <div class="chips">
+                            @foreach (var t in h.Rarity.Expressed)
+                            {
+                                <span class="chip ghost">@t.Category <b class="tag-@t.Tier.ToLowerInvariant()">@t.Tier</b></span>
+                            }
+                        </div>
+                    }
+                    <div class="statline mono">
+                        <span>HP @h.Stats.MaxHp</span>
+                        <span>ATK @h.Stats.Attack</span>
+                        <span>MAG @h.Stats.Magic</span>
+                        <span>DEF @h.Stats.Defense</span>
+                        <span>SPD @h.Stats.Speed</span>
+                        <span>@h.Xp / @h.XpToNext xp</span>
+                    </div>
+                </div>
+            </div>
+
+            @* Links, not handlers: each of these modes already has a page that states its stake and
+               collects what it needs. Duplicating the flows here would mean two places to keep honest
+               about what a death-match costs. *@
+            <div class="acct-actions">
+                <a class="btn ghost sm" href="@($"spar?a={h.Id}")" title="Free practice — the real combat engine, no wager">⚔ Spar</a>
+                <a class="btn ghost sm" href="duel" title="Staked PvP — both sides escrow the wager, winner takes the pot">🎯 Duel</a>
+                @if (!h.IsSterile)
+                {
+                    <a class="btn ghost sm" href="breed" title="Two heroes, one heir — costs sats">🧬 Breed</a>
+                }
+                <a class="btn ghost sm" href="sell" title="List this hero on the market">🏷 Sell</a>
+                <a class="btn ghost sm" href="heroes/@h.Id" title="Rename this hero (costs a small fee)">✎ Rename</a>
+                <a class="btn ghost sm acct-danger" href="deathmatch" title="Winner takes everything and the loser's hero is destroyed forever">💀 Death-match</a>
+            </div>
+
+            <div class="acct-hist">
+                <div class="hud">past duels</div>
+                @if (History(h.Id) is { Count: > 0 } past)
+                {
+                    @foreach (var m in past)
+                    {
+                        <div class="match-row muted">
+                            <span>
+                                vs <b>@Name(Opponent(m, h.Id))</b>
+                                @if (m.WagerSats > 0)
+                                {
+                                    <text>· <b class="mono">@m.WagerSats.ToString("N0")</b> sats</text>
+                                }
+                            </span>
+                            <span class="spacer"></span>
+                            <span class="chip @(m.Result!.WinnerId == h.Id ? "ok" : "bad")">
+                                @(m.Result.WinnerId == h.Id ? "won" : "lost")
+                            </span>
+                            <a class="btn ghost sm" href="watch/@m.MatchId">Replay ↗</a>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <p class="muted acct-empty">
+                        No finished duels in the arena's recent window —
+                        <a href="heroes/@h.Id">this hero's own record</a> goes back further.
+                    </p>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<HeroDto> _heroes = new();
+    private List<MatchDto> _matches = new();
+    private readonly Dictionary<string, string> _names = new();
+
+    /// <summary>Resolved duels per hero id, built once per load so the markup doesn't re-scan the
+    /// match list for every hero on every render.</summary>
+    private readonly Dictionary<string, List<MatchDto>> _history = new();
+
+    private bool _loading = true;
+
+    /// <summary>The roster read actually succeeded. Distinct from "the roster is empty" — see the
+    /// branch above; conflating them is how /duel once told stocked players to go and claim starters.</summary>
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChange += OnState;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!State.IsSignedIn) { _loading = false; return; }
+        _loading = true;
+        try
+        {
+            _heroes = await Api.Heroes.MineAsync();
+            foreach (var h in _heroes) _names[h.Id] = h.Name;
+            // History is chrome next to the roster itself: an unreachable match list must leave the
+            // page showing your heroes, not replace it with an error about duels.
+            try { _matches = await Api.Matches.ListAsync(); }
+            catch { _matches = new(); }
+            BuildHistory();
+            await ResolveOpponentNamesAsync();
+            _loaded = true;
+        }
+        catch
+        {
+            // Left unloaded on purpose — the card above says so rather than pretending you own nothing.
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>Bucket every RESOLVED match under each of my heroes that fought in it. Unresolved ones
+    /// belong to /duel, which is where you act on them; this page is the record of what already happened.</summary>
+    void BuildHistory()
+    {
+        _history.Clear();
+        var mine = _heroes.Select(h => h.Id).ToHashSet();
+        foreach (var m in _matches.Where(m => m.Result is not null))
+        {
+            // A hero can now fight itself, in which case both ids are the same one — Distinct keeps the
+            // match from appearing twice under a single hero.
+            foreach (var id in new[] { m.ChallengerHeroId, m.DefenderHeroId }.Distinct())
+            {
+                if (!mine.Contains(id)) continue;
+                if (!_history.TryGetValue(id, out var list)) _history[id] = list = new();
+                list.Add(m);
+            }
+        }
+    }
+
+    /// <summary>Opponent heroes aren't in my roster, so their names have to be fetched one at a time.
+    /// Best-effort: an unresolved id falls back to its short form rather than blanking the row.
+    ///
+    /// <para>Issued together rather than in sequence. The match window holds fifty, so a well-travelled
+    /// roster can need dozens of these, and one-after-another turns "your account" into a page that
+    /// visibly fills in. The browser still caps how many go out at once; results are collected before
+    /// anything is written so the name cache is only touched from here.</para></summary>
+    async Task ResolveOpponentNamesAsync()
+    {
+        var needed = _history.Values
+            .SelectMany(ms => ms)
+            .SelectMany(m => new[] { m.ChallengerHeroId, m.DefenderHeroId })
+            .Where(id => !_names.ContainsKey(id))
+            .Distinct()
+            .ToList();
+        var found = await Task.WhenAll(needed.Select(async id =>
+        {
+            try { return (Id: id, Name: (string?)(await Api.Heroes.GetAsync(id)).Name); }
+            catch { return (Id: id, Name: (string?)null); }
+        }));
+        foreach (var (id, name) in found)
+        {
+            if (name is not null) _names[id] = name;
+        }
+    }
+
+    private List<MatchDto> History(string heroId) =>
+        _history.TryGetValue(heroId, out var list) ? list : [];
+
+    private int Fought(string heroId) => History(heroId).Count;
+    private int Won(string heroId) => History(heroId).Count(m => m.Result!.WinnerId == heroId);
+
+    private static string Opponent(MatchDto m, string heroId) =>
+        m.ChallengerHeroId == heroId ? m.DefenderHeroId : m.ChallengerHeroId;
+
+    private string Name(string heroId) =>
+        _names.TryGetValue(heroId, out var n) ? n : heroId[..Math.Min(8, heroId.Length)];
+
+    private static string Tier(HeroDto h) => h.Rarity?.Tier ?? "Common";
+    private static string TierKey(HeroDto h) => Tier(h).ToLowerInvariant();
+
+    // Signing in on this page (or elsewhere in the shell) has to fill it — otherwise a player who
+    // lands here before the session resumes sees the signed-out card until they navigate away.
+    void OnState() => InvokeAsync(async () =>
+    {
+        if (State.IsSignedIn && !_loaded && !_loading) await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => State.OnChange -= OnState;
+}

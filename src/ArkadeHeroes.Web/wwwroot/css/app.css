@@ -1070,3 +1070,37 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 
 /* --- Operator console: paired panels that collapse to one column ---------- */
 .admin-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.1rem; }
+
+/* --- /account: the owner's view of a hero — portrait, stats, actions, record ---
+   Deliberately a stacked LIST rather than the roster's card grid. These rows carry six actions and a
+   match history each, which a 220px grid cell cannot hold without hiding one of them behind a click. */
+.acct-signed { margin-bottom: 1.1rem; }
+.acct-hero { margin-bottom: 1.1rem; }
+.acct-top { display: grid; grid-template-columns: 120px 1fr; gap: 1.1rem; align-items: start; }
+.acct-portrait {
+    position: relative; aspect-ratio: 1; border-radius: var(--radius); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    background: radial-gradient(120% 120% at 50% 12%, var(--bg-2), #06080c);
+}
+.acct-portrait:hover { border-color: rgba(53,240,208,.4); box-shadow: var(--glow); }
+.acct-ident { display: grid; gap: .55rem; min-width: 0; }
+.acct-name { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.acct-name a { font-size: 1.15rem; font-weight: 600; color: var(--text); }
+.acct-name a:hover { color: var(--accent); text-decoration: none; }
+
+.acct-actions {
+    display: flex; gap: .5rem; flex-wrap: wrap;
+    margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--line-soft);
+}
+.acct-actions .btn { text-decoration: none; }
+/* The one action that can end a creature reads differently from the five that can't. */
+.acct-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.acct-danger:hover { border-color: var(--danger); box-shadow: 0 0 22px -6px rgba(255,90,90,.7); }
+
+.acct-hist { margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--line-soft); }
+.acct-empty { margin: .4rem 0 0; font-size: .82rem; }
+
+@media (max-width: 620px) {
+    .acct-top { grid-template-columns: 1fr; }
+    .acct-portrait { max-width: 160px; }
+}
