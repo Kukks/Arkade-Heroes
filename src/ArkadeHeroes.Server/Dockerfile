@@ -106,6 +106,18 @@ RUN apt-get update \
 RUN mkdir -p /data && chown $APP_UID:$APP_UID /data
 VOLUME ["/data"]
 
+# Durability is opt-in in the app (no key ⇒ everything in memory, lost on restart), and that
+# default is right for `dotnet run` but wrong for anything shipped. Defaulted HERE rather than
+# only in docker-compose.yml because a platform that deploys this IMAGE directly — Dokploy, a
+# bare `docker run` — never reads that file, and the failure is silent: the server boots clean
+# and serves happily while writing nothing, so the roster only disappears at the next redeploy.
+# An operator can still override it, and compose sets the identical value explicitly.
+#
+# NOTE: this makes the DB get WRITTEN; keeping it needs /data backed by a NAMED volume or host
+# mount. The bare VOLUME above is anonymous — it survives a restart but is orphaned when the
+# container is recreated, which is exactly what a redeploy does.
+ENV Game__StateDbPath=/data/game.db
+
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
 
