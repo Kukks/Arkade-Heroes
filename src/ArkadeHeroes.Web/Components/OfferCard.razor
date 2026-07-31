@@ -19,6 +19,18 @@
             <span class="price-shine"></span>
         </div>
     }
+    else
+    {
+        @* The fall-through: a HERO offer whose HeroDto didn't resolve. Reachable whenever the market's
+           roster fetch fails (it is swallowed there on purpose — portraits are a nicety) or the hero isn't
+           in the public set. With no final else the card rendered with no tile, no tier frame and no kind
+           badge at all, so a real listing read as a broken row. A placeholder still says what it is. *@
+        <div class="offer-tile tier-@TierIndex">
+            <div class="offer-noart mono">?</div>
+            <span class="offer-kind mono">@KindLabel</span>
+            <span class="price-shine"></span>
+        </div>
+    }
     <div class="offer-body">
         <div class="offer-head">
             <span class="offer-name">@Offer.ItemName</span>

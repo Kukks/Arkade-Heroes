@@ -19,9 +19,25 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
 }
+@* "You have fewer than two fertile heroes" and "we never managed to read your roster" are different
+   facts, and this branch used to state the first while meaning either. _heroesLoaded was already declared
+   and set; it was simply never read. *@
+else if (!_heroesLoaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your roster.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            This is not the same as owning too few fertile heroes — we simply couldn't look. @_loadError
+        </p>
+        <button class="btn primary sm" style="margin-top:.7rem" @onclick="Retry" disabled="@_loading">Try again</button>
+    </div>
+}
 else if (_fertile.Count < 2)
 {
-    <div class="card muted">You need at least two fertile heroes — claim your starters on the <a href="heroes">Heroes</a> page first.</div>
+    @* ?mine=1, not bare /heroes: the roster opens on the ALL tab and the recruit card only renders under
+       Mine, so this link used to land a stuck player on a grid of other people's heroes with no way to
+       do the thing the sentence just told them to do. *@
+    <div class="card muted">You need at least two fertile heroes — recruit one on the <a href="heroes?mine=1">Heroes</a> page first.</div>
 }
 else
 {
@@ -51,6 +67,16 @@ else
                 </select>
             </label>
         </div>
+        @* The price, stated before the spend. The breed fee DOUBLES with every prior breed across both
+           parents (up to the configured cap), so "the fee" can be many multiples of the base — and the
+           player used to first learn the number from the commit response, after the covenant was sealed. *@
+        @if (Fee is { } fee)
+        {
+            <p class="muted" style="margin:.8rem 0 0;font-size:.85rem">
+                This pairing costs <b>@fee.ToString("N0") sats</b>, deposited into the escrow with both
+                parents. The fee doubles with each prior breed, so a well-used pair costs more than a fresh one.
+            </p>
+        }
         <button class="btn primary" style="margin-top:1.1rem" @onclick="DoBreed"
                 disabled="@(_breeding || string.IsNullOrEmpty(_parentAId) || string.IsNullOrEmpty(_parentBId) || _parentAId == _parentBId)">
             @(_breeding ? "Breeding…" : "Breed")
@@ -167,8 +193,21 @@ else
     private bool _heroesLoaded;
     private string? _status;
     private string? _error;
+    private string? _loadError;
     private HeroDto? _child;
     private string? _pendingBreedingId;   // set when a reveal times out — enables "Retry reveal"
+
+    /// <summary>The server's published fee knobs, so the page can price the SELECTED pairing before the
+    /// player commits. Read separately from the roster: a config blip must not cost you the page.</summary>
+    private GameConfigDto? _config;
+
+    /// <summary>What breeding the currently-picked pair costs, or null until both a pair and the config are
+    /// known. Escalating, so it is a property of the PAIR, not a constant.</summary>
+    private long? Fee => Parent(_parentAId) is { } a && Parent(_parentBId) is { } b && a.Id != b.Id
+        ? Pricing.BreedFee(_config, a.BreedCount, b.BreedCount)
+        : null;
+
+    private HeroDto? Parent(string id) => _fertile.FirstOrDefault(h => h.Id == id);
 
     // ── Stud service: breeding with another player's hero, behind their consent ──
     private string _studMineId = "";
@@ -200,10 +239,31 @@ else
             _mine = await Api.Heroes.MineAsync();
             _fertile = _mine.Where(h => !h.IsSterile).ToList();
             _heroesLoaded = true;
-            await LoadStudAsync();
+            _loadError = null;
         }
-        catch { /* token may not be set yet on a fresh page load; OnState retries once signed in */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed. OnState only re-runs on the NEXT wallet event, and a server hiccup
+            // produces none — so a one-off failure looked exactly like owning one fertile hero, forever.
+            _loadError = ex.Message;
+        }
         finally { _loading = false; }
+
+        // Both of these used to sit INSIDE the try above, after _heroesLoaded was already set — so a stud
+        // read that threw was eaten by a catch whose retry gate (!_heroesLoaded) could never open again,
+        // and incoming proposals (sats another player is offering you) simply never appeared.
+        try { await LoadStudAsync(); }
+        catch (Exception ex) { _studError = $"Couldn't read stud proposals: {ex.Message}"; }
+
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* price unknown — the page says so rather than quoting a zero */ }
+    }
+
+    /// <summary>Manual retry, because the automatic one depends on an event that may never fire.</summary>
+    async Task Retry()
+    {
+        _error = null;
+        await LoadAsync();
     }
 
     /// <summary>Splits the public proposal feed into the two lists that mean something to this player: the

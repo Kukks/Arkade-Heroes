@@ -94,7 +94,15 @@
         ]),
         new("Keep track", "where you stand",
         [
-            new("Roster", "heroes", "📜", "Every hero you own, with its traits, rarity and bloodline.", Free),
+            // ?mine=1 — /heroes opens on the ALL tab, and the recruit card only renders under Mine. A
+            // "Roster" card that lands you on other people's heroes is the wrong page for the word.
+            new("Roster", "heroes?mine=1", "📜", "Every hero you own, with its traits, rarity and bloodline.", Free),
+            // /daily had NO door. It has a route, it has a section rule in MainLayout that lights the
+            // Heroes tab for it, and the header comment above lists it among the fourteen modes this page
+            // replaced — but nothing anywhere linked to it, so the whole streak-and-quests loop was
+            // reachable only by typing the URL. It was swapped out for Achievements and never re-added.
+            new("Daily", "daily", "🎁", "Today's quests, your streak, and the daily sats claim. The streak "
+                + "multiplier resets if you skip a day.", Free),
             new("Achievements", "achievements", "🎖", "Badges for what you have actually done — bred, "
                 + "fought, collected, survived.", Free),
             new("Ranks", "leaderboard", "📈", "The season ladder, the rarest creatures on it, and the "

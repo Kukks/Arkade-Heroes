@@ -19,9 +19,22 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading the arena…</div>
 }
+@* "You have 0 heroes" and "we never managed to read your roster" are different facts, and this branch
+   used to state the first while meaning either — printing an invented count as fact. Only _heroesLoaded
+   tells them apart. Same fix as /duel, /deathmatch, /gauntlet and /trials already carry. *@
+else if (!_heroesLoaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your roster.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            This is not the same as owning too few heroes — we simply couldn't look. @_loadError
+        </p>
+        <button class="btn primary sm" style="margin-top:.7rem" @onclick="Retry" disabled="@_loading">Try again</button>
+    </div>
+}
 else if (_mine.Count < 3)
 {
-    <div class="card muted">A squad needs 3 heroes — breed or claim more on the <a href="heroes">Heroes</a> page (you have @_mine.Count).</div>
+    <div class="card muted">A squad needs 3 heroes — breed or recruit more on the <a href="heroes?mine=1">Heroes</a> page (you have @_mine.Count).</div>
 }
 else
 {
@@ -72,6 +85,15 @@ else
         <label style="margin-top:1rem">Wager (sats, each side stakes this)
             <input type="number" min="1" step="100" @bind="_wager" />
         </label>
+        @* The wager was the only number on screen, but BOTH sides also pay a match fee on top of it — at
+           open and again at accept. Money that leaves the wallet gets said out loud. *@
+        @if (MatchFee is { } fee)
+        {
+            <p class="muted" style="margin:.5rem 0 0;font-size:.85rem">
+                Plus a <b>@fee.ToString("N0") sat</b> match fee per side, scaled to your top hero's level —
+                so this costs you <b>@((_wager + fee).ToString("N0")) sats</b> in total.
+            </p>
+        }
         <button class="btn primary" style="margin-top:1rem" @onclick="DoOpen"
                 disabled="@(_busy || !LineupValid || string.IsNullOrEmpty(_oppOwner) || _wager < 1)">
             @(_busy ? "Working…" : "Challenge squad")
@@ -91,7 +113,7 @@ else
         <span class="spacer"></span>
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
-    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any())
+    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any() && !AwaitingOpponent.Any() && !History.Any())
     {
         <div class="card muted">No open squad matches. Challenge a rival above — or wait to be challenged.</div>
     }
@@ -125,6 +147,25 @@ else
                 }
             </div>
         }
+        @* Accepted, and I am the DEFENDER — the bucket that did not exist. ToAccept is open+defender and
+           ToResolve is accepted+CHALLENGER, so the instant a defender accepted (and their stake and match
+           fee left their wallet) the match belonged to no bucket and vanished from their page, under a
+           message inviting them to challenge someone. Accepting looked like it had done nothing. Read-only
+           on purpose: only the challenger may resolve a squad match. *@
+        @if (AwaitingOpponent.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Staked — waiting for the challenger to fight</div>
+                @foreach (var m in AwaitingOpponent)
+                {
+                    <div class="match-row muted">
+                        <span>Your squad vs a rival · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <span class="chip">accepted</span>
+                    </div>
+                }
+            </div>
+        }
         @if (Waiting.Any())
         {
             <div class="card">
@@ -135,6 +176,22 @@ else
                         <span>Your squad vs a rival · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
                         <span class="spacer"></span>
                         <span class="chip">open</span>
+                    </div>
+                }
+            </div>
+        }
+        @* What already happened. A resolved squad match dropped out of every bucket, so the page went back
+           to looking like nothing had occurred — even though the pot had moved. *@
+        @if (History.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Past squad matches</div>
+                @foreach (var m in History)
+                {
+                    <div class="match-row muted">
+                        <span>Your squad vs a rival · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <span class="chip">resolved</span>
                     </div>
                 }
             </div>
@@ -173,7 +230,23 @@ else
     private string _oppOwner = "";
     private long _wager = 1000;
     private bool _loading = true, _busy, _heroesLoaded;
-    private string? _status, _error;
+    private string? _status, _error, _loadError;
+    private GameConfigDto? _config;
+
+    /// <summary>The per-side match fee this lineup will be charged ON TOP of the wager, at open and again
+    /// at accept — the server prices it off the lineup's TOP level. Null until the config is read.</summary>
+    private long? MatchFee => MyLineup.All(x => !string.IsNullOrEmpty(x)) && TopLevel is { } lvl
+        ? Pricing.MatchFee(_config, lvl)
+        : null;
+
+    private int? TopLevel
+    {
+        get
+        {
+            var picked = _mine.Where(h => MyLineup.Contains(h.Id)).ToList();
+            return picked.Count == 0 ? null : picked.Max(h => h.Level);
+        }
+    }
     private SquadOutcome? _outcome;
     private int _duelIndex;
 
@@ -191,9 +264,22 @@ else
         Opponents.FirstOrDefault(o => o.Owner == _oppOwner).Heroes?.Select(h => h.Id).ToList() ?? new();
 
     private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
+    private bool Mine(SquadMatchDto m) => m.ChallengerLineup.Any(MineIds.Contains) || m.DefenderLineup.Any(MineIds.Contains);
+
     private IEnumerable<SquadMatchDto> ToAccept => _matches.Where(m => m.Status == "open" && m.DefenderLineup.Any(MineIds.Contains));
     private IEnumerable<SquadMatchDto> ToResolve => _matches.Where(m => m.Status == "accepted" && m.ChallengerLineup.Any(MineIds.Contains));
     private IEnumerable<SquadMatchDto> Waiting => _matches.Where(m => m.Status == "open" && m.ChallengerLineup.Any(MineIds.Contains));
+
+    /// <summary>Accepted matches where I am the DEFENDER — staked, and nothing for me to do but watch.</summary>
+    private IEnumerable<SquadMatchDto> AwaitingOpponent =>
+        _matches.Where(m => m.Status == "accepted" && m.DefenderLineup.Any(MineIds.Contains));
+
+    /// <summary>
+    /// Squad matches of mine that already ran. The server's status vocabulary is exactly
+    /// open | accepted | resolved, so between the four live buckets and this one every combination of
+    /// (status × my role) now renders somewhere — which is the property that was missing, not any one row.
+    /// </summary>
+    private IEnumerable<SquadMatchDto> History => _matches.Where(m => m.Status == "resolved" && Mine(m));
 
     protected override async Task OnInitializedAsync()
     {
@@ -211,9 +297,27 @@ else
             _all = await Api.Heroes.AllAsync();
             _matches = await Api.Squad.ListAsync();
             _heroesLoaded = true;
+            _loadError = null;
         }
-        catch { /* token may still be settling; OnState retries once signed in */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed. OnState only re-runs on the NEXT wallet event and a server hiccup
+            // produces none, so an already-signed-in player whose read failed would otherwise sit forever
+            // on a page insisting they own too few heroes to play.
+            _loadError = ex.Message;
+        }
         finally { _loading = false; }
+
+        // A nice-to-have, kept out of the load's own try so a config blip can't cost you the roster.
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* price unknown — the page says so rather than quoting a zero */ }
+    }
+
+    /// <summary>Manual retry, because the automatic one depends on an event that may never fire.</summary>
+    async Task Retry()
+    {
+        _error = null;
+        await LoadAsync();
     }
 
     async Task DoOpen() => await RunAction("Opening the squad match…", async () =>
@@ -242,6 +346,10 @@ else
 
     async Task RunAction(string initial, Func<Task> action)
     {
+        // Claimed BEFORE the first await. disabled="@_busy" only takes effect at the next render, which
+        // happens at that first await — so a second click dispatched in the window between it ran the
+        // whole action again, staking a second wager on a second match.
+        if (_busy) return;
         _busy = true; _error = null; _status = initial;
         try { await action(); _status = null; }
         catch (Exception ex) { _error = ex.Message; _status = null; }

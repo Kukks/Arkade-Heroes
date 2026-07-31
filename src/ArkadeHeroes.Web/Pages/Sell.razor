@@ -19,9 +19,24 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
 }
+@* "You have no heroes" and "we never managed to read your roster" are different facts, and this branch
+   used to state the first while meaning either — telling a player with a full stable to go and claim
+   starters they already own. _heroesLoaded was already declared and set; it was simply never read. *@
+else if (!_heroesLoaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your roster.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            This is not the same as having nothing to sell — we simply couldn't look. @_loadError
+        </p>
+        <button class="btn primary sm" style="margin-top:.7rem" @onclick="Retry" disabled="@_loading">Try again</button>
+    </div>
+}
 else if (_mine.Count == 0)
 {
-    <div class="card muted">You have no heroes to sell yet — claim your starters (or breed) first.</div>
+    <div class="card muted">
+        You have no heroes to sell yet — <a href="heroes?mine=1">recruit one</a> or <a href="breed">breed</a> first.
+    </div>
 }
 else
 {
@@ -96,6 +111,7 @@ else
     private bool _heroesLoaded;
     private string? _status;
     private string? _error;
+    private string? _loadError;
     private OfferDto? _listed;
     private HeroDto? _listedHero;
     private long _listingFeeSats;
@@ -117,9 +133,22 @@ else
         {
             _mine = await Api.Heroes.MineAsync();
             _heroesLoaded = true;
+            _loadError = null;
         }
-        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed. OnState only re-runs on the NEXT wallet event, and a server hiccup
+            // produces none — so a one-off failure looked exactly like owning no heroes, forever.
+            _loadError = ex.Message;
+        }
         finally { _loading = false; }
+    }
+
+    /// <summary>Manual retry, because the automatic one depends on an event that may never fire.</summary>
+    async Task Retry()
+    {
+        _error = null;
+        await LoadAsync();
     }
 
     async Task DoList()

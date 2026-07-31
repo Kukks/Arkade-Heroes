@@ -12,15 +12,23 @@
 {
     <div class="status-line"><span class="dot wait"></span> tallying the boards…</div>
 }
-else if (_error)
-{
-    <div class="card">
-        <div class="status-line"><span class="dot bad"></span> Couldn't reach the arena.</div>
-        <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
-    </div>
-}
+@* Everything the arena DID answer is rendered, whatever else failed. This used to be an else: one
+   unreachable endpoint threw away the eleven boards that had loaded fine, which is the opposite of what
+   the OrNull fan-out below was built to achieve — and it could put "Couldn't reach the arena" over a page
+   whose treasury, season and champions were all sitting in memory, ready to draw. *@
 else
 {
+    @if (_error)
+    {
+        <div class="card" style="margin-bottom:1.6rem">
+            <div class="status-line"><span class="dot bad"></span> Couldn't load the headline ladder.</div>
+            <p class="muted" style="margin:.7rem 0 0">
+                The arena may be briefly unreachable. Anything below that did load is shown — reload the
+                page to try the rest again.
+            </p>
+        </div>
+    }
+
     @if (_economy is not null)
     {
         <div class="card" style="margin-bottom:1.6rem">
@@ -279,7 +287,11 @@ else
         <h3 style="margin:0">Recent bouts</h3>
         <span class="hud">watch + verify any fight — no login</span>
     </div>
-    @if (_recent.Count == 0)
+    @if (Failed("recent"))
+    {
+        <div class="card muted" style="margin-bottom:1.6rem">Couldn't load the feed — it isn't empty, we just couldn't read it.</div>
+    }
+    else if (_recent.Count == 0)
     {
         <div class="card muted" style="margin-bottom:1.6rem">No bouts yet — <a href="spar">spar</a> or <a href="duel">duel</a> to fill the feed.</div>
     }
@@ -303,7 +315,11 @@ else
         <h3 style="margin:0">Rarest heroes</h3>
         <span class="hud">genome-derived, trustless</span>
     </div>
-    @if (_rarest.Count == 0)
+    @if (Failed("rarest"))
+    {
+        <div class="card muted">Couldn't load this board — it isn't empty, we just couldn't read it.</div>
+    }
+    else if (_rarest.Count == 0)
     {
         <div class="card muted">No heroes minted yet.</div>
     }
@@ -321,7 +337,11 @@ else
         <h3 style="margin:0">Fancy heroes</h3>
         <span class="hud">named genome sets — a breeding target</span>
     </div>
-    @if (_fancies.Count == 0)
+    @if (Failed("fancies"))
+    {
+        <div class="card muted">Couldn't load this board — it isn't empty, we just couldn't read it.</div>
+    }
+    else if (_fancies.Count == 0)
     {
         <div class="card muted">No fancy heroes yet — breed toward a named set.</div>
     }
@@ -339,7 +359,11 @@ else
         <h3 style="margin:0">Founder heroes</h3>
         <span class="hud">generation-0 originals — the scarcest lineage</span>
     </div>
-    @if (_founders.Count == 0)
+    @if (Failed("founders"))
+    {
+        <div class="card muted">Couldn't load this board — it isn't empty, we just couldn't read it.</div>
+    }
+    else if (_founders.Count == 0)
     {
         <div class="card muted">No founders yet — the first minted heroes appear here.</div>
     }
@@ -365,6 +389,16 @@ else
     private List<TrialsBoardEntryDto> _trialsBoard = new();
     private List<FancyDiscoveryDto> _discoveries = new();
     private List<HighlightDto> _highlights = new();
+
+    /// <summary>
+    /// The boards whose read FAILED. Every call here is OrNull-wrapped and its null coalesced to an empty
+    /// list, which made "this board couldn't load" indistinguishable from "this board is genuinely empty" —
+    /// so the page could print "No heroes minted yet" directly under a treasury card reporting thousands of
+    /// heroes in play. Recording which ones failed is what lets each empty state tell the truth.
+    /// </summary>
+    private readonly HashSet<string> _failed = new();
+
+    private bool Failed(string board) => _failed.Contains(board);
     private List<MatchDto> _recent = new();
     private readonly Dictionary<string, string> _names = new();
     private bool _loading = true;
@@ -380,6 +414,14 @@ else
     private static async Task<T?> OrNull<T>(Task<T> call) where T : class
     {
         try { return await call; } catch { return null; }
+    }
+
+    /// <summary>Coalesce a board to an empty list, remembering that it was NULL because the call failed —
+    /// which is the fact each empty state needs in order not to lie about it.</summary>
+    private List<T> Record<T>(string board, List<T>? result)
+    {
+        if (result is null) _failed.Add(board);
+        return result ?? [];
     }
 
     protected override async Task OnInitializedAsync()
@@ -406,14 +448,14 @@ else
         _top = topResult ?? [];
         _season = await season;
         _economy = await economy;
-        _rarest = await rarest ?? [];
-        _fancies = await fancies ?? [];
-        _founders = await founders ?? [];
-        _tournaments = await tournaments ?? [];
-        _trialsBoard = await trialsBoard ?? [];
-        _discoveries = await discoveries ?? [];
-        _highlights = await highlights ?? [];
-        _recent = (await recent ?? []).Where(m => m.Result is not null).ToList();
+        _rarest = Record("rarest", await rarest);
+        _fancies = Record("fancies", await fancies);
+        _founders = Record("founders", await founders);
+        _tournaments = Record("tournaments", await tournaments);
+        _trialsBoard = Record("trials", await trialsBoard);
+        _discoveries = Record("discoveries", await discoveries);
+        _highlights = Record("highlights", await highlights);
+        _recent = Record("recent", await recent).Where(m => m.Result is not null).ToList();
         foreach (var h in await all ?? []) _names[h.Id] = h.Name;
 
         _loading = false;

@@ -14,9 +14,28 @@
 {
     <div class="status-line"><span class="dot wait"></span> loading the replay…</div>
 }
+@* "This match doesn't exist" and "we couldn't reach the arena" are different facts, and this branch used
+   to state the first while meaning either — so during any outage every shared replay link told the player
+   the fight they just fought had never happened. A 404 is the only thing that means "no such match". *@
+else if (_unreachable)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't load this replay.</div>
+        <p class="muted" style="margin:.7rem 0 0">
+            This doesn't mean the match isn't there — the arena is briefly unreachable. @_loadError
+        </p>
+        <div class="btn-row" style="margin-top:.7rem">
+            <button class="btn primary sm" @onclick="ReloadAsync" disabled="@_loading">Try again</button>
+            <a class="btn ghost sm" href="/">Back to the arena</a>
+        </div>
+    </div>
+}
 else if (_replay is null)
 {
-    <div class="card muted">No replay here — the match doesn't exist yet, or it hasn't been fought.</div>
+    <div class="card muted">
+        No replay here — the match doesn't exist yet, or it hasn't been fought.
+        <a href="/" style="margin-left:.4rem">Back to the arena →</a>
+    </div>
 }
 else
 {
@@ -121,11 +140,20 @@ else
     private string _replayPath = "";
     private string? _copied;
 
-    protected override async Task OnParametersSetAsync()
+    /// <summary>The replay read failed for a reason that is NOT "no such match".</summary>
+    private bool _unreachable;
+    private string? _loadError;
+
+    protected override Task OnParametersSetAsync() => ReloadAsync();
+
+    async Task ReloadAsync()
     {
         _loading = true;
         _replay = null;
         _copied = null;
+        _unreachable = false;
+        _loadError = null;
+        StateHasChanged();
         try
         {
             // A shareable id is either a wager/friendly match or a death-match — try both.
@@ -140,9 +168,14 @@ else
                 _replayPath = $"/api/deathmatch/{MatchId}/replay";
             }
         }
-        catch
+        catch (Exception ex)
         {
-            _replay = null;   // unknown / unresolved match → the "no replay" card
+            _replay = null;
+            // A 404 from BOTH lookups is the only answer that means "no such match" — every other failure
+            // (server down, 500, CORS, bad JSON) is us, not the match, and must not be reported as the
+            // match never having happened.
+            _unreachable = !IsNotFound(ex);
+            _loadError = _unreachable ? ex.Message : null;
         }
         finally
         {
@@ -151,6 +184,13 @@ else
 
         await Verify();
     }
+
+    /// <summary>Whether the SDK's failure was a plain 404. Matched on the message because the exception
+    /// carries the server's text and this page must not take a dependency on its shape.</summary>
+    private static bool IsNotFound(Exception ex) =>
+        ex.Message.Contains("404", StringComparison.Ordinal)
+        || ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("NotFound", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Independently re-derives the fight from the revealed seed, in THIS browser. Runs once on load

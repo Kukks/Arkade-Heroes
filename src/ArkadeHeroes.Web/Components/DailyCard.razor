@@ -24,6 +24,23 @@
     {
         <p class="muted" style="margin:0">Press <a href="/">Play</a> to set up your wallet, then claim daily sats for playing.</p>
     }
+    @* "Still loading" and "the read failed" used to be the same spinner, with the only retry gated on a
+       sign-in TRANSITION that can never fire again for an already-signed-in player. The nastiest path was
+       the success one: a claim LANDS, the reload after it throws, _status goes null — and the card
+       collapses into a permanent spinner that also swallows the "+50 sat!" confirmation. This card already
+       had an _error field; it was only ever used for claim failures, never for load failures. *@
+    else if (_loadError is not null)
+    {
+        <div class="status-line"><span class="dot bad"></span> Couldn't load today's quests.</div>
+        <p class="muted" style="margin:.6rem 0 .7rem;font-size:.85rem">
+            @if (_flash is not null)
+            {
+                <text><b>@_flash</b> — that part did land. </text>
+            }
+            @_loadError
+        </p>
+        <button class="btn ghost sm" @onclick="LoadAsync" disabled="@_loading">Try again</button>
+    }
     else if (_status is null)
     {
         <div class="status-line"><span class="dot wait"></span> loading today's quests…</div>
@@ -69,6 +86,12 @@
     private bool _wasSignedIn;
     private string? _flash;
     private string? _error;
+    private bool _loading;
+
+    /// <summary>Why today's quests are missing, when they are missing because the read failed rather than
+    /// because it hasn't happened yet. Kept separate from <see cref="_error"/>, which reports a failed
+    /// CLAIM and renders inside the loaded card.</summary>
+    private string? _loadError;
 
     /// <summary>Whether this server pays a daily reward at all. Defaults to hidden, so a server we
     /// cannot reach shows nothing rather than a button that cannot work.</summary>
@@ -85,9 +108,13 @@
 
     private async Task LoadAsync()
     {
-        if (!_faucetOpen || !State.IsSignedIn) { _status = null; StateHasChanged(); return; }
+        if (!_faucetOpen || !State.IsSignedIn) { _status = null; _loadError = null; StateHasChanged(); return; }
+        _loading = true;
+        _loadError = null;
+        StateHasChanged();
         try { _status = await Session.DailyStatusAsync(); }
-        catch { _status = null; }
+        catch (Exception ex) { _status = null; _loadError = ex.Message; }
+        finally { _loading = false; }
         StateHasChanged();
     }
 
