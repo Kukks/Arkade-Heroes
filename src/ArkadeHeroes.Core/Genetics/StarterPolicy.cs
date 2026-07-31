@@ -19,8 +19,12 @@ namespace ArkadeHeroes.Core.Genetics;
 /// </summary>
 public static class StarterPolicy
 {
-    /// <summary>How many generation-0 heroes one claim mints. Two, so a new player can breed immediately.</summary>
-    public const int HeroCount = 2;
+    /// <summary>
+    /// How many heroes one claim mints. One — a recruit is a single purchase at a single price, and
+    /// bundling two only made sense back when the claim was a one-time handout that had to leave a new
+    /// player able to breed. Now that recruiting repeats, wanting a pair is just buying twice.
+    /// </summary>
+    public const int HeroCount = 1;
 
     /// <summary>
     /// The ceiling on a recruit's stat and growth genes, out of 255.

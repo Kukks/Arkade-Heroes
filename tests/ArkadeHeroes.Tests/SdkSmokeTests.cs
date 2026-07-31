@@ -1,3 +1,4 @@
+using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -26,9 +27,9 @@ public class SdkSmokeTests : IClassFixture<WebApplicationFactory<Program>>
         var quote = await sdk.Heroes.RequestStartersAsync();
         await sdk.PayInvoiceAsync(quote.Fee!.InvoiceId);
         var starters = await sdk.Heroes.ClaimStartersAsync();
-        Assert.Equal(2, starters.Heroes.Count);
+        Assert.Equal(StarterPolicy.HeroCount, starters.Heroes.Count);
 
         var mine = await sdk.Heroes.MineAsync();
-        Assert.Equal(2, mine.Count);
+        Assert.Equal(StarterPolicy.HeroCount, mine.Count);
     }
 }

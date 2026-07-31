@@ -16,16 +16,32 @@ export function isSupported() {
         && !!(navigator.credentials && navigator.credentials.store && navigator.credentials.get);
 }
 
-/// Stores one phrase under `id`. Returns false rather than throwing when the browser can't, or when the
-/// player dismisses the browser's own save prompt — a declined save is a choice, not an error.
+/// Stores one phrase under `id` and reports what actually happened, as one of:
+///   'confirmed'   — stored, and read back to prove it
+///   'accepted'    — the browser took the request but wouldn't confirm; may have saved silently
+///   'refused'     — the call threw (blocked, dismissed, or not permitted here)
+///   'unsupported' — no PasswordCredential in this browser
+///
+/// The distinction matters. `navigator.credentials.store()` resolves when the browser ACCEPTS THE REQUEST,
+/// not when a credential exists — and Chrome frequently stores with no visible prompt at all. So a resolved
+/// promise alone proves nothing, and reporting "saved" on it is how you tell someone their keys are backed
+/// up when they might not be. The read-back is the only part that actually establishes anything.
 export async function save(id, secret, name) {
-    if (!isSupported()) return false;
+    if (!isSupported()) return 'unsupported';
     try {
         await navigator.credentials.store(new PasswordCredential({ id, password: secret, name }));
-        return true;
     } catch {
-        return false;
+        return 'refused';
     }
+    try {
+        // 'silent' so confirming costs the player no extra dialog. A null here is INCONCLUSIVE — some
+        // browsers require mediation before handing anything back — so it must not be reported as failure.
+        const found = await navigator.credentials.get({ password: true, mediation: 'silent' });
+        if (found && found.id === id) return 'confirmed';
+    } catch {
+        // Silent read not permitted. Still inconclusive.
+    }
+    return 'accepted';
 }
 
 /// Asks the player to pick a saved phrase. `mediation: 'required'` always shows the chooser, which is what

@@ -170,11 +170,11 @@ else // Ready
             <p class="muted" style="margin:.6rem 0 .2rem">
                 @if (State.Player.StarterClaimed)
                 {
-                    <text>Recruit @StarterPolicy.HeroCount more heroes — the cheapest way to get one, and it shows: they roll no traits and weak stats.</text>
+                    <text>Recruit another hero — the cheapest way to get one, and it shows: no traits, weak stats. Recruit as many as you like.</text>
                 }
                 else
                 {
-                    <text>Recruit @StarterPolicy.HeroCount heroes to enter the arena. They're the bottom of the barrel — no traits, weak stats — but they're yours, and they can breed.</text>
+                    <text>Recruit a hero to enter the arena. Recruits are the bottom of the barrel — no traits, weak stats — but it's yours, and it can breed. Buy as many as you want.</text>
                 }
             </p>
             <button class="btn primary" style="margin-top:.6rem" @onclick="ClaimStarters" disabled="@(_busy || !CanAffordClaim)">
@@ -184,11 +184,11 @@ else // Ready
                 }
                 else if (_claimFeeSats is null)
                 {
-                    <text>Recruit @StarterPolicy.HeroCount heroes</text>
+                    <text>Recruit a hero</text>
                 }
                 else
                 {
-                    <text>Recruit @StarterPolicy.HeroCount heroes — @_claimFeeSats.Value.ToString("N0") sats</text>
+                    <text>Recruit a hero — @_claimFeeSats.Value.ToString("N0") sats</text>
                 }
             </button>
             @if (!CanAffordClaim && _claimFeeSats is not null)
@@ -401,10 +401,24 @@ else // Ready
                 _credentialNote = "No wallet is loaded in this tab.";
                 return;
             }
-            _credentialOk = await Credentials.SaveAsync(_activeId);
-            _credentialNote = _credentialOk
-                ? "Saved. Your browser can now restore this wallet — treat it like any other saved password."
-                : "Your browser declined to save it (some block this, and it needs https). Write the words down instead.";
+            // Each outcome says exactly what is known. "Accepted" is the one that matters: the browser took
+            // it, often with no prompt, but wouldn't confirm — so it must not be reported as done.
+            var outcome = await Credentials.SaveAsync(_activeId);
+            _credentialOk = outcome is WalletCredentialStore.SaveOutcome.Confirmed
+                                    or WalletCredentialStore.SaveOutcome.Accepted;
+            _credentialNote = outcome switch
+            {
+                WalletCredentialStore.SaveOutcome.Confirmed =>
+                    "Saved — read back from your browser to confirm it's really there.",
+                WalletCredentialStore.SaveOutcome.Accepted =>
+                    "Handed to your browser, which didn't confirm it. Chrome often saves these with no prompt, "
+                    + "so check your saved passwords for \"Arkade Heroes\" before relying on it — and keep the written copy either way.",
+                WalletCredentialStore.SaveOutcome.NoPhrase =>
+                    "This wallet has no recovery phrase stored in this browser, so there's nothing to save.",
+                WalletCredentialStore.SaveOutcome.Unsupported =>
+                    "This browser can't store credentials (Chromium over https only). Write the words down.",
+                _ => "Your browser refused to save it. Write the words down instead.",
+            };
         }
         catch (Exception ex)
         {
@@ -578,7 +592,7 @@ else // Ready
             });
             await RefreshMineAsync();
             await RefreshAsync();   // the fee left the wallet; the balance on screen should show it
-            _claimMsg = $"Recruited {heroes.Count} hero{(heroes.Count == 1 ? "" : "es")} — recruit more any time.";
+            _claimMsg = $"Recruited {heroes.Count} hero{(heroes.Count == 1 ? "" : "es")} — recruit another any time.";
         }
         catch (Exception ex)
         {

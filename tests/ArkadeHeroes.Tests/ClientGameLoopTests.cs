@@ -51,6 +51,8 @@ public class ClientGameLoopTests : IDisposable
         var home = FreshHome();
         await using var alice = NewClient(home);
         await alice.ExecuteAsync(["register", "LoopAlice"]);
+        // One hero per recruit, so buy the second the way a player would.
+        await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["mine"]);        // populate the client's list for '1'/'2' refs
         await alice.ExecuteAsync(["breed", "1", "2"]);
@@ -69,6 +71,8 @@ public class ClientGameLoopTests : IDisposable
         var home = FreshHome();
         await using var alice = NewClient(home);
         await alice.ExecuteAsync(["register", "LoopMergeA"]);
+        // One hero per recruit, so buy the second the way a player would.
+        await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["mine"]); // populate the client's list for the '1'/'2' refs
         var before = (await HeroesAsync()).Select(h => h.Id).ToHashSet();
@@ -175,6 +179,8 @@ public class ClientGameLoopTests : IDisposable
         var home = FreshHome();
         await using var alice = NewClient(home);
         await alice.ExecuteAsync(["register", "LoopGauntletA"]);
+        // One hero per recruit, so buy the second the way a player would.
+        await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["starter"]);
         await alice.ExecuteAsync(["mine"]);          // populate the client's list for the '1' ref
         // Solo PvE end-to-end over the real dispatch: open -> pay the entry fee (InMemory dev pay) ->

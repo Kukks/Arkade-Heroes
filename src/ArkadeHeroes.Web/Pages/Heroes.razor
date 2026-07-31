@@ -1,7 +1,6 @@
 @page "/heroes"
 @inject ArkadeHeroesClient Api
 @inject WalletState State
-@inject GameSession Session
 @implements IDisposable
 
 <PageTitle>Heroes · Arkade Heroes</PageTitle>
@@ -40,20 +39,16 @@ else if (_error)
 else if (_heroes.Count == 0)
 {
     <div class="card muted">
+        @* Recruiting costs sats and needs the wallet, so it lives in one place — with the price on it and
+           the balance next to it. A second button here could only be a worse copy of that one. *@
         @if (_mine)
         {
             <p style="margin:0 0 .8rem">You don't have any heroes yet.</p>
-            <button class="btn primary" @onclick="ClaimStarters" disabled="@_claiming">
-                @(_claiming ? "Summoning…" : "Claim your starter heroes")
-            </button>
-            @if (_claimError is not null)
-            {
-                <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_claimError</div>
-            }
+            <a class="btn primary" href="wallet">Recruit one from your account</a>
         }
         else if (State.IsSignedIn)
         {
-            <text>No heroes minted yet — switch to <b>Mine</b> to claim your starters.</text>
+            <text>No heroes minted yet — <a href="wallet">recruit one from your account</a>.</text>
         }
         else
         {
@@ -84,8 +79,6 @@ else
     private bool _loading = true;
     private bool _error;
     private bool _mine;
-    private bool _claiming;
-    private string? _claimError;
 
     /// <summary>?mine=1 (e.g. right after Play claims your starters) opens the "Mine" tab first.</summary>
     [SupplyParameterFromQuery(Name = "mine")] public string? MineParam { get; set; }
@@ -145,24 +138,6 @@ else
         }
     }
 
-    async Task ClaimStarters()
-    {
-        _claiming = true;
-        _claimError = null;
-        try
-        {
-            await Session.ClaimStartersAsync();
-            await LoadAsync();
-        }
-        catch (Exception ex)
-        {
-            _claimError = ex.Message;
-        }
-        finally
-        {
-            _claiming = false;
-        }
-    }
 
     void OnStateChanged() => InvokeAsync(StateHasChanged);
 

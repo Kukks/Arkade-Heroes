@@ -81,7 +81,8 @@ public class MoneyPathRaceGuardTests
         var wins = await RaceAsync(Racers, () => svc.ClaimStartersAsync(player, CancellationToken.None));
 
         Assert.Equal(1, wins);
-        Assert.Equal(2, store.Heroes.Values.Count(h => h.OwnerId == player.Id));   // the pair, never four
+        // One paid invoice, one batch — however many claims raced for it.
+        Assert.Equal(StarterPolicy.HeroCount, store.Heroes.Values.Count(h => h.OwnerId == player.Id));
         Assert.True(player.StarterClaimed);
     }
 

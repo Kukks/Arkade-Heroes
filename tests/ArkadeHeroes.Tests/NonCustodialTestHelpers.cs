@@ -1,4 +1,5 @@
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Server;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
@@ -27,11 +28,26 @@ internal static class NonCustodialTestHelpers
     /// costs), so every test that starts with a roster now walks the paid path — which is the point: the
     /// flow every player takes on their first minute is the one under test, not a free shortcut past it.
     /// </summary>
-    public static async Task<List<HeroDto>> ClaimStartersAsync(this ArkadeHeroesClient client)
+    public static async Task<List<HeroDto>> ClaimStartersAsync(this ArkadeHeroesClient client) =>
+        await client.RecruitAsync(StarterPolicy.HeroCount * 2);
+
+    /// <summary>
+    /// Buys <paramref name="count"/> heroes, one purchase at a time — quote → pay → claim, repeated.
+    ///
+    /// <para>A claim mints ONE hero now, but most tests want a breedable pair to start from, which is why
+    /// the helper above asks for two. That is the same thing a player does: recruiting is repeatable, so
+    /// wanting a second hero means buying a second hero.</para>
+    /// </summary>
+    public static async Task<List<HeroDto>> RecruitAsync(this ArkadeHeroesClient client, int count)
     {
-        var quote = await client.Heroes.RequestStartersAsync();
-        if (quote.Fee is { } fee) await client.PayInvoiceAsync(fee.InvoiceId);
-        return (await client.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        var heroes = new List<HeroDto>();
+        for (var i = 0; i < count; i += StarterPolicy.HeroCount)
+        {
+            var quote = await client.Heroes.RequestStartersAsync();
+            if (quote.Fee is { } fee) await client.PayInvoiceAsync(fee.InvoiceId);
+            heroes.AddRange((await client.Heroes.ClaimStartersAsync()).Heroes);
+        }
+        return heroes;
     }
 
     /// <summary>
