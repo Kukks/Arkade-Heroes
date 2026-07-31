@@ -10,22 +10,34 @@
 
   <PropertyGroup>
     <!--
-      Trimming off. NOT, as this comment used to claim, because trimming broke the content pack — that was
-      a guess and it was wrong on both halves. ContentPackLoader does not bind through reflection at all
-      (it reads JsonDocument by hand, and says why), and the trimmer never rewrites this app's assemblies
-      anyway: Blazor WebAssembly trims with TrimMode=partial, so only assemblies marked IsTrimmable — the
-      BCL — are linked. Publishing this project both ways and diffing the output shows every
-      ArkadeHeroes.*.wasm byte-identical between them, so trimming could not have removed a thing from the
-      pack. The TypeInitializationException it was turned off to fix was a static-initializer cycle in
-      ContentPackVersion, fixed there, and it reproduced with trimming already off.
+      Trimming is ON — the Blazor WebAssembly default, so there is deliberately no PublishTrimmed here.
 
-      So this switch is now load-bearing for nothing, and turning it back on is worth doing — measured at
-      publish, it is ~9.9 MB off the bundle (60.9 MB → 50.9 MB). It is left off here only because that is a
-      separate change from a bug fix: a trimmed bundle boots and renders, but it has not been taken through
-      a funded flow, and this is an app that moves real sats. Re-enable it deliberately, with a browser pass
-      over the money paths, rather than as a side effect of this fix.
+      There used to be a <PublishTrimmed>false</PublishTrimmed>, added on a wrong diagnosis: the
+      TypeInitializationException on /gauntlet was blamed on the trimmer eating the content pack. It was
+      not. ContentPackLoader binds nothing through reflection (it reads JsonDocument by hand, and says
+      why), and under TrimMode=partial — which is what Blazor WASM uses, and what this project still
+      evaluates to — only assemblies marked IsTrimmable are linked at all, i.e. the BCL. This app's own
+      assemblies are copied verbatim, and publishing both ways showed every ArkadeHeroes.*.wasm — and
+      every NArk.*.wasm — MD5-identical. The real cause was a mutual static-initializer cycle reachable
+      only under Mono's beforefieldinit semantics, fixed in ContentPackVersion, and it reproduced with
+      trimming already off.
+
+      Do not turn it off again without a failure that survives that check. It costs 23.5 MB of player
+      download: measured at publish, wwwroot goes 72.3 MB -> 48.8 MB (75,812,025 -> 51,136,817 bytes),
+      256 assemblies down to 129. What goes is type-forwarding facades (mscorlib, System.Core,
+      System.Runtime.Extensions and the like), assemblies a browser cannot use anyway (Win32.Registry,
+      IO.Pipes, Net.HttpListener, ServiceProcess, WindowsBase), and console/file logging and configuration
+      providers nothing here builds. EF Core, the SQLite provider, SQLitePCLRaw, NBitcoin and System.Text.Json
+      all survive.
+
+      What holds the line is the browser-test job in CI ("Browser smoke (published bundle)"), which drives
+      the REAL published bundle in Chromium. That is a stronger gate than it sounds for a trimming change:
+      Program.cs builds the EF Core model, runs EnsureCreatedAsync against the in-browser SQLite and starts
+      the Ark services BEFORE the first render, so a page rendering at all means the reflection-heavy
+      storage layer survived the trimmer. It does NOT cover a funded spend — coin selection and signing are
+      still only exercised against a real arkd by the E2E suite, which builds this project rather than
+      publishing it and so cannot see trimming at all.
     -->
-    <PublishTrimmed>false</PublishTrimmed>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
