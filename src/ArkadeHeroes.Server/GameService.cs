@@ -1217,8 +1217,11 @@ public class GameService(
         return invoice;
     }
 
-    /// <summary>Mints the one-time pair of generation-0 starter heroes to the player's own address,
-    /// once the claim fee billed by <see cref="RequestStartersAsync"/> has cleared.</summary>
+    /// <summary>Mints the claim's <see cref="StarterHeroCount"/> generation-0 recruit to the player's own
+    /// address, once the claim fee billed by <see cref="RequestStartersAsync"/> has cleared. A claim is
+    /// neither one-time nor a pair any more: it mints ONE hero and repeats as often as the player pays
+    /// for it — <see cref="StarterPolicy"/> says why a permanent floor under hero supply is not an
+    /// inflation valve.</summary>
     public async Task<IReadOnlyList<Hero>> ClaimStartersAsync(Player player, CancellationToken ct)
     {
         // The first irreversible step into the game — assets get minted here. Gate it (opt-in) on the
