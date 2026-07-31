@@ -26,6 +26,10 @@ public sealed class HeroesApi(ArkadeHeroesClient client)
         return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
     }
     public Task<HeroDto> GetAsync(string heroId) => client.GetAsync<HeroDto>($"/api/heroes/{heroId}");
+
+    /// <summary>This hero's full provenance, newest first — birth, fights, trades, fusions.</summary>
+    public Task<HeroTimelineDto> TimelineAsync(string heroId) => client.GetAsync<HeroTimelineDto>($"/api/heroes/{heroId}/timeline");
+
     public Task<EquipResponse> EquipAsync(string heroId, EquipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/equip", req);
     public Task<EquipResponse> UnequipAsync(string heroId, UnequipRequest req) => client.PostAsync<EquipResponse>($"/api/heroes/{heroId}/unequip", req);
     public Task<TransferResponse> TransferAsync(string heroId, TransferRequest req) => client.PostAsync<TransferResponse>($"/api/heroes/{heroId}/transfer", req);

@@ -182,6 +182,41 @@ public class PersistedOffer
 }
 
 /// <summary>
+/// A hero that CHANGED HANDS, and for how much — the one marketplace fact nothing else could answer.
+///
+/// The offer row already holds the ask and the seller, so this looks redundant until you follow what
+/// happens to it. A sold offer is closed, and <c>LoadIntoAsync</c> filters closed rows out on purpose:
+/// they hold no escrowed asset and rehydrating them would only regrow the market's live set forever. So
+/// the price a hero fetched survived exactly as long as the process did. Worse, <c>closed</c> conflates
+/// SOLD with RECLAIMED — the seller pulling their own listing lands in the same state — so even a
+/// surviving offer row cannot say whether a trade happened at all. And the BUYER was never written
+/// anywhere: <c>ClaimPurchasedHeroAsync</c> moves the hero to them and keeps no record that it did.
+///
+/// One row per SALE, keyed by the offer it settled, so this is append-only and once-only by
+/// construction: the two places that can prove a sale (the buyer's claim, and reconcile observing the
+/// covenant's treasury leg) both write under the same key, and the second is a no-op. It books no sats
+/// and gates nothing — losing a row costs a line of history, never money.
+///
+/// <c>BuyerId</c> is nullable because the two proofs know different things. A claim knows exactly who
+/// bought it (the chain was just asked whether THEY hold the asset); reconcile only knows the covenant
+/// paid out, not to whom. A later claim fills the null in — the write only ever ADDS what it knows and
+/// never overwrites a buyer already recorded.
+/// </summary>
+public class PersistedHeroSale
+{
+    /// <summary>The offer this sale settled — the primary key, and so the once-only marker.</summary>
+    public required string OfferId { get; set; }
+    public required string HeroId { get; set; }
+    public required string SellerId { get; set; }
+    /// <summary>Null when the sale was proven on-chain but the buyer had not identified themselves.</summary>
+    public string? BuyerId { get; set; }
+    /// <summary>What the buyer paid — the sticker ask. The seller nets this minus the listing fee.</summary>
+    public required long AskSats { get; set; }
+    public required long ListingFeeSats { get; set; }
+    public required long SoldAtUnixSeconds { get; set; }
+}
+
+/// <summary>
 /// One treasury movement — a fee captured (<see cref="In"/>) or a payout made (<see cref="Out"/>). The ROWS
 /// are the record and the by-tag totals are GROUPED from them at boot, never stored: a stored total can drift
 /// from the movements it claims to summarise, a derived one cannot.
@@ -232,6 +267,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
     public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
+    public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -244,6 +280,9 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedOffer>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedStudProposal>().HasKey(x => x.Id);
+        // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
+        // "already recorded" set and the second prover of the same sale writes nothing.
+        modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);
         // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
         // collides is the "already counted" no-op, and that must never be able to eat a payout row.
         modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });

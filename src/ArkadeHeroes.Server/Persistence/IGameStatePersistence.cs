@@ -59,6 +59,12 @@ public interface IGameStatePersistence
     /// proposal must not come back consented, and a stud fee already paid must not come back unpaid.</summary>
     Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default);
 
+    /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
+    /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
+    /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
+    /// line of a hero's history, never money.</summary>
+    Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default);
+
     /// <summary>Durably append one treasury movement — a fee captured or a payout made — so the by-tag totals
     /// can be grouped back out of the rows at boot. On the INFLOW side <paramref name="id"/> is the invoice id
     /// and the row IS the dedup marker: an id already stored is silently left alone, which is what stops an
@@ -79,6 +85,7 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default) => Task.CompletedTask;
 }
 
@@ -154,6 +161,10 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 if (Core.Equipment.ItemCatalog.Find(itemId) is { } item)
                     hero.Equipment.Equip(item);
             store.Heroes[hero.Id] = hero;
+            // This hero predates the process. Its receipts do not — they live in memory and died with the
+            // last one — so anything derived from them is a partial history, and the timeline says so
+            // rather than presenting a life that begins at boot as a whole one.
+            store.RehydratedHeroes[hero.Id] = 0;
         }
 
         // Resolved and refunded brackets are NEVER rehydrated — both are TERMINAL. Their rows survive as
@@ -220,6 +231,15 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 // AssetDeposited is deliberately left false — the next reconcile derives it from the chain.
             };
         }
+
+        // Hero sales come back UNFILTERED — unlike the offers above, there is no terminal state to skip.
+        // A sale row is a historical fact, not a live position: it holds nothing, gates nothing, and can
+        // never be re-settled, so the only thing rehydrating one can do is let a hero's page still say what
+        // it fetched. This is the half of a hero's provenance that survives a restart.
+        foreach (var row in await db.HeroSales.AsNoTracking().ToListAsync(ct))
+            store.LoadHeroSale(new HeroSale(
+                row.OfferId, row.HeroId, row.SellerId, row.BuyerId,
+                row.AskSats, row.ListingFeeSats, row.SoldAtUnixSeconds));
 
         // Stud proposals come back so a consent already given — and, far more importantly, a stud fee
         // already PAID against it — survives the restart. Completed and declined rows are TERMINAL and are
@@ -525,6 +545,34 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             // the worst a lost race leaves is a row reading `active` for an offer memory has already closed,
             // and a restart then reconciles it closed again (re-booking under the same once-only key).
             row.Status = offer.Status;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.HeroSales.FindAsync([sale.OfferId], ct);
+        if (row is null)
+        {
+            db.HeroSales.Add(new PersistedHeroSale
+            {
+                OfferId = sale.OfferId,
+                HeroId = sale.HeroId,
+                SellerId = sale.SellerId,
+                BuyerId = sale.BuyerId,
+                AskSats = sale.AskSats,
+                ListingFeeSats = sale.ListingFeeSats,
+                SoldAtUnixSeconds = sale.SoldAtUnixSeconds,
+            });
+        }
+        else if (row.BuyerId is null && sale.BuyerId is not null)
+        {
+            // The ONLY field that ever moves, and it only ever moves from unknown to known. Reconcile can
+            // prove a sale without learning who bought it; a later claim names them. Nothing else is
+            // writable: the price, the parties and the moment are what the trade WAS, and a row able to
+            // restate them could rewrite a hero's history after the fact.
+            row.BuyerId = sale.BuyerId;
         }
         await db.SaveChangesAsync(ct);
     }
