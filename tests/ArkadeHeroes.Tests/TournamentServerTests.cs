@@ -393,6 +393,10 @@ public class TournamentServerTests
             => processDied() ? Task.CompletedTask : inner.SaveStudProposalAsync(proposal, ct);
         public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveHeroSaleAsync(sale, ct);
+        public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroTombstoneAsync(stone, ct);
+        public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroBidAsync(bid, ct);
         public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveTreasuryFlowAsync(id, direction, tag, sats, ct);
     }

@@ -160,11 +160,13 @@ public class HeroTimelineTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task AFusedHero_ShowsWhatWasBurnedForIt_AndSaysTheirNamesAreGone()
+    public async Task AFusedHero_ShowsWhatWasBurnedForIt_AndMarksThemDestroyed()
     {
         var (alice, _) = await _factory.RegisterAsync("TL-Fuser");
         var heroes = await alice.ClaimStartersAsync();
+        var store = _factory.Services.GetRequiredService<GameStore>();
         var (baseId, sacId) = (heroes[0].Id, heroes[1].Id);
+        var burnedNames = new[] { store.Heroes[baseId].Name, store.Heroes[sacId].Name };
 
         var commit = await alice.Merge.CommitAsync(new MergeCommitRequest(baseId, sacId));
         await alice.Dev.FundMergeEscrowAsync(new { MergeId = commit.MergeId });
@@ -178,9 +180,15 @@ public class HeroTimelineTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(
             new[] { baseId, sacId }.OrderBy(x => x, StringComparer.Ordinal),
             forged!.Related.Select(r => r.HeroId).OrderBy(x => x, StringComparer.Ordinal));
-        // …and named HONESTLY: the merge erased both records, so no name survives to show. A null name is
-        // the truth about a burned hero, and a fabricated one would be a fact nothing can stand behind.
-        Assert.All(forged.Related, r => Assert.Null(r.Name));
+        // …and marked DESTROYED, which is the fact that must reach the page. This assertion used to demand
+        // a NULL name, because a null name was the only way "gone" could be expressed and the merge erased
+        // both rows. It is now the stronger claim: a headstone written at the burn site keeps the name, so
+        // the page can say WHICH heroes died instead of printing two bare ids — and `Destroyed` carries
+        // the "gone" that the null used to have to imply.
+        Assert.All(forged.Related, r => Assert.True(r.Destroyed));
+        Assert.Equal(
+            burnedNames.OrderBy(x => x, StringComparer.Ordinal),
+            forged.Related.Select(r => r.Name).OrderBy(x => x, StringComparer.Ordinal));
         Assert.Contains("burned", forged.Summary);
     }
 

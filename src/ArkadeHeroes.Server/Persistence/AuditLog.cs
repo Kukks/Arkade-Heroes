@@ -131,6 +131,14 @@ public static class AuditEventType
     public const string OfferClosed = "offer.closed";
     public const string OfferHeroClaimed = "offer.hero-claimed";
 
+    // ── Bids (buyer-initiated: an offer to buy a hero that is not for sale) ──
+    public const string BidPlaced = "bid.placed";
+    public const string BidAccepted = "bid.accepted";
+    public const string BidDeclined = "bid.declined";
+    public const string BidWithdrawn = "bid.withdrawn";
+    public const string BidSettled = "bid.settled";
+    public const string BidRefunded = "bid.refunded";
+
     // ── Daily loop + seasons ──
     public const string DailyClaimed = "daily.claimed";
     public const string SeasonSettled = "season.settled";

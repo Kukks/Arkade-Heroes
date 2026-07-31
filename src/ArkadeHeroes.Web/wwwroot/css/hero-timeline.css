@@ -63,9 +63,13 @@
 .tl-meta a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--line); }
 .tl-meta a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* A hero that no longer exists. Rendered as plain, unlinked text — there is no
-   page to send anyone to, and the id is genuinely all that survived of it. */
+/* A hero that no longer exists. Dimmer and italic wherever it appears — as a LINK when a headstone
+   survives (a destroyed hero has a page now, and "what happened to it" is the question the line raises),
+   and as plain text when even that is gone. The `.tl-meta a` above is more specific than a bare class,
+   so the link form has to restate the colour or it would render as an ordinary live one. */
 .tl-gone { color: var(--faint); font-style: italic; }
+.tl-meta a.tl-gone { color: var(--faint); border-bottom-color: var(--line-soft); }
+.tl-meta a.tl-gone:hover { color: var(--muted); border-bottom-color: var(--muted); }
 
 /* Origin and value events are the two a reader scans for, so they get the only
    colour on the rail; everything else stays quiet. */
@@ -77,7 +81,12 @@
 .tl-sold .tl-mark { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); }
 
 .tl-deathmatch .tl-mark,
-.tl-burned .tl-mark { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.tl-burned .tl-mark,
+.tl-destroyed .tl-mark { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+/* The death itself — the one event on a hero's rail that ends it. Filled rather than outlined, because
+   it is the only line that is terminal. */
+.tl-destroyed .tl-mark { background: color-mix(in srgb, var(--danger) 18%, var(--bg-2)); }
 
 /* The honesty line: what this timeline cannot promise. Deliberately part of the
    card rather than a toast — it is a property of the history, not a transient. */

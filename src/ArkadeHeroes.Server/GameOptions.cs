@@ -91,6 +91,14 @@ public class GameOptions
     /// the fee baked into the covenant it was created with.</summary>
     public long OfferListingFeeSats { get; set; } = 1_000;
 
+    /// <summary>How many LIVE bids one player may have outstanding across the whole game. Bids are free to
+    /// make on purpose — nothing is billed until the hero's owner consents, which is what makes an ignored
+    /// bid cost the bidder nothing — and "free" plus "unbounded" is a spam surface: one account could paper
+    /// every hero in the arena with bids it never intends to fund, and every owner's inbox with noise. This
+    /// is the counterweight. It bounds nothing else: a bid that is settled, refunded, declined or withdrawn
+    /// stops counting immediately. 0 (or any non-positive value) disables the cap entirely.</summary>
+    public int MaxOpenBidsPerPlayer { get; set; } = 20;
+
     /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),
     /// so it can never drain the treasury below this permanent reserve. 0 = no floor (clamp to full balance).
     /// An operator raises it to protect scheduled obligations (e.g. the season pot) from the daily emission drain.</summary>

@@ -32,6 +32,7 @@ public sealed class ArkadeHeroesClient
         Matches = new MatchesApi(this);
         Squad = new SquadApi(this);
         Offers = new OffersApi(this);
+        Bids = new BidsApi(this);
         Items = new ItemsApi(this);
         Chain = new ChainApi(this);
         Leaderboard = new LeaderboardApi(this);
@@ -57,6 +58,8 @@ public sealed class ArkadeHeroesClient
     public MatchesApi Matches { get; }
     public SquadApi Squad { get; }
     public OffersApi Offers { get; }
+    /// <summary>Buying a hero that is NOT for sale, behind its owner's consent — see <see cref="BidsApi"/>.</summary>
+    public BidsApi Bids { get; }
     public ItemsApi Items { get; }
     public ChainApi Chain { get; }
     public LeaderboardApi Leaderboard { get; }

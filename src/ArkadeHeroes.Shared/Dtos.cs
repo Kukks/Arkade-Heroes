@@ -100,13 +100,37 @@ public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 /// <summary>
 /// Another hero named by a timeline event — a parent, a burned input, an opponent.
 ///
-/// <see cref="Name"/> is deliberately NULLABLE and deliberately not backfilled. A hero burned in a
-/// fusion or a death-match has its record erased at the burn site (its on-chain asset is retired, and a
-/// rehydrated ghost would be a fightable, listable hero that no longer exists), so by the time anything
-/// reads this the id is genuinely all that is left of it. Rendering a placeholder name would invent a
-/// fact; a null says "this one is gone" and lets the UI show the id it can still stand behind.
+/// <para><see cref="Destroyed"/> and <see cref="Name"/> are INDEPENDENT, and that separation is the whole
+/// point of the pair. A hero burned in a fusion or a death-match has its record erased at the burn site (its
+/// on-chain asset is retired, and a rehydrated ghost would be a fightable, listable hero that no longer
+/// exists), so its own row can never answer either question. A durable headstone written at the burn site
+/// answers both: the hero is destroyed, and it was called this.</para>
+///
+/// <para>Name is still deliberately NULLABLE and still never a placeholder — a hero destroyed before
+/// headstones existed has genuinely lost its name, and inventing one would put a fact on the page that
+/// nothing can stand behind. What changed is that a null name no longer MEANS "destroyed": read
+/// <see cref="Destroyed"/> for that, or a nameless-but-living hero would render as a grave.</para>
 /// </summary>
-public record TimelineHeroRefDto(string HeroId, string? Name);
+public record TimelineHeroRefDto(string HeroId, string? Name, bool Destroyed = false);
+
+/// <summary>
+/// A hero that no longer exists — everything the arena can still say about one, read off the headstone
+/// written at its burn site.
+///
+/// This is what <c>GET /api/heroes/{id}</c> cannot serve: heroes are HARD DELETED when they die (a
+/// death-match loser, a fusion's inputs, both sides of an absorb), so there is no hero row left to return
+/// and no <see cref="HeroDto"/> to shape. A destroyed hero's page is built from this instead.
+/// </summary>
+/// <param name="Reason">"merge-input" | "deathmatch-loser" | "deathmatch-absorb-winner" |
+/// "deathmatch-absorb-loser".</param>
+/// <param name="SessionId">The merge or death-match that consumed it — replayable at <c>/watch/{id}</c>
+/// when it was a death-match.</param>
+/// <param name="ReplacedByHeroId">What rose from it, when anything did. Null for a classic death-match
+/// loser, which simply ends.</param>
+public record HeroTombstoneDto(
+    string HeroId, string Name, string OwnerId, int Generation, int Level, string GenomeHex,
+    string Reason, string SessionId, string? ReplacedByHeroId, long DestroyedAtUnixSeconds,
+    string? ParentAId = null, string? ParentBId = null);
 
 /// <summary>
 /// One thing that happened to a hero, in the one shape the page renders.
@@ -472,6 +496,31 @@ public record CreateOfferRequest(string ItemId, long AskSats);
 /// <summary>List one of your heroes for sale at a fixed ask (sats).</summary>
 public record CreateHeroOfferRequest(string HeroId, long AskSats);
 
+// ── Bids: buy a hero that is NOT for sale (propose → the owner consents → deliver → settle) ──
+
+/// <summary>Offer a hero's owner <paramref name="BidSats"/> for a hero they have not listed. Nothing is
+/// billed by making one — the invoice appears only if the owner accepts.</summary>
+public record PlaceBidRequest(string HeroId, long BidSats);
+
+/// <summary>One bid, as everyone sees it. <see cref="Status"/> = proposed (awaiting the owner) | accepted
+/// (the bidder may fund it, and the owner may deliver) | declined | withdrawn | settled | refunded.
+/// <see cref="ReclaimAfterUnixSeconds"/> is 0 until accepted; past it, an accepted bid that was never
+/// delivered against can be unwound by either party and the bidder's sats go home.</summary>
+public record BidDto(
+    string BidId, string HeroId, string BidderPlayerId, string OwnerPlayerId,
+    long BidSats, long FeeSats, string Status, long ReclaimAfterUnixSeconds);
+
+/// <summary>What an accepted bid bills, and whether the bidder has paid it yet.
+/// <see cref="SellerNetSats"/> is what actually reaches the owner — the bid less the marketplace fee, which
+/// the seller absorbs exactly as they do on a listing. <see cref="Funded"/> is the fact the OWNER must not
+/// deliver the hero without.</summary>
+public record BidInvoiceResponse(
+    BidDto Bid, FeeInvoiceDto Invoice, bool Funded, long SellerNetSats);
+
+/// <summary>Unwinding an accepted bid. <see cref="RefundedSats"/> is what went back to the bidder — 0 when
+/// the bid was accepted but never funded, which strands nothing.</summary>
+public record BidRefundResponse(BidDto Bid, long RefundedSats);
+
 /// <summary>Claim a custom, globally-unique name for a hero (a treasury sats sink).</summary>
 public record RenameHeroRequest(string Name);
 
@@ -609,7 +658,11 @@ public record CreateOfferResponse(
 /// permission: a player who knows the id can always reclaim without the server agreeing it is stuck.
 /// </summary>
 public record ReclaimableDto(
-    /// <summary>"offer" | "breed" | "merge" | "wager" | "deathmatch" — which covenant, and so which reclaim flow recovers it.</summary>
+    /// <summary>"offer" | "breed" | "merge" | "wager" | "deathmatch" — which covenant, and so which reclaim
+    /// flow recovers it — or "bid", the one kind that is NOT a covenant: an accepted bid's sats rest in the
+    /// treasury under an invoice, and <c>POST /api/bids/{id}/refund</c> recovers them rather than a reclaim
+    /// leaf. It is listed here anyway because it answers the same question the page exists for, and a player
+    /// should not have to know which mechanism is holding their sats in order to find them.</summary>
     string Kind,
     string Id,
     /// <summary>A player-facing line naming what is escrowed and why it has no way forward.</summary>

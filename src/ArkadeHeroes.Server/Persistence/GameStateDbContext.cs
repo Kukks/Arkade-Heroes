@@ -217,6 +217,76 @@ public class PersistedHeroSale
 }
 
 /// <summary>
+/// A durable headstone for a hero that was DESTROYED — a fusion's input, a death-match's loser, an absorb's
+/// pair. Every burn site erases the hero row on purpose, so without this the fact that a hero ever existed
+/// survived only in the admin-only audit log, and the public surfaces that name it (its own page, a child's
+/// lineage, a timeline event) had an id and nothing else.
+///
+/// Keyed by the HERO, which makes the key the once-only marker: a hero burns exactly once, for all time, so
+/// a retried settle re-running the in-memory tail cannot invent a second death. The row is never updated
+/// and never deleted — deleting it would re-open the exact hole it was added to close.
+///
+/// It gates nothing. Losing one costs a name on a page, never money.
+/// </summary>
+public class PersistedHeroTombstone
+{
+    public required string HeroId { get; set; }
+    /// <summary>Its name at the moment it died. The one fact nothing else can recover.</summary>
+    public required string Name { get; set; }
+    /// <summary>Who owned it when it died — the loser of the death-match, the merger who spent it.</summary>
+    public required string OwnerId { get; set; }
+    public required int Generation { get; set; }
+    public required int Level { get; set; }
+    /// <summary>Its genome, so the portrait still renders. A hero IS its genome; without this the headstone
+    /// could name it but not show it.</summary>
+    public required string GenomeHex { get; set; }
+    /// <summary>"merge-input" | "deathmatch-loser" | "deathmatch-absorb-winner" | "deathmatch-absorb-loser".</summary>
+    public required string Reason { get; set; }
+    /// <summary>The merge or death-match that consumed it — the id /watch replays.</summary>
+    public required string SessionId { get; set; }
+    /// <summary>The hero that rose from it, when one did.</summary>
+    public string? ReplacedByHeroId { get; set; }
+    public required long DestroyedAtUnixSeconds { get; set; }
+    /// <summary>Its own parents, so a destroyed hero's page can still show where IT came from. The birth
+    /// receipt carries the same pair but lives in memory only, so it does not survive a restart; these
+    /// columns are the durable half of a dead hero's lineage.</summary>
+    public string? ParentAId { get; set; }
+    public string? ParentBId { get; set; }
+}
+
+/// <summary>
+/// A durable bid on a hero — the buyer-initiated half of the marketplace, and the second flow (after
+/// <see cref="PersistedStudProposal"/>) where sats owed to ANOTHER PLAYER rest in the treasury between two
+/// calls. That is why it is here: a lost row would leave a bidder's paid sats with nothing able to name who
+/// they belong to, or whose hero they were for.
+///
+/// <c>Accepted</c>, <c>SellerPaid</c> and <c>RefundPaid</c> are the load-bearing fields. The first is
+/// CONSENT — a restart must neither promote an un-consented bid nor lose a consent already paid against.
+/// The other two are the once-only payout latches, each written BEFORE its sat moves; losing either would
+/// let a retry after a crash pay out twice from a treasury that cannot print. <c>ReclaimAfterUnixSeconds</c>
+/// is the bidder's exit and must survive too, or an accepted bid becomes unrefundable across a bounce.
+/// </summary>
+public class PersistedHeroBid
+{
+    public required string Id { get; set; }
+    public required string BidderPlayerId { get; set; }
+    public required string OwnerPlayerId { get; set; }
+    public required string HeroId { get; set; }
+    public required long BidSats { get; set; }
+    public required long FeeSats { get; set; }
+    public string? BidInvoiceId { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+    public required bool Accepted { get; set; }
+    public required bool Declined { get; set; }
+    public required bool Withdrawn { get; set; }
+    public required bool Settled { get; set; }
+    public required bool Refunded { get; set; }
+    public required bool SellerPaid { get; set; }
+    public required bool RefundPaid { get; set; }
+    public required long ReclaimAfterUnixSeconds { get; set; }
+}
+
+/// <summary>
 /// One treasury movement — a fee captured (<see cref="In"/>) or a payout made (<see cref="Out"/>). The ROWS
 /// are the record and the by-tag totals are GROUPED from them at boot, never stored: a stored total can drift
 /// from the movements it claims to summarise, a derived one cannot.
@@ -268,6 +338,8 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
+    public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
+    public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
     public DbSet<PersistedAuditEvent> AuditEvents => Set<PersistedAuditEvent>();
     public DbSet<PersistedAuditSubject> AuditEventSubjects => Set<PersistedAuditSubject>();
@@ -285,6 +357,18 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);
+        // Keyed by the HERO, not a surrogate: a hero burns exactly once for all time, so the key IS the
+        // "already recorded" set and a retried settle cannot write a second death.
+        modelBuilder.Entity<PersistedHeroTombstone>().HasKey(x => x.HeroId);
+        modelBuilder.Entity<PersistedHeroBid>(e =>
+        {
+            e.HasKey(x => x.Id);
+            // The two questions every bid surface asks: "what has been bid on THIS hero" (the owner's
+            // inbox and the hero page) and "what have I bid on" (the bidder's). Both over a table that
+            // only grows, so both are indexed.
+            e.HasIndex(x => x.HeroId);
+            e.HasIndex(x => x.BidderPlayerId);
+        });
         // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
         // collides is the "already counted" no-op, and that must never be able to eat a payout row.
         modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });
