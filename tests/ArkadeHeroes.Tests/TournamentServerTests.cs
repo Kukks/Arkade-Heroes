@@ -201,7 +201,8 @@ public class TournamentServerTests
     [Fact]
     public async Task Refund_UnresolvableTournament_ReturnsEveryPaidBuyIn_Once()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        // Nets the treasury against its own start, so a paid starter claim must not add to it.
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         var store = factory.Services.GetRequiredService<GameStore>();
         var treasuryStart = await chain.TreasuryBalanceAsync();
@@ -269,7 +270,8 @@ public class TournamentServerTests
     [Fact]
     public async Task Refund_OnlyRefundsPaidBuyIns()
     {
-        using var factory = new WebApplicationFactory<Program>();
+        // Nets the treasury against its own start, so a paid starter claim must not add to it.
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters();
         var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
         var store = factory.Services.GetRequiredService<GameStore>();
         var treasuryStart = await chain.TreasuryBalanceAsync();

@@ -45,6 +45,22 @@ internal static class NonCustodialTestHelpers
         this WebApplicationFactory<Program> factory) =>
         factory.WithWebHostBuilder(b => b.UseSetting("Game:DailyRewardEnabled", "true"));
 
+    /// <summary>
+    /// A server that gives starter heroes away.
+    ///
+    /// <para>Claiming normally costs what breeding costs, which is real income to the treasury and real
+    /// spend from the player. That is the right default and ~250 tests exercise it. It is wrong only where
+    /// a test's SUBJECT is an exact sat total — "the treasury holds precisely what I funded it with", "the
+    /// player is down precisely their stake" — because there an unrelated 2,000 sats arriving means the
+    /// assertion is measuring the claim rather than the thing under test.</para>
+    ///
+    /// <para>Zeroing the breed fee takes the claim to zero with it, since the two are derived from one
+    /// number. That is the honest lever: it turns the fee off rather than hiding it.</para>
+    /// </summary>
+    public static WebApplicationFactory<Program> WithFreeStarters(
+        this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(b => b.UseSetting("Game:BreedingFeeSats", "0"));
+
     /// <summary>Simulated client-wallet payment of a fee invoice.</summary>
     public static Task PayInvoiceAsync(this ArkadeHeroesClient client, string invoiceId) =>
         client.Dev.PayInvoiceAsync(new { InvoiceId = invoiceId });

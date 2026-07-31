@@ -34,7 +34,9 @@ public class DailyFaucetSybilGateTests
     {
         // The actual attack, in miniature: a funded treasury and a pile of free identities. The point is
         // not that each claim throws — it is that the treasury is untouched at the end.
-        using var factory = new WebApplicationFactory<Program>();
+        // Claims are free here on purpose: the assertion is that the treasury does not MOVE, and a paid
+        // claim would move it upward — the opposite of the leak under test, but still a broken equality.
+        using var factory = new WebApplicationFactory<Program>().WithFreeStarters();
         var (funder, _) = await factory.RegisterAsync("Sybil-Funder");
         await funder.Dev.FundTreasuryAsync(new { Sats = 50_000L });
         var before = (await funder.Economy.HealthAsync()).TreasuryBalanceSats;

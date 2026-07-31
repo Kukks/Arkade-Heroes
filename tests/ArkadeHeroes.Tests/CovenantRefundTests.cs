@@ -27,7 +27,9 @@ public class CovenantRefundTests : IClassFixture<WebApplicationFactory<Program>>
     // for one test. No appsettings entry shadows this key, so UseSetting binds it at
     // host startup: the deadline the guard checks becomes (escrow-open + window).
     private WebApplicationFactory<Program> WithRefundWindow(TimeSpan window) =>
-        _factory.WithWebHostBuilder(b => b.UseSetting("Game:WagerEscrowRefundAfter", window.ToString()));
+        _factory.WithWebHostBuilder(b => b.UseSetting("Game:WagerEscrowRefundAfter", window.ToString()))
+            // These assert exact stake arithmetic; a paid starter claim would move the balances first.
+            .WithFreeStarters();
 
     private static async Task<(ArkadeHeroesClient Alice, ArkadeHeroesClient Bob, OpenMatchResponse Open)> OpenCovenantMatchAsync(
         WebApplicationFactory<Program> factory, string tag)

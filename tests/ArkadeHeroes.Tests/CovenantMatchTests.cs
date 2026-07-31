@@ -20,8 +20,10 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task CovenantMatch_EscrowGatesTheFight_SettlementPaysTheWinner()
     {
-        var (alice, _) = await _factory.RegisterAsync("C-Alice");
-        var (bob, _) = await _factory.RegisterAsync("C-Bob");
+        // Exact wager arithmetic below, so the starter claim must not move the balances first.
+        using var factory = _factory.WithFreeStarters();
+        var (alice, _) = await factory.RegisterAsync("C-Alice");
+        var (bob, _) = await factory.RegisterAsync("C-Bob");
         var aliceHeroes = await alice.ClaimStartersAsync();
         var bobHeroes = await bob.ClaimStartersAsync();
         const long wager = 4_000;

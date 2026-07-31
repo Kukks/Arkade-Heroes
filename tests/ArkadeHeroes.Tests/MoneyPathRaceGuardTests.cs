@@ -72,6 +72,12 @@ public class MoneyPathRaceGuardTests
         var store = factory.Services.GetRequiredService<GameStore>();
         var player = store.Players[dto.PlayerId];
 
+        // Heroes are bought now, so the race needs a cleared invoice behind it. The subject is
+        // unchanged: concurrent claims must mint ONE pair, never four — the fee is not the gate here.
+        var fee = await svc.RequestStartersAsync(player, CancellationToken.None);
+        ((InMemoryChainService)factory.Services.GetRequiredService<IChainService>())
+            .PayInvoiceFromPlayer(player.Id, fee!.InvoiceId);
+
         var wins = await RaceAsync(Racers, () => svc.ClaimStartersAsync(player, CancellationToken.None));
 
         Assert.Equal(1, wins);

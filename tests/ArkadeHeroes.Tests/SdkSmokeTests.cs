@@ -22,6 +22,9 @@ public class SdkSmokeTests : IClassFixture<WebApplicationFactory<Program>>
             new RegisterPlayerRequest("Sdk-Smoke", $"sim-wallet-{Guid.NewGuid():N}"));
         Assert.NotNull(player.Token);
 
+        // Starter heroes carry a fee, so the typed facades have to walk quote → pay → claim.
+        var quote = await sdk.Heroes.RequestStartersAsync();
+        await sdk.PayInvoiceAsync(quote.Fee!.InvoiceId);
         var starters = await sdk.Heroes.ClaimStartersAsync();
         Assert.Equal(2, starters.Heroes.Count);
 
