@@ -88,7 +88,7 @@
         var p when p == "heroes" || p.StartsWith("heroes/")
                    || p is "play" or "spar" or "gauntlet" or "trials" or "duel" or "deathmatch" or "breed"
                         or "merge" or "gear" or "leaderboard" or "daily" or "squad" or "tournaments"
-                        or "reclaim" or "achievements" => "heroes",
+                        or "reclaim" or "achievements" or "account" => "heroes",
         _ => "",
     };
 
@@ -160,6 +160,9 @@
                 // with a different page highlighted than the one you were just taken to.
                 ("Play", "play", NavLinkMatch.Prefix),
                 ("Roster", "heroes", NavLinkMatch.All),
+                // Next to the roster because it answers the question the roster raises: the roster shows
+                // the creatures, this shows what YOU can do with them and what each has already done.
+                ("Account", "account", NavLinkMatch.Prefix),
                 ("Breed", "breed", NavLinkMatch.Prefix),
                 ("Achievements", "achievements", NavLinkMatch.Prefix),
                 ("Ranks", "leaderboard", NavLinkMatch.Prefix),

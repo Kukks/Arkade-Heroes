@@ -1,5 +1,7 @@
 @page "/heroes"
 @inject ArkadeHeroesClient Api
+@inject GameSession Session
+@inject GameWallet WalletSvc
 @inject WalletState State
 @implements IDisposable
 
@@ -36,40 +38,93 @@ else if (_error)
         <p class="muted" style="margin:.7rem 0 0">Start the server: <span class="mono">dotnet run --project src/ArkadeHeroes.Server</span></p>
     </div>
 }
-else if (_heroes.Count == 0)
-{
-    <div class="card muted">
-        @* Recruiting costs sats and needs the wallet, so it lives in one place — with the price on it and
-           the balance next to it. A second button here could only be a worse copy of that one. *@
-        @if (_mine)
-        {
-            <p style="margin:0 0 .8rem">You don't have any heroes yet.</p>
-            <a class="btn primary" href="wallet">Recruit one from your account</a>
-        }
-        else if (State.IsSignedIn)
-        {
-            <text>No heroes minted yet — <a href="wallet">recruit one from your account</a>.</text>
-        }
-        else
-        {
-            <text>No heroes yet — <a href="">start playing</a> to summon your first heroes.</text>
-        }
-    </div>
-}
 else
 {
-    <div class="grid cols">
-        @foreach (var h in _heroes)
-        {
-            <HeroCard Hero="h" />
-        }
-    </div>
-    @if (_hasMore)
+    @if (_heroes.Count == 0)
     {
-        <div style="text-align:center;margin-top:1.4rem">
-            <button class="btn ghost" @onclick="LoadMore" disabled="@_loadingMore">
-                @(_loadingMore ? "Loading…" : "Load more heroes")
+        <div class="card muted">
+            @if (_mine)
+            {
+                <text>You don't have any heroes yet — recruit your first one below.</text>
+            }
+            else if (State.IsSignedIn)
+            {
+                <text>No heroes minted yet — switch to <b>Mine</b> and recruit one.</text>
+            }
+            else
+            {
+                <text>No heroes yet — <a href="">start playing</a> to summon your first heroes.</text>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="grid cols">
+            @foreach (var h in _heroes)
+            {
+                <HeroCard Hero="h" />
+            }
+        </div>
+        @if (_hasMore)
+        {
+            <div style="text-align:center;margin-top:1.4rem">
+                <button class="btn ghost" @onclick="LoadMore" disabled="@_loadingMore">
+                    @(_loadingMore ? "Loading…" : "Load more heroes")
+                </button>
+            </div>
+        }
+    }
+
+    @* Recruiting used to live on /wallet, two clicks from the roster it fills — so the page that says
+       "you have no heroes" could only point somewhere else. It buys a hero, so it belongs with the heroes,
+       and it sits BELOW the roster for the same reason the badges left: nothing gets to push your own
+       creatures down the page. *@
+    @if (_mine && State.IsSignedIn)
+    {
+        <div class="card" style="margin-top:1.4rem">
+            <h3 style="margin-top:0">Recruit a hero</h3>
+            @* The price is stated up front because it is real money leaving the wallet, and recruits are
+               buyable as often as you can pay for them — so this is never "one-time" and never goes away. *@
+            <p class="muted" style="margin:.2rem 0 .9rem">
+                @if (_heroes.Count == 0)
+                {
+                    <text>Recruits are the bottom of the barrel — no traits, weak stats — but it's yours, and it can breed. Buy as many as you want.</text>
+                }
+                else
+                {
+                    <text>Another one, the cheapest way there is — and it shows: no traits, weak stats. Recruit as many as you like.</text>
+                }
+            </p>
+            <button class="btn primary" @onclick="Recruit" disabled="@(_claiming || !CanAffordClaim)">
+                @if (_claiming)
+                {
+                    <text>@(_claimStep ?? "Recruiting…")</text>
+                }
+                else if (_claimFeeSats is null)
+                {
+                    <text>Recruit a hero</text>
+                }
+                else
+                {
+                    <text>Recruit a hero — @_claimFeeSats.Value.ToString("N0") sats</text>
+                }
             </button>
+            @if (!CanAffordClaim && _claimFeeSats is not null)
+            {
+                <div class="status-line" style="margin-top:.7rem">
+                    <span class="dot bad"></span>
+                    You have @State.BalanceSats.ToString("N0") sats; recruiting costs @_claimFeeSats.Value.ToString("N0").
+                    <a href="wallet">Top up your wallet →</a>
+                </div>
+            }
+            @if (_claimMsg is not null)
+            {
+                <div class="status-line" style="margin-top:.7rem"><span class="dot ok"></span> @_claimMsg</div>
+            }
+            @if (_claimError is not null)
+            {
+                <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_claimError</div>
+            }
         </div>
     }
 }
@@ -87,10 +142,28 @@ else
     private bool _hasMore;
     private bool _loadingMore;
 
+    // ── Recruiting ───────────────────────────────────────────────────────────
+    /// <summary>The server's own price for a claim, so the button can state it before the player commits.
+    /// Read from published config rather than computed locally — a compiled-in guess would be wrong the
+    /// moment an operator changes the breed fee. Null until it loads (or if the read fails).</summary>
+    private long? _claimFeeSats;
+    private string? _claimStep;
+    private string? _claimMsg;
+    private string? _claimError;
+    private bool _claiming;
+
+    /// <summary>Whether the wallet covers a claim. Unknown price (config read failed) counts as affordable —
+    /// better to let the server refuse than to grey out a button over a missing number.</summary>
+    private bool CanAffordClaim => _claimFeeSats is not { } fee || State.BalanceSats >= fee;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnStateChanged;
         if (!string.IsNullOrEmpty(MineParam) && State.IsSignedIn) _mine = true;
+        // A plain read — no invoice is created here, so opening the roster never bills anything.
+        try { _claimFeeSats = (await Api.Chain.InfoAsync()).Config?.StarterClaimFeeSats; }
+        catch { /* price unknown — the button still works, it just can't quote up front */ }
+        await RefreshBalanceAsync();
         await LoadAsync();
     }
 
@@ -138,6 +211,49 @@ else
         }
     }
 
+    async Task Recruit()
+    {
+        _claiming = true;
+        _claimError = null;
+        _claimMsg = null;
+        try
+        {
+            // Paying takes a moment and costs real sats, so say which step is running rather than
+            // leaving a dead button while a spend is in flight.
+            var heroes = await Session.ClaimStartersAsync(step =>
+            {
+                _claimStep = step;
+                StateHasChanged();
+            });
+            _claimMsg = $"Recruited {heroes.Count} hero{(heroes.Count == 1 ? "" : "es")} — recruit another any time.";
+            await LoadAsync();          // the new heroes belong in the roster you are already looking at
+            await RefreshBalanceAsync();  // the fee left the wallet; the affordability line must follow it
+        }
+        catch (Exception ex)
+        {
+            _claimError = ex.Message;
+        }
+        finally
+        {
+            _claiming = false;
+            _claimStep = null;
+        }
+    }
+
+    /// <summary>
+    /// Re-reads the wallet balance so "you have N sats" is a fresh fact rather than whatever the shell
+    /// last cached. The shell's own read is best-effort and leaves the balance at zero when the Arkade
+    /// node is unreachable — which would grey out the recruit button and blame the player's funds for it.
+    /// </summary>
+    async Task RefreshBalanceAsync()
+    {
+        try
+        {
+            if (await WalletSvc.GetActiveWalletAsync() is { } w)
+                State.UpdateBalance(await WalletSvc.GetBalanceAsync(w.Id));
+        }
+        catch { /* balance stays at its last known value rather than taking the roster down with it */ }
+    }
 
     void OnStateChanged() => InvokeAsync(StateHasChanged);
 

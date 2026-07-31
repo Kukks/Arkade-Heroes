@@ -166,54 +166,19 @@ else // Ready
         @if (State.IsSignedIn)
         {
             <div class="status-line"><span class="dot ok"></span> Signed in as <b>@State.Player!.Name</b></div>
-            @* Recruits are buyable as often as you can pay for them, so this is never "one-time" and never
-               goes away — the price is stated up front because it is real money leaving the wallet. *@
-            <p class="muted" style="margin:.6rem 0 .2rem">
-                @if (State.Player.StarterClaimed)
+            @* Recruiting moved to the roster, where the heroes it buys actually appear. This page funds
+               the wallet and proves the identity; it no longer carries a second copy of that button. *@
+            <p class="muted" style="margin:.6rem 0 0">
+                @if (_myHeroCount > 0)
                 {
-                    <text>Recruit another hero — the cheapest way to get one, and it shows: no traits, weak stats. Recruit as many as you like.</text>
+                    <text>@_myHeroCount hero@(_myHeroCount == 1 ? "" : "es") in your roster.</text>
                 }
                 else
                 {
-                    <text>Recruit a hero to enter the arena. Recruits are the bottom of the barrel — no traits, weak stats — but it's yours, and it can breed. Buy as many as you want.</text>
+                    <text>No heroes yet — recruit your first one from the <a href="heroes?mine=1">roster</a>.</text>
                 }
+                <a href="account">Your account →</a>
             </p>
-            <button class="btn primary" style="margin-top:.6rem" @onclick="ClaimStarters" disabled="@(_busy || !CanAffordClaim)">
-                @if (_busy)
-                {
-                    <text>@(_claimStep ?? "Recruiting…")</text>
-                }
-                else if (_claimFeeSats is null)
-                {
-                    <text>Recruit a hero</text>
-                }
-                else
-                {
-                    <text>Recruit a hero — @_claimFeeSats.Value.ToString("N0") sats</text>
-                }
-            </button>
-            @if (!CanAffordClaim && _claimFeeSats is not null)
-            {
-                <div class="status-line" style="margin-top:.6rem">
-                    <span class="dot bad"></span>
-                    You have @State.BalanceSats.ToString("N0") sats; recruiting costs @_claimFeeSats.Value.ToString("N0").
-                    @if (Faucet.Available)
-                    {
-                        <text> Use "Get test sats" above.</text>
-                    }
-                </div>
-            }
-            @if (_myHeroCount > 0)
-            {
-                <p class="muted" style="margin:.6rem 0 0">
-                    @_myHeroCount hero@(_myHeroCount == 1 ? "" : "es") in your roster.
-                    <a href="heroes">View your heroes →</a>
-                </p>
-            }
-            @if (_claimMsg is not null)
-            {
-                <div class="status-line" style="margin-top:.7rem"><span class="dot ok"></span> @_claimMsg</div>
-            }
         }
         else
         {
@@ -349,7 +314,6 @@ else // Ready
 
     string _name = "";
     string? _idError;
-    string? _claimMsg;
     int _myHeroCount;
 
     string _sendTo = "";
@@ -358,17 +322,6 @@ else // Ready
     string? _sendResult;
     string? _sendError;
     bool _resumeTried;
-
-    // ── Recruiting ───────────────────────────────────────────────────────────
-    /// <summary>The server's own price for a claim, so the button can state it before the player commits.
-    /// Read from published config rather than computed locally — a compiled-in guess would be wrong the
-    /// moment an operator changes the breed fee. Null until it loads (or if the read fails).</summary>
-    long? _claimFeeSats;
-    string? _claimStep;
-
-    /// <summary>Whether the wallet covers a claim. Unknown price (config read failed) counts as affordable —
-    /// better to let the server refuse than to grey out a button over a missing number.</summary>
-    bool CanAffordClaim => _claimFeeSats is not { } fee || State.BalanceSats >= fee;
 
     // ── Sign out ─────────────────────────────────────────────────────────────
     bool _signOutArmed;
@@ -421,9 +374,6 @@ else // Ready
         // Asked once, up front: the buttons only exist where the browser can actually honour them
         // (Chromium, over https). Everywhere else the phrase is still shown for manual backup.
         _credentialsSupported = await Credentials.IsSupportedAsync();
-        // A plain read — no invoice is created here, so opening the page never bills anything.
-        try { _claimFeeSats = (await Api.Chain.InfoAsync()).Config?.StarterClaimFeeSats; }
-        catch { /* price unknown — the button still works, it just can't quote up front */ }
         await LoadAsync();
     }
 
@@ -637,35 +587,6 @@ else // Ready
         finally
         {
             _busy = false;
-        }
-    }
-
-    async Task ClaimStarters()
-    {
-        _busy = true;
-        _idError = null;
-        _claimMsg = null;
-        try
-        {
-            // Paying takes a moment and costs real sats, so say which step is running rather than
-            // leaving a dead button while a spend is in flight.
-            var heroes = await Session.ClaimStartersAsync(step =>
-            {
-                _claimStep = step;
-                StateHasChanged();
-            });
-            await RefreshMineAsync();
-            await RefreshAsync();   // the fee left the wallet; the balance on screen should show it
-            _claimMsg = $"Recruited {heroes.Count} hero{(heroes.Count == 1 ? "" : "es")} — recruit another any time.";
-        }
-        catch (Exception ex)
-        {
-            _idError = ex.Message;
-        }
-        finally
-        {
-            _busy = false;
-            _claimStep = null;
         }
     }
 
