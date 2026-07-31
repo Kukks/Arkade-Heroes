@@ -84,6 +84,33 @@ public readonly struct Genome : IEquatable<Genome>
         return new Genome(genes);
     }
 
+    /// <summary>
+    /// A bought hero: <see cref="NewGen0"/> with its stat and growth genes squashed into the bottom of
+    /// their range.
+    ///
+    /// <para>Recruits can be bought over and over, so their genome cannot be a lottery ticket. Gen-0 is
+    /// already trait-blank — bytes [16..] are cleared, so a recruit expresses nothing and scores zero
+    /// rarity — but stats come from raw hash bytes, and an unlimited supply of those is an unlimited number
+    /// of rolls at a good statline. Capping them makes a recruit reliably the worst hero available, which
+    /// is what keeps bred heroes worth breeding.</para>
+    ///
+    /// <para>Still a pure function of the entropy, so anyone holding the seed can recompute the genome and
+    /// check the server minted what it said it did.</para>
+    /// </summary>
+    public static Genome NewRecruit(ReadOnlySpan<byte> entropy, byte statCap)
+    {
+        Span<byte> genes = stackalloc byte[Size];
+        SHA256.HashData(entropy, genes);
+        genes[16..].Clear();
+
+        // Modulo rather than clamp: clamping would pile every high roll onto the cap exactly, making the
+        // ceiling the single most common value. This keeps the low band evenly covered.
+        var span = statCap + 1;
+        for (var i = 0; i <= 4; i++) genes[i] = (byte)(genes[i] % span);            // Might..Fortune
+        for (var i = 8; i <= 12; i++) genes[i] = (byte)(genes[i] % span);           // per-stat growth
+        return new Genome(genes);
+    }
+
     public bool Equals(Genome other) => Bytes.SequenceEqual(other.Bytes);
     public override bool Equals(object? obj) => obj is Genome g && Equals(g);
     public override int GetHashCode() => BitConverter.ToInt32(Bytes[..4]);

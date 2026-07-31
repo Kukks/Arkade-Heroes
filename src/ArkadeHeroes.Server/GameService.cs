@@ -801,7 +801,9 @@ public class GameService(
     public async Task<FeeInvoice?> RequestStartersAsync(Player player, CancellationToken ct)
     {
         RequireAcceptedTerms(player);
-        if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
+        // Deliberately NOT gated on having claimed before: recruits are buyable as often as the player
+        // wants to pay for them. The supply control is that they are the worst heroes in the game, not
+        // that there is a limit on them.
         if (StarterClaimFeeSats <= 0) return null;
 
         // Re-requesting must not re-bill. The player may well have paid already and then lost the
@@ -824,57 +826,42 @@ public class GameService(
         // terms the player is supposed to have read before any of that happened.
         RequireAcceptedTerms(player);
 
-        // Heroes are bought, not given. Check payment BEFORE the claimed-flag is reserved below, so an
-        // unpaid attempt leaves the player exactly as they were and able to try again once funded.
+        // Serialized per player, and everything that consumes the invoice happens inside. One paid invoice
+        // buys ONE claim: without the lock spanning check → mint → clear, two concurrent requests could
+        // both see the same payment and mint two batches for the price of one.
+        using var gate = await store.LockAsync($"starters:{player.Id}", ct);
+
+        var invoiceId = player.StarterFeeInvoiceId;
         if (StarterClaimFeeSats > 0)
         {
-            if (player.StarterFeeInvoiceId is not { } invoiceId)
+            if (invoiceId is null)
                 throw new GameRuleException("Request your starter heroes first — they carry a fee.");
             if (!await chain.IsInvoicePaidAsync(invoiceId, ct))
                 throw new GameRuleException(
                     $"The {StarterClaimFeeSats} sat claim fee has not arrived yet — pay it from your wallet, then claim.");
         }
 
-        // Per-player gate: the claimed-check → reserve pair below is only race-safe when concurrent
-        // claims are serialized — without it two requests can both read false and mint four starters.
-        using var gate = await store.LockAsync($"starters:{player.Id}", ct);
-        if (player.StarterClaimed) throw new GameRuleException("Starter heroes already claimed.");
-        player.StarterClaimed = true; // reserve first so concurrent claims can't double-mint
-        // Durably too — otherwise a restart lets the same player claim free starter heroes all over again.
-        await persistence.SavePlayerAsync(player, ct);
+        var minted = new List<Hero>();
+        for (var i = 0; i < StarterHeroCount; i++)
+        {
+            var entropy = RandomNumberGenerator.GetBytes(32);
+            // Bought heroes are the worst in the game on purpose — see StarterPolicy.RecruitStatCap.
+            var genome = Genome.NewRecruit(entropy, StarterPolicy.RecruitStatCap);
+            minted.Add(await MintHeroAsync(player, genome, generation: 0,
+                parentA: null, parentB: null,
+                serverSeedHex: Convert.ToHexString(entropy).ToLowerInvariant(),
+                playerNonce: null, entropyHex: null, ct));
+        }
 
-        // Idempotent under retry: mint only the shortfall to reach two gen-0
-        // starters. If a prior attempt minted one hero then failed (e.g. the
-        // treasury wasn't funded yet), it stays owned and a re-claim tops up.
-        var owned = store.Heroes.Values
-            .Where(h => h.OwnerId == player.Id && h.Generation == 0 && h.ParentAId is null)
-            .ToList();
-        try
-        {
-            var minted = new List<Hero>();
-            for (var i = owned.Count; i < StarterHeroCount; i++)
-            {
-                var entropy = RandomNumberGenerator.GetBytes(32);
-                var genome = Genome.NewGen0(entropy);
-                minted.Add(await MintHeroAsync(player, genome, generation: 0,
-                    parentA: null, parentB: null,
-                    serverSeedHex: Convert.ToHexString(entropy).ToLowerInvariant(),
-                    playerNonce: null, entropyHex: null, ct));
-            }
-            // Bank the fee only now the heroes actually exist. Recording it earlier would credit the
-            // treasury for a mint that could still throw, and the catch below hands the claim back.
-            if (player.StarterFeeInvoiceId is { } paid)
-                await store.RecordInflowAsync(paid, "starter", StarterClaimFeeSats, ct);
-            return [.. owned, .. minted];
-        }
-        catch
-        {
-            // Release the reservation so the player can retry rather than be
-            // stranded hero-less; already-minted heroes remain owned. The invoice id stays on the player,
-            // so the retry reuses what they already paid instead of billing a second time.
-            player.StarterClaimed = false;
-            throw;
-        }
+        // Spend the invoice only now the heroes exist. Clearing it is what makes the claim repeatable
+        // WITHOUT being free: the next claim finds nothing outstanding and has to buy its own. A throw
+        // above leaves it in place, so a player who paid and then hit a failed mint keeps what they bought.
+        if (invoiceId is not null)
+            await store.RecordInflowAsync(invoiceId, "starter", StarterClaimFeeSats, ct);
+        player.StarterFeeInvoiceId = null;
+        player.StarterClaimed = true;   // now only means "has claimed before" — the UI's cue, not a gate
+        await persistence.SavePlayerAsync(player, ct);
+        return minted;
     }
 
     /// <summary>Dev/test lever: mint one extra gen-0 hero to a player (InMemory only) — for tests that need a
