@@ -269,6 +269,8 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
+    public DbSet<PersistedAuditEvent> AuditEvents => Set<PersistedAuditEvent>();
+    public DbSet<PersistedAuditSubject> AuditEventSubjects => Set<PersistedAuditSubject>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -286,5 +288,32 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         // Composite so an outflow surrogate can never occupy an invoice id's slot: an inflow insert that
         // collides is the "already counted" no-op, and that must never be able to eat a payout row.
         modelBuilder.Entity<PersistedTreasuryFlow>().HasKey(x => new { x.Direction, x.Id });
+
+        // ── The append-only audit log ──
+        modelBuilder.Entity<PersistedAuditEvent>(e =>
+        {
+            // A value-generated integer key, which the SQLite provider emits as AUTOINCREMENT — that is
+            // what makes Sequence the log's monotonic total order rather than "whatever rowid was free".
+            e.HasKey(x => x.Sequence);
+            e.Property(x => x.Sequence).ValueGeneratedOnAdd();
+            // The once-only guarantee, in the schema rather than in a check-then-insert: a retried money
+            // path carrying the same DedupKey is REFUSED by the index, not merely usually caught by the
+            // lookup in front of it. Filtered so the many events with no natural key (a mint, a listing —
+            // where repetition IS the fact) are not all colliding on NULL.
+            e.HasIndex(x => x.DedupKey).IsUnique().HasFilter("\"DedupKey\" IS NOT NULL");
+            // The two ways an operator reads the log: "what happened lately of this kind", "what has this
+            // player done". Both over a table that grows forever, so both are indexed.
+            e.HasIndex(x => x.EventType);
+            e.HasIndex(x => x.ActorPlayerId);
+        });
+        modelBuilder.Entity<PersistedAuditSubject>(e =>
+        {
+            e.HasKey(x => new { x.Sequence, x.SubjectId });
+            // The per-subject query — "everything that ever happened to THIS hero/match/offer" — leads on
+            // SubjectId, so that is what the index leads on.
+            e.HasIndex(x => x.SubjectId);
+            e.HasOne(x => x.Event).WithMany(x => x.Subjects).HasForeignKey(x => x.Sequence)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

@@ -22,9 +22,23 @@ public class GameRuleException(string message) : Exception(message);
 /// </summary>
 public class GameService(
     GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options,
-    Persistence.IGameStatePersistence persistence, ILogger<GameService>? logger = null)
+    Persistence.IGameStatePersistence persistence, Persistence.IAuditLog audit,
+    ILogger<GameService>? logger = null)
 {
     private readonly GameOptions _options = options.Value;
+
+    /// <summary>
+    /// Appends one entry to the append-only audit log. NEVER throws (see <see cref="Persistence.IAuditLog"/>
+    /// for why that is the safe direction on a money path), so every call site below can sit inside a flow
+    /// that has already moved sats without the log being able to unwind it.
+    ///
+    /// <paramref name="dedupKey"/> is supplied wherever the action has a natural once-only key, so a client
+    /// that poll-retries — which they all do — logs the action once. Where an action can genuinely recur
+    /// (a mint, a listing, an equip) it is left null, because there the repetition IS the fact.
+    /// </summary>
+    private Task AuditAsync(string eventType, string? actorPlayerId, string?[] subjectIds, object payload,
+        string? dedupKey = null)
+        => audit.RecordAsync(new Persistence.AuditEntry(eventType, actorPlayerId, subjectIds, payload, dedupKey));
 
     // The game-balance config the server runs under (economy from GameOptions; the rest from
     // GameConfig.Default unless retuned here).
@@ -130,6 +144,17 @@ public class GameService(
         store.Players[player.Id] = player;
         store.PlayersByToken[player.Token] = player;
         await persistence.SavePlayerAsync(player, ct);   // identity is the anchor everything else references
+        // The first entry in this player's history. The bearer token is NEVER logged — it is a session
+        // credential, and the same reason it is kept out of the durable player row keeps it out of here.
+        await AuditAsync(Persistence.AuditEventType.PlayerRegistered, player.Id, [player.Id],
+            new
+            {
+                name = player.Name,
+                arkadeAddress = arkadeAddress.Trim(),
+                loginPubKeyHex = loginKey,
+                acceptedTermsVersion,
+            },
+            $"player-registered:{player.Id}");
         var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
         return (player, arkadeAddress.Trim(), balance);
     }
@@ -233,6 +258,12 @@ public class GameService(
         // Durably, and awaited inline: browser-local storage is one cache clear from gone and is the
         // player's own machine, so the row IS the evidence that the disclosure was made and agreed to.
         await persistence.SavePlayerAsync(player, ct);
+        // The player row holds only the LATEST acceptance (it moves forward on each bump). The log keeps
+        // every one of them, which is what turns "they accepted v3" into "they accepted v1 on this date,
+        // then v3 on that one" — the shape the evidence has to take if it is ever actually needed.
+        await AuditAsync(Persistence.AuditEventType.PlayerAcceptedTerms, player.Id, [player.Id],
+            new { version, acceptedAtUtc = player.TermsAcceptedAtUtc },
+            $"terms-accepted:{player.Id}:{version}");
         return player;
     }
 
@@ -525,6 +556,11 @@ public class GameService(
             && await chain.IsInvoicePaidAsync(priorInvoice, ct))
         {
             store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            // Deliberately logged, and deliberately marked as re-using an already-paid fee: this is the
+            // branch where a player retargets a name they have ALREADY paid for, so a log that showed only
+            // the first request would make the second name look like it arrived from nowhere.
+            await AuditAsync(Persistence.AuditEventType.HeroRenameRequested, player.Id, [heroId],
+                new { requestedName = normalized, feeSats = _options.HeroRenameFeeSats, feeInvoiceId = priorInvoice, reusedPaidFee = true });
             return null;   // already paid for — nothing further to settle before confirming
         }
 
@@ -532,6 +568,8 @@ public class GameService(
             ? await chain.CreateFeeInvoiceAsync($"rename:{heroId}", _options.HeroRenameFeeSats, ct)
             : null;
         store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        await AuditAsync(Persistence.AuditEventType.HeroRenameRequested, player.Id, [heroId],
+            new { requestedName = normalized, feeSats = fee is null ? 0 : _options.HeroRenameFeeSats, feeInvoiceId = fee?.InvoiceId, reusedPaidFee = false });
         return fee;
     }
 
@@ -558,11 +596,18 @@ public class GameService(
         if (NameTaken(pending.NewName, heroId))
             throw new GameRuleException($"The name '{pending.NewName}' was claimed before you confirmed — pick another.");
 
+        var previousName = hero.Name;
         hero.Name = pending.NewName;
         store.Renames.TryRemove(heroId, out _);
         // RENAME is an identity event: the name was bought (a real-sats fee) and is globally unique —
         // losing it to a crash would both refund nothing and free the name for someone else to claim.
         await persistence.SaveHeroAsync(hero, ct);
+        // No dedup key: a hero can legitimately be renamed again and again, and each is its own fact. A
+        // RETRY cannot double-log anyway — the session is removed above, so a second confirm is refused
+        // before it reaches here. The old name is recorded because the durable hero row keeps only the new
+        // one, and "what was this hero called when it won that match" is otherwise unanswerable.
+        await AuditAsync(Persistence.AuditEventType.HeroRenamed, player.Id, [heroId],
+            new { previousName, newName = hero.Name, feeSats = pending.FeeInvoiceId is null ? 0 : _options.HeroRenameFeeSats, feeInvoiceId = pending.FeeInvoiceId });
         return hero;
     }
 
@@ -796,6 +841,9 @@ public class GameService(
         };
         var buyIn = await AddEntrantAsync(session, player, heroId, ct);   // the opener is entrant #1
         store.Tournaments[session.Id] = session;
+        await AuditAsync(Persistence.AuditEventType.TournamentOpened, player.Id, [session.Id, heroId],
+            new { buyInSats, size, heroId, buyInInvoiceId = buyIn.InvoiceId, commitmentHex = session.CommitmentHex },
+            $"tournament-opened:{session.Id}");
         return (session, buyIn);
     }
 
@@ -816,6 +864,15 @@ public class GameService(
             if (session.Entrants.Any(e => e.PlayerId == player.Id))
                 throw new GameRuleException("You have already joined this tournament.");
             var buyIn = await AddEntrantAsync(session, player, heroId, ct);
+            // One entrant per player is already enforced above, so the player+bracket pair IS the once-only
+            // key — a retried join is refused before it gets here, and the key holds the line if it ever isn't.
+            await AuditAsync(Persistence.AuditEventType.TournamentJoined, player.Id, [session.Id, heroId],
+                new
+                {
+                    buyInSats = session.BuyInSats, heroId, buyInInvoiceId = buyIn.InvoiceId,
+                    entrants = session.Entrants.Count, size = session.Size, status = session.Status,
+                },
+                $"tournament-joined:{session.Id}:{player.Id}");
             return (session, buyIn);
         }
         finally { store.TournamentLock.Release(); }
@@ -921,6 +978,21 @@ public class GameService(
                         + "under-reports by this amount.", prizes[i], tag);
                 }
             }
+            // Logged AFTER the podium loop so the entry reflects what was actually attempted, and keyed on
+            // the bracket so the "already resolved" guard above and this key say the same thing. The prize
+            // MOVEMENTS are logged separately by the treasury choke point (one treasury.outflow per prize
+            // that really left) — this entry is the outcome, not a second copy of the payments.
+            await AuditAsync(Persistence.AuditEventType.TournamentResolved, player.Id,
+                [session.Id, .. session.Entrants.Select(e => e.HeroId)],
+                new
+                {
+                    championHeroId = result.ChampionId, potSats = pot, rakePct = _config.TournamentRakePct,
+                    prizePoolSats = prizePool, prizes, podium, entrants = session.Entrants.Count,
+                    nonce, serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant(),
+                    entropyHex = session.EntropyHex, configVersion = session.ConfigVersion,
+                    contentVersion = session.ContentVersion,
+                },
+                $"tournament-resolved:{session.Id}");
             return (session, result, Convert.ToHexString(session.ServerSeed).ToLowerInvariant(), session.EntropyHex, prizes);
         }
         finally { store.TournamentLock.Release(); }
@@ -1006,6 +1078,18 @@ public class GameService(
                         + "under-reports by this amount.", session.BuyInSats, tag);
                 }
             }
+            // Actor is NULL: this is reachable from the operator console with no player behind it, and the
+            // player-facing route is a bystander triggering a refund of OTHER people's buy-ins — neither
+            // is an actor in the sense the log means. The bracket and its entrants are the subjects, which
+            // is what a "why did my buy-in come back" question is actually asked against.
+            await AuditAsync(Persistence.AuditEventType.TournamentRefunded, null,
+                [session.Id, .. session.Entrants.Select(e => e.HeroId)],
+                new
+                {
+                    entrantsRefunded = refunded, refundedSats, buyInSats = session.BuyInSats,
+                    entrants = session.Entrants.Count, size = session.Size,
+                },
+                $"tournament-refunded:{session.Id}");
             return (session, refunded, refundedSats);
         }
         finally { store.TournamentLock.Release(); }
@@ -1039,6 +1123,12 @@ public class GameService(
         var invoice = await chain.CreateFeeInvoiceAsync($"starter:{player.Id}", StarterClaimFeeSats, ct);
         player.StarterFeeInvoiceId = invoice.InvoiceId;
         await persistence.SavePlayerAsync(player, ct);
+        // Keyed on the INVOICE, not the player: recruits are buyable as often as the player pays for them,
+        // so a player has many of these — but each outstanding invoice is billed exactly once, and the
+        // re-request path above returns without reaching here precisely so it cannot bill twice.
+        await AuditAsync(Persistence.AuditEventType.StarterRequested, player.Id, [player.Id],
+            new { feeSats = StarterClaimFeeSats, feeInvoiceId = invoice.InvoiceId, heroes = StarterHeroCount },
+            $"starter-requested:{invoice.InvoiceId}");
         return invoice;
     }
 
@@ -1085,6 +1175,13 @@ public class GameService(
         player.StarterFeeInvoiceId = null;
         player.StarterClaimed = true;   // now only means "has claimed before" — the UI's cue, not a gate
         await persistence.SavePlayerAsync(player, ct);
+        // Keyed on the invoice this claim SPENT, so a claim retried against the same paid invoice logs once
+        // — the same thing the invoice-clearing above makes true of the sats. A free claim (no fee
+        // configured) has no such key and is left un-deduped rather than given an invented one.
+        await AuditAsync(Persistence.AuditEventType.StarterClaimed, player.Id,
+            [player.Id, .. minted.Select(h => h.Id)],
+            new { feeSats = StarterClaimFeeSats, feeInvoiceId = invoiceId, heroIds = minted.Select(h => h.Id).ToList() },
+            invoiceId is null ? null : $"starter-claimed:{invoiceId}");
         return minted;
     }
 
@@ -1135,14 +1232,34 @@ public class GameService(
         // Every hero in the game passes through here — starters, bred, fused, absorbed — so this is the one
         // place the discovery race needs to watch. A newly-stamped find is persisted so the discovery, the
         // hero's edition, and the per-set count all survive a restart (else the next find becomes a 2nd "#1").
+        FancyFind? fancyFind = null;
         if (FancySets.TitleFor(hero.Genome, _config) is { } fancy
             && store.RecordFancyFind(fancy, hero.Id, hero.Name, player.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds()) is { } find)
+        {
+            fancyFind = find;
             await persistence.SaveFancyFindAsync(find, ct);
+        }
         // MINT is an identity event: durable NOW, not at the next flush — the chain can't enumerate a
         // player's heroes back, so an unsaved hero is unrecoverable if the process dies. Saved AFTER the
         // on-chain mint (this isn't a payout latch; the asset exists whether or not the row lands, and a
         // faulted save re-throws into a retryable flow). (No-op unless persistence is configured.)
         await persistence.SaveHeroAsync(hero, ct);
+        // THE ONE MINT CHOKE POINT. Every hero that has ever existed passes through here — starters,
+        // recruits, bred, fused, absorbed, the dev lever — so one call covers every way a hero can come
+        // into being, and a future mint path cannot be added that skips it without also skipping the store.
+        // Keyed on the hero id, which IS the on-chain asset id and is therefore unique for all time.
+        // The Fancy find is folded into this payload rather than given its own event: it is a FACT OF THIS
+        // MINT (the set and edition are stamped in the same instant), and it already has its own durable
+        // row — the log complements that record rather than duplicating it.
+        await AuditAsync(Persistence.AuditEventType.HeroMinted, player.Id, [hero.Id, parentA, parentB],
+            new
+            {
+                heroId = hero.Id, name = hero.Name, generation, genomeHex = genome.ToHex(),
+                parentAId = parentA, parentBId = parentB, assetId = mint.AssetId, mintArkTxId = mint.ArkTxId,
+                serverSeedHex, playerNonce, entropyHex,
+                fancyTitle = fancyFind?.Title, fancyEdition = fancyFind?.Edition,
+            },
+            $"hero-minted:{hero.Id}");
         return hero;
     }
 
@@ -1186,6 +1303,14 @@ public class GameService(
                 Mode = "covenant", EscrowAddress = escrow.EscrowAddress, FeeSats = breedFee,
             };
             store.Breedings[covenantSession.Id] = covenantSession;
+            await AuditAsync(Persistence.AuditEventType.BreedCommitted, player.Id,
+                [covenantSession.Id, parentAId, parentBId],
+                new
+                {
+                    mode = "covenant", feeSats = breedFee, escrowAddress = covenantSession.EscrowAddress,
+                    parentAId, parentBId, commitmentHex = covenantSession.CommitmentHex,
+                },
+                $"breed-committed:{covenantSession.Id}");
             return (covenantSession, null);
         }
 
@@ -1203,6 +1328,14 @@ public class GameService(
             FeeSats = breedFee,
         };
         store.Breedings[session.Id] = session;
+        await AuditAsync(Persistence.AuditEventType.BreedCommitted, player.Id,
+            [session.Id, parentAId, parentBId],
+            new
+            {
+                mode = "invoice", feeSats = breedFee, feeInvoiceId = invoice.InvoiceId,
+                parentAId, parentBId, commitmentHex = session.CommitmentHex,
+            },
+            $"breed-committed:{session.Id}");
         return (session, invoice);
     }
 
@@ -1293,6 +1426,21 @@ public class GameService(
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.ParentAId, session.ParentBId, child.Id);
 
+        // The CHILD's own existence is already logged by the mint choke point. This entry is the BREED —
+        // which session, whose fee, which parents and what it cost them in cooldown — keyed on the session
+        // so it survives the poll-retry the client does around a reveal.
+        await AuditAsync(Persistence.AuditEventType.BreedRevealed, player.Id,
+            [session.Id, session.ParentAId, session.ParentBId, child.Id],
+            new
+            {
+                mode = session.Mode, feeSats = session.FeeSats, feeInvoiceId = session.FeeInvoiceId,
+                parentAId = session.ParentAId, parentBId = session.ParentBId, childHeroId = child.Id,
+                childGeneration = child.Generation, parentABreedCount = parentA.BreedCount,
+                parentBBreedCount = parentB.BreedCount, nonce, serverSeedHex, entropyHex,
+                receiptId = receipt.Id,
+            },
+            $"breed-revealed:{session.Id}");
+
         return (child, serverSeedHex, entropyHex, receipt);
     }
 
@@ -1344,6 +1492,16 @@ public class GameService(
         };
         store.StudProposals[proposal.Id] = proposal;
         await persistence.SaveStudProposalAsync(proposal, ct);
+        // Nothing is billed here and nothing can mint — but the OFFER is what the stud's owner later
+        // consents to, so it is the thing a dispute over "what did I agree to" is settled against.
+        await AuditAsync(Persistence.AuditEventType.StudProposed, player.Id,
+            [proposal.Id, myHeroId, studHeroId, proposal.StudOwnerPlayerId],
+            new
+            {
+                proposerHeroId = myHeroId, studHeroId, studOwnerPlayerId = proposal.StudOwnerPlayerId,
+                studFeeSats, commitmentHex = proposal.CommitmentHex,
+            },
+            $"stud-proposed:{proposal.Id}");
         return proposal;
     }
 
@@ -1398,6 +1556,19 @@ public class GameService(
         // Durable NOW, before the proposer is handed anything to pay: the invoice ids are the only link
         // between sats about to leave a wallet and the consent that justified them.
         await persistence.SaveStudProposalAsync(proposal, ct);
+        // THE CONSENT. The single most important entry in this flow: it records who agreed, to what, at
+        // what price, and which invoices that agreement created. Actor is the STUD'S OWNER — they are the
+        // one taking the action, even though it is the proposer's sats that move next.
+        await AuditAsync(Persistence.AuditEventType.StudAccepted, player.Id,
+            [proposal.Id, proposal.ProposerHeroId, proposal.StudHeroId, proposal.ProposerPlayerId],
+            new
+            {
+                proposerPlayerId = proposal.ProposerPlayerId, proposerHeroId = proposal.ProposerHeroId,
+                studHeroId = proposal.StudHeroId, breedFeeSats = breedFee,
+                breedFeeInvoiceId = breedInvoice.InvoiceId, studFeeSats = proposal.StudFeeSats,
+                studFeeInvoiceId = studInvoice?.InvoiceId,
+            },
+            $"stud-accepted:{proposal.Id}");
         return (proposal, breedInvoice, studInvoice);
     }
 
@@ -1438,6 +1609,14 @@ public class GameService(
         if (proposal.Accepted) throw new GameRuleException("Stud proposal already accepted.");
         proposal.Declined = true;
         await persistence.SaveStudProposalAsync(proposal, ct);
+        await AuditAsync(Persistence.AuditEventType.StudDeclined, player.Id,
+            [proposal.Id, proposal.ProposerHeroId, proposal.StudHeroId, proposal.ProposerPlayerId],
+            new
+            {
+                proposerPlayerId = proposal.ProposerPlayerId, proposerHeroId = proposal.ProposerHeroId,
+                studHeroId = proposal.StudHeroId, studFeeSats = proposal.StudFeeSats,
+            },
+            $"stud-declined:{proposal.Id}");
         return proposal;
     }
 
@@ -1548,6 +1727,22 @@ public class GameService(
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             proposal.ProposerHeroId, proposal.StudHeroId, child.Id);
 
+        // The stud fee's actual MOVEMENT (in to the treasury, out to the stud's owner) is logged by the
+        // treasury choke point, once each, under the invoice id. This entry is the breed it paid for —
+        // both parties, both heroes, and who ended up with the child.
+        await AuditAsync(Persistence.AuditEventType.StudRevealed, player.Id,
+            [proposal.Id, proposal.ProposerHeroId, proposal.StudHeroId, child.Id, proposal.StudOwnerPlayerId],
+            new
+            {
+                proposerPlayerId = proposal.ProposerPlayerId, studOwnerPlayerId = proposal.StudOwnerPlayerId,
+                proposerHeroId = proposal.ProposerHeroId, studHeroId = proposal.StudHeroId,
+                childHeroId = child.Id, childGeneration = child.Generation,
+                breedFeeSats = proposal.BreedFeeSats, breedFeeInvoiceId = proposal.BreedFeeInvoiceId,
+                studFeeSats = proposal.StudFeeSats, studFeeInvoiceId = proposal.StudFeeInvoiceId,
+                studFeePaid = proposal.StudFeePaid, nonce, serverSeedHex, entropyHex, receiptId = receipt.Id,
+            },
+            $"stud-revealed:{proposal.Id}");
+
         return (child, serverSeedHex, entropyHex, proposal.StudFeePaid ? proposal.StudFeeSats : 0, receipt);
     }
 
@@ -1573,6 +1768,9 @@ public class GameService(
             FeeInvoiceId = invoice.InvoiceId, FeeSats = fee,
         };
         store.Gauntlets[id] = session;
+        await AuditAsync(Persistence.AuditEventType.GauntletOpened, player.Id, [session.Id, heroId],
+            new { heroId, heroLevel = hero.Level, feeSats = fee, feeInvoiceId = invoice.InvoiceId, commitmentHex = session.CommitmentHex },
+            $"gauntlet-opened:{session.Id}");
         return (session, invoice);
     }
 
@@ -1632,6 +1830,18 @@ public class GameService(
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.HeroId);
 
+        // The full-clear item DELIVERY is recorded here rather than as its own event: it is a reward this
+        // run produced, not a purchase, and there is no invoice to key it on. The fee's capture is logged
+        // by the treasury choke point under the fee invoice id.
+        await AuditAsync(Persistence.AuditEventType.GauntletRun, player.Id, [session.Id, session.HeroId],
+            new
+            {
+                heroId = session.HeroId, feeSats = session.FeeSats, feeInvoiceId = session.FeeInvoiceId,
+                wavesCleared = run.WavesCleared, xpAwarded = xpAward, preRunLevel, postRunLevel = hero.Level,
+                itemAwarded, itemAssetId, nonce, serverSeedHex, entropyHex, receiptId = receipt.Id,
+            },
+            $"gauntlet-run:{session.Id}");
+
         return (run, xpAward, heroSnapshot, itemAwarded, itemAssetId, serverSeedHex, entropyHex, receipt);
     }
 
@@ -1643,7 +1853,8 @@ public class GameService(
     /// <see cref="RunTrials"/> (its score lives in the signed receipt + best-by-hero, not the session).</summary>
     public const int MaxOpenTrialsPerPlayer = 8;
 
-    public TrialsSession OpenTrials(Player player, string heroId)
+    /// <summary>Async only because it appends to the audit log — the flow itself touches no I/O.</summary>
+    public async Task<TrialsSession> OpenTrialsAsync(Player player, string heroId)
     {
         GetOwnedHero(player, heroId);   // ownership check (throws if not the player's hero)
         // Bound the free flow: refuse a player already sitting on a full quota of open sessions (a
@@ -1659,10 +1870,14 @@ public class GameService(
             Affix = Trials.AffixFor(DateTimeOffset.UtcNow),   // pinned at open, not recomputed at run/verify
         };
         store.Trials[id] = session;
+        await AuditAsync(Persistence.AuditEventType.TrialsOpened, player.Id, [session.Id, heroId],
+            new { heroId, affix = session.Affix.ToString(), commitmentHex = session.CommitmentHex },
+            $"trials-opened:{session.Id}");
         return session;
     }
 
-    public (TrialsRun Run, Shared.HeroDto HeroSnapshot, string? Title, int BestScore, TrialsAffix Affix, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt) RunTrials(
+    /// <summary>Async only because it appends to the audit log — the run itself touches no I/O.</summary>
+    public async Task<(TrialsRun Run, Shared.HeroDto HeroSnapshot, string? Title, int BestScore, TrialsAffix Affix, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt)> RunTrialsAsync(
         Player player, string trialsId, string nonce)
     {
         if (!store.Trials.TryGetValue(trialsId, out var session) || session.PlayerId != player.Id)
@@ -1697,6 +1912,16 @@ public class GameService(
         // live session is never read again; dropping it bounds the free-flow store to only open runs.
         store.Trials.TryRemove(trialsId, out _);
 
+        // Trials moves no sats and mints nothing, so it is not a money path — but it does change state (a
+        // hero's personal best) and it is an action the player took, which is the bar for being here.
+        await AuditAsync(Persistence.AuditEventType.TrialsRun, player.Id, [session.Id, session.HeroId],
+            new
+            {
+                heroId = session.HeroId, wavesCleared = run.WavesCleared, title, bestScore = best,
+                affix = session.Affix.ToString(), nonce, serverSeedHex, entropyHex, receiptId = receipt.Id,
+            },
+            $"trials-run:{session.Id}");
+
         return (run, heroSnapshot, title, best, session.Affix, serverSeedHex, entropyHex, receipt);
     }
 
@@ -1729,6 +1954,13 @@ public class GameService(
             Mode = mode, EscrowAddress = escrow, FeeSats = _options.MergeFeeSats,
         };
         store.Merges[session.Id] = session;
+        await AuditAsync(Persistence.AuditEventType.MergeCommitted, player.Id, [session.Id, baseId, sacrificeId],
+            new
+            {
+                mode, baseHeroId = baseId, sacrificeHeroId = sacrificeId, feeSats = session.FeeSats,
+                escrowAddress = escrow, commitmentHex = session.CommitmentHex,
+            },
+            $"merge-committed:{session.Id}");
         return (session, escrow);
     }
 
@@ -1795,6 +2027,15 @@ public class GameService(
         store.RecordBurn(); store.RecordBurn();
         await persistence.DeleteHeroAsync(session.BaseId, ct);
         await persistence.DeleteHeroAsync(session.SacrificeId, ct);
+        // A BURN is the one state change with no durable row left behind to inspect afterwards — the hero's
+        // row is erased on purpose, so without this entry the fact that it ever existed survives only in the
+        // mint event. Keyed on the hero id: a hero can be burned exactly once, for all time.
+        await AuditAsync(Persistence.AuditEventType.HeroBurned, player.Id, [session.BaseId, session.Id],
+            new { heroId = session.BaseId, name = baseHero.Name, generation = baseHero.Generation, level = baseHero.Level, reason = "merge-input", sessionId = session.Id, replacedByHeroId = fused.Id },
+            $"hero-burned:{session.BaseId}");
+        await AuditAsync(Persistence.AuditEventType.HeroBurned, player.Id, [session.SacrificeId, session.Id],
+            new { heroId = session.SacrificeId, name = sacrificeHero.Name, generation = sacrificeHero.Generation, level = sacrificeHero.Level, reason = "merge-input", sessionId = session.Id, replacedByHeroId = fused.Id },
+            $"hero-burned:{session.SacrificeId}");
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "merge", session.Id, session.BaseId, session.SacrificeId, fused.Id,
@@ -1802,6 +2043,16 @@ public class GameService(
                 0, 0, baseHero.Level, sacrificeHero.Level,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.BaseId, session.SacrificeId, fused.Id);
+
+        await AuditAsync(Persistence.AuditEventType.MergeRevealed, player.Id,
+            [session.Id, session.BaseId, session.SacrificeId, fused.Id],
+            new
+            {
+                mode = session.Mode, baseHeroId = session.BaseId, sacrificeHeroId = session.SacrificeId,
+                fusedHeroId = fused.Id, fusedGeneration, fusedLevel = fused.Level, feeSats = session.FeeSats,
+                nonce, serverSeedHex, entropyHex, receiptId = receipt.Id,
+            },
+            $"merge-revealed:{session.Id}");
 
         return (fused, serverSeedHex, entropyHex, receipt);
     }
@@ -1865,6 +2116,19 @@ public class GameService(
             Matchmaking.PowerFavor(PowerScore.Compute(challenger, _config), PowerScore.Compute(defender, _config),
                 challenger.Genome.Element, defender.Genome.Element, _config));
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(id, ct);
+        // PERMADEATH is on the table from this point, so the terms of the wager — which heroes, whose gear,
+        // absorb or classic, and what each side was billed — are recorded before either party can stake.
+        await AuditAsync(Persistence.AuditEventType.DeathMatchOpened, player.Id,
+            [session.Id, challengerHeroId, defenderHeroId, defender.OwnerId],
+            new
+            {
+                challengerHeroId, defenderHeroId, defenderPlayerId = defender.OwnerId, absorb,
+                challengerGearItemIds = challengerGearIds, defenderGearItemIds = defenderGearIds,
+                challengerFeeSats = Leveling.DeathMatchFee(challenger.Level, absorb, _config),
+                challengerFeeInvoiceId = feeInvoice.InvoiceId, jointEscrowAddress = escrow,
+                refundAfterUnixSeconds = refundAfter, commitmentHex = commitment,
+            },
+            $"deathmatch-opened:{session.Id}");
         return (session, escrow, favor, MapGearDtos(escrowParams?.ChallengerGear), MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
 
@@ -1893,6 +2157,18 @@ public class GameService(
             $"dm-fee:defender:{deathMatchId}", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config), ct);
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(deathMatchId, ct);
+        // The defender's CONSENT to risk their hero permanently. Recorded for the same reason the stud
+        // accept is: it is what a "I never agreed to that" dispute is settled against.
+        await AuditAsync(Persistence.AuditEventType.DeathMatchAccepted, player.Id,
+            [session.Id, session.ChallengerHeroId, session.DefenderHeroId, session.ChallengerPlayerId],
+            new
+            {
+                challengerPlayerId = session.ChallengerPlayerId, challengerHeroId = session.ChallengerHeroId,
+                defenderHeroId = session.DefenderHeroId, absorb = session.Absorb,
+                defenderFeeSats = Leveling.DeathMatchFee(defender.Level, session.Absorb, _config),
+                defenderFeeInvoiceId = feeInvoice.InvoiceId, jointEscrowAddress = session.JointEscrowAddress,
+            },
+            $"deathmatch-accepted:{session.Id}");
         return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
 
@@ -1985,6 +2261,14 @@ public class GameService(
                 store.RecordBurn(); store.RecordBurn();
                 await persistence.DeleteHeroAsync(winner.Id, ct);
                 await persistence.DeleteHeroAsync(loser.Id, ct);
+                // BOTH heroes are gone in absorb mode — the winner's too. Their rows are erased, so these
+                // are the last records that they existed at all beyond their mint events.
+                await AuditAsync(Persistence.AuditEventType.HeroBurned, winner.OwnerId, [winner.Id, session.Id],
+                    new { heroId = winner.Id, name = winner.Name, generation = winner.Generation, level = winner.Level, reason = "deathmatch-absorb-winner", sessionId = session.Id, replacedByHeroId = absorbed.Id },
+                    $"hero-burned:{winner.Id}");
+                await AuditAsync(Persistence.AuditEventType.HeroBurned, loser.OwnerId, [loser.Id, session.Id],
+                    new { heroId = loser.Id, name = loser.Name, generation = loser.Generation, level = loser.Level, reason = "deathmatch-absorb-loser", sessionId = session.Id, replacedByHeroId = absorbed.Id },
+                    $"hero-burned:{loser.Id}");
 
                 var absorbReceipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                         "absorb", session.Id, session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id,
@@ -1992,6 +2276,20 @@ public class GameService(
                         0, 0, winner.Level, loser.Level,
                         DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
                     session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id);
+                await AuditAsync(Persistence.AuditEventType.DeathMatchSettled, player.Id,
+                    [session.Id, session.ChallengerHeroId, session.DefenderHeroId, absorbed.Id],
+                    new
+                    {
+                        outcome = "absorb-minted", challengerWon, winnerHeroId = result.WinnerId,
+                        loserHeroId = loser.Id, absorbedHeroId = absorbed.Id,
+                        traitsAbsorbed = outcome.TraitsAbsorbed, newGenomeHex = outcome.Result.ToHex(),
+                        challengerFeeInvoiceId = session.ChallengerFeeInvoiceId,
+                        defenderFeeInvoiceId = session.DefenderFeeInvoiceId,
+                        settledByPlayerId = player.Id, nonce, serverSeedHex, entropyHex,
+                        configVersion = session.ConfigVersion, contentVersion = session.ContentVersion,
+                        receiptId = absorbReceipt.Id,
+                    },
+                    $"deathmatch-settled:{session.Id}");
                 return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot,
                     serverSeedHex, entropyHex, absorbReceipt, true, outcome.TraitsAbsorbed, outcome.Result.ToHex(), absorbed.ToDto());
             }
@@ -2010,6 +2308,9 @@ public class GameService(
         store.RecordBurn();
         // The loser is burned on-chain — erase its durable row too, or a restart resurrects it.
         await persistence.DeleteHeroAsync(loser.Id, ct);
+        await AuditAsync(Persistence.AuditEventType.HeroBurned, loser.OwnerId, [loser.Id, session.Id],
+            new { heroId = loser.Id, name = loser.Name, generation = loser.Generation, level = loser.Level, reason = "deathmatch-loser", sessionId = session.Id, replacedByHeroId = (string?)null },
+            $"hero-burned:{loser.Id}");
 
         var receipt = IssueReceipt(new Shared.ProgressionReceiptDto(
                 "deathmatch", session.Id, session.ChallengerHeroId, session.DefenderHeroId, result.WinnerId,
@@ -2017,6 +2318,20 @@ public class GameService(
                 0, 0, challenger.Level, defender.Level,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             session.ChallengerHeroId, session.DefenderHeroId);
+
+        await AuditAsync(Persistence.AuditEventType.DeathMatchSettled, player.Id,
+            [session.Id, session.ChallengerHeroId, session.DefenderHeroId],
+            new
+            {
+                outcome = "keep", challengerWon, winnerHeroId = result.WinnerId, loserHeroId = loser.Id,
+                absorbedHeroId = (string?)null, absorbRequested = session.Absorb,
+                challengerFeeInvoiceId = session.ChallengerFeeInvoiceId,
+                defenderFeeInvoiceId = session.DefenderFeeInvoiceId,
+                settledByPlayerId = player.Id, nonce, serverSeedHex, entropyHex,
+                configVersion = session.ConfigVersion, contentVersion = session.ContentVersion,
+                receiptId = receipt.Id,
+            },
+            $"deathmatch-settled:{session.Id}");
 
         return (result.ToDto(), result.WinnerId, loser.Id, challengerSnapshot, defenderSnapshot,
             serverSeedHex, entropyHex, receipt, false, 0, null, null);
@@ -2097,6 +2412,18 @@ public class GameService(
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
+        await AuditAsync(Persistence.AuditEventType.MatchOpened, player.Id,
+            [session.Id, challengerHeroId, defenderHeroId, defender.OwnerId],
+            new
+            {
+                challengerHeroId, defenderHeroId, defenderPlayerId = defender.OwnerId, wagerSats, mode,
+                stakeInvoiceId = invoice?.InvoiceId,
+                matchFeeSats = wagerSats > 0 ? Leveling.MatchFee(challenger.Level, _config) : 0,
+                matchFeeInvoiceId = feeInvoice?.InvoiceId,
+                escrowChallengerAddress = escrowChallenger, escrowDefenderAddress = escrowDefender,
+                refundAfterUnixSeconds = refundAfterUnix, commitmentHex,
+            },
+            $"match-opened:{session.Id}");
         return (session, invoice, feeInvoice);
     }
 
@@ -2133,6 +2460,17 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await AuditAsync(Persistence.AuditEventType.MatchAccepted, player.Id,
+            [session.Id, session.ChallengerHeroId, session.DefenderHeroId, session.ChallengerPlayerId],
+            new
+            {
+                challengerPlayerId = session.ChallengerPlayerId, challengerHeroId = session.ChallengerHeroId,
+                defenderHeroId = session.DefenderHeroId, wagerSats = session.WagerSats, mode = session.Mode,
+                stakeInvoiceId = invoice?.InvoiceId,
+                matchFeeSats = Leveling.MatchFee(defender.Level, _config),
+                matchFeeInvoiceId = feeInvoice.InvoiceId,
+            },
+            $"match-accepted:{session.Id}");
         return (session, invoice, feeInvoice);
     }
 
@@ -2158,7 +2496,22 @@ public class GameService(
             var abandoned = m.Status == "open"
                 ? !funding.ChallengerFunded
                 : !(funding.ChallengerFunded && funding.DefenderFunded);
-            if (abandoned) m.Status = "expired";
+            if (!abandoned) continue;
+            var wasStatus = m.Status;
+            m.Status = "expired";
+            // Actor NULL: nobody DID this — the refund window simply passed and the chain says the stakes
+            // are not both there. It runs lazily on every match listing, so the dedup key is what keeps one
+            // expiry to one entry however many anonymous page loads observe it.
+            await AuditAsync(Persistence.AuditEventType.MatchExpired, null,
+                [m.Id, m.ChallengerHeroId, m.DefenderHeroId],
+                new
+                {
+                    fromStatus = wasStatus, wagerSats = m.WagerSats, mode = m.Mode,
+                    challengerPlayerId = m.ChallengerPlayerId, defenderPlayerId = m.DefenderPlayerId,
+                    challengerFunded = funding.ChallengerFunded, defenderFunded = funding.DefenderFunded,
+                    refundAfterUnixSeconds = m.RefundAfterUnixSeconds,
+                },
+                $"match-expired:{m.Id}");
         }
     }
 
@@ -2296,6 +2649,18 @@ public class GameService(
                             + "under-reports by this amount.", shares[i], tag);
                     }
                 }
+                // Actor NULL: nobody asked for this — it happens as a side effect of somebody reading the
+                // season board. The settled marker is in-memory and drops on restart (deliberately, with
+                // the receipts that define the winners), so the dedup key here is what stops a restarted
+                // server logging the same season a second time even though it will not re-pay it.
+                await AuditAsync(Persistence.AuditEventType.SeasonSettled, null,
+                    [.. standings.Select(e => e.OwnerId)],
+                    new
+                    {
+                        season = s, potSats = pot,
+                        winners = standings.Select((e, i) => new { rank = e.Rank, e.OwnerId, e.HeroId, e.Name, shareSats = shares[i] }).ToList(),
+                    },
+                    $"season-settled:{s}");
             }
         }
         finally { store.SettleLock.Release(); }
@@ -2407,6 +2772,20 @@ public class GameService(
                 throw;
             }
         }
+
+        // Logged AFTER the payout so a claim that threw on a failed payout — and released the day in
+        // memory so the player can retry — is not recorded as a claim that happened. The day index is the
+        // once-only key, exactly as it is for the day itself: one claim per player per UTC day, one entry.
+        await AuditAsync(Persistence.AuditEventType.DailyClaimed, player.Id, [player.Id],
+            new
+            {
+                dayIndex = window.DayIndex, paidSats = affordable, entitledSats = reward.Total,
+                baseSats = reward.Base, questBonusSats = reward.QuestBonus,
+                streakBonusPct = reward.StreakBonusPct, streak = newStreak,
+                questsCompleted = completed.Select(q => q.Id).ToList(),
+                cappedByTreasury = affordable < reward.Total,
+            },
+            $"daily-claimed:{player.Id}:{window.DayIndex}");
 
         return new Shared.DailyClaimResultDto(
             affordable, newStreak, reward.Base, reward.QuestBonus, reward.StreakBonusPct,
@@ -2564,6 +2943,21 @@ public class GameService(
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "", ""),
             challenger.Id, defender.Id);
 
+        await AuditAsync(Persistence.AuditEventType.MatchResolved, player.Id,
+            [session.Id, challenger.Id, defender.Id],
+            new
+            {
+                challengerHeroId = challenger.Id, defenderHeroId = defender.Id,
+                challengerPlayerId = session.ChallengerPlayerId, defenderPlayerId = session.DefenderPlayerId,
+                winnerHeroId = result.WinnerId, wagerSats = session.WagerSats, mode = session.Mode,
+                winnerPayoutSats = winnerPayout, challengerXpDelta = challengerDelta,
+                defenderXpDelta = defenderDelta, staked = session.WagerSats > 0,
+                nonce, serverSeedHex = serverSeedHexOut, entropyHex = session.EntropyHex,
+                configVersion = session.ConfigVersion, contentVersion = session.ContentVersion,
+                receiptId = receipt.Id,
+            },
+            $"match-resolved:{session.Id}");
+
         return (session, result,
             serverSeedHexOut,
             session.EntropyHex,
@@ -2644,6 +3038,19 @@ public class GameService(
             DefenderPlayerId = req.WagerSats > 0 ? defenderOwner : null,
         };
         store.SquadMatches[session.Id] = session;
+        await AuditAsync(Persistence.AuditEventType.SquadOpened, player.Id,
+            [session.Id, .. req.ChallengerLineup, .. req.DefenderLineup, defenderOwner],
+            new
+            {
+                challengerLineup = req.ChallengerLineup, defenderLineup = req.DefenderLineup,
+                defenderPlayerId = session.DefenderPlayerId, wagerSats = req.WagerSats, mode = req.Mode,
+                stakeInvoiceId = invoice?.InvoiceId,
+                matchFeeSats = req.WagerSats > 0 ? Leveling.MatchFee(challengerLineup.Max(h => h.Level), _config) : 0,
+                matchFeeInvoiceId = feeInvoice?.InvoiceId,
+                escrowChallengerAddress = escrowChallenger, escrowDefenderAddress = escrowDefender,
+                refundAfterUnixSeconds = refundAfterUnix, commitmentHex,
+            },
+            $"squad-opened:{session.Id}");
         return (session, invoice, feeInvoice);
     }
 
@@ -2670,6 +3077,17 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await AuditAsync(Persistence.AuditEventType.SquadAccepted, player.Id,
+            [session.Id, .. session.ChallengerLineup, .. session.DefenderLineup, session.ChallengerPlayerId],
+            new
+            {
+                challengerPlayerId = session.ChallengerPlayerId,
+                challengerLineup = session.ChallengerLineup, defenderLineup = session.DefenderLineup,
+                wagerSats = session.WagerSats, mode = session.Mode, stakeInvoiceId = invoice?.InvoiceId,
+                matchFeeSats = Leveling.MatchFee(defenders.Max(h => h.Level), _config),
+                matchFeeInvoiceId = feeInvoice.InvoiceId,
+            },
+            $"squad-accepted:{session.Id}");
         return (session, invoice, feeInvoice);
     }
 
@@ -2782,6 +3200,21 @@ public class GameService(
         session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
         session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
 
+        await AuditAsync(Persistence.AuditEventType.SquadResolved, player.Id,
+            [session.Id, .. session.ChallengerLineup, .. session.DefenderLineup],
+            new
+            {
+                challengerPlayerId = session.ChallengerPlayerId, defenderPlayerId = session.DefenderPlayerId,
+                challengerLineup = session.ChallengerLineup, defenderLineup = session.DefenderLineup,
+                challengerWon, wagerSats = session.WagerSats, mode = session.Mode,
+                winnerPayoutSats = winnerPayout, staked = session.WagerSats > 0,
+                duels = result.Duels.Select(d => new { d.Slot, winnerHeroId = d.Result.WinnerId }).ToList(),
+                nonce, serverSeedHex = serverSeedHexOut, entropyHex = session.EntropyHex,
+                configVersion = session.ConfigVersion, contentVersion = session.ContentVersion,
+                receiptIds = duelReceipts.Select(r => r.Id).ToList(),
+            },
+            $"squad-resolved:{session.Id}");
+
         return (session, result, serverSeedHexOut, session.EntropyHex, challengerSnapshots, defenderSnapshots, winnerPayout, duelReceipts);
     }
 
@@ -2815,6 +3248,7 @@ public class GameService(
                 "The chain does not show the recipient holding this hero yet — send the hero asset from your wallet first, then confirm.");
 
         // Item assets stay in the sender's wallet, so the loadout can't travel.
+        var strippedGear = hero.Equipment.Slots.Values.ToList();
         foreach (var slot in hero.Equipment.Slots.Keys.ToList())
             hero.Equipment.Unequip(slot);
 
@@ -2823,6 +3257,12 @@ public class GameService(
         // to the sender — the chain already shows the recipient holding the asset. (Captures the stripped
         // loadout in the same write.)
         await persistence.SaveHeroAsync(hero, ct);
+        // No dedup key: a hero can change hands any number of times and each move is its own fact. The
+        // durable hero row keeps only the CURRENT owner, so this chain of entries is the only place the
+        // custody history of a hero exists at all. A retry cannot double-log — the ownership check above
+        // refuses a second confirm from a sender who no longer owns it.
+        await AuditAsync(Persistence.AuditEventType.HeroTransferred, player.Id, [heroId, toPlayerId],
+            new { heroId, fromPlayerId = player.Id, toPlayerId, assetId = hero.AssetId, strippedGear, reason = "wallet-transfer" });
         return hero;
     }
 
@@ -2846,6 +3286,9 @@ public class GameService(
         // Durable BEFORE the player is handed an address to pay: if they pay and the server bounces before
         // they claim, the purchase must still be there. (No-op unless persistence is configured.)
         await persistence.SaveItemPurchaseAsync(purchase, ct);
+        await AuditAsync(Persistence.AuditEventType.ItemInvoiced, player.Id, [invoice.InvoiceId],
+            new { itemId = item.Id, itemName = item.Name, priceSats = item.PriceSats, invoiceId = invoice.InvoiceId },
+            $"item-invoiced:{invoice.InvoiceId}");
         return (purchase, invoice);
     }
 
@@ -2885,6 +3328,15 @@ public class GameService(
             purchase.Status = "claimed";
             await persistence.SaveItemPurchaseAsync(purchase, ct);   // delivered — record it so it can't be re-delivered
             await store.RecordInflowAsync(invoiceId, "item", item.PriceSats, ct);
+            // Keyed on the invoice, which is the purchase's identity: re-delivery after a crash is
+            // DELIBERATE in this flow, so the key is what stops one paid purchase logging two deliveries.
+            await AuditAsync(Persistence.AuditEventType.ItemClaimed, player.Id, [invoiceId, delivery.ItemAssetId],
+                new
+                {
+                    itemId = item.Id, itemName = item.Name, priceSats = item.PriceSats, invoiceId,
+                    itemAssetId = delivery.ItemAssetId, deliveryTxId = delivery.ArkTxId,
+                },
+                $"item-claimed:{invoiceId}");
             var held = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
             return (delivery.ItemAssetId, delivery.ArkTxId, held);
         }
@@ -2932,19 +3384,29 @@ public class GameService(
             throw new GameRuleException(
                 $"You hold {unitsHeld} unit(s) of {item.Name} and {unitsAllocated} are already equipped — buy another with 'buy {item.Id}'.");
 
+        var displaced = current;   // whatever this slot held before, if anything
         hero.Equipment.Equip(item);
         store.MarkHeroDirty(hero.Id);   // the loadout is progression — the flush persists it
+        // No dedup key: re-gearing is ordinary, repeatable play and every change is its own fact. Gear is
+        // a COMBAT INPUT and it is staked in a death-match, so "what was this hero wearing, and when did
+        // that change" is a question the replay stamps cannot answer on their own.
+        await AuditAsync(Persistence.AuditEventType.HeroEquipped, player.Id, [heroId],
+            new { heroId, itemId = item.Id, itemName = item.Name, slot = item.Slot.ToString(), displacedItemId = displaced, heroLevel = hero.Level });
         return hero;
     }
 
-    public Hero Unequip(Player player, string heroId, string slotName)
+    /// <summary>Async only because it appends to the audit log — the unequip itself touches no I/O.</summary>
+    public async Task<Hero> UnequipAsync(Player player, string heroId, string slotName)
     {
         var hero = GetOwnedHero(player, heroId);
         if (!Enum.TryParse<Core.Equipment.EquipmentSlot>(slotName, ignoreCase: true, out var slot))
             throw new GameRuleException($"Unknown slot '{slotName}' (Weapon/Armor/Trinket).");
+        var removed = hero.Equipment.Slots.GetValueOrDefault(slot);
         if (!hero.Equipment.Unequip(slot))
             throw new GameRuleException($"{hero.Name} has nothing equipped in {slot}.");
         store.MarkHeroDirty(hero.Id);   // the loadout is progression — the flush persists it
+        await AuditAsync(Persistence.AuditEventType.HeroUnequipped, player.Id, [heroId],
+            new { heroId, itemId = removed, slot = slot.ToString(), heroLevel = hero.Level });
         return hero;
     }
 
@@ -2999,6 +3461,15 @@ public class GameService(
         // survive a restart, but this row is the only thing that can NAME the offer afterwards, and the
         // deposit becomes possible the moment this response lands. (No-op unless persistence is configured.)
         await persistence.SaveOfferAsync(listing, ct);
+        await AuditAsync(Persistence.AuditEventType.OfferListed, player.Id, [offerId],
+            new
+            {
+                offerId, kind = "item", itemId = item.Id, itemName = item.Name, heroId = (string?)null,
+                askSats, listingFeeSats = fee, offerAddress = info.OfferAddress,
+                itemAssetId = info.ItemAssetId, offerValueSats = info.OfferValueSats,
+                refundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+            },
+            $"offer-listed:{offerId}");
         return (listing, info);
     }
 
@@ -3072,14 +3543,37 @@ public class GameService(
             // over-stating the income of a treasury holding real bitcoin is not.
             // Keyed on the offer, so this and ClaimPurchasedHeroAsync can never book the same sale twice.
             offer.Status = "closed";
-            // Was this close a SALE? Asked once and read for two purposes: booking the listing fee, and —
-            // for a hero — recording what it fetched. This is the LAST moment either question can be
-            // answered: `closed` is the same state a seller's reclaim lands in, so a step from here the
-            // difference is gone for good. The call is skipped only when neither purpose applies (no fee to
-            // book, and a fungible item unit that has no page to have a history on), and it costs at most
-            // one chain read per offer ever, since only a real transition reaches this branch.
-            var sold = (offer.ListingFeeSats > 0 || offer.Kind == "hero")
-                       && await chain.WasOfferSoldAsync(offer.Id, ct);
+            // Was this close a SALE? Asked once and read for THREE purposes now: booking the listing fee,
+            // recording what a hero fetched, and saying which way the listing ended in the audit log. This
+            // is the LAST moment any of them can be answered: `closed` is the same state a seller's reclaim
+            // lands in, so a step from here the difference is gone for good. The call is skipped only when
+            // none of the purposes applies (no fee to book, and a fungible item unit that has no page to
+            // have a history on), and it costs at most one chain read per offer ever, since only a real
+            // transition reaches this branch.
+            var probed = offer.ListingFeeSats > 0 || offer.Kind == "hero";
+            var sold = probed && await chain.WasOfferSoldAsync(offer.Id, ct);
+            // The asset LEFT the covenant, which is the moment the listing's outcome is decided. Actor is
+            // NULL because from here the two spends are only distinguishable by whether the treasury got
+            // its cut — the buyer, if there was one, is not knowable from this observation. `sold: false`
+            // is the normal reclaim, not an error.
+            //
+            // `sold` is TRI-STATE on the wire: null when the probe above was skipped, because a fee-free
+            // ITEM offer is genuinely unknowable from here and recording `false` would assert a reclaim
+            // that may not have happened. The probe stays gated exactly as it was — logging must not start
+            // costing a chain call the game did not already need.
+            //
+            // The dedup key is SHARED with ClaimPurchasedHeroAsync's close (both prove the same close by
+            // different means, and both run), so whichever observes it first records it and the other is
+            // absorbed — mirroring exactly what OfferSaleInflowId does for the fee and what
+            // RecordHeroSaleAsync does for the price.
+            await AuditAsync(Persistence.AuditEventType.OfferClosed, null, [offer.Id, offer.HeroId],
+                new
+                {
+                    offerId = offer.Id, kind = offer.Kind, sellerId = offer.SellerId, itemId = offer.ItemId,
+                    heroId = offer.HeroId, askSats = offer.AskSats, listingFeeSats = offer.ListingFeeSats,
+                    sold = probed ? sold : (bool?)null, observedBy = "reconcile",
+                },
+                $"offer-closed:{offer.Id}");
             // Buyer unknown by construction here: the covenant's treasury leg proves a sale happened, not
             // who it was to. A later claim fills them in under the same key.
             if (sold) await RecordHeroSaleAsync(offer, buyerId: null, ct);
@@ -3279,6 +3773,15 @@ public class GameService(
         // higher here: the hero itself is persisted, so a lost offer row leaves the game believing the seller
         // still owns a hero whose asset is escrowed in the covenant.
         await persistence.SaveOfferAsync(listing, ct);
+        await AuditAsync(Persistence.AuditEventType.OfferListed, player.Id, [offerId, heroId],
+            new
+            {
+                offerId, kind = "hero", itemId = (string?)null, itemName = (string?)null, heroId,
+                heroName = hero.Name, askSats, listingFeeSats = fee, offerAddress = info.OfferAddress,
+                itemAssetId = info.ItemAssetId, offerValueSats = info.OfferValueSats,
+                refundAfterUnixSeconds = info.RefundAfterUnixSeconds,
+            },
+            $"offer-listed:{offerId}");
         return (listing, info);
     }
 
@@ -3301,12 +3804,26 @@ public class GameService(
             throw new GameRuleException(
                 "The chain does not show you holding this hero yet — fulfil the offer from your wallet first, then claim.");
 
+        var sellerId = offer.SellerId;
+        var strippedGear = hero.Equipment.Slots.Values.ToList();
         foreach (var slot in hero.Equipment.Slots.Keys.ToList())
             hero.Equipment.Unequip(slot);
         hero.OwnerId = buyer.Id;
         // The marketplace's transfer moment — same identity event as ConfirmTransferAsync, same rule:
         // the buyer's ownership goes durable now, not at the next flush.
         await persistence.SaveHeroAsync(hero, ct);
+        // Logged as a TRANSFER as well as a sale, so "who has owned this hero" is one query on one event
+        // type rather than a union the reader has to know to take — this is the only place a hero's whole
+        // custody chain exists, since the hero row keeps only the CURRENT owner and a wallet transfer
+        // creates no sale row at all.
+        //
+        // The price is carried too, but this is NOT the source of truth for it: PersistedHeroSale below is,
+        // and the public hero timeline reads that. That record is narrower and purpose-built (one row per
+        // sale, keyed by the offer, filled in by whichever prover knows the buyer), and nothing here
+        // replaces or competes with it. The log complements it by covering the transfers it deliberately
+        // does not model.
+        await AuditAsync(Persistence.AuditEventType.HeroTransferred, buyer.Id, [hero.Id, sellerId, offer.Id],
+            new { heroId = hero.Id, fromPlayerId = sellerId, toPlayerId = buyer.Id, assetId = hero.AssetId, strippedGear, reason = "marketplace-sale", offerId = offer.Id, salePriceSats = offer.AskSats });
         offer.Status = "closed";
         // A CONFIRMED sale — the chain shows the buyer holding the hero, so the fulfil ran and its
         // covenant paid the treasury its cut. ReconcileOfferAsync now proves the same thing a second
@@ -3323,6 +3840,25 @@ public class GameService(
         // same once-only key. The hero's new ownership is already durable above, so the only thing still at
         // stake here is whether the sale can be found again — never who owns the hero.
         await persistence.SaveOfferAsync(offer, ct);
+        // The buyer's own action, and a CONFIRMED sale — the chain shows them holding the hero, so unlike
+        // the reconcile's observation this one knows there was a buyer and who it is.
+        await AuditAsync(Persistence.AuditEventType.OfferHeroClaimed, buyer.Id, [offer.Id, hero.Id, sellerId],
+            new
+            {
+                offerId = offer.Id, heroId = hero.Id, sellerId, buyerId = buyer.Id,
+                salePriceSats = offer.AskSats, listingFeeSats = offer.ListingFeeSats,
+            },
+            $"offer-hero-claimed:{offer.Id}");
+        // …and the CLOSE, under the key ReconcileOfferAsync also uses, so the offer's close is recorded
+        // exactly once however many times either path observes it. `sold: true` is known here, not inferred.
+        await AuditAsync(Persistence.AuditEventType.OfferClosed, null, [offer.Id, hero.Id],
+            new
+            {
+                offerId = offer.Id, kind = offer.Kind, sellerId, itemId = offer.ItemId, heroId = hero.Id,
+                askSats = offer.AskSats, listingFeeSats = offer.ListingFeeSats, sold = (bool?)true,
+                observedBy = "hero-claim",
+            },
+            $"offer-closed:{offer.Id}");
         return hero;
     }
 }
