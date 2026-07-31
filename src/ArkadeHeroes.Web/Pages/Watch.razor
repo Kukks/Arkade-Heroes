@@ -1,5 +1,7 @@
 @page "/watch/{MatchId}"
 @inject ArkadeHeroesClient Api
+@inject HttpClient Http
+@inject IJSRuntime JS
 
 <PageTitle>Match replay · Arkade Heroes</PageTitle>
 
@@ -25,15 +27,85 @@ else
 
     <div class="card" style="margin-top:1.2rem">
         <div class="status-line"><span class="dot ok"></span> <span><b>@winner.Name</b> won this match.</span></div>
-        <div class="status-line" style="margin-top:.7rem">
-            <span class="dot @(_verifyOk ? "ok" : "bad")"></span>
-            <span class="mono" style="font-size:.78rem">
-                @(_verifyOk ? $"fairness ✓ {_verifyDetail}" : $"fairness ✗ {_verifyDetail}")
-            </span>
+    </div>
+
+    <div class="card proof">
+        <div class="proof-head">
+            <h3>Don't take our word for it</h3>
+            <button class="btn sm" @onclick="Verify" disabled="@_verifying">
+                @(_verifying ? "verifying…" : "re-verify in this browser")
+            </button>
         </div>
-        <p class="muted" style="margin:.6rem 0 0;font-size:.8rem">
-            Anyone can replay this fight — the server revealed its commit-reveal seed, and your browser
-            re-ran the exact battle engine to confirm the outcome. No trust required.
+
+        @* Three states, not two: an audit still running must not read as a failed one. *@
+        <div class="proof-verdict @VerdictCss">
+            <span class="dot @(_verifying ? "wait" : _verifyOk ? "ok" : "bad")"></span>
+            <b>@(_verifying ? "VERIFYING…" : _verifyOk ? "VERIFIED" : "NOT VERIFIED")</b>
+            <span class="why">@_verifyDetail</span>
+        </div>
+
+        @* The three derivations FairnessAudit.VerifyMatch just ran, written out, so the verdict above
+           is a claim the reader can check rather than one they have to accept. *@
+        <ol class="proof-steps">
+            <li class="proof-step">
+                <span class="n">01</span>
+                <code>SHA-256(serverSeed) == commitment</code>
+                <p>
+                    The commitment was published when the match opened, before either hero was in the ring.
+                    A seed that hashes to it is one the server could not have picked after seeing the fight.
+                </p>
+            </li>
+            <li class="proof-step">
+                <span class="n">02</span>
+                <code>entropy == DeriveEntropy(serverSeed, matchId, challengerId, defenderId, nonce)</code>
+                <p>
+                    The randomness every roll consumes is a pure function of the revealed seed and the two
+                    heroes — including the nonce the challenger chose, so the server alone did not fix it.
+                </p>
+            </li>
+            <li class="proof-step">
+                <span class="n">03</span>
+                <code>BattleEngine.Fight(challenger, defender, entropy, config) == the log above</code>
+                <p>
+                    Your browser re-ran the battle engine over the pre-fight snapshots, under the rules this
+                    match was stamped with, and compared every turn: winner, turn count, and each event's
+                    damage, crit, heal and remaining HP. One altered number fails this step.
+                </p>
+            </li>
+        </ol>
+
+        <div class="proof-inputs">
+            @foreach (var (key, label, value) in Inputs())
+            {
+                <div class="proof-row">
+                    <span class="proof-k">@label</span>
+                    @if (string.IsNullOrEmpty(value))
+                    {
+                        <span class="proof-v none">unstamped — resolved under this build's defaults</span>
+                        <span></span>
+                    }
+                    else
+                    {
+                        <span class="proof-v">@value</span>
+                        <button class="btn ghost sm" @onclick="() => Copy(key, value)">
+                            @(_copied == key ? "copied ✓" : "copy")
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="proof-foot">
+            <a class="btn ghost sm" href="@RawUrl" target="_blank" rel="noopener">raw replay json</a>
+            <button class="btn ghost sm" @onclick="CopyAll">
+                @(_copied == "all" ? "copied ✓" : "copy every input")
+            </button>
+        </div>
+
+        <p class="muted proof-note">
+            These are the whole input set. Feed them to <span class="mono">FairnessAudit.VerifyMatch</span>
+            in the open-source client — or reimplement the three lines above yourself — and you should get
+            the same verdict on any machine. If you don't, the server cheated and this page is the evidence.
         </p>
     </div>
 }
@@ -43,29 +115,30 @@ else
 
     private MatchReplayDto? _replay;
     private bool _loading = true;
+    private bool _verifying;
     private bool _verifyOk;
     private string _verifyDetail = "";
+    private string _replayPath = "";
+    private string? _copied;
 
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
         _replay = null;
+        _copied = null;
         try
         {
             // A shareable id is either a wager/friendly match or a death-match — try both.
-            try { _replay = await Api.Matches.ReplayAsync(MatchId); }
-            catch { _replay = await Api.DeathMatch.ReplayAsync(MatchId); }
-
-            // Independently verify the replay reproduces the fight from the revealed seed (VerifyMatch reads
-            // Result/seed/entropy/snapshots; the trailing wager/receipt fields default).
-            var fr = new FightResponse(_replay.Result, _replay.ServerSeedHex, _replay.EntropyHex, 0, 0,
-                _replay.ChallengerSnapshot, _replay.DefenderSnapshot, _replay.ChallengerSnapshot, _replay.DefenderSnapshot);
-            // Replay under the rules the match was RESOLVED under, resolved from its stamp. An unresolvable
-            // stamp reads as "cannot verify" — never as a silent replay under this build's own defaults.
-            var (cfg, cfgError) = await Api.Config.ResolveAsync(_replay.ConfigVersion);
-            (_verifyOk, _verifyDetail) = cfg is null
-                ? (false, cfgError!)
-                : FairnessAudit.VerifyMatch(MatchId, _replay.Nonce, _replay.CommitmentHex, fr, cfg);
+            try
+            {
+                _replay = await Api.Matches.ReplayAsync(MatchId);
+                _replayPath = $"/api/matches/{MatchId}/replay";
+            }
+            catch
+            {
+                _replay = await Api.DeathMatch.ReplayAsync(MatchId);
+                _replayPath = $"/api/deathmatch/{MatchId}/replay";
+            }
         }
         catch
         {
@@ -75,5 +148,78 @@ else
         {
             _loading = false;
         }
+
+        await Verify();
+    }
+
+    /// <summary>
+    /// Independently re-derives the fight from the revealed seed, in THIS browser. Runs once on load
+    /// and again on demand from the button — a verdict you watched execute is worth more than one that
+    /// was simply printed on the page.
+    /// </summary>
+    async Task Verify()
+    {
+        if (_replay is null) return;
+        _verifying = true;
+        _verifyDetail = "";   // a stale verdict must not sit beside "VERIFYING…"
+        StateHasChanged();
+        try
+        {
+            // VerifyMatch reads Result/seed/entropy/snapshots; the trailing wager/receipt fields default.
+            var fr = new FightResponse(_replay.Result, _replay.ServerSeedHex, _replay.EntropyHex, 0, 0,
+                _replay.ChallengerSnapshot, _replay.DefenderSnapshot, _replay.ChallengerSnapshot, _replay.DefenderSnapshot);
+            // Replay under the rules the match was RESOLVED under, resolved from its stamp. An unresolvable
+            // stamp reads as "cannot verify" — never as a silent replay under this build's own defaults.
+            var (cfg, cfgError) = await Api.Config.ResolveAsync(_replay.ConfigVersion);
+            (_verifyOk, _verifyDetail) = cfg is null
+                ? (false, cfgError!)
+                : FairnessAudit.VerifyMatch(MatchId, _replay.Nonce, _replay.CommitmentHex, fr, cfg);
+        }
+        catch (Exception ex)
+        {
+            // A throw mid-audit is a FAILED verification, not a missing match — malformed hex on the wire
+            // lands here, and hiding it behind the "no replay" card would suppress the one thing worth saying.
+            (_verifyOk, _verifyDetail) = (false, $"verification could not complete — {ex.Message}");
+        }
+        finally
+        {
+            _verifying = false;
+        }
+    }
+
+    string VerdictCss => _verifying ? "" : _verifyOk ? "ok" : "bad";
+
+    /// <summary>Every input the recompute consumes, in the order the three steps consume them.</summary>
+    IEnumerable<(string Key, string Label, string Value)> Inputs()
+    {
+        var r = _replay!;
+        yield return ("match", "match id", MatchId);
+        yield return ("chal", "challenger id", r.ChallengerSnapshot.Id);
+        yield return ("def", "defender id", r.DefenderSnapshot.Id);
+        yield return ("nonce", "nonce", r.Nonce);
+        yield return ("commit", "commitment", r.CommitmentHex);
+        yield return ("seed", "server seed", r.ServerSeedHex);
+        yield return ("entropy", "entropy", r.EntropyHex);
+        yield return ("cfg", "rules version", r.ConfigVersion);
+        yield return ("content", "content version", r.ContentVersion);
+    }
+
+    // Absolute, so it survives being pasted into a terminal. BaseAddress is where the SDK itself fetched
+    // this replay from, which is the origin a reader should re-fetch it from too.
+    string RawUrl => Http.BaseAddress is null ? _replayPath : new Uri(Http.BaseAddress, _replayPath).ToString();
+
+    Task CopyAll() => Copy("all", string.Join('\n',
+        Inputs().Select(i => $"{i.Label.PadRight(15)} {(string.IsNullOrEmpty(i.Value) ? "(unstamped)" : i.Value)}")
+                .Append($"{"raw replay".PadRight(15)} {RawUrl}")));
+
+    async Task Copy(string key, string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); } catch { }
+        _copied = key;
+        StateHasChanged();
+        await Task.Delay(1400);
+        if (_copied == key) _copied = null;
+        StateHasChanged();
     }
 }
