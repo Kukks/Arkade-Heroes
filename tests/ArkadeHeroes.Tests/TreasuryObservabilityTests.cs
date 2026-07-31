@@ -281,6 +281,7 @@ public class TreasuryObservabilityTests
         public Task SaveHeroProgressionAsync(ArkadeHeroes.Core.Heroes.Hero hero, CancellationToken ct = default) => _inner.SaveHeroProgressionAsync(hero, ct);
         public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => _inner.DeleteHeroAsync(heroId, ct);
         public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => _inner.SaveOfferAsync(offer, ct);
+        public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => _inner.SaveStudProposalAsync(proposal, ct);
         public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)
             => throw new InvalidOperationException("the ledger database is refusing writes");
     }
