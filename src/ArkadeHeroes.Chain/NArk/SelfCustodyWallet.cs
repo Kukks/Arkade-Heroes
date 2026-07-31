@@ -263,10 +263,8 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
     /// (<c>Spend(outputs)</c>) offers recoverable coins to selection, and a spend
     /// that lands on one is rejected by arkd with <c>VTXO_RECOVERABLE</c>; the
     /// explicit-inputs overload computes change, so a filtered set spends cleanly.
-    /// Picks the asset carriers for each output asset, then the largest pure-BTC
-    /// coins to cover the sats plus one for headroom (the proven "carrier + largest
-    /// BTC coin" shape). Uses the SDK's fallback chain time (now, height 0), which
-    /// catches both swept and time-expired coins.
+    /// Uses the SDK's fallback chain time (now, height 0), which catches both swept
+    /// and time-expired coins. The choice itself is <see cref="SelectFrom"/>.
     /// </summary>
     private async Task<ArkCoin[]> SelectSpendableCoinsAsync(ArkTxOut[] outputs, CancellationToken ct)
     {
@@ -274,6 +272,31 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         var spendable = (await Spending.GetAvailableCoins(_walletId, ct))
             .Where(c => c.CanSpendOffchain(now))
             .ToList();
+        var dust = (await Transport.GetServerInfoAsync(ct)).Dust.Satoshi;
+        return SelectFrom(spendable, outputs, dust);
+    }
+
+    /// <summary>
+    /// Which of the given coins to spend: the carriers for each output asset, then the largest
+    /// pure-BTC coins until the change clears dust, falling back to a carrier when no pure-BTC coin
+    /// can cover the sats, and refusing outright when the spend would leave asset change with
+    /// nowhere of the wallet's own to land.
+    ///
+    /// <para>Deliberately a DUPLICATE of the browser wallet's selection in
+    /// <c>ArkadeHeroes.Web.Wallet.GameWallet.SelectSpendableCoinsAsync</c>, not a shared helper.
+    /// The two differ in what they raise: this one throws <see cref="InvalidOperationException"/>
+    /// with operator-facing detail for the console and the E2E suite, while the browser throws a
+    /// player-facing exception and additionally separates the settlement-lag case from a real
+    /// shortfall using the unfiltered coin set this side never reads. Folding them together would
+    /// mean threading message factories through the browser path that was proven live against arkd,
+    /// to save a function this size — a worse trade than keeping two copies honest. Keep them in
+    /// step by hand: a change to one belongs in the other.</para>
+    ///
+    /// <para>Pure and static so the rules below can be tested directly — they are the rules that
+    /// decide where a player's heroes end up.</para>
+    /// </summary>
+    internal static ArkCoin[] SelectFrom(IReadOnlyCollection<ArkCoin> spendable, ArkTxOut[] outputs, long dust)
+    {
         var selected = new HashSet<ArkCoin>();
 
         static ulong AssetHeld(ArkCoin c, string assetId) =>
@@ -300,21 +323,79 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         }
 
         // 2. Cover the sats total with the largest PURE-BTC coins (so a sats send
-        //    doesn't drag in unrelated asset VTXOs), plus one for headroom — the
-        //    offchain fee and a clean change output.
+        //    doesn't drag in unrelated asset VTXOs).
         long required = outputs.Sum(o => o.Value.Satoshi);
         var btc = spendable
             .Where(c => !selected.Contains(c) && c.Assets is null or { Count: 0 })
             .OrderByDescending(c => c.TxOut.Value.Satoshi).ToList();
+        // Take coins until the change this leaves is a real VTXO (at or above dust), not merely
+        // until the outputs are covered: sub-dust change is what misplaces asset change (step 4).
+        // This replaces an unconditional "grab one more coin for headroom", which took a coin the
+        // spend did not need and left the SDK's one-MINUTE per-input lock — never released on
+        // failure — sitting on it. That spare is exactly the coin a retry reaches for.
         var i = 0;
-        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
+        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required + dust && i < btc.Count)
             selected.Add(btc[i++]);
-        if (i < btc.Count) selected.Add(btc[i]); // headroom for the fee / change
+
+        // 3. A settlement round can consolidate the whole wallet into ONE VTXO that carries the
+        //    sats AND every hero the player owns. After that there is no pure-BTC coin left, so no
+        //    fee could ever be paid again — every spend fails with "lacks spendable sats" while the
+        //    balance still shows the full amount. Fall back to spending a carrier: the SDK's asset
+        //    packet assigns every unspent input asset to the change output, so the heroes ride home
+        //    to the wallet's own change address. Only take a carrier that leaves change at or above
+        //    dust — below dust the change output moves to vout 0 while asset change still points at
+        //    the LAST output, which would hand the heroes to the recipient.
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
+        {
+            foreach (var carrier in spendable
+                         .Where(c => !selected.Contains(c) && c.Assets is { Count: > 0 })
+                         .OrderByDescending(c => c.TxOut.Value.Satoshi))
+            {
+                if (selected.Sum(c => c.TxOut.Value.Satoshi) + carrier.TxOut.Value.Satoshi < required + dust) continue;
+                selected.Add(carrier);
+                break;
+            }
+        }
+
         if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
             throw new InvalidOperationException(
                 $"Wallet lacks {required} spendable sats (recoverable coins excluded).");
 
+        // 4. The last line of defence for whatever the inputs are still carrying. Wherever the
+        //    selected coins hold asset units the outputs do NOT consume, the SDK puts that leftover
+        //    on the change output — but only when there IS one. Change below dust is moved to an
+        //    OP_RETURN at vout 0 while the asset packet still points at the LAST output, and change
+        //    of exactly zero produces no change output at all; either way the leftover hero lands
+        //    on the recipient. Step 3 already holds this line for the case it handles, but it is
+        //    not the only way a carrier gets selected — step 1 picks one too, and that path can
+        //    land here with a coin that holds two heroes and barely more than dust.
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) - required < dust && LeavesAssetsBehind(selected, outputs))
+            throw new InvalidOperationException(
+                "Refusing to spend: the selected coins leave asset change, but the sats left over are " +
+                "below dust, so there is no change output to carry it and it would land on the recipient.");
+
         return [.. selected];
+    }
+
+    /// <summary>
+    /// True when the chosen inputs hold asset units the outputs don't spend — i.e. there is asset
+    /// change, and it therefore needs somewhere of the wallet's own to land. Mirrors the SDK's own
+    /// <c>HasAssetChange</c>, which is what decides that a change output is required.
+    /// </summary>
+    private static bool LeavesAssetsBehind(IEnumerable<ArkCoin> inputs, ArkTxOut[] outputs)
+    {
+        var held = new Dictionary<string, ulong>();
+        foreach (var coin in inputs)
+            foreach (var asset in coin.Assets ?? [])
+                held[asset.AssetId] = held.GetValueOrDefault(asset.AssetId) + asset.Amount;
+        if (held.Count == 0) return false;
+
+        var sent = new Dictionary<string, ulong>();
+        foreach (var output in outputs)
+            foreach (var asset in output.Assets ?? [])
+                sent[asset.AssetId] = sent.GetValueOrDefault(asset.AssetId) + asset.Amount;
+
+        return held.Any(kv => kv.Value > sent.GetValueOrDefault(kv.Key));
     }
 
     /// <summary>Pays sats to an address (fee invoices, stakes) — signed locally.</summary>
