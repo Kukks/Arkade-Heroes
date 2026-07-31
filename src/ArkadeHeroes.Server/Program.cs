@@ -44,6 +44,11 @@ if (!string.IsNullOrWhiteSpace(stateDbPath))
 {
     builder.Services.AddDbContextFactory<GameStateDbContext>(o => o.UseSqlite($"Data Source={stateDbPath}"));
     builder.Services.AddSingleton<IGameStatePersistence, SqliteGameStatePersistence>();
+    // The append-only audit log — every state-changing action, in the SAME database file, so it shares one
+    // migration pipeline and one backup with the state it describes. A SINGLETON because its write-failure
+    // counter has to accumulate across the process, which is the only way a log that has gone deaf surfaces
+    // as a number rather than as a warning nobody greps.
+    builder.Services.AddSingleton<IAuditLog, SqliteAuditLog>();
     // Hero-progression flush: identity events save inline, grinding rides this loop. Registered as a
     // resolvable singleton too so a test can force a deterministic flush instead of racing the timer.
     builder.Services.AddSingleton<HeroFlushService>();
@@ -52,6 +57,10 @@ if (!string.IsNullOrWhiteSpace(stateDbPath))
 else
 {
     builder.Services.AddSingleton<IGameStatePersistence, NullGameStatePersistence>();
+    // No database to append to: the audit log follows the same opt-in seam as the rest of durability
+    // (Game:StateDbPath), because a log that lives only in this process's memory records nothing a restart
+    // could ever be asked about.
+    builder.Services.AddSingleton<IAuditLog, NullAuditLog>();
 }
 
 var app = builder.Build();
@@ -192,9 +201,20 @@ api.MapPost("/players", async (RegisterPlayerRequest request, GameService game, 
 api.MapGet("/players/login-challenge", (GameService game) =>
     Results.Ok(new LoginChallengeResponse(game.IssueLoginChallenge())));
 
-api.MapPost("/players/login", async (LoginRequest request, GameService game, IChainService chain, CancellationToken ct) =>
+api.MapPost("/players/login", async (LoginRequest request, GameService game, IChainService chain, IAuditLog audit, CancellationToken ct) =>
 {
     var player = game.Login(request.LoginPubKeyHex, request.NonceHex, request.SignatureHex);
+    // Logged HERE rather than inside GameService.Login because that method is synchronous by design (it
+    // touches no I/O) and making it async to fit the log would ripple a signature change through the
+    // service for no gain. A REFUSED login is not recorded: Login throws, so this line is never reached —
+    // the log holds successful sign-ins, and a failed one is an authentication concern the request log
+    // already carries.
+    //
+    // No signature, nonce, token OR pubkey is recorded. The key is on the player row already, and the
+    // actor id resolves to it; writing it into a table the database refuses to update or delete would put
+    // a wallet identifier permanently beyond correction for no fact the actor id does not already give.
+    await audit.RecordAsync(new AuditEntry(AuditEventType.PlayerLoggedIn, player.Id, [player.Id],
+        new { resumed = true }));
     var address = await chain.GetPlayerAddressAsync(player.Id, ct);
     var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, player.Token,
@@ -476,18 +496,18 @@ api.MapGet("/trials/board", (GameStore store) =>
     return Results.Ok(TrialsBoardBuilder.Build(heroes, receipts));
 });
 
-api.MapPost("/trials/open", (TrialsOpenRequest request, HttpContext http, GameService game) =>
+api.MapPost("/trials/open", async (TrialsOpenRequest request, HttpContext http, GameService game) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var session = game.OpenTrials(player, request.HeroId);
+    var session = await game.OpenTrialsAsync(player, request.HeroId);
     return Results.Ok(new TrialsOpenResponse(session.Id, session.CommitmentHex, session.Affix.ToString(),
         ArkadeHeroes.Core.Progression.Trials.AffixDescription(session.Affix)));
 });
 
-api.MapPost("/trials/{id}/run", (string id, TrialsRunRequest request, HttpContext http, GameService game) =>
+api.MapPost("/trials/{id}/run", async (string id, TrialsRunRequest request, HttpContext http, GameService game) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var (run, snapshot, title, best, affix, seed, entropy, receipt) = game.RunTrials(player, id, request.Nonce);
+    var (run, snapshot, title, best, affix, seed, entropy, receipt) = await game.RunTrialsAsync(player, id, request.Nonce);
     // Surface each wave's ghost snapshot + fight log so the browser can replay the wave in the arena. The
     // ghost is a pure function of the run entropy + the run's pinned affix, so this reconstructs exactly
     // what Trials.Resolve fought — no soft-foe substitution possible.
@@ -816,10 +836,10 @@ api.MapPost("/heroes/{heroId}/equip", async (string heroId, EquipRequest request
     return Results.Ok(new EquipResponse(hero.ToDto()));
 });
 
-api.MapPost("/heroes/{heroId}/unequip", (string heroId, UnequipRequest request, HttpContext http, GameService game) =>
+api.MapPost("/heroes/{heroId}/unequip", async (string heroId, UnequipRequest request, HttpContext http, GameService game) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    var hero = game.Unequip(player, heroId, request.Slot);
+    var hero = await game.UnequipAsync(player, heroId, request.Slot);
     return Results.Ok(new EquipResponse(hero.ToDto()));
 });
 
@@ -996,11 +1016,42 @@ if (AdminGate.IsEnabled(adminToken))
     admin.MapGet("/overview", async (GameService game, CancellationToken ct) =>
         Results.Ok(await game.AdminOverviewAsync(ct)));
 
+    // ── The append-only audit log ──────────────────────────────────────────
+    // A pure read of history. Behind the admin gate because the log names every player, every amount and
+    // every counterparty in the game — it is the most sensitive read on the server, and strictly more
+    // revealing than the overview beside it.
+    //
+    // Paged on the SEQUENCE, exclusive: `after` is the last sequence you saw, so a poller can never skip
+    // an event or re-read one, and the page size is clamped (SqliteAuditLog.MaxPageSize) because this table
+    // grows forever by design and an unbounded read is how you fall over on your own history.
+    admin.MapGet("/audit", async (
+        long? after, int? take, string? subject, string? type, string? actor,
+        IAuditLog audit, CancellationToken ct) =>
+    {
+        var from = after ?? 0;
+        var events = await audit.ReadAsync(from, take ?? 100, subject, type, actor, ct);
+        return Results.Ok(new AuditPageDto(
+            events, events.Count > 0 ? events[^1].Sequence : from, audit.WriteFailures));
+    });
+
+    // The per-subject read as a first-class URL: everything that ever happened to ONE hero, match,
+    // death-match, offer, tournament, stud proposal or player, in the order it happened. Same filter the
+    // query parameter above exposes — it exists separately because "show me this hero's history" is the
+    // question an operator actually arrives with, and it should not require knowing the query shape.
+    admin.MapGet("/audit/subjects/{subjectId}", async (
+        string subjectId, long? after, int? take, IAuditLog audit, CancellationToken ct) =>
+    {
+        var from = after ?? 0;
+        var events = await audit.ReadAsync(from, take ?? 100, subjectId, null, null, ct);
+        return Results.Ok(new AuditPageDto(
+            events, events.Count > 0 ? events[^1].Sequence : from, audit.WriteFailures));
+    });
+
     // ACTION — the strand refund (#103): a bracket that can never resolve pays every CLEARED buy-in back
     // to its entrant. Unchanged from the player-facing endpoint that already exposes it; safe because the
     // service itself refuses a bracket that can still be played, marks durably BEFORE paying, and is
     // single-shot. The operator route exists so this can be done without holding a player account.
-    admin.MapPost("/tournaments/{id}/refund", async (string id, GameService game, CancellationToken ct) =>
+    admin.MapPost("/tournaments/{id}/refund", async (string id, GameService game, IAuditLog audit, CancellationToken ct) =>
     {
         // The REQUEST, then the OUTCOME — two lines, because the service refuses a bracket that can still
         // be played. A request logged with no outcome after it is a refusal, and reads as one.
@@ -1009,13 +1060,18 @@ if (AdminGate.IsEnabled(adminToken))
         app.Logger.LogInformation(
             "ADMIN ACTION refund-tournament: bracket {TournamentId} is now {Status}; {Entrants} entrant(s) "
             + "refunded {Sats} sat in total.", id, session.Status, entrantsRefunded, refundedSats);
+        // The actor is NULL and stays null: the operator console authenticates with ONE shared token that
+        // names no person, so any player id put here would be an invention. The event records that the
+        // OPERATOR did it; who was holding the token is a deployment question, not one this server can answer.
+        await audit.RecordAsync(new AuditEntry(AuditEventType.AdminAction, null, [id],
+            new { action = "refund-tournament", tournamentId = id, status = session.Status, entrantsRefunded, refundedSats }));
         return Results.Ok(new TournamentRefundResponse(ToTournamentDto(session), entrantsRefunded, refundedSats));
     });
 
     // ACTION — expire covenant matches abandoned past their refund window. Moves NO money: it flips a
     // status so the stake becomes reclaimable by each player's OWN wallet. Already runs on every listing
     // of /api/matches, so this only chooses the moment.
-    admin.MapPost("/actions/reconcile-matches", async (GameService game, GameStore store, CancellationToken ct) =>
+    admin.MapPost("/actions/reconcile-matches", async (GameService game, GameStore store, IAuditLog audit, CancellationToken ct) =>
     {
         var before = store.Matches.Values.Count(m => m.Status == "expired");
         await game.ReconcileAbandonedMatchesAsync(ct);
@@ -1026,6 +1082,8 @@ if (AdminGate.IsEnabled(adminToken))
         var detail = $"Expired matches went {before} → {after} across this run; "
                      + $"{after} of {store.Matches.Count} now expired.";
         app.Logger.LogInformation("ADMIN ACTION reconcile-matches: {Detail}", detail);
+        await audit.RecordAsync(new AuditEntry(AuditEventType.AdminAction, null, [],
+            new { action = "reconcile-matches", expiredBefore = before, expiredAfter = after, detail }));
         return Results.Ok(new AdminActionResultDto("reconcile-matches", detail));
     });
 
@@ -1033,7 +1091,7 @@ if (AdminGate.IsEnabled(adminToken))
     // /api/leaderboard/season already makes on every anonymous page load, so it grants no capability an
     // unauthenticated visitor does not already have; it only lets an operator choose the moment and see
     // the result. Already idempotent: the settled marker advances before a sat moves, under a lock.
-    admin.MapPost("/actions/settle-seasons", async (GameService game, GameStore store, CancellationToken ct) =>
+    admin.MapPost("/actions/settle-seasons", async (GameService game, GameStore store, IAuditLog audit, CancellationToken ct) =>
     {
         var before = store.LastSettledSeason;
         var board = await game.SeasonLeaderboard(ct);
@@ -1044,6 +1102,10 @@ if (AdminGate.IsEnabled(adminToken))
               + $"season {board.SeasonNumber} is live."
             : $"Nothing was due — season {board.SeasonNumber} is live, last settled {store.LastSettledSeason}.";
         app.Logger.LogInformation("ADMIN ACTION settle-seasons: {Detail}", detail);
+        // The settle ITSELF logs season.settled + treasury.outflow from inside the service, so this entry
+        // records only that an operator chose the moment — never a second copy of what was paid.
+        await audit.RecordAsync(new AuditEntry(AuditEventType.AdminAction, null, [],
+            new { action = "settle-seasons", settledBefore = before, settledAfter = store.LastSettledSeason, detail }));
         return Results.Ok(new AdminActionResultDto("settle-seasons", detail));
     });
 }

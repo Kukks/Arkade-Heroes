@@ -34,4 +34,31 @@ public sealed class AdminApi(ArkadeHeroesClient client)
     public Task<AdminActionResultDto> SettleSeasonsAsync(string adminToken) =>
         client.SendWithAdminTokenAsync<AdminActionResultDto>(
             HttpMethod.Post, "/api/admin/actions/settle-seasons", adminToken);
+
+    /// <summary>
+    /// One page of the append-only audit log, in append order. <paramref name="after"/> is EXCLUSIVE and
+    /// is the cursor: pass back <c>AuditPageDto.NextAfter</c> to walk forward without skipping or
+    /// repeating an event. The optional filters narrow to one subject id, event type or actor.
+    ///
+    /// A pure read of history — it changes nothing, and it moves no money.
+    /// </summary>
+    public Task<AuditPageDto> AuditAsync(
+        string adminToken, long after = 0, int take = 100,
+        string? subject = null, string? type = null, string? actor = null)
+    {
+        var query = $"?after={after}&take={take}";
+        if (subject is not null) query += $"&subject={Uri.EscapeDataString(subject)}";
+        if (type is not null) query += $"&type={Uri.EscapeDataString(type)}";
+        if (actor is not null) query += $"&actor={Uri.EscapeDataString(actor)}";
+        return client.SendWithAdminTokenAsync<AuditPageDto>(HttpMethod.Get, $"/api/admin/audit{query}", adminToken);
+    }
+
+    /// <summary>Everything that ever happened to ONE subject — a hero, a match, a death-match, an offer, a
+    /// tournament, a stud proposal, a player — in the order it happened.</summary>
+    public Task<AuditPageDto> AuditForSubjectAsync(
+        string adminToken, string subjectId, long after = 0, int take = 100) =>
+        client.SendWithAdminTokenAsync<AuditPageDto>(
+            HttpMethod.Get,
+            $"/api/admin/audit/subjects/{Uri.EscapeDataString(subjectId)}?after={after}&take={take}",
+            adminToken);
 }

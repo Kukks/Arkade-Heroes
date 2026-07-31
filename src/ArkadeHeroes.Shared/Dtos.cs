@@ -883,6 +883,35 @@ public record AdminOverviewDto(
 public record AdminActionResultDto(string Action, string Detail);
 
 /// <summary>
+/// One entry from the server's append-only audit log — a single state-changing action, exactly as it was
+/// written. Immutable at the storage layer (the table refuses UPDATE and DELETE), so what is served here is
+/// what was recorded at the time and can never have been edited since.
+/// </summary>
+/// <param name="Sequence">The monotonic position in the log. Also the paging cursor.</param>
+/// <param name="AtUnixSeconds">When the action happened, UTC.</param>
+/// <param name="ActorPlayerId">Who caused it, or null for the server itself (a lazy settle, an operator action).</param>
+/// <param name="EventType">What happened, e.g. <c>deathmatch.settled</c>, <c>treasury.outflow</c>.</param>
+/// <param name="SubjectIds">Every id it touched — heroes, sessions, offers, players.</param>
+/// <param name="PayloadJson">The specifics as raw JSON: amounts in sats, counterparty, outcome.</param>
+public record AuditEventDto(
+    long Sequence, long AtUnixSeconds, string? ActorPlayerId, string EventType,
+    IReadOnlyList<string> SubjectIds, string PayloadJson);
+
+/// <summary>
+/// One page of the audit log, plus the operator-facing health of the log itself.
+///
+/// <paramref name="NextAfter"/> is the cursor for the next page — feed it back as <c>after</c>. It is the
+/// last sequence in <paramref name="Events"/>, or the <c>after</c> that was asked for when the page is
+/// empty, so polling for new events is a stable loop rather than a re-read of history.
+///
+/// <paramref name="WriteFailures"/> is the number that matters when it is not zero: log writes are
+/// best-effort by design (failing them would abort settled money paths), so this is how a log that has
+/// gone deaf surfaces at all. Any non-zero value means history is incomplete from here on.
+/// </summary>
+public record AuditPageDto(
+    IReadOnlyList<AuditEventDto> Events, long NextAfter, long WriteFailures);
+
+/// <summary>
 /// The authored CONTENT of one pack, served by <c>GET /api/content/{version}</c> so a client holding an
 /// outcome stamped with an unfamiliar content version can rebuild the gear and dungeons it was actually
 /// resolved under instead of assuming its own compiled-in pack.

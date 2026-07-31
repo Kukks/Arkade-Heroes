@@ -59,6 +59,10 @@ public class AdminConsoleTests
                      (HttpMethod.Post, "/api/admin/actions/reconcile-matches"),
                      (HttpMethod.Post, "/api/admin/actions/settle-seasons"),
                      (HttpMethod.Post, "/api/admin/tournaments/tourney-1/refund"),
+                     // The audit log is the most revealing read on the server — it names every player,
+                     // amount and counterparty in the game — so it has to be absent here too.
+                     (HttpMethod.Get, "/api/admin/audit"),
+                     (HttpMethod.Get, "/api/admin/audit/subjects/hero-1"),
                  })
         {
             // No token supplied, and — the part that matters — no token that COULD be supplied.
@@ -90,6 +94,8 @@ public class AdminConsoleTests
     [InlineData("POST", "/api/admin/actions/reconcile-matches")]
     [InlineData("POST", "/api/admin/actions/settle-seasons")]
     [InlineData("POST", "/api/admin/tournaments/tourney-1/refund")]
+    [InlineData("GET", "/api/admin/audit")]
+    [InlineData("GET", "/api/admin/audit/subjects/hero-1")]
     public async Task EveryAdminRoute_Refuses_AMissingOrWrongToken(string verb, string path)
     {
         using var factory = Enabled();

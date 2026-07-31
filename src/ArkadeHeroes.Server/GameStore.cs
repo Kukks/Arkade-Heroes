@@ -415,8 +415,16 @@ public sealed class TournamentSession
 ///
 /// The optional <paramref name="persistence"/> is the treasury ledger's durability seam only — everything
 /// else in here is saved by <see cref="GameService"/>. It defaults to none so a bare <c>new GameStore()</c>
-/// (and an in-memory server, which gets the null implementation) behaves exactly as it always has.</summary>
-public class GameStore(Persistence.IGameStatePersistence? persistence = null, ILogger<GameStore>? logger = null)
+/// (and an in-memory server, which gets the null implementation) behaves exactly as it always has.
+///
+/// The optional <paramref name="audit"/> is the append-only log's hook into the ONE place every sat this
+/// server accounts for passes through — see <see cref="RecordInflowAsync"/>/<see cref="RecordOutflowAsync"/>.
+/// It is deliberately wired HERE rather than at the twenty-odd call sites in <see cref="GameService"/>:
+/// a money path that books no treasury movement is already a bug the economy card catches, so a new one
+/// that books correctly gets its audit entry for free and cannot be added without one.</summary>
+public class GameStore(
+    Persistence.IGameStatePersistence? persistence = null, ILogger<GameStore>? logger = null,
+    Persistence.IAuditLog? audit = null)
 {
     public ConcurrentDictionary<string, Player> Players { get; } = new();
     public ConcurrentDictionary<string, Player> PlayersByToken { get; } = new();
@@ -581,7 +589,16 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
         TreasuryOutflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
         // Append-only under a surrogate id: a payout has no natural key and has never been deduped, and
         // giving it one now would silently drop the second of two identical legitimate payouts.
-        await PersistFlowAsync(Guid.NewGuid().ToString("N"), Persistence.PersistedTreasuryFlow.Out, tag, sats, ct);
+        var flowId = Guid.NewGuid().ToString("N");
+        await PersistFlowAsync(flowId, Persistence.PersistedTreasuryFlow.Out, tag, sats, ct);
+        // Every sat that leaves the treasury, at the one place they all leave from. NO dedup key, for
+        // exactly the reason the ledger row has none: two identical legitimate payouts (the same tag, the
+        // same amount) are two facts, and a key that collapsed them would hide one. The flow id ties this
+        // entry to its ledger row so the two can be reconciled against each other.
+        if (audit is not null)
+            await audit.RecordAsync(new Persistence.AuditEntry(
+                Persistence.AuditEventType.TreasuryOutflow, null, [],
+                new { direction = "out", tag, sats, flowId }));
     }
 
     // Treasury INFLOW (fee captures) tallied by category. Deduped by invoice id, so a record call inside a
@@ -593,6 +610,14 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
         if (!_talliedInflowInvoices.TryAdd(invoiceId, 0)) return;
         TreasuryInflowByTag.AddOrUpdate(tag, sats, (_, prev) => prev + sats);
         await PersistFlowAsync(invoiceId, Persistence.PersistedTreasuryFlow.In, tag, sats, ct);
+        // Every sat that ARRIVES, at the one place they all arrive at. Behind the dedup guard above, so a
+        // fee booked inside a reconcile loop is already once-only in memory — the key adds the half that
+        // survives a restart, which is the same reason the ledger row is keyed on the invoice id.
+        if (audit is not null)
+            await audit.RecordAsync(new Persistence.AuditEntry(
+                Persistence.AuditEventType.TreasuryInflow, null, [invoiceId],
+                new { direction = "in", tag, sats, invoiceId },
+                $"treasury-in:{invoiceId}"));
     }
 
     /// <summary>Whether this invoice's fee has already been counted — the same already-counted set the
