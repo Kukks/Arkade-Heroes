@@ -48,11 +48,82 @@ jobs:
           --logger "trx;LogFileName=unit.trx"
           --results-directory TestResults
 
+      # Renders the Blazor pages in-process (bUnit). No browser, no server, no Docker — it is
+      # about as fast as the unit suite, so it gates every PR alongside it. This is the gate
+      # that would have caught a Send form drawn at zero balance, an empty-state that claimed
+      # the player owned nothing when the read had merely failed, and an accepted match that
+      # fell through every bucket on the defender's page. See tests/ArkadeHeroes.Tests.Web/README.md.
+      - name: Component render tests (bUnit)
+        run: >
+          dotnet test tests/ArkadeHeroes.Tests.Web
+          --configuration Release --no-build
+          --logger "trx;LogFileName=web.trx"
+          --results-directory TestResults
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
+          path: TestResults/*.trx
+
+  # ── Published-bundle browser smoke — MANUAL + NIGHTLY ──────────────────────
+  # Publishes the WASM frontend and drives the REAL bundle in Chromium. This is the only
+  # gate that sees what a player downloads: IL linking, the boot manifest, static
+  # initializers, JS interop. It exists because a static initializer once threw on startup
+  # and blanked every page that touches the content pack (the crash #207 finally pinned on
+  # a cycle in ContentPackVersion) while a local build and the whole unit suite stayed
+  # green — nothing in them ever started the app.
+  #
+  # NOT on PRs, and not because of missing infrastructure — it needs none, the bundle is
+  # verified to boot with every backend unreachable. It is off the PR path because the
+  # publish is a native emscripten link (minutes), which is the wrong tax on every push.
+  # Same schedule as the E2E job below, for the same reason: nothing that runs only on
+  # manual dispatch actually gets run.
+  browser-test:
+    name: Browser smoke (published bundle)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout (with submodules — brings the NArk SDK the game builds against)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0   # Nerdbank.GitVersioning needs full history to compute the version height
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      # Published ONCE here rather than by the fixture, so the artifact under test is visible
+      # in the log and a publish failure is reported as a publish failure, not a test timeout.
+      - name: Publish the frontend (Release — the configuration that actually ships)
+        run: dotnet publish src/ArkadeHeroes.Web -c Release -o published-web
+
+      - name: Build the browser suite
+        run: dotnet build tests/ArkadeHeroes.Tests.Browser --configuration Release
+
+      - name: Install Chromium
+        run: pwsh tests/ArkadeHeroes.Tests.Browser/bin/Release/net10.0/playwright.ps1 install chromium --with-deps
+
+      - name: Browser smoke tests
+        env:
+          ARKADE_WEB_PUBLISH_DIR: published-web
+        run: >
+          dotnet test tests/ArkadeHeroes.Tests.Browser
+          --configuration Release --no-build
+          --logger "trx;LogFileName=browser.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
           path: TestResults/*.trx
 
   # ── E2E on live regtest — MANUAL (workflow_dispatch) + NIGHTLY (schedule) ───
