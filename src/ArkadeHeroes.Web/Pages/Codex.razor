@@ -120,15 +120,50 @@
     Every hero has exactly one element. There is no best one: each is strong against the element after it
     and weak against the one before, all the way around the circle.
 </p>
-<div class="grid cols codex-elements">
-    @foreach (var (name, index) in Elements.Select((e, n) => (e, n)))
-    {
-        <div class="card codex-element">
-            <div class="hud">@name</div>
-            <div class="cx-el-line ok">beats @Elements[(index + 1) % Elements.Length]</div>
-            <div class="cx-el-line bad">loses to @Elements[(index + Elements.Length - 1) % Elements.Length]</div>
-        </div>
-    }
+@* The ring, drawn as a ring. Eight cards each saying "beats X, loses to Y" made the reader assemble
+   the cycle in their head; an arrow does it for them. Every arrow points from an element to the one
+   it beats, so following any arrow round returns you to where you started — which IS the balance
+   claim, shown rather than asserted. *@
+<div class="card el-ring-card">
+    <svg viewBox="0 0 560 560" class="el-ring" role="img"
+         aria-label="The eight elements in a ring: Ember beats Gale, Gale beats Terra, Terra beats Tide, Tide beats Volt, Volt beats Frost, Frost beats Radiant, Radiant beats Umbral, and Umbral beats Ember.">
+        @* One marker per element rather than one shared marker using currentColor: a marker is
+           rendered in its OWN context, so it inherits colour from <defs>, not from the line that
+           references it — a single marker comes out uniformly grey however the lines are coloured. *@
+        <defs>
+            @foreach (var i in Enumerable.Range(0, Elements.Length))
+            {
+                <marker id="@($"el-head-{i}")" viewBox="0 0 10 10" refX="9" refY="5"
+                        markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="@ElementColours[i]" />
+                </marker>
+            }
+        </defs>
+
+        @* Arrows first, so the discs sit on top of where they meet. *@
+        @foreach (var i in Enumerable.Range(0, Elements.Length))
+        {
+            var (x1, y1, x2, y2) = Arrow(i);
+            <g class="el-arrow" style="color:@ElementColours[i]">
+                <line x1="@F(x1)" y1="@F(y1)" x2="@F(x2)" y2="@F(y2)"
+                      marker-end="@($"url(#el-head-{i})")" />
+            </g>
+        }
+
+        @foreach (var i in Enumerable.Range(0, Elements.Length))
+        {
+            var (cx, cy) = Node(i);
+            <g class="el-node" style="color:@ElementColours[i]">
+                <circle cx="@F(cx)" cy="@F(cy)" r="@F(NodeRadius)" />
+                <text x="@F(cx)" y="@F(cy + 5)" text-anchor="middle">@Elements[i]</text>
+            </g>
+        }
+    </svg>
+    <p class="codex-foot el-ring-note">
+        Follow any arrow and you come back to where you started — that is the whole balance argument.
+        Each element beats exactly one other and loses to exactly one, so there is no element to pick
+        if you just want to win.
+    </p>
 </div>
 <p class="codex-foot">
     A favourable matchup multiplies damage by <b class="mono">@F(ElementStrong)×</b>; an unfavourable one
@@ -239,4 +274,34 @@
     // Element enum order — each is strong against the NEXT in this ring.
     static readonly string[] Elements =
         ["Ember", "Gale", "Terra", "Tide", "Volt", "Frost", "Radiant", "Umbral"];
+
+    // Parallel to Elements, kept separate rather than folded into a record so the array above stays a
+    // plain list of names — CodexReferenceTests reads it to check the ring against ElementMatrix.
+    static readonly string[] ElementColours =
+        ["#ff6b3d", "#7ee787", "#c9a227", "#4db6ff", "#ffd447", "#7fe6f0", "#ffeaa0", "#c07bff"];
+
+    // --- Ring geometry -----------------------------------------------------------------------
+    const double RingCx = 280, RingCy = 280, RingR = 190, NodeRadius = 52;
+
+    /// <summary>Centre of element i's disc. Index 0 sits at the top and the ring runs clockwise, so
+    /// reading order on screen matches the order the elements are defined in.</summary>
+    static (double X, double Y) Node(int i)
+    {
+        var a = -Math.PI / 2 + i * (2 * Math.PI / Elements.Length);
+        return (RingCx + RingR * Math.Cos(a), RingCy + RingR * Math.Sin(a));
+    }
+
+    /// <summary>The arrow from element i to the one it beats, trimmed to both discs so it starts and
+    /// ends in open space rather than under the artwork.</summary>
+    static (double X1, double Y1, double X2, double Y2) Arrow(int i)
+    {
+        var (x1, y1) = Node(i);
+        var (x2, y2) = Node((i + 1) % Elements.Length);
+        double dx = x2 - x1, dy = y2 - y1;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        dx /= len; dy /= len;
+        const double gap = 8, headroom = 16;   // headroom leaves space for the arrowhead
+        return (x1 + dx * (NodeRadius + gap), y1 + dy * (NodeRadius + gap),
+                x2 - dx * (NodeRadius + headroom), y2 - dy * (NodeRadius + headroom));
+    }
 }

@@ -187,7 +187,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 /* Three real creatures, drawn from fixed genomes — the landing art IS the game's art. */
 .showcase { display: flex; align-items: flex-end; justify-content: center; gap: 1.1rem; flex-wrap: wrap; }
 .showcase-hero { display: grid; justify-items: center; gap: .5rem; }
-.showcase-hero .hud { color: var(--faint); font-size: .62rem; letter-spacing: .14em; }
+.showcase-hero .hud { color: var(--muted); font-size: .62rem; letter-spacing: .14em; }
 /* The middle one sits proudest — a flat row of three reads as a spec sheet, not a roster. */
 .showcase-hero:nth-child(2) { transform: translateY(-14px); }
 .showcase-hero:nth-child(2) .hero-px { filter: drop-shadow(0 0 14px rgba(53,240,208,.35)); }
@@ -276,7 +276,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .dna-mark.right::after  { display: none; }
 .dna-mark.mech { color: color-mix(in srgb, var(--accent) 78%, var(--text)); }
 .dna-mark.dom  { color: color-mix(in srgb, var(--accent-2) 78%, var(--text)); }
-.dna-mark.rec  { color: rgba(255,77,157,.5); }
+.dna-mark.rec  { color: rgba(255,138,190,.72); }
 
 /* A soft pool of light under the strand so it reads as standing in space, not pasted on. */
 .dna-floor {
@@ -322,7 +322,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
     border: 1px solid var(--line-soft);
 }
 .codex-slot { display: grid; justify-items: center; gap: .45rem; }
-.codex-slot .hud { font-size: .58rem; color: var(--faint); }
+.codex-slot .hud { font-size: .58rem; color: var(--muted); }
 /* What is consumed reads as consumed: desaturated and dimmed, not merely labelled. */
 .codex-slot.burn .hero-px { filter: grayscale(.75) brightness(.65); }
 .codex-slot.burn .hud { color: var(--danger); }
@@ -347,7 +347,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .cx-ink-mut    { color: var(--accent-2); }
 .cx-ink-rare   { color: var(--r-rare); }
 
-.codex-foot { font-size: .78rem; color: var(--faint); margin: .8rem 0 0; }
+.codex-foot { font-size: .78rem; color: var(--muted); margin: .8rem 0 0; }
 
 /* Mutation-tier odds, drawn strictly to scale — the Legendary sliver IS the point, so no
    segment gets a minimum width and no label is allowed to inflate one. */
@@ -372,7 +372,7 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .codex-odd-keys .epic i      { background: var(--r-epic); }
 .codex-odd-keys .legendary i { background: var(--gold); }
 
-.codex-note { margin: 1.1rem 0 0; font-size: .76rem; color: var(--faint); text-align: center; }
+.codex-note { margin: 1.1rem 0 0; font-size: .76rem; color: var(--muted); text-align: center; }
 
 /* --- /codex reference page ------------------------------------------------ */
 .codex-intro { max-width: 70ch; }
@@ -393,6 +393,19 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .tier-dot.epic { background: var(--r-epic); }       b.epic      { color: var(--r-epic); }
 .tier-dot.legendary { background: var(--gold); }    b.legendary { color: var(--gold); }
 
+/* --- /play hub ------------------------------------------------------------ */
+.play-group-head { margin-top: 1.8rem; }
+.play-card { display: block; text-decoration: none; color: inherit; transition: border-color .15s ease, transform .05s ease; }
+.play-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.play-card p { margin: .5rem 0 0; font-size: .84rem; line-height: 1.55; }
+.play-card-top { display: flex; align-items: center; gap: .55rem; }
+.play-card-top h4 { margin: 0; font-size: 1.02rem; }
+.play-icon { font-size: 1.15rem; line-height: 1; }
+/* A mode that can permanently destroy a hero should not look like one that cannot. */
+.play-card.bad { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+.play-card.bad:hover { border-color: var(--danger); }
+.chip.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
 /* --- /tech page ----------------------------------------------------------- */
 .tech-p { margin: 0; font-size: .86rem; line-height: 1.6; }
 .tech-code {
@@ -412,10 +425,17 @@ h1:focus { outline: none; } /* Blazor FocusOnNavigate targets h1 — suppress th
 .tech-step.out { border-color: var(--accent); color: var(--accent); }
 .tech-arrow { color: var(--faint); }
 
-.codex-element { display: grid; gap: .3rem; }
-.cx-el-line { font-size: .78rem; }
-.cx-el-line.ok { color: var(--ok); }
-.cx-el-line.bad { color: var(--danger); opacity: .85; }
+/* The element ring. Each node and its outgoing arrow share a colour via `color`, set inline per
+   element, so currentColor carries it to the stroke, the fill and the arrowhead marker alike. */
+.el-ring-card { display: grid; justify-items: center; padding: 1.2rem; }
+.el-ring { width: 100%; max-width: 480px; height: auto; display: block; }
+.el-node circle { fill: color-mix(in srgb, currentColor 14%, var(--bg-2)); stroke: currentColor; stroke-width: 2; }
+.el-node text {
+    fill: currentColor; font-family: var(--font-hud); font-size: 15px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+}
+.el-arrow line { stroke: currentColor; stroke-width: 2.5; opacity: .75; }
+.el-ring-note { max-width: 56ch; text-align: center; }
 
 @media (max-width: 1000px) { .codex-ops { grid-template-columns: 1fr; } }
 

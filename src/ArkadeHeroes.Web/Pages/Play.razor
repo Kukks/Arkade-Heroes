@@ -1,0 +1,100 @@
+@page "/play"
+
+@* Everything a hero can do, grouped and explained.
+
+   This replaces a fourteen-item subnav. That nav listed Spar, Gauntlet, Trials, Duel, Squad,
+   Tournaments, Death-match, Breed, Merge, Gear, Daily, Ranks, Roster and Recover as one flat row of
+   equal-looking words — which told a new player nothing about which of them is free practice and
+   which one permanently destroys a creature they own. Grouping by INTENT, and saying the stake out
+   loud on every card, is the whole point of the page. *@
+
+<PageTitle>Play · Arkade Heroes</PageTitle>
+
+<div class="page-head">
+    <h2>What do you want to do?</h2>
+    <span class="hud">every mode, and what it costs you</span>
+</div>
+
+@foreach (var group in Groups)
+{
+    <div class="page-head play-group-head">
+        <h3 style="margin:0">@group.Title</h3>
+        <span class="hud">@group.Sub</span>
+    </div>
+    <div class="grid cols">
+        @foreach (var m in group.Modes)
+        {
+            <a class="card play-card @(m.Stake.Css)" href="@m.Href">
+                <div class="play-card-top">
+                    <span class="play-icon">@m.Icon</span>
+                    <h4>@m.Name</h4>
+                    <span class="spacer"></span>
+                    <span class="chip @m.Stake.Css">@m.Stake.Label</span>
+                </div>
+                <p class="muted">@m.What</p>
+            </a>
+        }
+    </div>
+}
+
+<p class="codex-note muted" style="margin-top:2rem">
+    New here? <a href="spar">Spar</a> costs nothing and uses the same combat engine as everything else —
+    it is the safe way to learn what your hero is good at. Read the
+    <a href="codex">codex</a> if you want the numbers behind it.
+</p>
+
+@code {
+    record Stake(string Label, string Css);
+
+    // Three honest categories. "Free" means nothing leaves your wallet; "Costs sats" means a fee or a
+    // stake; "Permanent" means a creature can cease to exist.
+    static readonly Stake Free = new("free", "ok");
+    static readonly Stake Sats = new("costs sats", "");
+    static readonly Stake Gone = new("permanent", "bad");
+
+    record Mode(string Name, string Href, string Icon, string What, Stake Stake);
+    record Group(string Title, string Sub, Mode[] Modes);
+
+    static readonly Group[] Groups =
+    [
+        new("Learn the ropes", "solo, nothing at stake",
+        [
+            new("Spar", "spar", "⚔", "A friendly bout against another hero. The real combat engine, "
+                + "replayed in your browser — no wager, no consequences.", Free),
+            new("Gauntlet", "gauntlet", "🌀", "Five escalating waves of ghosts, alone. A quick read on "
+                + "whether a hero's build actually holds up.", Free),
+            new("Trials", "trials", "🏔", "The endless ladder. Waves keep coming and keep getting "
+                + "worse — the question is only how deep you get.", Free),
+        ]),
+        new("Fight other players", "your sats against theirs",
+        [
+            new("Duel", "duel", "🎯", "One hero against another player's, with both stakes locked in a "
+                + "covenant. The winner takes the pot.", Sats),
+            new("Squad 3v3", "squad", "🛡", "Three heroes a side, best of three, position matters. The "
+                + "same escrow as a duel with more to think about.", Sats),
+            new("Tournaments", "tournaments", "🏆", "A bracket with a buy-in. The pot splits across the "
+                + "top three, and the house takes a small rake.", Sats),
+            new("Death-match", "deathmatch", "💀", "Winner takes everything and the loser's hero is "
+                + "destroyed forever. The winner can absorb a trait it was beaten by.", Gone),
+        ]),
+        new("Make something new", "spend heroes to get better ones",
+        [
+            new("Breed", "breed", "🧬", "Two heroes, one heir. It inherits from both, sometimes surfaces "
+                + "a hidden trait, and occasionally mutates into something neither carried.", Sats),
+            new("Fuse", "merge", "🔥", "Feed one hero to another to concentrate its rarest traits. The "
+                + "sacrifice is gone, and chasing rarity risks a sterile result.", Gone),
+            new("Gear", "gear", "🗡", "The equipment catalogue — what each item does and which builds it "
+                + "counters.", Free),
+        ]),
+        new("Keep track", "where you stand",
+        [
+            new("Roster", "heroes", "📜", "Every hero you own, with its traits, rarity and bloodline.", Free),
+            new("Achievements", "achievements", "🎖", "Badges for what you have actually done — bred, "
+                + "fought, collected, survived.", Free),
+            new("Ranks", "leaderboard", "📈", "The season ladder, the rarest creatures on it, and the "
+                + "prize pot riding on the finish.", Free),
+            new("Recover", "reclaim", "🛟", "Anything of yours stuck in a half-finished escrow, and the "
+                + "button that gets it back without our help.", Free),
+        ]),
+    ];
+}

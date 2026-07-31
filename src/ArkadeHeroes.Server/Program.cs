@@ -96,7 +96,23 @@ app.UseCors();
 // all. Running the API alone (no wwwroot, e.g. every test host) is unaffected: with no
 // files to serve these are no-ops, not errors.
 app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
+// Cache policy is load-bearing here, not tidying. index.html asks for the runtime as
+// `blazor.webassembly#[.{fingerprint}].js`, so a new build gives the framework a NEW url and the
+// browser fetches it. Our own assets — css/app.css, js/hero-render.js — keep the SAME url forever.
+// With no Cache-Control at all the browser is free to reuse them heuristically, which is exactly
+// what it did: a deploy shipped new markup against a MONTH-old stylesheet, and the page rendered
+// as unstyled text. `no-cache` still lets the browser store the file; it just has to revalidate,
+// so the steady state is a 304 and the deploy state is the new bytes.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // _framework is content-fingerprinted by the SDK — a changed file is a changed url, so it
+        // is safe to leave cacheable. Everything else is not, and must be revalidated.
+        if (!ctx.Context.Request.Path.StartsWithSegments("/_framework"))
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    },
+});
 
 // Deep links (/heroes/abc, /market, …) are client-side routes with no file behind them, so
 // the browser must still receive index.html and let the WASM router resolve them.
