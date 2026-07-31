@@ -4,6 +4,7 @@ using NArk.Abstractions.Assets;
 using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Core;
 using NArk.Core.Services;
 using NArk.Core.Transport;
 using NArk.Core.Wallet;
@@ -180,17 +181,106 @@ public class GameWallet(
         catch (Exception ex) { throw new GameWalletException("That isn't a valid Arkade address.", ex); }
     }
 
+    /// <summary>How many times a spend re-selects and tries again after losing a race for its own coins.</summary>
+    internal const int SpendAttempts = 3;
+
+    /// <summary>Pause between spend attempts; scaled by the attempt number so the wallet backs off.</summary>
+    internal static TimeSpan RetryBackoff { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Builds, signs and submits the spend — retrying against FRESH coin state when it loses a race.
+    ///
+    /// <para>The tab runs the SDK's own batch services, so the wallet's coins can be settled away by its
+    /// own background while the player is mid-flow. arkd then refuses the transaction
+    /// (<c>VTXO_ALREADY_SPENT</c>, <c>VTXO_ALREADY_REGISTERED</c>, "temporarily locked") even though the
+    /// player still holds the funds — the settlement handed them a NEW coin the tab hasn't caught up to.
+    /// One attempt made that the player's problem: a raw SDK string in the UI and a fee that never got
+    /// paid. So a refusal that names the coin state is treated as what it is — stale local knowledge —
+    /// and healed: ask arkd which of the inputs it considers spent, write that truth into local storage,
+    /// give the tab's own sync a beat to bring in the replacement, then select again from scratch.</para>
+    ///
+    /// <para>Only retried when arkd REFUSED the transaction, which is the whole point of matching on the
+    /// coin-state errors rather than on failure in general: a refused transaction does not exist, so
+    /// re-selecting cannot double-spend. Anything else surfaces immediately.</para>
+    /// </summary>
     private async Task<string> SpendAsync(string walletId, ArkTxOut[] outputs)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            ArkCoin[] coins;
+            try
+            {
+                coins = await SelectSpendableCoinsAsync(walletId, outputs);
+            }
+            catch (GameWalletException) { throw; }
+            catch (Exception ex)
+            {
+                throw new GameWalletException(
+                    "Couldn't read your coins just now. Check your connection and try again.", ex);
+            }
+
+            try
+            {
+                var txId = await spendingService.Spend(walletId, coins, outputs);
+                return txId.ToString();
+            }
+            catch (Exception ex) when (attempt < SpendAttempts && IsStaleCoinState(ex))
+            {
+                await ForgetSpentCoinsAsync(coins);
+                await Task.Delay(RetryBackoff * attempt);
+            }
+            catch (GameWalletException) { throw; }
+            catch (Exception ex) { throw new GameWalletException(Explain(ex), ex); }
+        }
+    }
+
+    /// <summary>
+    /// True when the failure says the inputs are no longer the wallet's to spend — arkd refused the
+    /// transaction outright, so nothing was broadcast and a fresh selection is safe. Matched on the
+    /// arkd error codes and the SDK's own locked-VTXO exception rather than on any failure, so a
+    /// genuinely broken send is never quietly re-tried.
+    /// </summary>
+    private static bool IsStaleCoinState(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is AlreadyLockedVtxoException) return true;
+            var m = e.Message;
+            if (m.Contains("VTXO_ALREADY_SPENT", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("VTXO_ALREADY_REGISTERED", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("already spent", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("already registered", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("temporarily locked", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Writes arkd's view of the attempted inputs into local storage, so the next selection stops
+    /// offering coins the operator has already seen spent. Asking arkd directly (rather than waiting for
+    /// the background sync) is what makes the retry converge instead of picking the same dead coin again.
+    /// Best-effort: on any transport error the retry simply proceeds on what it has.
+    /// </summary>
+    private async Task ForgetSpentCoinsAsync(IReadOnlyCollection<ArkCoin> attempted)
     {
         try
         {
-            var coins = await SelectSpendableCoinsAsync(walletId, outputs);
-            var txId = await spendingService.Spend(walletId, coins, outputs);
-            return txId.ToString();
+            var outpoints = attempted.Select(c => c.Outpoint).ToList();
+            await foreach (var vtxo in transport.GetVtxosByOutpoints(outpoints, spentOnly: true))
+                await vtxoStorage.UpsertVtxo(vtxo);
         }
-        catch (GameWalletException) { throw; }
-        catch (Exception ex) { throw new GameWalletException($"Send failed: {ex.Message}", ex); }
+        catch { /* the delay + re-selection still give the tab's own sync a chance to catch up */ }
     }
+
+    /// <summary>
+    /// A spend failure in the player's language. The SDK speaks gRPC status text and arkd speaks error
+    /// codes — "net_http_message_not_success_statuscode_reason, 400/409" told a player nothing except
+    /// that the game was broken. The detail is not lost: it rides on the inner exception for the console.
+    /// </summary>
+    private static string Explain(Exception ex) => IsStaleCoinState(ex)
+        ? "Your coins are being settled by the network right now. Give it a few seconds and try again."
+        : "That payment didn't go through. Your funds are safe — please try again in a moment.";
 
     // Explicit coin selection mirroring SelfCustodyWallet: exclude recoverable (swept/expired)
     // coins, cover each output asset with its carrier VTXOs, then the sats with the largest
