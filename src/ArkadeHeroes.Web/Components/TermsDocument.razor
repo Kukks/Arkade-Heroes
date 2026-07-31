@@ -19,15 +19,33 @@ else if (_state == Load.Missing)
         You are being asked to accept <b>version @Terms.CurrentVersion</b>.
     </p>
 }
+@* "The fetch failed" and "this build shipped without the document" are different facts with different
+   answers, and collapsing them was a hard lockout: the gate fails CLOSED on anything that isn't Ready, has
+   no ✕ and no click-outside, and rides the layout on EVERY route — so one timed-out GET of a static file
+   left the player unable to accept, unable to dismiss, and told by the gate's own copy to "report it rather
+   than working around it". A transient network fault is not a packaging fault; it just needs another go. *@
+else if (_state == Load.Failed)
+{
+    <div class="status-line"><span class="dot bad"></span> Couldn't load the Terms of Use.</div>
+    <p class="muted">
+        This looks like a network problem rather than a missing document — nothing is wrong with your
+        account, and nothing has been recorded. @_error
+    </p>
+    <button class="btn primary sm" @onclick="RetryAsync" disabled="@(_state == Load.Loading)">Try again</button>
+}
 else
 {
     <div class="terms-doc">@((MarkupString)_html)</div>
 }
 
 @code {
-    enum Load { Loading, Ready, Missing }
+    /// <summary><see cref="Missing"/> means the build genuinely didn't ship the document — a packaging
+    /// fault, and retrying will not help. <see cref="Failed"/> means the request itself fell over, which
+    /// retrying very often does fix. Both keep Accept disabled; only one is worth a button.</summary>
+    enum Load { Loading, Ready, Missing, Failed }
     Load _state = Load.Loading;
     string _html = "";
+    string? _error;
 
     /// <summary>
     /// Raised with true once the terms are actually on screen, false while they are loading or couldn't be
@@ -37,7 +55,19 @@ else
     /// </summary>
     [Parameter] public EventCallback<bool> OnLoadStateChanged { get; set; }
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    /// <summary>Re-runs the fetch after a failure. Re-raises the load-state event either way, so the gate's
+    /// Accept button follows a successful retry without needing to be re-created.</summary>
+    async Task RetryAsync()
+    {
+        _state = Load.Loading;
+        _error = null;
+        StateHasChanged();
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
     {
         try
         {
@@ -60,13 +90,18 @@ else
             _html = MarkdownLite.ToHtml(text);
             _state = Load.Ready;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Deliberately every exception, not just HttpRequestException: a request timeout
-            // (TaskCanceledException) or any other fault must land in Missing rather than escape and strand
-            // the component on "loading…" — which, before the gate consulted this state, left a player able
-            // to accept a document that was still in flight.
-            _state = Load.Missing;
+            // (TaskCanceledException) or any other fault must be caught rather than escape and strand the
+            // component on "loading…" — which, before the gate consulted this state, left a player able to
+            // accept a document that was still in flight.
+            //
+            // But it lands in Failed, not Missing. A thrown request says nothing about whether the file was
+            // bundled, and treating it as a packaging fault is what turned a network blip into a permanent,
+            // undismissable lockout from the whole application.
+            _state = Load.Failed;
+            _error = ex.Message;
         }
         finally
         {

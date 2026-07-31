@@ -22,6 +22,16 @@
     {
         <p class="muted" style="margin:0">Press <a href="/">Play</a> to set up your wallet — then every duel, breed and clear counts toward the season.</p>
     }
+    @* "Still reading" and "the read failed" used to be the same spinner. The only retry is a sign-in
+       TRANSITION, and the shell resumes the session before you ever reach this card — so for an
+       already-signed-in player it can never fire again and this sat on "reading your season…" for the
+       rest of the session. The comment on the catch below claimed a retry that could not happen. *@
+    else if (_error is not null)
+    {
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your season.</div>
+        <p class="muted" style="margin:.6rem 0 .7rem;font-size:.85rem">@_error</p>
+        <button class="btn ghost sm" @onclick="LoadAsync" disabled="@_loading">Try again</button>
+    }
     else if (_pass is null)
     {
         <div class="status-line"><span class="dot wait"></span> reading your season…</div>
@@ -56,6 +66,10 @@
 @code {
     private SeasonPassProgress? _pass;
     private bool _wasSignedIn;
+    private bool _loading;
+
+    /// <summary>Why the season is missing, when it is missing because the read failed.</summary>
+    private string? _error;
 
     protected override async Task OnInitializedAsync()
     {
@@ -71,9 +85,13 @@
 
     private async Task LoadAsync()
     {
-        if (!State.IsSignedIn) { _pass = null; StateHasChanged(); return; }
+        if (!State.IsSignedIn) { _pass = null; _error = null; StateHasChanged(); return; }
+        _loading = true;
+        _error = null;
+        StateHasChanged();
         try { _pass = await Session.SeasonPassAsync(); }
-        catch { _pass = null; }   // a fresh load can race the login token; OnState retries
+        catch (Exception ex) { _pass = null; _error = ex.Message; }
+        finally { _loading = false; }
         StateHasChanged();
     }
 

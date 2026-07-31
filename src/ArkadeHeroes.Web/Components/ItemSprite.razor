@@ -18,22 +18,33 @@
     private static Task<IJSObjectReference>? _module;
     private string? _src;
 
+    /// <summary>Which item+size <see cref="_src"/> currently holds art for.</summary>
+    private string? _srcKey;
+
     protected override async Task OnParametersSetAsync()
     {
         var id = ItemId ?? string.Empty;
         var key = $"{id}:{Size}";
-        if (_cache.TryGetValue(key, out var cached)) { _src = cached; return; }
+        if (_cache.TryGetValue(key, out var cached)) { _src = cached; _srcKey = key; return; }
+
+        // Drop the old icon BEFORE rendering the new item — see the matching note in HeroSprite. _src was
+        // only ever assigned, so a failed render left the previous item's art under the new item's name
+        // and price, which on a shop grid is a picture of a thing you are not buying.
+        if (_srcKey != key) { _src = null; _srcKey = key; }
+
         try
         {
-            _module ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/item-render.js").AsTask();
-            var module = await _module;
+            // Never cache a FAULTED import: _module is static, so one failure used to blank every icon in
+            // the application for the rest of the session.
+            var module = await (_module ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/item-render.js").AsTask());
             var src = await module.InvokeAsync<string>("renderItemDataUrl", id, Size);
             _cache[key] = src;
             _src = src;
         }
         catch
         {
-            // Render/module error → blank rather than a broken row.
+            // Render/module error → blank rather than a broken row, or the wrong row.
+            if (_module is { IsFaulted: true }) _module = null;
         }
     }
 }

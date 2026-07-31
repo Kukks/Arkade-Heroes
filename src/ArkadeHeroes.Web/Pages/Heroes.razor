@@ -53,7 +53,9 @@ else
             }
             else
             {
-                <text>No heroes yet — <a href="">start playing</a> to summon your first heroes.</text>
+                @* href="/" — an EMPTY href resolves to the current document, so the one call to action a
+                   signed-out visitor gets on an empty server used to re-navigate to /heroes. *@
+                <text>No heroes yet — <a href="/">start playing</a> to summon your first heroes.</text>
             }
         </div>
     }

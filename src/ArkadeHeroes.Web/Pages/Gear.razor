@@ -27,7 +27,18 @@
 }
 @if (_justBought is not null)
 {
-    <div class="card"><div class="status-line"><span class="dot ok"></span> Bought <b>@_justBought</b> — equip it from a hero's page.</div></div>
+    @* Links to the roster rather than naming "a hero's page" and pointing nowhere. *@
+    <div class="card"><div class="status-line"><span class="dot ok"></span>
+        Bought <b>@_justBought</b> — equip it from <a href="heroes?mine=1">one of your heroes</a>.
+    </div></div>
+}
+@* Said out loud, because the consequence of not knowing is spending sats on a duplicate. *@
+@if (_ownedError is not null && State.IsSignedIn)
+{
+    <div class="card"><div class="status-line"><span class="dot bad"></span>
+        Couldn't check what you already own, so nothing below is marked "owned" — check before you buy.
+        <button class="btn ghost sm" style="margin-left:.6rem" @onclick="HydrateOwnedAsync">Try again</button>
+    </div></div>
 }
 
 @if (_loading)
@@ -112,6 +123,10 @@ else
     private readonly HashSet<string> _owned = new();
     private bool _ownedHydrated;
 
+    /// <summary>Why we don't know what the player already owns. Surfaced, because the consequence of not
+    /// knowing is buying a second copy of something you have.</summary>
+    private string? _ownedError;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnState;
@@ -131,8 +146,16 @@ else
         {
             foreach (var id in await Api.Items.MineAsync()) _owned.Add(id);
             _ownedHydrated = true;
+            _ownedError = null;
         }
-        catch { /* not signed in yet / token racing — retried on the next state change */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed. A silent failure here leaves _owned empty, so every item the
+            // player ALREADY OWNS renders "Buy" instead of "owned ✓" — and the purchase goes through.
+            // Real sats spent on a duplicate because a read failed and said nothing. The retry this used
+            // to claim is a wallet event that an already-signed-in player never sees again.
+            _ownedError = ex.Message;
+        }
     }
 
     async Task DoBuy(ItemDto it)

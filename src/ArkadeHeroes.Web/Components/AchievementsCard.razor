@@ -11,13 +11,24 @@
         <h3 style="margin:0">Achievements</h3>
         @if (_ach is not null)
         {
-            <span class="hud">@_ach.Badges.Count / @Defs.Length badges</span>
+            @* Denominator counts the badges this card can actually show. Any the server knows about and
+               this file doesn't get added on, so the total can never be smaller than the earned count. *@
+            <span class="hud">@_ach.Badges.Count / @(Defs.Length + UnknownBadges.Count()) badges</span>
         }
     </div>
 
     @if (!State.IsSignedIn)
     {
         <p class="muted" style="margin:0">Press <a href="/">Play</a> to summon a roster and start earning badges.</p>
+    }
+    @* "Still loading" and "the read failed" used to be the same spinner, with the only retry gated on a
+       sign-in TRANSITION — which never happens again for a player who was already signed in. This page's
+       whole body is this card, so /achievements spun forever with no error and no way out but F5. *@
+    else if (_error is not null)
+    {
+        <div class="status-line"><span class="dot bad"></span> Couldn't tally your achievements.</div>
+        <p class="muted" style="margin:.6rem 0 .7rem">@_error</p>
+        <button class="btn primary sm" @onclick="LoadAsync" disabled="@_loading">Try again</button>
     }
     else if (_ach is null)
     {
@@ -41,6 +52,15 @@
                 {
                     <span class="chip">@Math.Min(have, d.Target)/@d.Target · @d.Goal</span>
                 }
+            </div>
+        }
+
+        @foreach (var key in UnknownBadges)
+        {
+            <div class="match-row">
+                <span>🏅 @key</span>
+                <span class="spacer"></span>
+                <span class="chip on">✓ earned</span>
             </div>
         }
 
@@ -93,6 +113,11 @@
 @code {
     private PlayerAchievementsDto? _ach;
     private bool _wasSignedIn;
+    private bool _loading;
+
+    /// <summary>Why the tally is missing, when it is missing because the read failed rather than because it
+    /// hasn't happened yet. Null while loading and once loaded.</summary>
+    private string? _error;
 
     // Icon + goal copy per badge. Keys + targets mirror GameService.PlayerAchievements (server is
     // authoritative for the earned/unearned state via Badges; the target is a display hint only).
@@ -100,12 +125,27 @@
 
     private static readonly BadgeDef[] Defs =
     {
-        new("Collector",     "📦", "Collector",     "own 5 heroes",       5, a => a.HeroesOwned),
-        new("Breeder",       "🧬", "Breeder",       "breed 3 heroes",     3, a => a.HeroesBred),
-        new("Legend-keeper", "💎", "Legend-keeper", "hold a Legendary",   1, a => a.Legendaries),
-        new("Fancier",       "🎀", "Fancier",       "own a Fancy",        1, a => a.Fancies),
-        new("Champion",      "🏆", "Champion",      "win a tournament",   1, a => a.TournamentsWon),
+        new("Collector",     "📦", "Collector",     "own 5 heroes",          5, a => a.HeroesOwned),
+        new("Breeder",       "🧬", "Breeder",       "breed 3 heroes",        3, a => a.HeroesBred),
+        new("Legend-keeper", "💎", "Legend-keeper", "hold a Legendary",      1, a => a.Legendaries),
+        new("Fancier",       "🎀", "Fancier",       "own a Fancy",           1, a => a.Fancies),
+        new("Champion",      "🏆", "Champion",      "win a tournament",      1, a => a.TournamentsWon),
+        // The server has awarded this since Fancy discovery became a permanent deed, and this list never
+        // learned about it: the rarest badge in the game — first ever to breed a named set, credited for
+        // good — was earned, returned, and drawn nowhere. The header counted it, so the card read
+        // "6 / 5 badges" over five rows. There is no progress COUNT for it in the DTO (it is a one-shot
+        // deed, not a tally), so its own earned state is the only thing to show against it.
+        new("Trailblazer",   "🚩", "Trailblazer",   "discover a Fancy set first", 1,
+            a => a.Badges.Contains("Trailblazer") ? 1 : 0),
     };
+
+    /// <summary>
+    /// Badges the SERVER awarded that this file has no definition for. Rendered rather than dropped: the
+    /// list above is a client-side constant, and the last time the server grew a badge it simply vanished
+    /// here and broke the counter. Now a new one shows up unstyled but present, and the count still adds up.
+    /// </summary>
+    private IEnumerable<string> UnknownBadges =>
+        _ach is null ? [] : _ach.Badges.Where(b => !Defs.Any(d => d.Key == b));
 
     protected override async Task OnInitializedAsync()
     {
@@ -116,9 +156,13 @@
 
     private async Task LoadAsync()
     {
-        if (!State.IsSignedIn) { _ach = null; StateHasChanged(); return; }
+        if (!State.IsSignedIn) { _ach = null; _error = null; StateHasChanged(); return; }
+        _loading = true;
+        _error = null;
+        StateHasChanged();
         try { _ach = await Session.AchievementsAsync(); }
-        catch { _ach = null; }
+        catch (Exception ex) { _ach = null; _error = ex.Message; }
+        finally { _loading = false; }
         StateHasChanged();
     }
 

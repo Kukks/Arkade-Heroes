@@ -92,7 +92,13 @@
             {
                 <span class="chip">species <b class="mono">@Short(_info.SpeciesAssetId)</b></span>
             }
-            <span class="chip">breed fee <b>@(_info.Config?.BreedingFeeSats ?? 0) sat</b></span>
+            @* Only claimed when it is actually known. `?? 0` printed "breed fee 0 sat" — i.e. told a
+               visitor breeding is FREE — whenever the config came back null, which is reachable against
+               any server that doesn't publish it. A confident wrong price is worse than no price. *@
+            @if (_info.Config is { } cfg)
+            {
+                <span class="chip">breed fee <b>@cfg.BreedingFeeSats.ToString("N0") sat</b></span>
+            }
             <span class="chip">absorb odds <b>@Pct(_info.AbsorbChance)</b></span>
         </div>
     }

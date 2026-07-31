@@ -34,7 +34,9 @@ else if (!_heroesLoaded)
 }
 else if (_mine.Count == 0)
 {
-    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+    @* ?mine=1: the roster opens on the ALL tab and the recruit card only renders under Mine, so a bare
+       link landed a hero-less player on a grid of other people's creatures with nothing to press. *@
+    <div class="card muted">You need a hero first — recruit one on the <a href="heroes?mine=1">Heroes</a> page.</div>
 }
 else
 {
@@ -128,7 +130,7 @@ else
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
 
-    @if (!ToAccept.Any() && !ToSettle.Any() && !Waiting.Any())
+    @if (!ToAccept.Any() && !ToSettle.Any() && !Waiting.Any() && !AwaitingOpponent.Any() && !History.Any())
     {
         <div class="card muted">No open death-matches. Challenge a rival above — or wait for one to come for you.</div>
     }
@@ -162,6 +164,20 @@ else
                 }
             </div>
         }
+        @if (AwaitingOpponent.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Staked to the death — waiting for the challenger to fight</div>
+                @foreach (var d in AwaitingOpponent)
+                {
+                    <div class="match-row muted">
+                        <span>Your <b>@Name(d.DefenderHeroId)</b> vs <b>@Name(d.ChallengerHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
+                        <span class="spacer"></span>
+                        <span class="chip">accepted</span>
+                    </div>
+                }
+            </div>
+        }
         @if (Waiting.Any())
         {
             <div class="card">
@@ -172,6 +188,32 @@ else
                         <span>Your <b>@Name(d.ChallengerHeroId)</b> vs <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
                         <span class="spacer"></span>
                         <span class="chip">open</span>
+                    </div>
+                }
+            </div>
+        }
+        @* The graveyard. A settled death-match used to leave no trace here at all — the page went straight
+           back to "No open death-matches" over a hero that had been destroyed forever. *@
+        @if (History.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Settled — a hero died</div>
+                @foreach (var d in History)
+                {
+                    <div class="match-row muted">
+                        <span>
+                            <b>@Name(d.ChallengerHeroId)</b> vs <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")
+                            @if (d.WinnerHeroId is { } w)
+                            {
+                                <text> · ☠ <b>@Name(d.ChallengerHeroId == w ? d.DefenderHeroId : d.ChallengerHeroId)</b> burned</text>
+                            }
+                        </span>
+                        <span class="spacer"></span>
+                        @if (IWon(d) is { } won)
+                        {
+                            <span class="chip @(won ? "ok" : "bad")">@(won ? "you won" : "you lost")</span>
+                        }
+                        <a class="btn ghost sm" href="watch/@d.DeathMatchId">Replay ↗</a>
                     </div>
                 }
             </div>
@@ -241,9 +283,47 @@ else
     private OpponentSuggestionDto? Opp => _opponents.FirstOrDefault(o => o.Hero.Id == _oppId);
 
     private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
+
+    /// <summary>Every hero id that has been in my roster since this page loaded. A death-match BURNS the
+    /// loser, so the live roster stops being able to name the player it happened to at exactly the moment
+    /// it matters — this remembers.</summary>
+    private readonly HashSet<string> _everMine = new();
     private IEnumerable<DeathMatchDto> ToAccept => _dms.Where(d => d.Status == "open" && MineIds.Contains(d.DefenderHeroId));
     private IEnumerable<DeathMatchDto> ToSettle => _dms.Where(d => d.Status == "accepted" && MineIds.Contains(d.ChallengerHeroId));
     private IEnumerable<DeathMatchDto> Waiting => _dms.Where(d => d.Status == "open" && MineIds.Contains(d.ChallengerHeroId));
+
+    /// <summary>
+    /// Accepted, with me as the DEFENDER: staked to the death and waiting on the challenger, who is the
+    /// only one who may settle. ToAccept is open+defender and ToSettle is accepted+CHALLENGER, so the
+    /// instant a defender accepted, their death-match belonged to no bucket and disappeared — accepting a
+    /// challenge to the death looked like it had done nothing at all.
+    /// </summary>
+    private IEnumerable<DeathMatchDto> AwaitingOpponent =>
+        _dms.Where(d => d.Status == "accepted" && MineIds.Contains(d.DefenderHeroId));
+
+    /// <summary>
+    /// Death-matches that already happened. The server's vocabulary is exactly open | accepted | resolved,
+    /// and NOTHING rendered the last of those: a settled death-match dropped out of every bucket, so the
+    /// page went back to reading "No open death-matches" — over a hero that had been burned on-chain,
+    /// permanently. The loser never even runs Settle, so for them this was the only place the outcome could
+    /// ever have appeared, and it never did.
+    ///
+    /// <para>Matched against <see cref="_everMine"/>, not the live roster. The LOSER's hero is burned, so it
+    /// is gone from <c>MineIds</c> the moment the thing worth telling them about happens — matching on the
+    /// current roster would have shown this row to the winner and to nobody else.</para>
+    ///
+    /// <para>KNOWN LIMIT, stated rather than papered over: <c>_everMine</c> only spans this page's lifetime.
+    /// A player who loses a hero and comes back in a new tab still cannot see that death-match here,
+    /// because <c>DeathMatchDto</c> carries hero ids and no owner — attributing a burned hero to its former
+    /// owner needs a field the server does not publish. Their own settle panel and /account still show it.</para>
+    /// </summary>
+    private IEnumerable<DeathMatchDto> History =>
+        _dms.Where(d => d.Status == "resolved"
+                     && (_everMine.Contains(d.ChallengerHeroId) || _everMine.Contains(d.DefenderHeroId)));
+
+    /// <summary>Did MY hero win it? Null when the row names neither side as a winner yet.</summary>
+    private bool? IWon(DeathMatchDto d) =>
+        d.WinnerHeroId is not { } w ? null : MineIds.Contains(w);
 
     protected override async Task OnInitializedAsync()
     {
@@ -258,7 +338,7 @@ else
         try
         {
             _mine = await Api.Heroes.MineAsync();
-            foreach (var h in _mine) _names[h.Id] = h.Name;
+            foreach (var h in _mine) { _names[h.Id] = h.Name; _everMine.Add(h.Id); }
             await LoadDeathMatchesAsync();
             _heroesLoaded = true;
         }
@@ -324,6 +404,10 @@ else
 
     async Task RunAction(string initial, Func<Task> action)
     {
+        // Claimed BEFORE the first await. disabled="@_busy" only takes effect at the next render, which
+        // happens at that first await — so a second click dispatched in the window between it ran the
+        // whole action again. On this page that means staking a second hero to the death.
+        if (_busy) return;
         _busy = true;
         _error = null;
         _status = initial;

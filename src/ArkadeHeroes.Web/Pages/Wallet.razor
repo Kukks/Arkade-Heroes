@@ -90,6 +90,13 @@ else if (_view == View.ShowMnemonic)
 }
 else // Ready
 {
+    @* _error used to render ONLY in the no-wallet view, so a failure on this screen — a refresh that
+       couldn't reach the node, a sign-out that didn't complete — had nowhere to appear at all. *@
+    @if (_error is not null)
+    {
+        <div class="card err" style="margin-bottom:1.1rem"><span class="dot bad"></span> @_error</div>
+    }
+
     <div class="wallet-grid">
         <div class="card">
             <h3>Receive address</h3>
@@ -546,6 +553,7 @@ else // Ready
     {
         if (_activeId is null) return;
         _busy = true;
+        _error = null;
         try
         {
             _address ??= await WalletSvc.GetReceiveAddressAsync(_activeId);
@@ -564,6 +572,15 @@ else // Ready
                 await Session.ResumeAsync();
             }
             await RefreshMineAsync();
+        }
+        catch (Exception ex)
+        {
+            // Every call above needs the Arkade node or the game server. Unhandled, a single unreachable
+            // node escaped OnInitializedAsync and put Blazor's "A glitch in the arcade" bar over the whole
+            // wallet — the one page a player goes to when things are already going wrong, and the one that
+            // can still usefully show them their address and their recovery phrase without a node.
+            // MainLayout was hardened against exactly this; this page was not.
+            _error = $"Couldn't refresh from the network: {ex.Message}";
         }
         finally
         {
@@ -636,13 +653,29 @@ else // Ready
 
     async Task RevealAsync()
     {
-        if (_activeId is null) return;
-        var mnemonic = await WalletSvc.GetMnemonicAsync(_activeId);
-        if (mnemonic is not null)
+        // Every exit says something. A null mnemonic (a wallet with no HD secret) and a throw both used to
+        // leave the button doing nothing visible, which is indistinguishable from a broken button — the
+        // same failure this file already names and fixes for "Save phrase to this browser".
+        if (_activeId is null)
         {
+            _error = "No wallet is loaded in this tab.";
+            return;
+        }
+        try
+        {
+            if (await WalletSvc.GetMnemonicAsync(_activeId) is not { } mnemonic)
+            {
+                _error = "This wallet has no recovery phrase stored in this browser, so there's nothing to reveal.";
+                return;
+            }
+            _error = null;
             _freshWords = mnemonic.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             _revealed = true;
             State.SetBackupPending(false); // they've seen their phrase — clear the shell nudge
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't read your recovery phrase: {ex.Message}";
         }
     }
 

@@ -56,9 +56,11 @@
                 @* Fail CLOSED. A player cannot agree to a document they were never shown, so if the terms
                    are still loading — or a build shipped without them — Accept stays disabled rather than
                    recording an acceptance that is evidence of nothing. *@
+                @* No longer claims to know WHY. The document distinguishes "not bundled" (report it) from
+                   "the fetch fell over" (retry, and it offers the button), and this line used to assert the
+                   first for both — sending players to file a packaging bug over a dropped request. *@
                 <p class="muted terms-blocked">
-                    You can't accept the terms until they're on screen. If this build is missing the
-                    document, that's a packaging fault — report it rather than working around it.
+                    You can't accept the terms until they're on screen — see the message above.
                 </p>
             }
 
@@ -100,8 +102,18 @@
         StateHasChanged();
     }
 
-    /// <summary>A signed-in player whose SERVER record predates the current terms — the document changed.</summary>
-    bool IsReprompt => State.IsSignedIn && Acceptance.MustAccept(State.Player);
+    /// <summary>
+    /// A signed-in player whose SERVER record predates the current terms — the document changed.
+    ///
+    /// <para><c>AcceptedThisSession</c> ends it, exactly as <c>RequestAcceptanceAsync</c> already does.
+    /// <c>MustAccept</c> answers from the player row alone, and that row is a CACHED copy: the moment the
+    /// read-back of it fails, a durable acceptance the server took is invisible here, and this modal — no ✕,
+    /// no click-outside, layered over every route — never comes down. The flag is only set after the
+    /// server write returned, so trusting it can't suppress a question that is genuinely still open.</para>
+    /// </summary>
+    bool IsReprompt => State.IsSignedIn
+                    && !Acceptance.AcceptedThisSession
+                    && Acceptance.MustAccept(State.Player);
 
     // Signed-out visitors are NOT prompted just for browsing: entry is gated at Play, which opens the prompt
     // explicitly. Only a signed-in player with a stale record is asked unprompted, because they can act.
@@ -131,7 +143,12 @@
             if (State.IsSignedIn)
             {
                 await Api.Players.AcceptTermsAsync(version);
-                State.SetPlayer(await Api.Players.MeAsync());   // refresh so the gate reads the new record
+                // The COMMIT is the line above; this is only a read-back so the gate sees the new record.
+                // It used to sit in the same try, so a failure here reported "Couldn't record your
+                // acceptance" over an acceptance that HAD been recorded, and — since the modal has no ✕ and
+                // covers every route — left the player locked out over a durable write that succeeded.
+                try { State.SetPlayer(await Api.Players.MeAsync()); }
+                catch { /* the record landed; a stale local copy is not a reason to re-ask */ }
             }
 
             Acceptance.Accepted(version);

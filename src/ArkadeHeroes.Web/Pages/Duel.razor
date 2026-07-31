@@ -34,7 +34,9 @@ else if (!_heroesLoaded)
 }
 else if (_mine.Count == 0)
 {
-    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+    @* ?mine=1: the roster opens on the ALL tab and the recruit card only renders under Mine, so a bare
+       link landed a hero-less player on a grid of other people's creatures with nothing to press. *@
+    <div class="card muted">You need a hero first — recruit one on the <a href="heroes?mine=1">Heroes</a> page.</div>
 }
 else
 {
@@ -46,7 +48,9 @@ else
            below is the honest test (Favor == underdog AND XpIfYouLose == 0); the prose now defers to it
            instead of stating the strong version of what it means. *@
         <p class="muted" style="margin-top:0">
-            Both of you stake the wager into your own covenant escrow and pay a small match fee. The
+            @* "a small match fee" — the page is about to state the number, and it is not the page's place
+               to call someone else's money small. *@
+            Both of you stake the wager into your own covenant escrow and pay a match fee. The
             deterministic duel is resolved by the challenger; the emulator sweeps the whole pot to the
             winner. XP is a conserved transfer: beating a higher hero takes a lot off it, and beating a
             much weaker one takes nothing. Past a wide enough gap losing costs the underdog no XP at
@@ -100,6 +104,17 @@ else
             <input type="number" min="1" step="100" @bind="_wager" />
         </label>
 
+        @* "A small match fee" was the whole disclosure. It is real money, it scales with your hero's level,
+           and both sides pay it — so it gets a number. *@
+        @if (MatchFee is { } fee)
+        {
+            <p class="muted" style="margin:.5rem 0 0;font-size:.85rem">
+                Plus a <b>@fee.ToString("N0") sat</b> match fee, scaled to your hero's level — so a challenge
+                costs you <b>@((_wager + fee).ToString("N0")) sats</b> up front. Your opponent pays the same
+                against their own level when they accept.
+            </p>
+        }
+
         <button class="btn primary" style="margin-top:1rem" @onclick="DoChallenge"
                 disabled="@(_busy || string.IsNullOrEmpty(_myHeroId) || string.IsNullOrEmpty(_oppId) || _wager < 1)">
             @(_busy ? "Working…" : "Challenge")
@@ -120,7 +135,22 @@ else
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
 
-    @if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any() && !AwaitingOpponent.Any())
+    @* "We couldn't read your matches" must not render as "you have none": the reload path can recover the
+       roster while leaving the match list empty, and this page then states the absence of a duel you are
+       staked into as fact. *@
+    @if (!_matchesLoaded)
+    {
+        <div class="card">
+            <div class="status-line"><span class="dot bad"></span> Couldn't read your matches.</div>
+            <p class="muted" style="margin:.6rem 0 0">
+                This is not the same as having none — any duel you have opened or accepted is still live.
+                @_matchesError
+            </p>
+            <button class="btn primary sm" style="margin-top:.7rem" @onclick="Reload" disabled="@_busy">Try again</button>
+        </div>
+    }
+    else if (!ToAccept.Any() && !ToResolve.Any() && !Waiting.Any() && !AwaitingOpponent.Any()
+         && !History.Any() && !Expired.Any())
     {
         <div class="card muted">No open matches. Challenge a rival above — or wait for someone to challenge you.</div>
     }
@@ -166,6 +196,24 @@ else
                         <span>Your <b>@Name(m.DefenderHeroId)</b> vs <b>@Name(m.ChallengerHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
                         <span class="spacer"></span>
                         <span class="chip">accepted</span>
+                    </div>
+                }
+            </div>
+        }
+
+        @* Abandoned. Says where the money went and points at the page that can get it back — an expired
+           match used to render nowhere, which made a stranded stake invisible from the page that took it. *@
+        @if (Expired.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Abandoned — the match never completed</div>
+                @foreach (var m in Expired)
+                {
+                    <div class="match-row muted">
+                        <span><b>@Name(m.ChallengerHeroId)</b> vs <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span class="spacer"></span>
+                        <span class="chip bad">expired</span>
+                        <a class="btn ghost sm" href="reclaim">Recover your stake ↗</a>
                     </div>
                 }
             </div>
@@ -259,8 +307,22 @@ else
     private bool _loadingOpps;
     private bool _busy;
     private bool _heroesLoaded;
+
+    /// <summary>The match list read succeeded. Distinct from "you have no matches": a matches read that
+    /// threw used to leave this page confidently announcing "No open matches" over a staked, live duel —
+    /// the roster retry below only re-reads HEROES, so nothing else would ever have said otherwise.</summary>
+    private bool _matchesLoaded;
     private string? _status;
     private string? _error;
+    private string? _matchesError;
+    private GameConfigDto? _config;
+
+    /// <summary>What a challenge with the picked hero costs on top of the wager. Null until a hero is
+    /// chosen and the config is read — an unknown price is stated as unknown, never as zero.</summary>
+    private long? MatchFee => _mine.FirstOrDefault(h => h.Id == _myHeroId) is { } h
+        ? Pricing.MatchFee(_config, h.Level)
+        : null;
+
     private DuelOutcome? _duel;
     private string? _resolvedMatchId;   // the just-resolved match, for the shareable replay link
 
@@ -285,6 +347,20 @@ else
         _matches.Where(m => m.Status == "accepted" && MineIds.Contains(m.DefenderHeroId));
 
     /// <summary>
+    /// Matches the server has given up on. Every match this page opens is a COVENANT match, and
+    /// <c>ReconcileAbandonedMatchesAsync</c> marks one "expired" once its refund window passes with a stake
+    /// missing — so this is a real, reachable status with no <c>Result</c>.
+    ///
+    /// <para>It matched none of the four live buckets and none of History (which keys off Result), so it
+    /// fell through the page entirely: a match you had staked into simply stopped existing here, while the
+    /// sats sat in an escrow only /reclaim knows about. Exactly the fall-through that broke duels once
+    /// before, one status further along.</para>
+    /// </summary>
+    private IEnumerable<MatchDto> Expired =>
+        _matches.Where(m => m.Status == "expired"
+                         && (MineIds.Contains(m.ChallengerHeroId) || MineIds.Contains(m.DefenderHeroId)));
+
+    /// <summary>
     /// Duels of mine that already happened. Nothing recorded what a player had been through — a resolved
     /// match dropped out of every bucket and the page went back to looking like nothing had occurred, even
     /// though sats had moved and the replay was on the server the whole time.
@@ -292,8 +368,12 @@ else
     /// <para>Read from the same list the live buckets use, so no new endpoint and nothing to keep in sync.
     /// The server already returns matches newest-first and capped.</para>
     /// </summary>
+    /// <para>Matched on the STATUS as well as the presence of a result. Keying off Result alone left the
+    /// page's bucket set silently coupled to the two moving together on the server: a match marked
+    /// "resolved" whose result had not been attached would have matched no bucket at all, which is the
+    /// failure mode this whole set of buckets exists to avoid.</para>
     private IEnumerable<MatchDto> History =>
-        _matches.Where(m => m.Result is not null
+        _matches.Where(m => (m.Result is not null || m.Status == "resolved")
                          && (MineIds.Contains(m.ChallengerHeroId) || MineIds.Contains(m.DefenderHeroId)));
 
     /// <summary>Did MY hero win it? Null when the result names neither of mine.</summary>
@@ -326,11 +406,16 @@ else
             await RetryLoadAsync();
         }
         finally { _loading = false; }
+
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* price unknown — the fee line stays off rather than quoting a zero */ }
     }
 
     async Task LoadMatchesAsync()
     {
         _matches = await Api.Matches.ListAsync();
+        _matchesLoaded = true;
+        _matchesError = null;
         // Resolve the opponent heroes' names for display (my own are already cached from the roster).
         var mineIds = _mine.Select(h => h.Id).ToHashSet();
         var needed = _matches
@@ -377,6 +462,10 @@ else
     // Shared action wrapper: busy-gate, run, reload the roster + matches, surface errors.
     async Task RunAction(string initial, Func<Task> action)
     {
+        // Claimed BEFORE the first await. disabled="@_busy" only takes effect at the next render, which
+        // happens at that first await — so a second click dispatched in the window between it ran the
+        // whole action again. Challenge and Accept both stake real sats and are not idempotent.
+        if (_busy) return;
         _busy = true;
         _error = null;
         _status = initial;
@@ -436,6 +525,11 @@ else
             {
                 _mine = await Api.Heroes.MineAsync();
                 _heroesLoaded = true;
+                // The matches too. This retried only the ROSTER, so a failure whose cause was the MATCH
+                // read left _matches empty behind a page that had recovered — and the arena then said
+                // "No open matches" over a staked duel. _matchesLoaded is what keeps that honest.
+                try { await LoadMatchesAsync(); }
+                catch (Exception mex) { _matchesError = mex.Message; }
                 StateHasChanged();
                 return;
             }

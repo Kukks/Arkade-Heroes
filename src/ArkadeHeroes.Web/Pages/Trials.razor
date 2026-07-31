@@ -38,7 +38,8 @@ else if (!_heroesLoaded)
 }
 else if (_mine.Count == 0)
 {
-    <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+    @* ?mine=1: the roster opens on the ALL tab and the recruit card only renders under Mine. *@
+    <div class="card muted">You need a hero first — recruit one on the <a href="heroes?mine=1">Heroes</a> page.</div>
 }
 else
 {

@@ -19,9 +19,24 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading brackets…</div>
 }
+@* "You have no heroes" and "we never managed to read your roster" are different facts, and this branch
+   used to state the first while meaning either — hiding the host form, the open brackets AND the player's
+   own paid-into bracket behind a lie. _heroesLoaded was already declared and set; it was simply never
+   read. Same fix as /duel, /deathmatch, /gauntlet and /trials already carry. *@
+else if (!_heroesLoaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your account.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            This is not the same as owning no heroes — we simply couldn't look, so any bracket you have
+            entered is still live. @_loadError
+        </p>
+        <button class="btn primary sm" style="margin-top:.7rem" @onclick="Retry" disabled="@_loading">Try again</button>
+    </div>
+}
 else if (_mine.Count == 0)
 {
-    <div class="card muted">You need a hero to enter — claim your starters on the <a href="heroes">Heroes</a> page.</div>
+    <div class="card muted">You need a hero to enter — recruit one on the <a href="heroes?mine=1">Heroes</a> page.</div>
 }
 else
 {
@@ -29,7 +44,7 @@ else
         <h3 style="margin-top:0">Host a tournament</h3>
         <p class="muted" style="margin-top:0">
             Pick a hero, a buy-in, and a bracket size. Every buy-in funds the pot; once full, any entrant runs the
-            bracket and the champion + runner-up split it 70/30 (the house keeps a @_rakePct% rake).
+            bracket and the champion + runner-up split it 70/30@(_rakePct is { } rake ? $" (the house keeps a {rake}% rake)" : ", less the house rake").
         </p>
         <div class="sell-picks">
             <label>Hero
@@ -62,7 +77,7 @@ else
         <span class="spacer"></span>
         <button class="btn ghost sm" @onclick="Reload" disabled="@_busy">Refresh</button>
     </div>
-    @if (!Joinable.Any() && !Resolvable.Any() && !Waiting.Any())
+    @if (!Joinable.Any() && !Resolvable.Any() && !Waiting.Any() && !OthersFull.Any() && !Concluded.Any())
     {
         <div class="card muted">No open brackets — host one above.</div>
     }
@@ -90,6 +105,30 @@ else
                 <span>Your bracket is full · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Size entrants</span>
                 <span class="spacer"></span>
                 <button class="btn primary sm" @onclick="() => DoResolve(t.Id)" disabled="@_busy">Run bracket!</button>
+            </div></div>
+        }
+        @foreach (var t in OthersFull)
+        {
+            <div class="card"><div class="match-row muted">
+                <span>Bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · full (@t.Size entrants)</span>
+                <span class="spacer"></span>
+                <span class="chip">an entrant will run it</span>
+            </div></div>
+        }
+        @foreach (var t in Concluded)
+        {
+            <div class="card"><div class="match-row muted">
+                <span>Your bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Size entrants</span>
+                <span class="spacer"></span>
+                @if (t.Status == "refunded")
+                {
+                    <span class="chip">refunded — your buy-in was returned</span>
+                }
+                else
+                {
+                    <span class="chip">@(t.ChampionHeroId is not null ? $"champion {Name(t.ChampionHeroId)}" : "resolved")</span>
+                    <button class="btn ghost sm" @onclick="() => DoVerify(t.Id)" disabled="@_verifying">Verify</button>
+                }
             </div></div>
         }
     }
@@ -143,9 +182,13 @@ else
     private string _heroId = "";
     private long _buyIn = 1000;
     private int _size = 4;
-    private int _rakePct;
+
+    /// <summary>The house rake, or null when we couldn't read it. Nullable on purpose: an int defaulting to
+    /// 0 made the page state as fact that the house takes NOTHING out of a real-money pot whenever the
+    /// config read failed — a confident wrong price is worse than no price.</summary>
+    private int? _rakePct;
     private bool _loading = true, _busy, _heroesLoaded, _verifying;
-    private string? _status, _error;
+    private string? _status, _error, _loadError;
     private TournamentResolveResponse? _result;
     private (bool Ok, string Detail)? _verify;
 
@@ -158,6 +201,21 @@ else
     // twice) and Resolvable excludes it (not full yet), so without this it renders NOWHERE — you pay a
     // real-sats buy-in and your bracket vanishes, under a message inviting you to host another one.
     private IEnumerable<TournamentDto> Waiting => _tournaments.Where(t => t.Status == "open" && t.Entrants.Any(e => e.PlayerId == MyId));
+
+    /// <summary>
+    /// Brackets of mine that are OVER — the rest of the fall-through the comment above found one case of
+    /// and stopped. The server's statuses are open | full | resolved | refunded, so a bracket I paid into
+    /// dropped out of every bucket the moment it finished: a resolved one (my sats won or lost) and a
+    /// refunded one (my sats returned by an operator) both left the page saying "No open brackets — host
+    /// one above", with nothing anywhere recording that the first bracket had ever existed.
+    /// </summary>
+    private IEnumerable<TournamentDto> Concluded =>
+        _tournaments.Where(t => t.Status is "resolved" or "refunded" && t.Entrants.Any(e => e.PlayerId == MyId));
+
+    /// <summary>A full bracket I am NOT in. Not actionable — I can't join it — but listing it is what stops
+    /// "No open brackets" from being printed over a screenful of brackets that plainly exist.</summary>
+    private IEnumerable<TournamentDto> OthersFull =>
+        _tournaments.Where(t => t.Status == "full" && !t.Entrants.Any(e => e.PlayerId == MyId));
     private string Name(string? heroId) => heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "—";
 
     protected override async Task OnInitializedAsync()
@@ -175,11 +233,28 @@ else
             _mine = await Api.Heroes.MineAsync();
             _tournaments = await Api.Tournament.ListAsync();
             foreach (var h in await Api.Heroes.AllAsync()) _names[h.Id] = h.Name;
-            _rakePct = (await Api.Chain.InfoAsync()).Config?.TournamentRakePct ?? 0;
             _heroesLoaded = true;
+            _loadError = null;
         }
-        catch { /* token may still be settling; OnState retries once signed in */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed: OnState only re-runs on the NEXT wallet event, and a server hiccup
+            // produces none — so an already-signed-in player would sit forever on "you need a hero".
+            _loadError = ex.Message;
+        }
         finally { _loading = false; }
+
+        // Moved OUT of the block above. It used to be the last statement in that try, so a failure to read
+        // a display-only percentage also skipped _heroesLoaded and took the whole page down with it.
+        try { _rakePct = (await Api.Chain.InfoAsync()).Config?.TournamentRakePct; }
+        catch { /* rake unknown — the copy stops quoting a number rather than quoting zero */ }
+    }
+
+    /// <summary>Manual retry, because the automatic one depends on an event that may never fire.</summary>
+    async Task Retry()
+    {
+        _error = null;
+        await LoadAsync();
     }
 
     async Task DoOpen() => await RunAction(async () =>
@@ -206,6 +281,11 @@ else
 
     async Task RunAction(Func<Task> action)
     {
+        // Claimed BEFORE the first await. disabled="@_busy" only takes effect at the next render, which
+        // happens at that await — so a second click dispatched in the window between ran the whole action
+        // again, and DoOpen is not idempotent: it hosts a second bracket and pays a second real-sats
+        // buy-in. Home.razor and DailyCard already guard their spends this way; this one did not.
+        if (_busy) return;
         _busy = true; _error = null;
         try { await action(); _status = null; }
         catch (Exception ex) { _error = ex.Message; _status = null; }

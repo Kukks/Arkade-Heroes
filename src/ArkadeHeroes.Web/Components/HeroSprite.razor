@@ -32,22 +32,37 @@
     private static Task<IJSObjectReference>? _module;
     private string? _src;
 
+    /// <summary>Which genome+size <see cref="_src"/> currently holds art for.</summary>
+    private string? _srcKey;
+
     protected override async Task OnParametersSetAsync()
     {
         var hex = Hero?.GenomeHex ?? Genome ?? string.Empty;
         var key = $"{hex}:{Size}";
-        if (_cache.TryGetValue(key, out var cached)) { _src = cached; return; }
+        if (_cache.TryGetValue(key, out var cached)) { _src = cached; _srcKey = key; return; }
+
+        // Drop the old art BEFORE rendering the new hero. Blazor reuses a component instance when a list
+        // re-renders with different data (no @key on the roster/market grids), and _src was only ever
+        // assigned, never cleared — so a render that threw left the PREVIOUS hero's pixels under the new
+        // hero's name, level, rarity frame and alt text. On a page where you spend real sats on the
+        // creature in the picture, showing the wrong creature is not a cosmetic failure. Blank is honest.
+        if (_srcKey != key) { _src = null; _srcKey = key; }
+
         try
         {
-            _module ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/hero-render.js").AsTask();
-            var module = await _module;
+            // Never cache a FAULTED import. _module is static and was assigned with ??=, so one failed
+            // module load pinned a faulted task that every sprite in the application then awaited for the
+            // rest of the session — every portrait and every item icon blank, with no way back but a
+            // reload. Clearing it on failure means the next sprite simply tries again.
+            var module = await (_module ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/hero-render.js").AsTask());
             var src = await module.InvokeAsync<string>("renderHeroDataUrl", hex, Size, "menace");
             _cache[key] = src;
             _src = src;
         }
         catch
         {
-            // Render/module error → blank art rather than a broken grid.
+            // Render/module error → blank art rather than a broken grid, or the wrong grid.
+            if (_module is { IsFaulted: true }) _module = null;
         }
     }
 }

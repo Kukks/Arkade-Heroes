@@ -41,6 +41,9 @@ public class PageClaimTests
         ["achievements"] = () => 0,
         ["leaderboard"] = () => 0,
         ["reclaim"] = () => 0,
+        // The daily claim PAYS the player; opening the page costs nothing. (The server may pay 0 from a
+        // drained treasury, but that is a shortfall on a reward, not an entry cost.)
+        ["daily"] = () => 0,
 
         // A same-level match fee plus the dungeon's entry premium. THE regression this test exists for.
         ["gauntlet"] = () => Gauntlet.Fee(1),
@@ -72,7 +75,14 @@ public class PageClaimTests
                 Page("Play.razor"),
                 """new\("(?<name>[^"]+)",\s*"(?<href>[^"]+)",\s*"[^"]*",.*?,\s*(?<stake>Free|Sats|Gone)\)""",
                 RegexOptions.Singleline)
-            .Select(m => (m.Groups["name"].Value, m.Groups["href"].Value, m.Groups["stake"].Value))
+            // Priced by ROUTE, not by the exact link. A mode may point at a tab or a filter
+            // ("heroes?mine=1" — the roster tab that can actually recruit); the query selects a view of
+            // the same page and cannot change what entering it costs. Stripping it keeps the table keyed
+            // on the thing that has a price, and stops a link gaining a query from reading as an
+            // unpriced new mode.
+            .Select(m => (m.Groups["name"].Value,
+                          m.Groups["href"].Value.Split('?')[0],
+                          m.Groups["stake"].Value))
             .ToArray();
 
     [Fact]

@@ -19,9 +19,27 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
 }
+@* "You have fewer than two heroes" and "we never managed to read your roster" are different facts, and
+   this branch used to state the first while meaning either. _heroesLoaded was already declared and set;
+   it was simply never read. *@
+else if (!_heroesLoaded)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your roster.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            This is not the same as owning too few heroes — we simply couldn't look. @_loadError
+        </p>
+        <button class="btn primary sm" style="margin-top:.7rem" @onclick="Retry" disabled="@_loading">Try again</button>
+    </div>
+}
 else if (_mine.Count < 2)
 {
-    <div class="card muted">You need at least two heroes to fuse — claim your starters (or breed more) first.</div>
+    @* Both actions named here now LINK somewhere. This card used to name two things to go and do and
+       point at neither, which leaves a stuck player exactly as stuck. *@
+    <div class="card muted">
+        You need at least two heroes to fuse — <a href="heroes?mine=1">recruit one</a> or
+        <a href="breed">breed more</a> first.
+    </div>
 }
 else
 {
@@ -53,6 +71,18 @@ else
                 </select>
             </label>
         </div>
+        @* The price, stated before the burn. Nothing on this page named a number: the fee was first seen
+           inside the commit response, by which point both heroes were already escrowed. *@
+        @if (Fee is { } fee)
+        {
+            <p class="muted" style="margin:.8rem 0 0;font-size:.85rem">
+                Fusing costs <b>@fee.ToString("N0") sats</b>, deposited into the escrow with both heroes.
+                @if (Sacrifice is { } s)
+                {
+                    <text><b>@s.Name</b> is destroyed permanently — there is no undo.</text>
+                }
+            </p>
+        }
         <button class="btn primary" style="margin-top:1.1rem" @onclick="DoMerge"
                 disabled="@(_merging || string.IsNullOrEmpty(_baseId) || string.IsNullOrEmpty(_sacrificeId) || _baseId == _sacrificeId)">
             @(_merging ? "Fusing…" : "Fuse")
@@ -90,8 +120,19 @@ else
     private bool _heroesLoaded;
     private string? _status;
     private string? _error;
+    private string? _loadError;
     private HeroDto? _fused;
     private string? _pendingMergeId;   // set when a reveal times out — enables "Retry reveal"
+
+    /// <summary>The server's published fee, so the page can price an IRREVERSIBLE burn before the player
+    /// commits to it. It used to be learned only from the commit response — i.e. after the covenant was
+    /// already sealed around both heroes.</summary>
+    private GameConfigDto? _config;
+    private long? Fee => Pricing.MergeFee(_config);
+
+    /// <summary>The hero about to be burned, named at the point of commitment rather than left as a
+    /// dropdown selection the player has to re-read.</summary>
+    private HeroDto? Sacrifice => _mine.FirstOrDefault(h => h.Id == _sacrificeId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -107,9 +148,25 @@ else
         {
             _mine = await Api.Heroes.MineAsync();
             _heroesLoaded = true;
+            _loadError = null;
         }
-        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        catch (Exception ex)
+        {
+            // RECORDED, not swallowed. OnState only re-runs on the NEXT wallet event, and a server hiccup
+            // produces none — so a one-off failure looked exactly like owning one hero, forever.
+            _loadError = ex.Message;
+        }
         finally { _loading = false; }
+
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* price unknown — the page says so rather than quoting a zero */ }
+    }
+
+    /// <summary>Manual retry, because the automatic one depends on an event that may never fire.</summary>
+    async Task Retry()
+    {
+        _error = null;
+        await LoadAsync();
     }
 
     async Task DoMerge()
