@@ -624,6 +624,100 @@ public class HeroBidTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task OnAFeeFreeArena_ABidStillCannotBeZeroOrNegative()
+    {
+        // The sibling test above passes for the WRONG reason on a default arena: MarketplaceFeeFor refuses
+        // anything at or below the 1,000-sat marketplace fee, so a 0-sat bid is caught by the fee boundary
+        // rather than by a rule about bids. Turn the fee off — which an operator may legitimately do, and
+        // which both listing paths still guard against — and that boundary disappears entirely:
+        // MarketplaceFeeFor returns 0 without looking at the amount. A 0-sat bid would then be a real
+        // offer, and settling it would hand over the hero while `proceeds > 0` skipped the payout: a hero
+        // for nothing.
+        using var factory = _factory.WithWebHostBuilder(b => b.UseSetting("Game:OfferListingFeeSats", "0"));
+        var (alice, _) = await factory.RegisterAsync("Bid-FeeFree-A");
+        var (bob, _) = await factory.RegisterAsync("Bid-FeeFree-B");
+        await alice.ClaimStartersAsync();
+        var theirs = (await bob.ClaimStartersAsync())[0].Id;
+
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Bids.PlaceAsync(new PlaceBidRequest(theirs, 0)));
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Bids.PlaceAsync(new PlaceBidRequest(theirs, -10_000)));
+
+        // …and a real bid still works with the fee off, so the guard is about the AMOUNT, not the fee.
+        var ok = await alice.Bids.PlaceAsync(new PlaceBidRequest(theirs, 5_000));
+        Assert.Equal(0, ok.FeeSats);
+        Assert.Equal(5_000, ok.BidSats);
+    }
+
+    [Fact]
+    public async Task ConcurrentAcceptsOfTwoBidsOnOneHero_AcceptOnlyOne()
+    {
+        // The one-accepted-bid-per-hero rule reads state owned by OTHER bid ids, so the per-bid lock does
+        // not serialise it: two accepts on the same hero can both scan before either writes, and both
+        // become accepted. That is two funded claims on a thing there is one of — the second bidder pays
+        // for a hero that is already promised and has to wait out the window to get their sats back.
+        //
+        // SIX contenders rather than two, deliberately. With two the interleaving is easy to miss on a warm
+        // host (measured: reliably caught alone, missed inside a full class run), and a race test that only
+        // fires in isolation is a race test that rots. Six makes the overlap the common case.
+        using var factory = _factory.WithFreeStarters();
+        var (bob, _) = await factory.RegisterAsync("Bid-AcceptRace-Owner");
+        var theirs = (await bob.ClaimStartersAsync())[0].Id;
+
+        var bidIds = new List<string>();
+        for (var i = 0; i < 6; i++)
+        {
+            var (bidder, _) = await factory.RegisterAsync($"Bid-AcceptRace-{i}");
+            await bidder.ClaimStartersAsync();
+            bidIds.Add((await bidder.Bids.PlaceAsync(new PlaceBidRequest(theirs, 7_000 + i * 500))).BidId);
+        }
+
+        // All six accepts in flight at once — the owner hammering their own inbox.
+        var results = await Task.WhenAll(bidIds.Select(async id =>
+        {
+            try { return (await bob.Bids.AcceptAsync(id)).Bid.BidId; }
+            catch (ArkadeHeroesApiException) { return null; }
+        }));
+
+        Assert.Single(results, id => id is not null);
+        var live = await bob.Bids.ListAsync();
+        Assert.Single(live.Where(b => b.HeroId == theirs && b.Status == "accepted"));
+    }
+
+    [Fact]
+    public async Task AcceptSerialisesPerHero_NotMerelyPerBid()
+    {
+        // The deterministic companion to the race above. A racing test proves the gate is real but only
+        // when the interleaving actually happens — measured, the six-way race fires every time in isolation
+        // and not once inside a warm class run, which makes it a poor guard against the gate rotting out.
+        //
+        // This pins the same fact without depending on the scheduler: hold the per-HERO key from outside,
+        // and an accept must not be able to finish. Without that lock the accept only ever takes
+        // bid:{bidId}, which nothing here holds, so it sails straight through and this fails immediately.
+        using var factory = _factory.WithFreeStarters();
+        var (alice, _) = await factory.RegisterAsync("Bid-Serialise-A");
+        var (bob, _) = await factory.RegisterAsync("Bid-Serialise-B");
+        await alice.ClaimStartersAsync();
+        var theirs = (await bob.ClaimStartersAsync())[0].Id;
+        var store = factory.Services.GetRequiredService<GameStore>();
+
+        var bid = await alice.Bids.PlaceAsync(new PlaceBidRequest(theirs, 8_400));
+
+        var gate = await store.LockAsync($"hero-bid:{theirs}");
+        var accept = Task.Run(() => bob.Bids.AcceptAsync(bid.BidId));
+        // Long enough that a request which ISN'T waiting on this key would have finished several times
+        // over (the same accept completes in single-digit milliseconds unblocked).
+        var finishedEarly = await Task.WhenAny(accept, Task.Delay(1_500)) == accept;
+        Assert.False(finishedEarly, "accept must serialise on the HERO, not only on the bid");
+
+        // …and it completes the moment the key is free, so the wait above was the lock and not a hang.
+        gate.Dispose();
+        var accepted = await accept.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal("accepted", accepted.Bid.Status);
+    }
+
+    [Fact]
     public async Task ABidderCannotStackDuplicateBidsOnOneHero()
     {
         var (alice, _) = await _factory.RegisterAsync("Bid-Dup-A");

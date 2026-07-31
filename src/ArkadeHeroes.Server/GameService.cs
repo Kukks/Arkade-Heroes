@@ -3841,10 +3841,15 @@ public class GameService(
                                  && (b.BidderPlayerId == player.Id || b.OwnerPlayerId == player.Id)).ToList())
         {
             var name = store.Heroes.TryGetValue(bid.HeroId, out var h) ? h.Name : "a hero";
+            // The countdown is spelled out as a SERVER-clock window in the summary, because the page judges
+            // every other row against the chain's median-time-past — which lags wall-clock time, and would
+            // otherwise print a wait for a bid whose window has already opened. Nothing here can cause an
+            // early spend (the endpoint re-checks against its own clock); the line just has to be honest
+            // about which clock it is counting down.
             items.Add(new Shared.ReclaimableDto("bid", bid.Id,
                 bid.BidderPlayerId == player.Id
-                    ? $"An accepted bid on {name} — your {bid.BidSats} sats are held against a hero that hasn't arrived."
-                    : $"An accepted bid on {name} — unwind it to free the hero if the bidder has gone quiet.",
+                    ? $"An accepted bid on {name} — your {bid.BidSats} sats are held against a hero that hasn't arrived. Unwinds on the arena's own clock, not the chain's."
+                    : $"An accepted bid on {name} — unwind it to free the hero if the bidder has gone quiet. Runs on the arena's own clock, not the chain's.",
                 bid.ReclaimAfterUnixSeconds));
         }
 
@@ -4003,6 +4008,11 @@ public class GameService(
         // payment to yourself through a treasury that takes a cut of it.
         if (hero.OwnerId == player.Id)
             throw new GameRuleException("You already own this hero.");
+        // Checked HERE and not left to MarketplaceFeeFor below, which returns 0 without looking at the
+        // amount whenever the marketplace fee is switched off — so on a fee-free arena a 0-sat or negative
+        // bid would sail through, and settling one would transfer the hero while the `proceeds > 0` payout
+        // branch was skipped: a hero for nothing. Both listing paths guard the same way, for the same reason.
+        if (bidSats <= 0) throw new GameRuleException("A bid must be a positive number of sats.");
         // Priced through the SAME knob a listing's ask is, and refused on the same boundary — an amount at
         // or below the fee would net the owner nothing or less, and no honest sale looks like that.
         var fee = MarketplaceFeeFor(bidSats, hero.Name);
@@ -4050,6 +4060,12 @@ public class GameService(
         RequireAcceptedTerms(player);
         if (!store.HeroBids.TryGetValue(bidId, out var bid))
             throw new GameRuleException($"Unknown bid '{bidId}'.");
+        // Per-HERO gate, taken FIRST. The one-accepted-bid-per-hero rule below reads state owned by OTHER
+        // bid ids, so a per-bid lock cannot serialise it: two accepts of two different bids on one hero
+        // would both scan before either wrote, and both would become accepted — two funded claims on a
+        // thing there is one of. Accept is the only path that takes both locks, and always in this order,
+        // so no other flow can be on the other side of a cycle.
+        using var heroGate = await store.LockAsync($"hero-bid:{bid.HeroId}", ct);
         // Per-bid gate: the accepted-check → invoice → accepted-set must be one atomic step, or two
         // concurrent accepts of one bid bill the bidder twice. The SAME key settle and refund take, so an
         // accept can never interleave with the settle it authorises.

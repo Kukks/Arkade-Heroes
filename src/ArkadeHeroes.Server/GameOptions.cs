@@ -96,7 +96,7 @@ public class GameOptions
     /// bid cost the bidder nothing — and "free" plus "unbounded" is a spam surface: one account could paper
     /// every hero in the arena with bids it never intends to fund, and every owner's inbox with noise. This
     /// is the counterweight. It bounds nothing else: a bid that is settled, refunded, declined or withdrawn
-    /// stops counting immediately.</summary>
+    /// stops counting immediately. 0 (or any non-positive value) disables the cap entirely.</summary>
     public int MaxOpenBidsPerPlayer { get; set; } = 20;
 
     /// <summary>Faucet governor reserve floor: the daily faucet clamps its payout to (treasury balance − this),
