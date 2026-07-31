@@ -17,6 +17,31 @@ public class ContentPackVersionTests
 {
     private static ContentPack Pack => ContentPack.Default;
 
+    /// <summary>
+    /// THIS TYPE MUST HAVE NO STATIC CONSTRUCTOR, because <see cref="ContentPack"/>'s own static
+    /// constructor calls into it and a cycle between the two is unresolvable.
+    ///
+    /// The cycle: <c>ContentPack..cctor</c> → <c>ContentPackLoader.LoadEmbedded</c> → <c>Parse</c> →
+    /// <c>ContentValidation.Validate</c> → <c>ContentValidation.Seal</c> → <c>ItemCanon</c>, which is a
+    /// static method ON THIS TYPE. If reaching it runs a static constructor here, that constructor reads
+    /// <c>ContentPack.Default</c> — whose initializer is the one still running — gets NULL, and dies with a
+    /// NullReferenceException wrapped in a TypeInitializationException that then poisons every type that
+    /// touches the content pack, <c>Gauntlet</c> and <c>Trials</c> among them.
+    ///
+    /// It is asserted STRUCTURALLY, not by running the cycle, because whether the cycle actually fires is a
+    /// property of the RUNTIME rather than of the code. A static field initializer with no explicit
+    /// constructor compiles to a <c>beforefieldinit</c> type, and beforefieldinit only promises the
+    /// initializer runs before the first static FIELD access — CoreCLR defers it past a static method call,
+    /// Mono (which is what Blazor WebAssembly runs) does not. So on this test host the cycle is invisible
+    /// and in the browser it is fatal, which is exactly how it shipped. No test running on CoreCLR can
+    /// catch it by executing it; the shape is what has to be pinned.
+    /// </summary>
+    [Fact]
+    public void TheVersionTypeHasNoStaticConstructorToCycleWithTheContentPack()
+    {
+        Assert.Null(typeof(ContentPackVersion).TypeInitializer);
+    }
+
     [Fact]
     public void Compute_IsDeterministicAndPinnedToDefault()
     {
