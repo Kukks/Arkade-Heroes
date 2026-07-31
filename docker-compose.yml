@@ -85,7 +85,9 @@ services:
       # ── Durability ────────────────────────────────────────────────────────
       # SQLite file holding state a restart must not lose: players, the hero roster,
       # paid-but-unclaimed purchases, treasury flows. Default (app): UNSET = no persistence
-      # at all, everything in memory, gone on restart. Set here, on the named volume above.
+      # at all, everything in memory, gone on restart — which is why the IMAGE defaults it to
+      # this same path, so a platform that deploys the image without this file still persists.
+      # Repeated here regardless: this is where an operator looks, next to the volume it needs.
       Game__StateDbPath: /data/game.db
       # How often DIRTY hero progression (level/XP, equipment, cooldowns, breed count) is
       # flushed. Default: 00:00:15. Identity events — mint, burn, transfer, rename — persist

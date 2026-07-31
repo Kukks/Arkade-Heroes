@@ -103,9 +103,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         var (alice, _) = await RegisterAsync("Alice", aliceWallet);
         var (bob, bobPlayer) = await RegisterAsync("Bob", bobWallet);
 
-        // ── Starters: minted by the treasury straight into player wallets ─
-        var aliceHeroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
-        var bobHeroes = (await bob.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        // ── Starters: BOUGHT from the treasury, minted straight into player wallets ─
+        // A recruit mints one hero, so Alice — who breeds below — buys the pair one purchase at a time.
+        var aliceHeroes = await alice.RecruitAsync(aliceWallet, 2);
+        var bobHeroes = await bob.RecruitAsync(bobWallet);
         Assert.Equal(2, aliceHeroes.Count);
 
         // The hero assets are IN Alice's own wallet — she truly holds them.

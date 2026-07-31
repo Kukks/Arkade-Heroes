@@ -91,8 +91,25 @@ if (!string.IsNullOrWhiteSpace(stateDbPath))
     // schema changes on an existing file, so a shipped entity (e.g. Heroes) would be missing in production.
     await app.Services.GetRequiredService<IDbContextFactory<GameStateDbContext>>()
         .CreateDbContext().Database.MigrateAsync();
-    await app.Services.GetRequiredService<IGameStatePersistence>()
-        .LoadIntoAsync(app.Services.GetRequiredService<GameStore>());
+    var rehydrated = app.Services.GetRequiredService<GameStore>();
+    await app.Services.GetRequiredService<IGameStatePersistence>().LoadIntoAsync(rehydrated);
+    app.Logger.LogInformation(
+        "State durability ENABLED at {StateDbPath}: rehydrated {Heroes} heroes, {Players} players, {Offers} offers.",
+        stateDbPath, rehydrated.Heroes.Count, rehydrated.Players.Count, rehydrated.Offers.Count);
+}
+else
+{
+    // Said at boot, loudly, because the alternative is finding out from a player. Durability is opt-in, and
+    // an operator who never sets the key gets a server that looks entirely healthy — it boots, it serves, it
+    // passes the healthcheck — right up until the first restart takes the whole roster with it. The heroes
+    // are on-chain and survive; it is the game's only record of WHOSE they are that does not, which makes
+    // them permanently invisible rather than merely misplaced. Same shape as the admin-token notice below:
+    // name the key, say what turns it on.
+    app.Logger.LogWarning(
+        "State durability DISABLED: no Game:StateDbPath configured, so heroes, offers and stud proposals "
+        + "live only in this process's memory and a restart destroys them — the on-chain assets survive but "
+        + "the game can no longer see who owns them. Set Game__StateDbPath to a file on a PERSISTENT volume "
+        + "(the container defaults it to /data/game.db) to keep them.");
 }
 
 app.UseCors();

@@ -118,4 +118,56 @@ public class StarterClaimFeeTests(WebApplicationFactory<Program> factory) : ICla
 
         Assert.Equal(quote.HeroCount, (await alice.Heroes.ClaimStartersAsync()).Heroes.Count);
     }
+
+    /// <summary>
+    /// The E2E suite must reach a starter hero through the helper that PAYS for it, and nowhere else.
+    ///
+    /// <para>This is the guard for how the claim fee actually broke things. When the claim started costing
+    /// sats, the unit suite's helper was migrated to quote → pay → claim and the E2E suite's was not — two
+    /// suites with parallel helpers, one of them updated. Nothing failed, because E2E runs only nightly and
+    /// on manual dispatch: the contract change landed green and the gate stayed red for 31 commits before
+    /// anyone dispatched it.</para>
+    ///
+    /// <para>So the check lives HERE, in the suite that runs on every PR, and reads the other suite's source
+    /// rather than its behaviour — that is the only way one assembly can hold the other to this without
+    /// referencing it, and it is enough: a test that calls the endpoint directly cannot have paid, because
+    /// paying in NArk mode means moving real sats from a real wallet, which is precisely what the helper is
+    /// for. A future change to the claim contract now breaks a PR-time test instead of a nightly one.</para>
+    /// </summary>
+    [Fact]
+    public void TheE2ESuite_BuysItsStartersThroughThePayingHelper_AndNeverCallsTheEndpointDirectly()
+    {
+        var e2e = Path.Combine(FindRepoRoot(), "tests", "ArkadeHeroes.Tests.E2E");
+        const string helper = "StarterPurchaseHelpers.cs";
+
+        // The helper itself walks the full sequence — quote, pay from the wallet, then claim.
+        var helperSource = File.ReadAllText(Path.Combine(e2e, helper));
+        var quote = helperSource.IndexOf("RequestStartersAsync", StringComparison.Ordinal);
+        var pay = helperSource.IndexOf("SendAsync", StringComparison.Ordinal);
+        var claim = helperSource.IndexOf("ClaimStartersAsync", StringComparison.Ordinal);
+        Assert.True(quote >= 0 && pay > quote && claim > pay,
+            $"{helper} must quote, then pay from the player's wallet, then claim — in that order.");
+
+        // And every other E2E file goes through it. A direct call is a test claiming for free again.
+        var offenders = Directory.EnumerateFiles(e2e, "*.cs", SearchOption.AllDirectories)
+            .Where(f => Path.GetFileName(f) != helper)
+            .Where(f => File.ReadAllText(f).Contains("Heroes.ClaimStartersAsync(", StringComparison.Ordinal))
+            .Select(f => Path.GetFileName(f))
+            .ToList();
+        Assert.True(offenders.Count == 0,
+            $"E2E tests must buy starters via {helper} (RecruitAsync), not call the claim endpoint directly — "
+            + $"starters cost sats and there is no dev pay-invoice facade in NArk mode. Offenders: "
+            + string.Join(", ", offenders));
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir, "ArkadeHeroes.slnx"))) return dir;
+            dir = Path.GetDirectoryName(dir);
+        }
+        throw new InvalidOperationException($"Could not locate ArkadeHeroes.slnx above {AppContext.BaseDirectory}");
+    }
 }

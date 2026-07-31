@@ -3,6 +3,7 @@ using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ArkadeHeroes.Tests;
 
@@ -470,5 +471,120 @@ public class StateDurabilityTests
         var persistence = factory.Services.GetRequiredService<ArkadeHeroes.Server.Persistence.IGameStatePersistence>();
         Assert.IsType<ArkadeHeroes.Server.Persistence.NullGameStatePersistence>(persistence);
         Assert.True(factory.Services.GetRequiredService<GameStore>().ItemPurchases.ContainsKey(bought.Invoice.InvoiceId));
+    }
+
+    /// <summary>
+    /// A server running without durability must SAY so, at boot, at warning.
+    ///
+    /// <para>The opt-in default is right for <c>dotnet run</c> and catastrophic in production, and the two
+    /// are indistinguishable from the outside: the server boots, serves, and passes its healthcheck while
+    /// writing nothing, so the first anyone learns of it is a restart taking the whole roster. The heroes
+    /// themselves are on-chain and survive — it is the only record of whose they are that does not, which
+    /// makes them permanently invisible rather than merely misplaced.</para>
+    ///
+    /// <para>So the absence is loud, and — the other half, or the warning becomes noise nobody reads — a
+    /// server that IS configured says nothing of the kind.</para>
+    /// </summary>
+    [Fact]
+    public async Task WithNoStatePathConfigured_TheServerWarnsAtBoot_AndWithOneItDoesNot()
+    {
+        var silent = new CapturingLoggerProvider();
+        using (var volatileHost = new WebApplicationFactory<Program>().WithWebHostBuilder(
+            b => b.ConfigureLogging(l => l.AddProvider(silent).SetMinimumLevel(LogLevel.Warning))))
+        {
+            await volatileHost.RegisterAsync("Warned-Player");   // forces the host to actually boot
+        }
+
+        var warning = Assert.Single(silent.Warnings, w => w.Contains("State durability DISABLED"));
+        // Names the key that fixes it, and what is at stake — a warning that only says "disabled" leaves
+        // the operator to guess both.
+        Assert.Contains("Game__StateDbPath", warning);
+        Assert.Contains("restart destroys them", warning);
+
+        var quiet = new CapturingLoggerProvider();
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-durability-warn-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var durable = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            {
+                b.UseSetting("Game:StateDbPath", dbPath);
+                b.ConfigureLogging(l => l.AddProvider(quiet).SetMinimumLevel(LogLevel.Warning));
+            }))
+            {
+                await durable.RegisterAsync("Durable-Player");
+            }
+            Assert.DoesNotContain(quiet.Warnings, w => w.Contains("State durability DISABLED"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// The shipped IMAGE turns durability on by itself.
+    ///
+    /// <para>Every test above hands the server a state path, so none of them can notice a DEPLOYMENT that
+    /// forgets one — and that is the failure that actually happened: the compose file sets the key, but a
+    /// platform that deploys the published image directly never reads that file, and the app's own default
+    /// is no persistence at all. Defaulting it in the Dockerfile is what makes "deployed" mean "durable"
+    /// however the image is launched; this is the test that keeps it there.</para>
+    ///
+    /// <para>The path must sit under the <c>/data</c> mount point, since a database written anywhere else
+    /// in the image lives in the container's writable layer and dies with the container.</para>
+    /// </summary>
+    [Fact]
+    public void TheShippedImage_DefaultsTheStateDatabaseOntoItsVolume()
+    {
+        var root = FindRepoRoot();
+        var dockerfile = File.ReadAllText(Path.Combine(root, "src", "ArkadeHeroes.Server", "Dockerfile"));
+
+        var env = System.Text.RegularExpressions.Regex.Match(
+            dockerfile, @"^ENV\s+Game__StateDbPath=(?<path>\S+)\s*$",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+        Assert.True(env.Success,
+            "the server image must default Game__StateDbPath — without it a deployment that does not use "
+            + "docker-compose.yml persists nothing, and says nothing about it either.");
+        Assert.StartsWith("/data/", env.Groups["path"].Value);
+        Assert.Contains("VOLUME [\"/data\"]", dockerfile);
+
+        // And compose still mounts a NAMED volume there. The image's own VOLUME is anonymous: it survives a
+        // restart but is orphaned when the container is recreated, which is exactly what a redeploy does.
+        var compose = File.ReadAllText(Path.Combine(root, "docker-compose.yml"));
+        Assert.Contains("- arkade-state:/data", compose);
+        Assert.Contains("Game__StateDbPath: /data/", compose);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir, "ArkadeHeroes.slnx"))) return dir;
+            dir = Path.GetDirectoryName(dir);
+        }
+        throw new InvalidOperationException($"Could not locate ArkadeHeroes.slnx above {AppContext.BaseDirectory}");
+    }
+
+    /// <summary>Collects warning-level log messages so a test can assert on what an operator would see.</summary>
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        private readonly List<string> _warnings = [];
+        public IReadOnlyList<string> Warnings { get { lock (_warnings) return _warnings.ToList(); } }
+        public ILogger CreateLogger(string categoryName) => new Sink(_warnings);
+        public void Dispose() { }
+
+        private sealed class Sink(List<string> warnings) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (!IsEnabled(logLevel)) return;
+                lock (warnings) warnings.Add(formatter(state, exception));
+            }
+        }
     }
 }

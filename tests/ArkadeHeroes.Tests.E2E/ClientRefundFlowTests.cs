@@ -1,6 +1,7 @@
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Client.Sdk;
+using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -99,12 +100,12 @@ public class ClientRefundFlowTests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
-        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
+        var aliceHeroes = await alice.RecruitAsync(_alice);
+        var bobHeroes = await bob.RecruitAsync(_bob);
 
         // Covenant match; alice stakes into HER escrow; bob never accepts.
         var open = await alice.Matches.OpenAsync(
-            new OpenMatchRequest(aliceHeroes.Heroes[0].Id, bobHeroes.Heroes[0].Id, Wager, "covenant"));
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, Wager, "covenant"));
         Assert.NotNull(open.EscrowAddress);
         await _alice.SendAsync(open.EscrowAddress!, Wager);
 
@@ -150,9 +151,9 @@ public class ClientRefundFlowTests : IAsyncLifetime
     {
         var alice = await RegisterAsync("Merge-Reclaim-Alice", _alice);
         await EnsureTreasuryFundedAsync(alice);
-        var heroes = await alice.Heroes.ClaimStartersAsync();
-        var baseHero = heroes.Heroes[0];
-        var sacHero = heroes.Heroes[1];
+        var heroes = await alice.RecruitAsync(_alice, 2);   // a recruit mints one — a merge needs two
+        var baseHero = heroes[0];
+        var sacHero = heroes[1];
 
         // Covenant merge; Alice deposits base + sacrifice + fee, then abandons it.
         var commit = await alice.Merge.CommitAsync(
@@ -187,9 +188,9 @@ public class ClientRefundFlowTests : IAsyncLifetime
     {
         var alice = await RegisterAsync("Breed-Reclaim-Alice", _alice);
         await EnsureTreasuryFundedAsync(alice);
-        var heroes = await alice.Heroes.ClaimStartersAsync();
-        var parentA = heroes.Heroes[0];
-        var parentB = heroes.Heroes[1];
+        var heroes = await alice.RecruitAsync(_alice, 2);   // a recruit mints one — a breed needs two
+        var parentA = heroes[0];
+        var parentB = heroes[1];
 
         // Covenant breed; Alice deposits both parents + fee, then abandons it (never reveals).
         var commit = await alice.Breeding.CommitAsync(
@@ -226,13 +227,13 @@ public class ClientRefundFlowTests : IAsyncLifetime
         var alice = await RegisterAsync("DM-Reclaim-Alice", _alice);
         var bob = await RegisterAsync("DM-Reclaim-Bob", _bob);
         await EnsureTreasuryFundedAsync(alice);
-        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
-        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
-        var myHero = aliceHeroes.Heroes[0];
+        var aliceHeroes = await alice.RecruitAsync(_alice);
+        var bobHeroes = await bob.RecruitAsync(_bob);
+        var myHero = aliceHeroes[0];
 
         // Alice opens + stakes her hero; Bob never accepts → half-funded, Alice is stranded.
         var open = await alice.DeathMatch.OpenAsync(
-            new DeathMatchOpenRequest(myHero.Id, bobHeroes.Heroes[0].Id));
+            new DeathMatchOpenRequest(myHero.Id, bobHeroes[0].Id));
         await _alice.SendAssetAsync(open.EscrowAddress, myHero.AssetId!, 1);
 
         var parameters = await alice.DeathMatch.EscrowAsync(open.DeathMatchId);
@@ -259,10 +260,10 @@ public class ClientRefundFlowTests : IAsyncLifetime
         var alice = await RegisterAsync("DM-Full-Alice", _alice);
         var bob = await RegisterAsync("DM-Full-Bob", _bob);
         await EnsureTreasuryFundedAsync(alice);
-        var aliceHeroes = await alice.Heroes.ClaimStartersAsync();
-        var bobHeroes = await bob.Heroes.ClaimStartersAsync();
-        var aHero = aliceHeroes.Heroes[0];
-        var bHero = bobHeroes.Heroes[0];
+        var aliceHeroes = await alice.RecruitAsync(_alice);
+        var bobHeroes = await bob.RecruitAsync(_bob);
+        var aHero = aliceHeroes[0];
+        var bHero = bobHeroes[0];
 
         var open = await alice.DeathMatch.OpenAsync(
             new DeathMatchOpenRequest(aHero.Id, bHero.Id));
@@ -295,11 +296,19 @@ public class ClientRefundFlowTests : IAsyncLifetime
         // view; a single stale read of cached VTXO storage used to throw "Treasury wallet has
         // no funds" and flake the suite.
         var alice = await RegisterAsync("Treasury-Race-Alice", _alice);
+
+        // Buy the hero BEFORE the treasury is funded. The fee has to clear before a claim is allowed at
+        // all, and waiting on it would hand the treasury the very sync grace this test exists to deny it —
+        // so the payment is got out of the way first, leaving the MINT as the thing racing the funding.
+        await alice.PayForStartersAsync(_alice);
+
         var info = await alice.Chain.InfoAsync();
         await RegtestHelper.ArkSend(info.TreasuryAddress, 200_000);
 
-        var heroes = await alice.Heroes.ClaimStartersAsync();
-        Assert.Equal(2, heroes.Heroes.Count);
+        // Retries only while the server has yet to see the fee — a mint that fails on an unsynced
+        // treasury surfaces immediately, which is the regression this is here to catch.
+        var heroes = await alice.ClaimWhenFeeClearsAsync();
+        Assert.Equal(StarterPolicy.HeroCount, heroes.Count);
     }
 
     /// <summary>Funds the fresh server's treasury and waits until the funding is indexer-visible — required before the first starter mint (as the wager fact does).</summary>

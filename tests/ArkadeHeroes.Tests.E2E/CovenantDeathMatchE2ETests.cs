@@ -106,15 +106,15 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        // Each player claims a starter hero into their own wallet.
-        var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
-        var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
+        // Both players need sats of their own: heroes are bought rather than given, a death-match bills a
+        // per-character fee on top, and the settle refuses until both invoices clear.
+        await FundPlayersAsync(_alice, _bob);
+
+        // Each player BUYS a starter hero into their own wallet.
+        var aliceHero = (await alice.RecruitAsync(_alice)).Single();
+        var bobHero = (await bob.RecruitAsync(_bob)).Single();
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
         await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
-
-        // Both players need sats of their own: a death-match bills a per-character fee, and
-        // the settle refuses until both invoices clear.
-        await FundPlayersAsync(_alice, _bob);
 
         // Alice opens the death-match; both players stake their hero into their escrow.
         var open = await alice.DeathMatch.OpenAsync(
@@ -196,14 +196,16 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        var aliceHero = (await alice.Heroes.ClaimStartersAsync()).Heroes[0];
-        var bobHero = (await bob.Heroes.ClaimStartersAsync()).Heroes[0];
+        // Both players need sats of their own: they BUY their heroes, Bob buys gear on top of that, and
+        // each owes a per-character death-match fee before the settle will run.
+        await FundPlayersAsync(_alice, _bob);
+
+        var aliceHero = (await alice.RecruitAsync(_alice)).Single();
+        var bobHero = (await bob.RecruitAsync(_bob)).Single();
         await _alice.WaitForAssetAsync(aliceHero.AssetId!, TimeSpan.FromSeconds(30));
         await _bob.WaitForAssetAsync(bobHero.AssetId!, TimeSpan.FromSeconds(30));
 
         // Bob buys + equips gear through the REAL purchase flow (invoice → wallet pays → claim).
-        await RegtestHelper.ArkSend(_bob.Address, 50_000);
-        await _bob.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
         var invoice = (await bob.Items.BuyAsync("rusty-blade")).Invoice;
         await _bob.SendAsync(invoice.PayToAddress, invoice.AmountSats);
         ClaimItemResponse? claim = null;
@@ -230,11 +232,6 @@ public class CovenantDeathMatchE2ETests : IAsyncLifetime
         Assert.Equal("rusty-blade", stake.ItemId);
         Assert.Equal(claim.ItemAssetId, stake.AssetId);
         Assert.Empty(open.ChallengerGear);
-
-        // Alice still holds no sats of her own (only Bob was funded, for the gear purchase),
-        // and both sides owe a per-character death-match fee before the settle will run.
-        await RegtestHelper.ArkSend(_alice.Address, 50_000);
-        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
 
         // Stakes: Alice her hero; Bob his hero + the gear unit.
         await _alice.SendAssetAsync(open.EscrowAddress, aliceHero.AssetId!, 1);

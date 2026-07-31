@@ -78,15 +78,18 @@ public class CovenantBreedFlowE2ETests : IAsyncLifetime
             await Task.Delay(1500);
         }
 
-        // Starters: two parent heroes minted straight into Alice's wallet.
-        var heroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
+        // Fund Alice's wallet: she buys her own heroes, then pays the breed fee out of the same sats.
+        await RegtestHelper.ArkSend(_alice.Address, 50_000);
+        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+
+        // Starters: a recruit mints ONE hero, so a breedable pair is two purchases — quote, pay, claim,
+        // twice — minted straight into Alice's wallet.
+        var heroes = await alice.RecruitAsync(_alice, 2);
         Assert.Equal(2, heroes.Count);
         await _alice.WaitForAssetAsync(heroes[0].AssetId!, TimeSpan.FromSeconds(30));
         await _alice.WaitForAssetAsync(heroes[1].AssetId!, TimeSpan.FromSeconds(30));
 
-        // Fund Alice's wallet for the fee, and commit a covenant breed.
-        await RegtestHelper.ArkSend(_alice.Address, 50_000);
-        await _alice.WaitForBalanceAsync(50_000, TimeSpan.FromSeconds(60));
+        // Commit a covenant breed.
         var commit = await alice.Breeding.CommitAsync(
             new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
         Assert.NotNull(commit.EscrowAddress);
