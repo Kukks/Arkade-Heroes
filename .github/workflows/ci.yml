@@ -6,8 +6,9 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-  # Nightly, for the E2E job only. Three death-match E2Es sat red for weeks because
-  # E2E ran on manual dispatch alone, so nothing on push or PR ever exercised them.
+  # Nightly, for the E2E job only — it is the one job left that cannot gate a PR, because it
+  # needs the regtest docker stack. Three death-match E2Es sat red for weeks because E2E ran
+  # on manual dispatch alone, so nothing on push or PR ever exercised them.
   schedule:
     - cron: '17 4 * * *'   # 04:17 UTC — off the hour, where runner contention is lower
 
@@ -67,7 +68,7 @@ jobs:
           name: unit-test-results
           path: TestResults/*.trx
 
-  # ── Published-bundle browser smoke — MANUAL + NIGHTLY ──────────────────────
+  # ── Published-bundle browser suite — EVERY PR ──────────────────────────────
   # Publishes the WASM frontend and drives the REAL bundle in Chromium. This is the only
   # gate that sees what a player downloads: IL linking, the boot manifest, static
   # initializers, JS interop. It exists because a static initializer once threw on startup
@@ -75,15 +76,30 @@ jobs:
   # a cycle in ContentPackVersion) while a local build and the whole unit suite stayed
   # green — nothing in them ever started the app.
   #
-  # NOT on PRs, and not because of missing infrastructure — it needs none, the bundle is
-  # verified to boot with every backend unreachable. It is off the PR path because the
-  # publish is a native emscripten link (minutes), which is the wrong tax on every push.
-  # Same schedule as the E2E job below, for the same reason: nothing that runs only on
-  # manual dispatch actually gets run.
+  # It now also walks the whole game against a REAL ArkadeHeroes.Server on the in-memory
+  # chain — every route, its console, its prices and its empty states. See that suite's
+  # README for what it reaches and where it stops.
+  #
+  # ON THE PR GATE as of this change, reversing the earlier call. Two things moved:
+  #
+  #   • What it costs, MEASURED rather than assumed. This is a separate JOB, so it runs in
+  #     PARALLEL with the unit job rather than after it, and a PR's wall clock is the slower
+  #     leg rather than the sum. On the run that introduced it (30673219593) the unit job
+  #     took 2m30s and this one 5m38s, so it IS the slower leg and it roughly doubles PR
+  #     latency. That is the real price; 5-6 minutes is still a reasonable gate, and the
+  #     earlier estimate that the publish costs "minutes" on its own was pessimistic.
+  #   • What it catches. It used to assert that pages draw with every backend unreachable,
+  #     which is worth little on a push. It now fails on a page that renders while throwing
+  #     in the console, on a price that disagrees with the server's config, and on an empty
+  #     state standing in for a failed read — regressions a reviewer cannot see in a diff.
+  #
+  # Needs no infrastructure: no Docker, no arkd, no bitcoind. That is what makes gating
+  # defensible, and it is the difference between this job and the E2E one below. The repo's
+  # own history is the argument: three E2Es sat red for weeks behind a manual-dispatch gate.
+  # If this job turns out to be the long pole on PR latency, moving it back is one `if:`.
   browser-test:
-    name: Browser smoke (published bundle)
+    name: Browser suite (published bundle)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - name: Checkout (with submodules — brings the NArk SDK the game builds against)
         uses: actions/checkout@v4
@@ -110,7 +126,7 @@ jobs:
       - name: Install Chromium
         run: pwsh tests/ArkadeHeroes.Tests.Browser/bin/Release/net10.0/playwright.ps1 install chromium --with-deps
 
-      - name: Browser smoke tests
+      - name: Browser suite (boot smoke + full arena walk)
         env:
           # ABSOLUTE. `dotnet test` runs the test host with its own working directory (the
           # assembly's output folder), not the repository root, so a relative path here

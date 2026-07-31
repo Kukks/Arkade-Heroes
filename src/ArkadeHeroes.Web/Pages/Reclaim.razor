@@ -135,6 +135,12 @@ else
 
     private async Task LoadAsync()
     {
+        // Signed out there is no bearer token to send, so this can only ever be a 400 — a wasted round-trip
+        // on every visit, and a console error that has to be excused by whoever reads the console next.
+        // Nothing is lost by not asking: the page already renders its "sign in to recover" panel from
+        // IsSignedIn, and OnState re-runs this the moment sign-in lands, which is the same path that
+        // already covers a cold load whose token was still settling. Mirrors Account.razor's LoadAsync.
+        if (!State.IsSignedIn) { _loading = false; return; }
         _loading = true;
         try
         {
