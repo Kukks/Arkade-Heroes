@@ -23,7 +23,12 @@
     --danger:    #ff5a5a;
     --ok:        #5be08a;
 
-    --r-common:    #8595ad;
+    /* Silver. Deliberately NOT --muted, which it used to duplicate byte for byte: a .tier badge draws
+       itself in its rarity colour, so a Common one came out the same blue-grey as ordinary .chip text
+       and read as a neutral label rather than the bottom rung of a scale. Lifted into the same
+       lightness band as the four tiers below it so it belongs to the scale, and left the only
+       desaturated one so it still reads as the LOWEST — it cannot compete with rare or legendary. */
+    --r-common:    #a9b6cc;
     --r-uncommon:  #5bd6a0;
     --r-rare:      #4db6ff;
     --r-epic:      #c07bff;
