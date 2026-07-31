@@ -144,16 +144,18 @@ public class GameService(
         store.Players[player.Id] = player;
         store.PlayersByToken[player.Token] = player;
         await persistence.SavePlayerAsync(player, ct);   // identity is the anchor everything else references
-        // The first entry in this player's history. The bearer token is NEVER logged — it is a session
-        // credential, and the same reason it is kept out of the durable player row keeps it out of here.
+        // The first entry in this player's history.
+        //
+        // DELIBERATELY MINIMAL. The bearer token is never logged — it is a session credential, and the same
+        // reason it is kept out of the durable player row keeps it out of here. The name, the wallet
+        // address and the login pubkey are left out for a different and stronger reason: they already live
+        // on the player row, which is mutable and erasable, and copying them into a table the database
+        // itself refuses to update or delete would make this log a permanent second home for personal data
+        // that cannot be corrected or removed. The actor id resolves to all three for anyone with a reason
+        // to look. Whether the pseudonymous id itself is enough is a retention question for counsel, not
+        // one to answer by writing more of it down.
         await AuditAsync(Persistence.AuditEventType.PlayerRegistered, player.Id, [player.Id],
-            new
-            {
-                name = player.Name,
-                arkadeAddress = arkadeAddress.Trim(),
-                loginPubKeyHex = loginKey,
-                acceptedTermsVersion,
-            },
+            new { acceptedTermsVersion, hasLoginKey = loginKey is not null },
             $"player-registered:{player.Id}");
         var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
         return (player, arkadeAddress.Trim(), balance);

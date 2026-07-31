@@ -43,9 +43,13 @@ public class AuditLogTests
     private static void Cleanup(string dbPath)
     {
         // SQLite pools connections, so the file stays handled until the pool is cleared. A leftover temp
-        // file is harmless either way — never fail on housekeeping.
+        // file is harmless either way — never fail on housekeeping. Both throws are caught: a still-held
+        // file gives IOException, a read-only one UnauthorizedAccessException, and a test whose assertions
+        // have already passed must not go red over which of the two Windows chose.
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
+        try { if (File.Exists(dbPath)) File.Delete(dbPath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>Every event in the log, read straight out of the database rather than through the paged
@@ -193,9 +197,13 @@ public class AuditLogTests
             using var factory = HostOn(dbPath, dailyFaucetOpen: true);
             var (alice, _, bob, _) = await DriveTheEconomyAsync(factory);
 
-            // Burn some heroes for real: a fusion retires two inputs and mints one.
-            var mine = (await alice.Heroes.MineAsync());
-            var merge = await alice.Merge.CommitAsync(new MergeCommitRequest(mine[0].Id, mine[1].Id));
+            // Burn some heroes for real: a fusion retires two inputs and mints one. FRESH recruits, never
+            // a pick out of the roster — `MineAsync` enumerates a ConcurrentDictionary in arbitrary order,
+            // and the battery above leaves behind a hero whose asset is escrowed in a live offer. Merging
+            // that one is a different test failing for a different reason on some runs and not others.
+            // (Sterility and cooldowns do not gate a merge, so fresh recruits make this fully determined.)
+            var toMerge = await alice.RecruitAsync(2);
+            var merge = await alice.Merge.CommitAsync(new MergeCommitRequest(toMerge[0].Id, toMerge[1].Id));
             await alice.Dev.FundMergeEscrowAsync(new { MergeId = merge.MergeId });
             await alice.Merge.RevealAsync(merge.MergeId, new MergeRevealRequest("audit-merge-nonce"));
 
@@ -236,14 +244,35 @@ public class AuditLogTests
             var (alice, _, bob, bobPlayer) = await DriveTheEconomyAsync(factory);
 
             // A few flows the shared battery leaves out because they need a second party or an escrow.
-            var mine = (await alice.Heroes.MineAsync());
-            var merge = await alice.Merge.CommitAsync(new MergeCommitRequest(mine[0].Id, mine[1].Id));
+            //
+            // FRESH heroes for both, never a pick out of the existing roster. `MineAsync` is backed by a
+            // ConcurrentDictionary, so its order is arbitrary — and the battery above has left cooldowns on
+            // the heroes it bred, an escrowed asset on the one it listed, and a burned pair behind the
+            // merge. Indexing into that list picks a different hero run to run and fails whenever it lands
+            // on one the flow legitimately refuses. (It did: this test flaked before it was pinned.)
+            var toMerge = await alice.RecruitAsync(2);
+            var merge = await alice.Merge.CommitAsync(new MergeCommitRequest(toMerge[0].Id, toMerge[1].Id));
             await alice.Dev.FundMergeEscrowAsync(new { MergeId = merge.MergeId });
             await alice.Merge.RevealAsync(merge.MergeId, new MergeRevealRequest("audit-merge-nonce"));
 
-            var bobHeroes = (await bob.Heroes.MineAsync());
-            var stud = await alice.Stud.ProposeAsync(new StudProposeRequest(
-                (await alice.Heroes.MineAsync())[0].Id, bobHeroes[0].Id, 300));
+            // Sterility is derived from the genome and genomes are random, so no fixed pick is safe here
+            // either — a sterile hero on either side is refused. Take the first pair the server ACCEPTS
+            // rather than asserting one it has no reason to.
+            var mine = await alice.RecruitAsync(4);
+            var theirs = await bob.RecruitAsync(4);
+            StudProposeResponse? stud = null;
+            foreach (var m in mine)
+            {
+                foreach (var t in theirs)
+                {
+                    try { stud = await alice.Stud.ProposeAsync(new StudProposeRequest(m.Id, t.Id, 300)); }
+                    catch (ArkadeHeroesApiException) { continue; }   // sterile on one side — try the next
+                    break;
+                }
+                if (stud is not null) break;
+            }
+            Assert.NotNull(stud);   // 16 fresh pairs all sterile would be a broken game, not a flaky test
+
             var studAccepted = await bob.Stud.AcceptAsync(stud.ProposalId);
             await alice.PayInvoiceAsync(studAccepted.BreedFeeInvoice.InvoiceId);
             await alice.PayInvoiceAsync(studAccepted.StudFeeInvoice!.InvoiceId);
@@ -462,6 +491,56 @@ public class AuditLogTests
     }
 
     /// <summary>
+    /// The dedup index really is a UNIQUE constraint, and it really does report SQLITE_CONSTRAINT_UNIQUE.
+    ///
+    /// This pins the ONE magic number in <c>SqliteAuditLog</c>. The lookup in front of the insert catches
+    /// the ordinary retry, so the catch behind it only ever fires on a genuine race — which no test can
+    /// schedule reliably, and which would therefore ship unverified. Getting the code wrong is not
+    /// catastrophic (a race would be counted as a write failure it isn't) but it is silent, and silent is
+    /// exactly what the failure counter exists to prevent.
+    ///
+    /// Deliberately checks the EXTENDED code. The primary code is shared by every constraint in the
+    /// schema, so matching on it would let a genuinely broken write be absorbed as a benign duplicate.
+    /// </summary>
+    [Fact]
+    public async Task ADuplicateDedupKey_RaisesTheExactConstraintTheLogAbsorbs()
+    {
+        var dbPath = NewDbPath();
+        try
+        {
+            using var factory = HostOn(dbPath);
+            var (alice, _) = await factory.RegisterAsync("Audit-Constraint");
+            await alice.RecruitAsync(2);
+
+            var existing = (await AllEventsAsync(factory)).First(e => e.DedupKey is not null);
+
+            // Straight at the table, bypassing RecordAsync's lookup — the only way to reach the constraint.
+            await using var db = await factory.Services
+                .GetRequiredService<IDbContextFactory<GameStateDbContext>>().CreateDbContextAsync();
+            db.AuditEvents.Add(new PersistedAuditEvent
+            {
+                AtUtc = DateTimeOffset.UtcNow,
+                EventType = "probe.duplicate",
+                PayloadJson = "{}",
+                DedupKey = existing.DedupKey,
+            });
+
+            var ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+            var sqlite = Assert.IsType<Microsoft.Data.Sqlite.SqliteException>(ex.InnerException);
+            Assert.Equal(2067, sqlite.SqliteExtendedErrorCode);   // SQLITE_CONSTRAINT_UNIQUE
+
+            // And the log itself absorbs a repeat of a written key without counting a failure.
+            var audit = factory.Services.GetRequiredService<IAuditLog>();
+            var before = (await AllEventsAsync(factory)).Count;
+            await audit.RecordAsync(new AuditEntry(
+                existing.EventType, existing.ActorPlayerId, [], new { repeat = true }, existing.DedupKey));
+            Assert.Equal(before, (await AllEventsAsync(factory)).Count);
+            Assert.Equal(0, audit.WriteFailures);
+        }
+        finally { Cleanup(dbPath); }
+    }
+
+    /// <summary>
     /// The other half of dedup: where an action can genuinely RECUR, the log must not collapse the
     /// repetitions. Two identical payouts are two facts — the treasury ledger deliberately refuses to
     /// dedup them for exactly this reason, and a log that silently merged them would under-report a real
@@ -669,6 +748,11 @@ public class AuditLogTests
                 var page = await alice.Admin.AuditAsync(AdminToken, after, take: 2);
                 if (page.Events.Count == 0) break;
                 walked.AddRange(page.Events.Select(e => e.Sequence));
+                // The cursor MUST advance. A non-advancing NextAfter would re-serve the same page forever
+                // and this test would hang rather than fail — and a hung test blocks the whole suite, which
+                // is a worse failure than the one it was written to catch.
+                Assert.True(page.NextAfter > after,
+                    $"the paging cursor did not advance past {after} — the walk would never terminate");
                 after = page.NextAfter;
             }
 

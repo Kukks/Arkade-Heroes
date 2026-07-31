@@ -305,9 +305,21 @@ public sealed class SqliteAuditLog(
             .ToList();
     }
 
-    /// <summary>SQLITE_CONSTRAINT (19) — the dedup index refusing a second row under the same key.</summary>
+    /// <summary>
+    /// SQLITE_CONSTRAINT_UNIQUE (2067) — the dedup INDEX refusing a second row under the same key, which is
+    /// the one constraint failure that means "already recorded" rather than "this write was wrong".
+    ///
+    /// The EXTENDED code, deliberately. The primary code (SQLITE_CONSTRAINT, 19) is shared by every
+    /// constraint in the schema — NOT NULL, foreign key, primary key, check — so matching on it would let a
+    /// genuinely broken write (a subject row failing its composite primary key, say, which reports 1555)
+    /// be swallowed as a benign dedup hit and never reach <see cref="WriteFailures"/>. A log that hides its
+    /// own failures behind the mechanism that makes it correct is worse than one that simply drops rows.
+    /// </summary>
+    private const int SqliteConstraintUnique = 2067;
+
     private static bool IsUniqueViolation(DbUpdateException ex)
-        => ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 };
+        => ex.InnerException is Microsoft.Data.Sqlite.SqliteException
+        { SqliteExtendedErrorCode: SqliteConstraintUnique };
 
     /// <summary>Serializing the payload for the failure log must not be able to throw a SECOND time and
     /// take out the only trace of the lost event.</summary>

@@ -208,9 +208,13 @@ api.MapPost("/players/login", async (LoginRequest request, GameService game, ICh
     // touches no I/O) and making it async to fit the log would ripple a signature change through the
     // service for no gain. A REFUSED login is not recorded: Login throws, so this line is never reached —
     // the log holds successful sign-ins, and a failed one is an authentication concern the request log
-    // already carries. No signature, nonce or token is recorded; the pubkey is the player's public handle.
+    // already carries.
+    //
+    // No signature, nonce, token OR pubkey is recorded. The key is on the player row already, and the
+    // actor id resolves to it; writing it into a table the database refuses to update or delete would put
+    // a wallet identifier permanently beyond correction for no fact the actor id does not already give.
     await audit.RecordAsync(new AuditEntry(AuditEventType.PlayerLoggedIn, player.Id, [player.Id],
-        new { loginPubKeyHex = player.LoginPubKeyHex }));
+        new { resumed = true }));
     var address = await chain.GetPlayerAddressAsync(player.Id, ct);
     var balance = await chain.GetAddressBalanceSatsAsync(player.Id, ct);
     return Results.Ok(new PlayerDto(player.Id, player.Name, address, balance, player.StarterClaimed, player.Token,
