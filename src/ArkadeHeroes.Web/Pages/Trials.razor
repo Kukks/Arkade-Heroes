@@ -167,7 +167,14 @@ else
             _mine = await Api.Heroes.MineAsync();
             _heroesLoaded = true;
         }
-        catch { /* token may not be set yet on a fresh load; OnState retries once signed in */ }
+        catch
+        {
+            // A swallowed read used to leave the page permanently empty: OnState only re-runs on the NEXT
+            // state change, and a server hiccup produces none — so a one-off failure looked exactly like
+            // owning no heroes, forever. Retry on our own rather than waiting for an event that may never
+            // come. Short backoff; the sign-in path still covers the not-yet-authenticated case.
+            await RetryLoadAsync();
+        }
         finally { _loading = false; }
     }
 
@@ -210,4 +217,26 @@ else
     });
 
     public void Dispose() => State.OnChange -= OnState;
+
+    /// <summary>
+    /// Re-attempts the roster read a few times, backing off. Deliberately bounded: past a few seconds the
+    /// honest answer is the "couldn't read your roster" card, not a page that spins forever.
+    /// </summary>
+    async Task RetryLoadAsync()
+    {
+        foreach (var delay in new[] { 400, 1200, 3000 })
+        {
+            await Task.Delay(delay);
+            if (_heroesLoaded || !State.IsSignedIn) return;
+            try
+            {
+                _mine = await Api.Heroes.MineAsync();
+                _heroesLoaded = true;
+                StateHasChanged();
+                return;
+            }
+            catch { /* keep backing off; the card below stays honest if we never succeed */ }
+        }
+    }
+
 }
