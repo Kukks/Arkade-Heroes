@@ -94,6 +94,19 @@ builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.TermsState>();
 // token, set on register/login, then persists app-wide in WASM's single scope).
 builder.Services.AddScoped<ArkadeHeroes.Web.Wallet.GameSession>();
 
+// The network, as a name the UI can branch on — currently only the faucet button needs it.
+builder.Services.AddSingleton(new ArkadeHeroes.Web.Wallet.ArkNetworkInfo(
+    (networkName ?? "regtest").Trim().ToLowerInvariant()));
+// A DEDICATED HttpClient, deliberately not the shared one: that client is the SDK's, and the SDK puts the
+// player's bearer token on it after sign-in. Reusing it here would send our session token to a third-party
+// faucet along with the address. The faucet is called with absolute URLs, so it needs no BaseAddress.
+builder.Services.AddSingleton(sp => new ArkadeHeroes.Web.Wallet.FaucetService(
+    new HttpClient(),
+    sp.GetRequiredService<ArkadeHeroes.Web.Wallet.ArkNetworkInfo>(),
+    sp.GetRequiredService<ArkadeHeroes.Web.Wallet.GameWallet>(),
+    sp.GetRequiredService<ArkadeHeroes.Web.Wallet.WalletState>()));
+builder.Services.AddSingleton<ArkadeHeroes.Web.Wallet.WalletCredentialStore>();
+
 var host = builder.Build();
 
 // Create the wallet DB on first launch, then start the SDK lifecycle manually (WASM has no IHostedService).
