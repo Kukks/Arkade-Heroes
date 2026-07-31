@@ -30,7 +30,12 @@
                 var index = i;
                 <li class="crawl-rung @RungCss(i)">
                     <span class="crawl-node"></span>
-                    <span class="crawl-w mono">W@rung.Wave</span>
+                    @* Parenthesised because Razor reads `W@rung.Wave` as an EMAIL ADDRESS — word@word.word
+                       — and emits it verbatim rather than evaluating it, so every rung of the shaft read
+                       the literal "W@rung.Wave". Same heuristic that put "L@o.Hero.Level" on six pages
+                       (#124); the house style since is to parenthesise any expression that follows a
+                       letter. *@
+                    <span class="crawl-w mono">W@(rung.Wave)</span>
                     <span class="crawl-foe">@FoeText(i, rung)</span>
                     <span class="crawl-mark mono">@Mark(i)</span>
                     @if (OnWatch.HasDelegate && i < Revealed)
