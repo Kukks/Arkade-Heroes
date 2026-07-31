@@ -133,6 +133,10 @@ else // Ready
         </div>
     </div>
 
+@* Nothing to send is not a state worth rendering a form for — it can only fail. The faucet button and
+   the receive address are the useful things at zero, and both are above. *@
+@if (State.BalanceSats > 0)
+{
     <div class="card" style="margin-bottom:1.1rem">
         <h3>Send</h3>
         <p class="muted">Move sats to another Arkade address — the spend is built and signed in this browser.</p>
@@ -154,20 +158,51 @@ else // Ready
             <div class="status-line" style="margin-top:.7rem"><span class="dot bad"></span> @_sendError</div>
         }
     </div>
+}
 
     <div class="card" style="margin-bottom:1.1rem">
         <h3>Game identity</h3>
         @if (State.IsSignedIn)
         {
             <div class="status-line"><span class="dot ok"></span> Signed in as <b>@State.Player!.Name</b></div>
-            @if (!State.Player.StarterClaimed)
+            @* Recruits are buyable as often as you can pay for them, so this is never "one-time" and never
+               goes away — the price is stated up front because it is real money leaving the wallet. *@
+            <p class="muted" style="margin:.6rem 0 .2rem">
+                @if (State.Player.StarterClaimed)
+                {
+                    <text>Recruit @StarterPolicy.HeroCount more heroes — the cheapest way to get one, and it shows: they roll no traits and weak stats.</text>
+                }
+                else
+                {
+                    <text>Recruit @StarterPolicy.HeroCount heroes to enter the arena. They're the bottom of the barrel — no traits, weak stats — but they're yours, and they can breed.</text>
+                }
+            </p>
+            <button class="btn primary" style="margin-top:.6rem" @onclick="ClaimStarters" disabled="@(_busy || !CanAffordClaim)">
+                @if (_busy)
+                {
+                    <text>@(_claimStep ?? "Recruiting…")</text>
+                }
+                else if (_claimFeeSats is null)
+                {
+                    <text>Recruit @StarterPolicy.HeroCount heroes</text>
+                }
+                else
+                {
+                    <text>Recruit @StarterPolicy.HeroCount heroes — @_claimFeeSats.Value.ToString("N0") sats</text>
+                }
+            </button>
+            @if (!CanAffordClaim && _claimFeeSats is not null)
             {
-                <p class="muted" style="margin:.6rem 0 .2rem">Claim your one-time starter heroes to enter the arena.</p>
-                <button class="btn primary" style="margin-top:.6rem" @onclick="ClaimStarters" disabled="@_busy">
-                    @(_busy ? "Claiming…" : "Claim starter heroes")
-                </button>
+                <div class="status-line" style="margin-top:.6rem">
+                    <span class="dot bad"></span>
+                    You have @State.BalanceSats.ToString("N0") sats; recruiting costs @_claimFeeSats.Value.ToString("N0").
+                    @if (Faucet.Available)
+                    {
+                        <text> Use "Get test sats" above.</text>
+                    }
+                </div>
             }
-            else
+            @if (_myHeroCount > 0)
             {
                 <p class="muted" style="margin:.6rem 0 0">
                     @_myHeroCount hero@(_myHeroCount == 1 ? "" : "es") in your roster.
@@ -294,6 +329,17 @@ else // Ready
     string? _sendError;
     bool _resumeTried;
 
+    // ── Recruiting ───────────────────────────────────────────────────────────
+    /// <summary>The server's own price for a claim, so the button can state it before the player commits.
+    /// Read from published config rather than computed locally — a compiled-in guess would be wrong the
+    /// moment an operator changes the breed fee. Null until it loads (or if the read fails).</summary>
+    long? _claimFeeSats;
+    string? _claimStep;
+
+    /// <summary>Whether the wallet covers a claim. Unknown price (config read failed) counts as affordable —
+    /// better to let the server refuse than to grey out a button over a missing number.</summary>
+    bool CanAffordClaim => _claimFeeSats is not { } fee || State.BalanceSats >= fee;
+
     // ── Faucet ───────────────────────────────────────────────────────────────
     bool _faucetBusy;
     bool _faucetOk;
@@ -311,6 +357,9 @@ else // Ready
         // Asked once, up front: the buttons only exist where the browser can actually honour them
         // (Chromium, over https). Everywhere else the phrase is still shown for manual backup.
         _credentialsSupported = await Credentials.IsSupportedAsync();
+        // A plain read — no invoice is created here, so opening the page never bills anything.
+        try { _claimFeeSats = (await Api.Chain.InfoAsync()).Config?.StarterClaimFeeSats; }
+        catch { /* price unknown — the button still works, it just can't quote up front */ }
         await LoadAsync();
     }
 
@@ -339,15 +388,28 @@ else // Ready
 
     async Task SaveToBrowserAsync()
     {
-        if (_activeId is null) return;
         _credentialBusy = true;
         _credentialNote = null;
         try
         {
+            // Every exit from here says something. The first version could return in silence (no active
+            // wallet) or throw past its own try/finally (GetMnemonicAsync), and a button that does nothing
+            // visible is indistinguishable from a broken one — which is exactly how it was reported.
+            if (_activeId is null)
+            {
+                _credentialOk = false;
+                _credentialNote = "No wallet is loaded in this tab.";
+                return;
+            }
             _credentialOk = await Credentials.SaveAsync(_activeId);
             _credentialNote = _credentialOk
                 ? "Saved. Your browser can now restore this wallet — treat it like any other saved password."
-                : "Your browser didn't save it. Write the words down instead.";
+                : "Your browser declined to save it (some block this, and it needs https). Write the words down instead.";
+        }
+        catch (Exception ex)
+        {
+            _credentialOk = false;
+            _credentialNote = $"Couldn't save it: {ex.Message}";
         }
         finally
         {
@@ -504,11 +566,19 @@ else // Ready
     {
         _busy = true;
         _idError = null;
+        _claimMsg = null;
         try
         {
-            var heroes = await Session.ClaimStartersAsync();
-            _myHeroCount = heroes.Count;
-            _claimMsg = $"Claimed {heroes.Count} starter hero{(heroes.Count == 1 ? "" : "es")}!";
+            // Paying takes a moment and costs real sats, so say which step is running rather than
+            // leaving a dead button while a spend is in flight.
+            var heroes = await Session.ClaimStartersAsync(step =>
+            {
+                _claimStep = step;
+                StateHasChanged();
+            });
+            await RefreshMineAsync();
+            await RefreshAsync();   // the fee left the wallet; the balance on screen should show it
+            _claimMsg = $"Recruited {heroes.Count} hero{(heroes.Count == 1 ? "" : "es")} — recruit more any time.";
         }
         catch (Exception ex)
         {
@@ -517,6 +587,7 @@ else // Ready
         finally
         {
             _busy = false;
+            _claimStep = null;
         }
     }
 
