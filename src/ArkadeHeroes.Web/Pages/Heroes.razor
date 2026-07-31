@@ -160,10 +160,7 @@ else
     {
         State.OnChange += OnStateChanged;
         if (!string.IsNullOrEmpty(MineParam) && State.IsSignedIn) _mine = true;
-        // A plain read — no invoice is created here, so opening the roster never bills anything.
-        try { _claimFeeSats = (await Api.Chain.InfoAsync()).Config?.StarterClaimFeeSats; }
-        catch { /* price unknown — the button still works, it just can't quote up front */ }
-        await RefreshBalanceAsync();
+        if (_mine) await LoadRecruitContextAsync();
         await LoadAsync();
     }
 
@@ -171,7 +168,27 @@ else
     {
         if (_mine == mine) return;
         _mine = mine;
+        // Raised HERE, not just inside LoadAsync: the price read below awaits first, and without this the
+        // render in between shows the tab you just left — the other list, counted as "yours", under a
+        // recruit button that hasn't learned its price yet.
+        _loading = true;
+        if (_mine) await LoadRecruitContextAsync();
         await LoadAsync();
+    }
+
+    /// <summary>
+    /// The two numbers the recruit button quotes. Read on the way INTO the Mine view rather than once at
+    /// startup: only that view can recruit, so someone browsing every hero in the game never pays for a
+    /// quote they can't use — and, more importantly, the numbers can't go stale. Reading them at init
+    /// would miss the ordinary case where the shell's sign-in resumes AFTER this page has loaded, leaving
+    /// a button that can spend sats but never learned what it costs.
+    /// </summary>
+    async Task LoadRecruitContextAsync()
+    {
+        // A plain read — no invoice is created here, so opening the roster never bills anything.
+        try { _claimFeeSats = (await Api.Chain.InfoAsync()).Config?.StarterClaimFeeSats; }
+        catch { /* price unknown — the button still works, it just can't quote up front */ }
+        await RefreshBalanceAsync();
     }
 
     async Task LoadAsync()

@@ -238,8 +238,13 @@ else
         }
     }
 
-    /// <summary>Opponent heroes aren't in my roster, so their names have to be fetched one by one.
-    /// Best-effort: an unresolved id falls back to its short form rather than blanking the row.</summary>
+    /// <summary>Opponent heroes aren't in my roster, so their names have to be fetched one at a time.
+    /// Best-effort: an unresolved id falls back to its short form rather than blanking the row.
+    ///
+    /// <para>Issued together rather than in sequence. The match window holds fifty, so a well-travelled
+    /// roster can need dozens of these, and one-after-another turns "your account" into a page that
+    /// visibly fills in. The browser still caps how many go out at once; results are collected before
+    /// anything is written so the name cache is only touched from here.</para></summary>
     async Task ResolveOpponentNamesAsync()
     {
         var needed = _history.Values
@@ -248,9 +253,14 @@ else
             .Where(id => !_names.ContainsKey(id))
             .Distinct()
             .ToList();
-        foreach (var id in needed)
+        var found = await Task.WhenAll(needed.Select(async id =>
         {
-            try { _names[id] = (await Api.Heroes.GetAsync(id)).Name; } catch { /* best-effort */ }
+            try { return (Id: id, Name: (string?)(await Api.Heroes.GetAsync(id)).Name); }
+            catch { return (Id: id, Name: (string?)null); }
+        }));
+        foreach (var (id, name) in found)
+        {
+            if (name is not null) _names[id] = name;
         }
     }
 
