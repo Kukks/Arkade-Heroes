@@ -145,6 +145,18 @@ public class SelfCustodyWalletCoinSelectionTests
     }
 
     [Fact]
+    public void APureBtcSpendLeavingSubDustChange_IsAllowed_BecauseNoAssetIsLeftBehind()
+    {
+        // 5,400 against 5,000 leaves 400 of change, under dust — but nothing carries an asset, so
+        // there is no asset change to misplace and the guard has no business refusing. The sub-dust
+        // change simply becomes an OP_RETURN. Pins the other side of the guard: it keys on assets
+        // being left behind, not on the change amount alone.
+        var only = Coin(5_400);
+
+        Assert.Equal([only], SelfCustodyWallet.SelectFrom([only], [Sats(5_000)], Dust));
+    }
+
+    [Fact]
     public void AHeroSendFundedByASeparateBtcCoin_LeavesTheChangeRoomToCarryTheOtherHero()
     {
         // The carrier is thin but a pure-BTC coin pays the dust output, so the change output is fat
