@@ -164,6 +164,29 @@ else
             </div>
         }
 
+        @* What happened before. A resolved duel used to leave no trace on this page at all. *@
+        @if (History.Any())
+        {
+            <div class="card">
+                <div class="hud" style="margin-bottom:.6rem">Past duels</div>
+                @foreach (var m in History)
+                {
+                    <div class="match-row muted">
+                        <span>
+                            <b>@Name(m.ChallengerHeroId)</b> vs <b>@Name(m.DefenderHeroId)</b>
+                            · <b class="mono">@m.WagerSats.ToString("N0")</b> sats
+                        </span>
+                        <span class="spacer"></span>
+                        @if (IWon(m) is { } won)
+                        {
+                            <span class="chip @(won ? "ok" : "bad")">@(won ? "won" : "lost")</span>
+                        }
+                        <a class="btn ghost sm" href="watch/@m.MatchId">Replay ↗</a>
+                    </div>
+                }
+            </div>
+        }
+
         @if (Waiting.Any())
         {
             <div class="card">
@@ -253,6 +276,22 @@ else
     /// </summary>
     private IEnumerable<MatchDto> AwaitingOpponent =>
         _matches.Where(m => m.Status == "accepted" && MineIds.Contains(m.DefenderHeroId));
+
+    /// <summary>
+    /// Duels of mine that already happened. Nothing recorded what a player had been through — a resolved
+    /// match dropped out of every bucket and the page went back to looking like nothing had occurred, even
+    /// though sats had moved and the replay was on the server the whole time.
+    ///
+    /// <para>Read from the same list the live buckets use, so no new endpoint and nothing to keep in sync.
+    /// The server already returns matches newest-first and capped.</para>
+    /// </summary>
+    private IEnumerable<MatchDto> History =>
+        _matches.Where(m => m.Result is not null
+                         && (MineIds.Contains(m.ChallengerHeroId) || MineIds.Contains(m.DefenderHeroId)));
+
+    /// <summary>Did MY hero win it? Null when the result names neither of mine.</summary>
+    private bool? IWon(MatchDto m) =>
+        m.Result is not { } r ? null : MineIds.Contains(r.WinnerId);
 
     protected override async Task OnInitializedAsync()
     {
