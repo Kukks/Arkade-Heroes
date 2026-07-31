@@ -22,6 +22,19 @@ else if (_loading)
 {
     <div class="status-line"><span class="dot wait"></span> loading your heroes…</div>
 }
+@* "You have no heroes" and "we never managed to read your roster" are different facts, and this
+   branch used to state the first while meaning either. A load that returns early because sign-in has
+   not resumed yet, or one that throws and is swallowed, both leave _mine empty — and the page then
+   told a player with a full roster to go and claim starters. Only _heroesLoaded distinguishes them. *@
+else if (!_heroesLoaded)
+{
+    <div class="card muted">
+        <div class="status-line"><span class="dot bad"></span> Couldn't read your roster.</div>
+        <p class="muted" style="margin:.6rem 0 0">
+            If you're signed in, reload the page. If not, <a href="wallet">sign in with your wallet</a>.
+        </p>
+    </div>
+}
 else if (_mine.Count == 0)
 {
     <div class="card muted">You need a hero first — claim your starters on the <a href="heroes">Heroes</a> page.</div>
