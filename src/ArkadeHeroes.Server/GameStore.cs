@@ -347,6 +347,15 @@ public class SquadMatchSession
     public string? ContentVersion { get; set; }
 }
 
+/// <summary>
+/// A completed hero sale: which hero, between whom, and for how much. <paramref name="BuyerId"/> is null
+/// when the sale was proven on-chain by a spend the server saw but nobody has since claimed the hero
+/// under — see <see cref="Persistence.PersistedHeroSale"/> for why the two proofs know different things.
+/// </summary>
+public sealed record HeroSale(
+    string OfferId, string HeroId, string SellerId, string? BuyerId,
+    long AskSats, long ListingFeeSats, long SoldAtUnixSeconds);
+
 /// <summary>A pending hero rename in the unique-name registry: the player pays the treasury fee, then
 /// confirms to apply the claimed name. In-memory like the rest; a restart drops it with the fee marker.</summary>
 public class RenameSession
@@ -503,6 +512,50 @@ public class GameStore(Persistence.IGameStatePersistence? persistence = null, IL
     public ConcurrentDictionary<string, SquadMatchSession> SquadMatches { get; } = new();
     public ConcurrentDictionary<string, ItemPurchase> ItemPurchases { get; } = new();
     public ConcurrentDictionary<string, OfferListing> Offers { get; } = new();
+
+    /// <summary>Completed hero sales, keyed by the offer that settled each one — the marketplace history a
+    /// closed offer cannot keep (closed rows are filtered out at boot, and <c>closed</c> cannot tell a sale
+    /// from a seller's reclaim anyway). Read by the hero timeline; gates nothing.</summary>
+    public ConcurrentDictionary<string, HeroSale> HeroSales { get; } = new();
+
+    /// <summary>
+    /// Records a sale once, and only ever ADDS to what is known about it.
+    ///
+    /// Two independent paths prove the same sale — the buyer claiming the hero (which knows WHO bought it,
+    /// having just asked the chain whether they hold the asset) and reconcile observing the covenant's
+    /// treasury leg (which knows a sale happened but not to whom) — and either can run first. So a repeat
+    /// is a no-op EXCEPT when it carries a buyer the stored row is missing, which is the one case where the
+    /// second write is worth more than the first. A buyer already recorded is never overwritten, and the
+    /// price is never rewritten by anyone.
+    /// </summary>
+    /// <returns>The row to persist when this call changed anything, or null when it was a pure repeat.</returns>
+    public HeroSale? RecordHeroSale(HeroSale sale)
+    {
+        var stored = HeroSales.AddOrUpdate(sale.OfferId, sale,
+            (_, prev) => prev.BuyerId is null && sale.BuyerId is not null
+                ? prev with { BuyerId = sale.BuyerId }
+                : prev);
+
+        // The insert landed — this call created the row.
+        if (ReferenceEquals(stored, sale)) return stored;
+        // Otherwise a row was already there. Worth a write only if the buyer now on it is the one THIS
+        // call carried; a caller that knew no buyer, or found one already recorded, learned nothing.
+        if (sale.BuyerId is not null && stored.BuyerId == sale.BuyerId) return stored;
+        return null;
+    }
+
+    /// <summary>Rehydrate one durable sale at boot, exactly as stored.</summary>
+    public void LoadHeroSale(HeroSale sale) => HeroSales[sale.OfferId] = sale;
+
+    /// <summary>
+    /// Heroes that were RESTORED from disk at boot rather than minted by this process.
+    ///
+    /// The receipt ledger is in-memory, so it begins at boot: for any hero in this set the timeline is a
+    /// partial history however complete it looks, and the page says so. A hero minted during this process
+    /// cannot have events older than the process, so its absence here is a real completeness guarantee.
+    /// </summary>
+    public ConcurrentDictionary<string, byte> RehydratedHeroes { get; } = new();
+
     public ConcurrentDictionary<string, RenameSession> Renames { get; } = new();
     public ConcurrentDictionary<string, TournamentSession> Tournaments { get; } = new();
     /// <summary>Serializes tournament join + resolve so a bracket can't be double-filled or double-paid.</summary>

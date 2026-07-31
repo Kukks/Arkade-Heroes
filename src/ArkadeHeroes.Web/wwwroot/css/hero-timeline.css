@@ -1,0 +1,92 @@
+/* ===========================================================================
+   Arkade Heroes — hero provenance timeline
+   A separate sheet from app.css on purpose: this is one page's component, and
+   it is loaded after the theme so it inherits every token defined there
+   (--line, --accent, --font-hud …) rather than restating any of them.
+   =========================================================================== */
+
+/* The rail is a single border on the list, so the line can never fall out of
+   step with the rows — it IS the rows' shared left edge. */
+.tl {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 1.35rem;
+    border-left: 1px solid var(--line-soft);
+    display: grid;
+    gap: 1.05rem;
+}
+
+.tl-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: .7rem;
+    align-items: start;
+}
+
+/* The node sits ON the rail: half its own width back, plus the list's padding. */
+.tl-mark {
+    position: absolute;
+    left: calc(-1.35rem - .72rem);
+    width: 1.44rem;
+    height: 1.44rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--bg-2);
+    color: var(--muted);
+    font-size: .74rem;
+    line-height: 1;
+    flex: none;
+}
+
+.tl-body { grid-column: 1 / -1; display: grid; gap: .3rem; min-width: 0; }
+
+.tl-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .5rem;
+}
+
+.tl-line b { font-weight: 500; }
+
+.tl-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .8rem;
+    font-size: .68rem;
+    color: var(--faint);
+}
+
+.tl-meta a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--line); }
+.tl-meta a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* A hero that no longer exists. Rendered as plain, unlinked text — there is no
+   page to send anyone to, and the id is genuinely all that survived of it. */
+.tl-gone { color: var(--faint); font-style: italic; }
+
+/* Origin and value events are the two a reader scans for, so they get the only
+   colour on the rail; everything else stays quiet. */
+.tl-born .tl-mark,
+.tl-bred .tl-mark,
+.tl-fused .tl-mark,
+.tl-absorbed .tl-mark { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+.tl-sold .tl-mark { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); }
+
+.tl-deathmatch .tl-mark,
+.tl-burned .tl-mark { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+/* The honesty line: what this timeline cannot promise. Deliberately part of the
+   card rather than a toast — it is a property of the history, not a transient. */
+.tl-caveat {
+    margin: 0 0 1rem;
+    padding: .6rem .7rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bg-2);
+    color: var(--muted);
+    font-size: .8rem;
+}

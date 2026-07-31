@@ -278,6 +278,227 @@ public class GameService(
         return hero;
     }
 
+    // ── Provenance: everything that ever happened to one hero ──────────
+
+    /// <summary>The receipt types that MINT the hero they name in <c>ResultHeroId</c> — this hero's birth,
+    /// when it names this hero. Deliberately a closed set rather than "anything with a ResultHeroId":
+    /// <c>gauntlet</c> puts the runner there on a full clear, <c>trials</c> always does, and
+    /// <c>deathmatch</c> puts the WINNER there. Treating any of those as a birth would have a hero born
+    /// again every time it cleared a dungeon.</summary>
+    private static readonly string[] BirthReceiptTypes = ["breeding", "merge", "absorb"];
+
+    /// <summary>
+    /// A hero's full provenance, newest first: how it came to exist, every fight it has been in, what it
+    /// was traded for, and what it consumed or was consumed by.
+    ///
+    /// Almost all of it is DERIVED rather than separately recorded — the progression receipt ledger
+    /// already files every breed, fusion, absorb, duel, spar, death-match, gauntlet and trials run under
+    /// each hero it names, and the hero's own lineage columns carry its parents. The one thing no
+    /// derivation could recover is what a hero SOLD for, which is why that alone gets a durable row.
+    ///
+    /// The ledger is in memory, so for a hero restored from disk this is a partial history — see
+    /// <see cref="Shared.HeroTimelineDto.Complete"/>, which says so rather than letting a life that
+    /// begins at boot read as a whole one.
+    /// </summary>
+    public Shared.HeroTimelineDto HeroTimeline(string heroId)
+    {
+        var hero = GetHero(heroId);   // unknown hero → the endpoint's 404
+        var events = new List<Shared.HeroTimelineEventDto>();
+
+        // Copy under the SAME lock IssueReceipt appends beneath: the value is a plain List, so enumerating
+        // it while a fight files a receipt is a torn read.
+        Shared.ProgressionReceiptDto[] receipts = [];
+        if (store.ReceiptsByHero.TryGetValue(heroId, out var filed))
+            lock (filed) { receipts = filed.ToArray(); }
+
+        var birth = receipts.FirstOrDefault(r =>
+            r.ResultHeroId == heroId && BirthReceiptTypes.Contains(r.Type));
+
+        foreach (var r in receipts)
+        {
+            if (ReferenceEquals(r, birth)) continue;   // rendered separately below, as the origin
+            if (BuildFightEvent(r, heroId) is { } e) events.Add(e);
+        }
+
+        events.Add(BirthEvent(hero, birth));
+
+        foreach (var sale in store.HeroSales.Values.Where(s => s.HeroId == heroId))
+        {
+            var buyer = sale.BuyerId is { } b ? store.Players.GetValueOrDefault(b)?.Name ?? Short(b) : null;
+            var seller = store.Players.GetValueOrDefault(sale.SellerId)?.Name ?? Short(sale.SellerId);
+            events.Add(new Shared.HeroTimelineEventDto(
+                "sold", sale.SoldAtUnixSeconds,
+                $"Sold on the marketplace for {sale.AskSats:N0} sats.",
+                [],
+                Sats: sale.AskSats,
+                // The buyer is genuinely unknown on a sale proven only by the covenant's treasury leg —
+                // say that, rather than leaving the line looking like it simply forgot to mention them.
+                Detail: buyer is null
+                    ? $"sold by {seller} · buyer not recorded"
+                    : $"{seller} → {buyer}"));
+        }
+
+        // Newest first, with the origin last. A birth whose moment was never recorded carries 0 and lands
+        // there anyway, which is where it belongs.
+        var ordered = events
+            .OrderByDescending(e => e.UnixSeconds)
+            .ThenByDescending(e => e.Kind, StringComparer.Ordinal)
+            .ToList();
+
+        var rehydrated = store.RehydratedHeroes.ContainsKey(heroId);
+        return new Shared.HeroTimelineDto(heroId, ordered, !rehydrated,
+            rehydrated
+                ? "This hero predates the arena's last restart. Fights, breeds and fusions are derived from "
+                  + "the in-memory receipt ledger, which the restart cleared — sales and lineage survived, "
+                  + "the rest of its earlier life did not."
+                : null);
+    }
+
+    /// <summary>How this hero came to exist. The birth RECEIPT is the good answer — it carries the moment
+    /// and both inputs. Without one (a gen-0 starter, or a hero whose receipt a restart dropped) this falls
+    /// back to the durable lineage columns, which know the parents but NOT when: nothing in the system
+    /// stamps a hero with its birth time, so the event carries 0 and the page says the moment is unknown
+    /// instead of printing the epoch.</summary>
+    private Shared.HeroTimelineEventDto BirthEvent(Hero hero, Shared.ProgressionReceiptDto? birth)
+    {
+        var at = birth?.UnixSeconds ?? 0;
+        if (birth is { Type: "merge" })
+            return new Shared.HeroTimelineEventDto("fused", at,
+                $"Forged in a fusion from {Display(birth.HeroAId)} and {Display(birth.HeroBId)} — both were burned for it.",
+                [Ref(birth.HeroAId), Ref(birth.HeroBId)],
+                Detail: $"inherited its base's level {birth.LevelA}");
+
+        if (birth is { Type: "absorb" })
+            return new Shared.HeroTimelineEventDto("absorbed", at,
+                $"Rose from a death-match absorb between {Display(birth.HeroAId)} and {Display(birth.HeroBId)} — both were burned for it.",
+                [Ref(birth.HeroAId), Ref(birth.HeroBId)],
+                WatchMatchId: birth.Id,
+                Detail: $"kept the winner's level {birth.LevelA}");
+
+        if (birth is { Type: "breeding" })
+            return new Shared.HeroTimelineEventDto("bred", at,
+                $"Bred from {Display(birth.HeroAId)} and {Display(birth.HeroBId)}.",
+                [Ref(birth.HeroAId), Ref(birth.HeroBId)],
+                Detail: $"generation {hero.Generation}");
+
+        // No birth receipt. The lineage columns are durable, so they still answer WHAT — just not when.
+        if (hero.ParentAId is { } pa && hero.ParentBId is { } pb)
+            return new Shared.HeroTimelineEventDto("bred", 0,
+                $"Descended from {Display(pa)} and {Display(pb)}.",
+                [Ref(pa), Ref(pb)],
+                Detail: $"generation {hero.Generation} · the moment was not recorded");
+
+        return new Shared.HeroTimelineEventDto("born", 0,
+            "Recruited into the arena as a gen-0 founder.",
+            [],
+            Detail: "no parents — the moment was not recorded");
+    }
+
+    /// <summary>One non-birth receipt as a timeline line, or null when it names this hero only in a role
+    /// the hero's own page has nothing to say about.</summary>
+    private Shared.HeroTimelineEventDto? BuildFightEvent(Shared.ProgressionReceiptDto r, string heroId)
+    {
+        var isA = r.HeroAId == heroId;
+        var isB = r.HeroBId == heroId;
+        // THE attribution gate. A receipt that does not NAME this hero is not this hero's history,
+        // whatever else it says. The caller reads a per-hero index and so only ever passes receipts
+        // already filed under this hero — but that is the CALLER's invariant, not this method's, and
+        // relying on it silently is how another hero's death-match ends up on this page the first time
+        // anything hands this a wider set. Stated once, here, so every arm below inherits it.
+        if (!isA && !isB) return null;
+        var swing = isA ? r.XpAwardA : r.XpAwardB;
+        // The opponent is whichever side this hero is NOT — except in a self-duel, where both are it.
+        var otherId = isA ? r.HeroBId : r.HeroAId;
+        var other = string.IsNullOrEmpty(otherId) || otherId == heroId ? null : otherId;
+        Shared.TimelineHeroRefDto[] related = other is null ? [] : [Ref(other)];
+        var vs = other is null ? "itself" : Display(other);
+
+        switch (r.Type)
+        {
+            case "merge":
+                return new Shared.HeroTimelineEventDto("burned", r.UnixSeconds,
+                    $"Burned in a fusion — {Display(r.ResultHeroId ?? "")} was forged from it and {vs}.", related);
+
+            case "absorb":
+                return new Shared.HeroTimelineEventDto("burned", r.UnixSeconds,
+                    $"Burned in a death-match absorb against {vs} — {Display(r.ResultHeroId ?? "")} rose from it.",
+                    related, WatchMatchId: r.Id);
+
+            case "breeding":
+            {
+                Shared.TimelineHeroRefDto[] parties = other is null
+                    ? [Ref(r.ResultHeroId ?? "")]
+                    : [Ref(other), Ref(r.ResultHeroId ?? "")];
+                return new Shared.HeroTimelineEventDto("bred-with", r.UnixSeconds,
+                    $"Bred with {vs} — {Display(r.ResultHeroId ?? "")} was born.",
+                    parties,
+                    Detail: $"level {(isA ? r.LevelA : r.LevelB)} at the time");
+            }
+
+            case "deathmatch":
+            {
+                var won = r.ResultHeroId == heroId;
+                return new Shared.HeroTimelineEventDto("deathmatch", r.UnixSeconds,
+                    won
+                        ? $"Survived a death-match against {vs}, which was burned."
+                        : $"Died in a death-match against {vs}.",
+                    related, WatchMatchId: r.Id, Outcome: won ? "won" : "lost");
+            }
+
+            case "gauntlet":
+                return new Shared.HeroTimelineEventDto("gauntlet", r.UnixSeconds,
+                    r.ResultHeroId == heroId ? "Cleared the gauntlet." : "Ran the gauntlet.",
+                    [], Detail: XpDetail(swing));
+
+            case "trials":
+                // The run's score rides in XpAwardB (the receipt attests it); no XP ever changes hands.
+                return new Shared.HeroTimelineEventDto("trials", r.UnixSeconds,
+                    $"Reached wave {r.XpAwardB} of the endless Trials.", []);
+
+            case "match" or "friendly":
+            {
+                var won = r.ResultHeroId == heroId;
+                var staked = r.Type == "match";
+                // A squad duel's receipt id is "{squadId}:{slot}" — a slot inside a 3v3 relay, which
+                // /watch cannot serve (it replays whole duels and death-matches). Naming it there would
+                // be a link to a "no replay" card, so it gets none.
+                var squad = r.Id.Contains(':');
+                var kind = squad ? "squad" : staked ? "duel" : "spar";
+                var verb = other is null
+                    ? "Fought itself"
+                    : won ? $"Beat {vs}" : "Lost to " + vs;
+                var arena = squad ? " in a squad relay" : staked ? " in a wagered duel" : " in a friendly spar";
+                return new Shared.HeroTimelineEventDto(kind, r.UnixSeconds,
+                    verb + arena + ".", related,
+                    WatchMatchId: squad ? null : r.Id,
+                    Outcome: other is null ? null : won ? "won" : "lost",
+                    Detail: XpDetail(swing));
+            }
+
+            default:
+                return null;
+        }
+    }
+
+    private static string? XpDetail(long swing) =>
+        swing == 0 ? null : swing > 0 ? $"+{swing:N0} xp" : $"{swing:N0} xp";
+
+    /// <summary>A hero reference for the wire: its id always, its name only when it still exists. A hero
+    /// burned in a fusion or a death-match has had its record erased, so a null name is the truth about it
+    /// rather than a lookup that failed.</summary>
+    private Shared.TimelineHeroRefDto Ref(string heroId) =>
+        new(heroId, store.Heroes.TryGetValue(heroId, out var h) ? h.Name : null);
+
+    /// <summary>How a hero reads inside a summary line: its name while it exists, and a shortened id once
+    /// it doesn't. Never a placeholder name — a burned hero's name is gone, and inventing one would put a
+    /// fact on the page that nothing in the system can stand behind.</summary>
+    private string Display(string heroId) =>
+        string.IsNullOrEmpty(heroId) ? "an unrecorded hero"
+        : store.Heroes.TryGetValue(heroId, out var h) ? h.Name
+        : $"a burned hero ({Short(heroId)})";
+
+    private static string Short(string id) => id.Length <= 12 ? id : $"{id[..6]}…{id[^4..]}";
+
     // ── Unique-name registry: claim a custom, globally-unique hero name (a treasury sats sink) ──
 
     /// <summary>
@@ -2851,9 +3072,20 @@ public class GameService(
             // over-stating the income of a treasury holding real bitcoin is not.
             // Keyed on the offer, so this and ClaimPurchasedHeroAsync can never book the same sale twice.
             offer.Status = "closed";
+            // Was this close a SALE? Asked once and read for two purposes: booking the listing fee, and —
+            // for a hero — recording what it fetched. This is the LAST moment either question can be
+            // answered: `closed` is the same state a seller's reclaim lands in, so a step from here the
+            // difference is gone for good. The call is skipped only when neither purpose applies (no fee to
+            // book, and a fungible item unit that has no page to have a history on), and it costs at most
+            // one chain read per offer ever, since only a real transition reaches this branch.
+            var sold = (offer.ListingFeeSats > 0 || offer.Kind == "hero")
+                       && await chain.WasOfferSoldAsync(offer.Id, ct);
+            // Buyer unknown by construction here: the covenant's treasury leg proves a sale happened, not
+            // who it was to. A later claim fills them in under the same key.
+            if (sold) await RecordHeroSaleAsync(offer, buyerId: null, ct);
             if (offer.ListingFeeSats > 0)
             {
-                if (await chain.WasOfferSoldAsync(offer.Id, ct))
+                if (sold)
                     await store.RecordInflowAsync(OfferSaleInflowId(offer.Id), "listing", offer.ListingFeeSats, ct);
                 else
                     // The tripwire. This is the EXPECTED path for a reclaim, so it is not an error — but it
@@ -2880,6 +3112,38 @@ public class GameService(
         // (a closed row is never rehydrated) and lose the fee permanently. Under-booking is survivable and
         // double-booking real-bitcoin income is not, so the safe half of that trade is the one taken here.
         if (offer.Status != statusBefore) await persistence.SaveOfferAsync(offer, ct);
+    }
+
+    /// <summary>
+    /// Records a hero sale, once, from whichever proof got here first.
+    ///
+    /// Both callers have already established that the offer CLOSED ON A SALE — this only writes the fact
+    /// down. Item offers fall straight through: a fungible unit has no page and no history. The store's
+    /// keyed dedup decides whether anything is new, and only a real change reaches the disk, so this is
+    /// safe to call from a retried settle and safe to call in either order.
+    ///
+    /// Deliberately swallows a write failure, for the same reason the treasury tally does: it sits behind
+    /// code that has already moved sats and whose callers unwind in-memory state on a throw. A throw out
+    /// of here would abandon <c>ClaimPurchasedHeroAsync</c> AFTER the hero had durably changed owner,
+    /// leaving the buyer's claim reported as failed on a hero that is already theirs. A missing row costs
+    /// one line of a hero's history; nothing else reads it.
+    /// </summary>
+    private async Task RecordHeroSaleAsync(OfferListing offer, string? buyerId, CancellationToken ct)
+    {
+        if (offer.Kind != "hero" || offer.HeroId is not { } heroId) return;
+        var sale = new HeroSale(offer.Id, heroId, offer.SellerId, buyerId,
+            offer.AskSats, offer.ListingFeeSats, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (store.RecordHeroSale(sale) is not { } changed) return;
+        try
+        {
+            await persistence.SaveHeroSaleAsync(changed, ct);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Hero {HeroId} sold for {Sats} sat under offer {OfferId}, but the sale "
+                                   + "was not persisted; its page will forget the price after a restart.",
+                heroId, offer.AskSats, offer.Id);
+        }
     }
 
     /// <summary>The once-only key a listing fee is booked under. ReconcileOfferAsync and
@@ -3050,6 +3314,10 @@ public class GameService(
         // store's inflow dedup makes the sale once-only however often either path runs.
         if (offer.ListingFeeSats > 0)
             await store.RecordInflowAsync(OfferSaleInflowId(offer.Id), "listing", offer.ListingFeeSats, ct);
+        // The same confirmed sale, kept as history. This path is the one that knows the BUYER — the chain
+        // was just asked whether they hold the asset — so it records what reconcile cannot, and fills in
+        // the buyer on a row reconcile may already have written under the same key.
+        await RecordHeroSaleAsync(offer, buyer.Id, ct);
         // The close goes durable last, for the same reason it does in ReconcileOfferAsync: a crash before this
         // point leaves the offer rehydrating as `active`, and reconcile then closes it and re-books under the
         // same once-only key. The hero's new ownership is already durable above, so the only thing still at

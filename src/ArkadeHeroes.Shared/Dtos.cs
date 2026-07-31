@@ -97,6 +97,62 @@ public record HeroDto(
 
 public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
+/// <summary>
+/// Another hero named by a timeline event — a parent, a burned input, an opponent.
+///
+/// <see cref="Name"/> is deliberately NULLABLE and deliberately not backfilled. A hero burned in a
+/// fusion or a death-match has its record erased at the burn site (its on-chain asset is retired, and a
+/// rehydrated ghost would be a fightable, listable hero that no longer exists), so by the time anything
+/// reads this the id is genuinely all that is left of it. Rendering a placeholder name would invent a
+/// fact; a null says "this one is gone" and lets the UI show the id it can still stand behind.
+/// </summary>
+public record TimelineHeroRefDto(string HeroId, string? Name);
+
+/// <summary>
+/// One thing that happened to a hero, in the one shape the page renders.
+///
+/// Assembled by the server rather than the browser because the sources disagree about what an event even
+/// IS: a receipt files the same fight under both fighters and says nothing about which of them is "you",
+/// a squad duel's receipt id is <c>{squadId}:{slot}</c> and names a replay that <c>/watch</c> cannot
+/// serve, and a burned hero survives only as an id. Deriving the player-facing line once, server-side,
+/// keeps those rules in one testable place instead of scattered through Razor.
+/// </summary>
+public record HeroTimelineEventDto(
+    /// <summary>"born" | "bred" | "fused" | "absorbed" | "bred-with" | "burned" | "duel" | "spar"
+    /// | "deathmatch" | "gauntlet" | "trials" | "sold" — what happened, for the icon and the grouping.</summary>
+    string Kind,
+    /// <summary>When, in unix seconds — or 0 when the moment was never recorded (a gen-0 starter has no
+    /// birth timestamp anywhere in the system). Zero sorts first and the UI says so rather than printing
+    /// the epoch as if it were a real date.</summary>
+    long UnixSeconds,
+    /// <summary>The player-facing line.</summary>
+    string Summary,
+    /// <summary>The other heroes this event names, in the order the summary mentions them.</summary>
+    IReadOnlyList<TimelineHeroRefDto> Related,
+    /// <summary>The id to link at <c>/watch/{id}</c>, when a replay of THIS event can actually be served
+    /// there. Null for everything else — a dead link is worse than no link.</summary>
+    string? WatchMatchId = null,
+    /// <summary>Sats this event moved, when it moved any (what a sale fetched). 0 otherwise.</summary>
+    long Sats = 0,
+    /// <summary>"won" | "lost" | null — this hero's side of a fight, when the event was one.</summary>
+    string? Outcome = null,
+    /// <summary>A second line of detail (the XP swing, the buyer), when there is one worth showing.</summary>
+    string? Detail = null);
+
+/// <summary>
+/// A hero's full provenance, newest first.
+///
+/// <see cref="Complete"/> is the honest part. Almost every event here is derived from the progression
+/// receipt ledger, which lives in memory: a server restart drops it, and the timeline then legitimately
+/// begins mid-life. Sales and lineage are durable and survive. Saying so on the wire lets the page admit
+/// the gap instead of presenting a truncated history as a whole one.
+/// </summary>
+public record HeroTimelineDto(
+    string HeroId,
+    IReadOnlyList<HeroTimelineEventDto> Events,
+    bool Complete,
+    string? Caveat = null);
+
 /// <summary>What the starter heroes cost, and the invoice to pay before claiming them. <c>Fee</c> is null
 /// when the server charges nothing, in which case the claim can be made straight away.</summary>
 public record StarterQuoteResponse(long FeeSats, int HeroCount, FeeInvoiceDto? Fee);

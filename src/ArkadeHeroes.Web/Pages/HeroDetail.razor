@@ -288,6 +288,72 @@ else
 
     <div class="card">
         <div class="page-head" style="margin-bottom:.8rem">
+            <h3 style="margin:0">Provenance</h3>
+            <span class="hud">everything that ever happened to this hero</span>
+        </div>
+        @if (_timelineError is not null)
+        {
+            <div class="status-line"><span class="dot bad"></span> @_timelineError</div>
+        }
+        else if (_timeline is null)
+        {
+            <div class="status-line"><span class="dot wait"></span> reading its history…</div>
+        }
+        else
+        {
+            @if (_timeline.Caveat is not null)
+            {
+                <p class="tl-caveat">@_timeline.Caveat</p>
+            }
+            <ol class="tl">
+                @foreach (var e in _timeline.Events)
+                {
+                    <li class="tl-row tl-@e.Kind">
+                        <span class="tl-mark" title="@e.Kind">@Glyph(e.Kind)</span>
+                        <div class="tl-body">
+                            <div class="tl-line">
+                                <b>@e.Summary</b>
+                                @if (e.Outcome is not null)
+                                {
+                                    <span class="chip @(e.Outcome == "won" ? "ok" : "bad")">@e.Outcome</span>
+                                }
+                                @if (e.Sats > 0)
+                                {
+                                    <span class="chip mono">@e.Sats.ToString("N0") sat</span>
+                                }
+                            </div>
+                            <div class="tl-meta mono">
+                                <span>@When(e.UnixSeconds)</span>
+                                @if (e.Detail is not null)
+                                {
+                                    <span>@e.Detail</span>
+                                }
+                                @foreach (var rel in e.Related)
+                                {
+                                    @if (rel.Name is not null)
+                                    {
+                                        <a href="heroes/@rel.HeroId">@rel.Name</a>
+                                    }
+                                    else
+                                    {
+                                        @* No link: this hero was burned, so there is no page to open. *@
+                                        <span class="tl-gone" title="burned — its record was erased with its on-chain asset">@Short(rel.HeroId) · burned</span>
+                                    }
+                                }
+                                @if (e.WatchMatchId is not null)
+                                {
+                                    <a href="watch/@e.WatchMatchId">replay ↗</a>
+                                }
+                            </div>
+                        </div>
+                    </li>
+                }
+            </ol>
+        }
+    </div>
+
+    <div class="card">
+        <div class="page-head" style="margin-bottom:.8rem">
             <h3 style="margin:0">Progression receipts</h3>
             <span class="hud">signed facts · verified in your browser</span>
             <span class="spacer"></span>
@@ -337,6 +403,8 @@ else
     [Parameter] public string Id { get; set; } = "";
 
     private HeroDto? _hero;
+    private HeroTimelineDto? _timeline;
+    private string? _timelineError;
     private List<ProgressionReceiptDto> _receipts = new();
     private string? _advertisedKey;
     private int _replayedLevel;
@@ -387,6 +455,14 @@ else
             try { _shape = _gearCounters && _hero is not null ? CombatShapes.Of(Genome.FromHex(_hero.GenomeHex), _hero.Level) : null; }
             catch { _shape = null; }
             _replayedLevel = ReceiptVerifier.ReplayLevel(Id, _receipts);
+            // Deliberately NOT part of the all-or-nothing above. The timeline cross-checks nothing — it is
+            // a rendering of facts those three already carry — so a failure here should cost the history
+            // card, not the whole hero. It says so out loud rather than rendering as an empty history,
+            // which would read as "nothing ever happened to this hero".
+            _timeline = null;
+            _timelineError = null;
+            try { _timeline = await Api.Heroes.TimelineAsync(Id); }
+            catch { _timelineError = "Couldn't load this hero's history — the rest of the page is unaffected."; }
             if (_catalog.Count == 0)
             {
                 try { _catalog = await Api.Items.ShopAsync(); }
@@ -422,6 +498,28 @@ else
 
     static string Short(string s) => s.Length <= 12 ? s : $"{s[..6]}…{s[^4..]}";
     static string Signed(long n) => n > 0 ? $"+{n}" : n.ToString();
+
+    // A mark per event class. Typographic, not pictorial — the arena's own voice, and legible at 12px.
+    static string Glyph(string kind) => kind switch
+    {
+        "born" => "✦",
+        "bred" or "bred-with" => "❖",
+        "fused" or "absorbed" => "⬢",
+        "burned" => "✖",
+        "duel" or "squad" or "spar" => "⚔",
+        "deathmatch" => "☠",
+        "gauntlet" => "⚑",
+        "trials" => "∞",
+        "sold" => "⇄",
+        _ => "·",
+    };
+
+    // A zero timestamp is NOT a date — nothing in the arena stamps a hero with its birth moment, so the
+    // events derived from lineage alone genuinely have no time. Printing the epoch would be a lie that
+    // looks like a fact; say the moment is unknown instead.
+    static string When(long unixSeconds) => unixSeconds <= 0
+        ? "moment not recorded"
+        : DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime.ToString("yyyy-MM-dd HH:mm") + " UTC";
 
     // Prettify a catalog item id for display ("steel-saber" -> "Steel Saber").
     static string Pretty(string id) => string.IsNullOrEmpty(id) ? id

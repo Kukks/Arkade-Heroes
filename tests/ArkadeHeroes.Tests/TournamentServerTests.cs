@@ -391,6 +391,8 @@ public class TournamentServerTests
             => processDied() ? Task.CompletedTask : inner.SaveOfferAsync(offer, ct);
         public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveStudProposalAsync(proposal, ct);
+        public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveHeroSaleAsync(sale, ct);
         public Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveTreasuryFlowAsync(id, direction, tag, sats, ct);
     }

@@ -311,6 +311,15 @@ api.MapGet("/heroes/mine", (HttpContext http, int? skip, int? take, GameService 
 api.MapGet("/heroes/{heroId}", (string heroId, GameService game) =>
     Results.Ok(game.GetHero(heroId).ToDto()));
 
+// Everything that ever happened to one hero, newest first — how it was born, what it fought, what it was
+// traded for, what it was fused from. Public: a hero's provenance is what a buyer is really appraising,
+// so it should not need an account to read. 404 for a hero that doesn't exist (or was burned).
+api.MapGet("/heroes/{heroId}/timeline", (string heroId, GameService game) =>
+{
+    try { return Results.Ok(game.HeroTimeline(heroId)); }
+    catch (GameRuleException) { return Results.NotFound(); }
+});
+
 // ── Breeding (commit → reveal) ─────────────────────────────────────────────
 
 api.MapPost("/breeding/commit", async (BreedCommitRequest request, HttpContext http, GameService game,
