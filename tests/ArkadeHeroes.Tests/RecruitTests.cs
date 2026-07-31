@@ -22,15 +22,16 @@ public class RecruitTests(WebApplicationFactory<Program> factory) : IClassFixtur
     {
         var (alice, _) = await factory.RegisterAsync($"repeat-{Guid.NewGuid():N}");
 
-        var first = await alice.ClaimStartersAsync();
-        var second = await alice.ClaimStartersAsync();
-        var third = await alice.ClaimStartersAsync();
+        // One purchase each — the helper's default buys a starting pair, which would hide the per-claim size.
+        var first = await alice.RecruitAsync(StarterPolicy.HeroCount);
+        var second = await alice.RecruitAsync(StarterPolicy.HeroCount);
+        var third = await alice.RecruitAsync(StarterPolicy.HeroCount);
 
         Assert.Equal(StarterPolicy.HeroCount, first.Count);
         Assert.Equal(StarterPolicy.HeroCount, second.Count);
 
         var everyId = first.Concat(second).Concat(third).Select(h => h.Id).ToList();
-        Assert.Equal(everyId.Count, everyId.Distinct().Count());          // no batch repeats another
+        Assert.Equal(everyId.Count, everyId.Distinct().Count());          // no purchase repeats another
         Assert.Equal(StarterPolicy.HeroCount * 3, (await alice.Heroes.MineAsync()).Count);
     }
 

@@ -13,7 +13,9 @@
             @* Game-first: only the three game sections live in the nav. The wallet is a
                lower-level system — it's reachable from the subtle pill on the right, not here. *@
             <NavLink href="" Match="NavLinkMatch.All">Arena</NavLink>
-            <a href="heroes" class="@(Section == "heroes" ? "active" : "")">Heroes</a>
+            @* Lands on Play, not the roster: the top-level question is "what can I do", and the roster is
+               one answer among fourteen. It's still first in the subnav below. *@
+            <a href="play" class="@(Section == "heroes" ? "active" : "")">Heroes</a>
             <a href="market" class="@(Section == "market" ? "active" : "")">Market</a>
         </nav>
         <span class="spacer"></span>
@@ -150,8 +152,10 @@
             // by intent and states the stake on each, and the nav just points at it.
             "heroes" =>
             [
-                ("Roster", "heroes", NavLinkMatch.All),
+                // Play first, because that is where the Heroes tab lands — the subnav should not open
+                // with a different page highlighted than the one you were just taken to.
                 ("Play", "play", NavLinkMatch.Prefix),
+                ("Roster", "heroes", NavLinkMatch.All),
                 ("Breed", "breed", NavLinkMatch.Prefix),
                 ("Achievements", "achievements", NavLinkMatch.Prefix),
                 ("Ranks", "leaderboard", NavLinkMatch.Prefix),

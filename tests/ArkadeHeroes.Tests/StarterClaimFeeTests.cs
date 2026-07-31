@@ -1,3 +1,4 @@
+using ArkadeHeroes.Core.Genetics;
 using ArkadeHeroes.Client.Sdk;
 using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
@@ -32,10 +33,12 @@ public class StarterClaimFeeTests(WebApplicationFactory<Program> factory) : ICla
         Assert.NotNull(quote.Fee);
         var perHero = quote.FeeSats / quote.HeroCount;
 
-        // Pay and claim, so there are two unbred parents to quote a breed against.
+        // Pay and claim, then buy a second — a breed quote needs two unbred parents, and a recruit is a
+        // single hero, so getting a pair means purchasing twice.
         await alice.PayInvoiceAsync(quote.Fee!.InvoiceId);
         var heroes = (await alice.Heroes.ClaimStartersAsync()).Heroes.ToList();
         Assert.Equal(quote.HeroCount, heroes.Count);
+        heroes.AddRange(await alice.RecruitAsync(StarterPolicy.HeroCount));
 
         // A first breed — neither parent has bred, so this is the floor price of a new hero.
         var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id));

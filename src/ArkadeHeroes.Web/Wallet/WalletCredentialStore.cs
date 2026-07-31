@@ -36,20 +36,35 @@ public class WalletCredentialStore(IJSRuntime js, GameWallet wallet)
         catch { return false; }   // no JS, no module, no feature — all the same answer to the caller
     }
 
+    /// <summary>What a save attempt actually achieved. See the module's <c>save</c> for why "accepted" and
+    /// "confirmed" are different answers rather than both being success.</summary>
+    public enum SaveOutcome { Confirmed, Accepted, Refused, Unsupported, NoPhrase }
+
     /// <summary>
-    /// Saves the active wallet's phrase. False when the browser can't, when the wallet has no phrase to
-    /// save, or when the player dismisses the browser's own prompt — a declined save is a choice.
+    /// Saves the active wallet's phrase and reports what can actually be established.
+    ///
+    /// <para>Deliberately not a bool. The browser resolving the store call does not mean a credential
+    /// exists, and Chrome often saves with no prompt at all — so "it didn't throw" and "your keys are
+    /// backed up" are different claims, and only the second one is worth telling a player.</para>
     /// </summary>
-    public async Task<bool> SaveAsync(string walletId)
+    public async Task<SaveOutcome> SaveAsync(string walletId)
     {
-        if (await wallet.GetMnemonicAsync(walletId) is not { Length: > 0 } phrase) return false;
+        if (await wallet.GetMnemonicAsync(walletId) is not { Length: > 0 } phrase) return SaveOutcome.NoPhrase;
         try
         {
             // Keyed by wallet id so a second wallet cannot silently overwrite the first's phrase — on a
             // non-custodial wallet that would be losing the only copy of someone's keys.
-            return await (await ModuleAsync()).InvokeAsync<bool>("save", walletId, phrase, CredentialLabel);
+            var status = await (await ModuleAsync())
+                .InvokeAsync<string>("save", walletId, phrase, CredentialLabel);
+            return status switch
+            {
+                "confirmed" => SaveOutcome.Confirmed,
+                "accepted" => SaveOutcome.Accepted,
+                "unsupported" => SaveOutcome.Unsupported,
+                _ => SaveOutcome.Refused,
+            };
         }
-        catch { return false; }
+        catch { return SaveOutcome.Refused; }
     }
 
     /// <summary>
