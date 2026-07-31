@@ -1,6 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
   <PropertyGroup>
+    <!--
+      Trimming off. Blazor WASM turns it on for Release publish, and the content pack cannot survive it:
+      ContentPackLoader binds items.json / dungeons.json through reflection-based System.Text.Json and then
+      REJECTS anything that fails to bind ("unknown field, or broken invariant — bad content must never load
+      silently"). Trimming removes the property metadata that binding needs, so the reject fires, throws out
+      of ContentPack.Default's initializer, and every static that touches it — Gauntlet.Content among them —
+      dies as TypeInitializationException.
+
+      Only in published builds, which is why a local build and the whole unit suite are clean. The cost is a
+      larger download; the alternative is a trimmer descriptor listing every content type by hand, which is
+      the same guarantee maintained by remembering to update it.
+    -->
+    <PublishTrimmed>false</PublishTrimmed>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
