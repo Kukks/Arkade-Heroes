@@ -24,7 +24,11 @@ namespace ArkadeHeroes.Tests.E2E;
 /// </summary>
 public class BrowserWalletSpendRaceE2ETests(ITestOutputHelper output) : IAsyncLifetime
 {
-    private const long PerCoin = 60_000;
+    // Deliberately unequal. Selection takes the largest coin first, so making the coin that gets settled
+    // away the larger one is what guarantees the spend actually walks into the race rather than happening
+    // to pick the survivor.
+    private const long BigCoin = 80_000;
+    private const long SmallCoin = 40_000;
     private const long FeeSats = 1_000;
 
     private readonly List<string> _walletDbPaths = [];
@@ -77,10 +81,10 @@ public class BrowserWalletSpendRaceE2ETests(ITestOutputHelper output) : IAsyncLi
         // and its background batch services are.
         Assert.Equal(settler.Address, browser.Address);
 
-        await RegtestHelper.ArkSend(settler.Address, PerCoin);
-        await RegtestHelper.ArkSend(settler.Address, PerCoin);
-        await settler.WaitForBalanceAsync(PerCoin * 2, TimeSpan.FromSeconds(60));
-        await browser.WaitForBalanceAsync(PerCoin * 2, TimeSpan.FromSeconds(60));
+        await RegtestHelper.ArkSend(settler.Address, BigCoin);
+        await RegtestHelper.ArkSend(settler.Address, SmallCoin);
+        await settler.WaitForBalanceAsync(BigCoin + SmallCoin, TimeSpan.FromSeconds(60));
+        await browser.WaitForBalanceAsync(BigCoin + SmallCoin, TimeSpan.FromSeconds(60));
 
         var settlerSpending = settler.GetService<ISpendingService>();
         var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
@@ -89,6 +93,7 @@ public class BrowserWalletSpendRaceE2ETests(ITestOutputHelper output) : IAsyncLi
             .OrderByDescending(c => c.TxOut.Value.Satoshi)
             .ToArray();
         Assert.True(coins.Length >= 2, "the wallet needs two coins for one of them to be raced away");
+        Assert.Equal(BigCoin, coins[0].TxOut.Value.Satoshi);   // the one selection will reach for first
 
         // The race, made deterministic. Settling a coin away is only half of it — the half that bites is
         // the tab still believing it owns the coin, and the SDK's own sync stream heals that within the
@@ -112,6 +117,12 @@ public class BrowserWalletSpendRaceE2ETests(ITestOutputHelper output) : IAsyncLi
         var txId = await browserWallet.SendSatsAsync(browser.WalletId, feeRecipient.Address, FeeSats);
         Assert.False(string.IsNullOrWhiteSpace(txId));
         await feeRecipient.WaitForBalanceAsync(FeeSats, TimeSpan.FromSeconds(60));
+
+        // The wallet's own store now agrees with arkd about the coin it lost — that healing is what makes
+        // the retry converge instead of picking the same dead coin again.
+        Assert.DoesNotContain(
+            await browser.GetService<ISpendingService>().GetAvailableCoins(browser.WalletId),
+            c => c.Outpoint == raced.Outpoint);
 
         // Reported, not asserted: whether the browser's store had actually gone stale by the time it
         // selected. The SDK's own sync stream can heal it within the same second, in which case this run

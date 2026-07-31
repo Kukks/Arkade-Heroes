@@ -383,7 +383,41 @@ public class GameWallet(
                 : "Not enough spendable sats (you need funds for the amount plus the network fee).");
         }
 
+        // The last line of defence for whatever the inputs are still carrying. Wherever the selected
+        // coins hold asset units the outputs do NOT consume, the SDK puts that leftover on the change
+        // output — but only when there IS one. Change below dust is moved to an OP_RETURN at vout 0
+        // while the asset packet still points at the LAST output, and change of exactly zero produces
+        // no change output at all; either way the leftover hero lands on the recipient. The carrier
+        // fallback above already guarantees this for the case it handles, but it is not the only way a
+        // carrier gets selected — covering an output asset picks one too, and that path can land here
+        // with a coin that holds two heroes and barely more than dust. Refuse rather than send one.
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) - required < dust && LeavesAssetsBehind(selected, outputs))
+            throw new GameWalletException(
+                "Sending this would give away another hero riding on the same coin. " +
+                "Add a few more sats to your wallet and try again.");
+
         return [.. selected];
+    }
+
+    /// <summary>
+    /// True when the chosen inputs hold asset units the outputs don't spend — i.e. there is asset change,
+    /// and it therefore needs somewhere of the player's own to land. Mirrors the SDK's own
+    /// <c>HasAssetChange</c>, which is what decides that a change output is required.
+    /// </summary>
+    private static bool LeavesAssetsBehind(IEnumerable<ArkCoin> inputs, ArkTxOut[] outputs)
+    {
+        var held = new Dictionary<string, ulong>();
+        foreach (var coin in inputs)
+            foreach (var asset in coin.Assets ?? [])
+                held[asset.AssetId] = held.GetValueOrDefault(asset.AssetId) + asset.Amount;
+        if (held.Count == 0) return false;
+
+        var sent = new Dictionary<string, ulong>();
+        foreach (var output in outputs)
+            foreach (var asset in output.Assets ?? [])
+                sent[asset.AssetId] = sent.GetValueOrDefault(asset.AssetId) + asset.Amount;
+
+        return held.Any(kv => kv.Value > sent.GetValueOrDefault(kv.Key));
     }
 
     /// <summary>

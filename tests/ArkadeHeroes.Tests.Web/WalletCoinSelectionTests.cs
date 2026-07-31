@@ -119,6 +119,46 @@ public class WalletCoinSelectionTests
         Assert.Equal([big], Inputs(spending));
     }
 
+    [Fact]
+    public async Task SendingOneHeroOffACoinCarryingTwo_IsRefusedWhenTheChangeWouldNotSurvive()
+    {
+        // 1,500 sats and two heroes. Sending one costs dust (1,000), which leaves 500 of change — under
+        // dust, so the SDK would move it to vout 0 while the asset packet still assigns the SECOND hero
+        // to the last output. That last output is the recipient.
+        var carrier = Coin(1_500, HeroAsset, units: 2);
+        var (wallet, spending) = Wallet(carrier);
+
+        var ex = await Assert.ThrowsAsync<GameWalletException>(
+            () => wallet.SendAssetAsync(WalletId, Destination, HeroAsset));
+
+        Assert.Contains("another hero", ex.Message);
+        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default!, default!);
+    }
+
+    [Fact]
+    public async Task SendingOneHeroOffACoinCarryingTwo_GoesThroughOnceTheChangeClearsDust()
+    {
+        // The same send with room to leave a real change output: allowed, and the second hero rides it.
+        var carrier = Coin(9_000, HeroAsset, units: 2);
+        var (wallet, spending) = Wallet(carrier);
+
+        await wallet.SendAssetAsync(WalletId, Destination, HeroAsset);
+
+        Assert.Equal([carrier], Inputs(spending));
+    }
+
+    [Fact]
+    public async Task SendingTheLastHeroOffACoin_IsNotBlockedByTheGuard()
+    {
+        // Nothing is left behind, so there is no asset change to misplace — a thin carrier is fine.
+        var carrier = Coin(1_500, HeroAsset);
+        var (wallet, spending) = Wallet(carrier);
+
+        await wallet.SendAssetAsync(WalletId, Destination, HeroAsset);
+
+        Assert.Equal([carrier], Inputs(spending));
+    }
+
     // ── Losing the race for your own coins ───────────────────────────────────────────────────────
 
     [Fact]
@@ -230,7 +270,7 @@ public class WalletCoinSelectionTests
 
     private static uint _index;
 
-    private static ArkCoin Coin(long sats, string? assetId = null, bool swept = false)
+    private static ArkCoin Coin(long sats, string? assetId = null, bool swept = false, ulong units = 1)
     {
         var serverKey = ECXOnlyPubKey.Create(new Key().PubKey.TaprootInternalKey.ToBytes());
         var script = new GenericTapScript([Op.GetPushOp(1), OpcodeType.OP_TRUE]);
@@ -250,7 +290,7 @@ public class WalletCoinSelectionTests
             sequence: null,
             swept: swept,
             unrolled: false,
-            assets: assetId is null ? null : [new VtxoAsset(assetId, 1)]);
+            assets: assetId is null ? null : [new VtxoAsset(assetId, units)]);
     }
 
     private static string Address()
