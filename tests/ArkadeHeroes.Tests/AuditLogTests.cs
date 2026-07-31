@@ -345,9 +345,15 @@ public class AuditLogTests
 
     /// <summary>
     /// Clients poll-retry every one of these flows, so "logged once per ACTION" and "logged once per CALL"
-    /// are very different properties and only the first is useful. The money paths in this repo already
-    /// sit behind durable latches and invoice-id dedup; the log matches that discipline with a UNIQUE
-    /// index on the once-only key rather than trusting the caller not to repeat itself.
+    /// are very different properties and only the first is useful.
+    ///
+    /// NOTE ON WHAT THIS PROVES, because it is less than it looks. For the three flows below the second
+    /// call never reaches the log at all: the item claim returns early on its <c>claimed</c> status, and
+    /// the daily and gauntlet retries are refused outright by their own latches. So what is under test
+    /// here is that a retry does not produce a second entry — which is the property that matters — but the
+    /// mechanism doing the work is the FLOW's once-only guard, not the log's dedup key. The log's own key
+    /// is exercised directly at the end of this test, and on a real flow in
+    /// <see cref="TheSameCloseProvenTwice_IsLoggedOnce"/>, which is where it does work nothing else does.
     /// </summary>
     [Fact]
     public async Task ARetriedAction_IsLoggedExactlyOnce()
@@ -401,6 +407,56 @@ public class AuditLogTests
                 new { forged = true },
                 events.First(e => e.EventType == AuditEventType.DailyClaimed).DedupKey));
             Assert.Equal(before, (await AllEventsAsync(factory)).Count);
+        }
+        finally { Cleanup(dbPath); }
+    }
+
+    /// <summary>
+    /// THE DEDUP KEY DOING WORK NOTHING ELSE DOES — the case the retry test above cannot reach.
+    ///
+    /// One offer's close is provable two independent ways, and BOTH can run: reconcile observes the asset
+    /// left the covenant and the treasury took its cut, and the buyer's claim observes the chain showing
+    /// them holding the hero. Neither path checks the other's status first — <c>ClaimPurchasedHeroAsync</c>
+    /// deliberately does not refuse an offer reconcile has already closed — so the second one through
+    /// genuinely reaches the log with the same fact. Only the shared once-only key stops the close being
+    /// recorded twice, and this is the same key discipline <c>OfferSaleInflowId</c> uses to stop the FEE
+    /// being booked twice off exactly this race.
+    /// </summary>
+    [Fact]
+    public async Task TheSameCloseProvenTwice_IsLoggedOnce()
+    {
+        var dbPath = NewDbPath();
+        try
+        {
+            using var factory = HostOn(dbPath);
+            var (seller, sellerPlayer) = await factory.RegisterAsync("Audit-Close-Seller");
+            var (buyer, buyerPlayer) = await factory.RegisterAsync("Audit-Close-Buyer");
+            var heroes = await seller.RecruitAsync(2);
+
+            var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(heroes[0].Id, 6_000));
+            await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+            await seller.Offers.ListAsync();                                  // observed funded → active
+            await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
+
+            // PROOF ONE: reconcile sees the asset gone and the treasury paid — it closes the offer.
+            await buyer.Offers.ListAsync();
+            // PROOF TWO: the buyer claims game-side ownership, which knows the sale happened AND who
+            // bought it. It writes the same close again, under the same key.
+            await buyer.Offers.ClaimHeroAsync(offer.OfferId);
+
+            var closes = (await AllEventsAsync(factory))
+                .Where(e => e.EventType == AuditEventType.OfferClosed
+                            && e.Subjects.Any(s => s.SubjectId == offer.OfferId))
+                .ToList();
+            Assert.Single(closes);
+
+            // Both proofs really did run — otherwise the single close above would be single for the boring
+            // reason that only one path ever fired, and this test would prove nothing.
+            Assert.Contains(await AllEventsAsync(factory),
+                e => e.EventType == AuditEventType.OfferHeroClaimed
+                     && e.Subjects.Any(s => s.SubjectId == offer.OfferId));
+            Assert.Equal(buyerPlayer.PlayerId,
+                (await buyer.Heroes.GetAsync(heroes[0].Id)).OwnerId);
         }
         finally { Cleanup(dbPath); }
     }

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
@@ -221,11 +220,6 @@ public sealed class SqliteAuditLog(
     private long _writeFailures;
     public long WriteFailures => Interlocked.Read(ref _writeFailures);
 
-    /// <summary>Dedup keys already written by THIS process. A pure fast path in front of the UNIQUE index —
-    /// it saves the round trip on the common retry, and it is the index, not this, that makes the guarantee
-    /// (a second process, or a restart, finds an empty set and falls through to the database).</summary>
-    private readonly ConcurrentDictionary<string, byte> _seenDedupKeys = new();
-
     public async Task RecordAsync(AuditEntry entry)
     {
         try
@@ -236,15 +230,14 @@ public sealed class SqliteAuditLog(
             // a disconnect can erase is not a log. These are single-row local SQLite inserts.
             await using var db = await factory.CreateDbContextAsync();
 
-            if (entry.DedupKey is { } key)
-            {
-                if (_seenDedupKeys.ContainsKey(key)) return;
-                if (await db.AuditEvents.AsNoTracking().AnyAsync(e => e.DedupKey == key))
-                {
-                    _seenDedupKeys.TryAdd(key, 0);
-                    return;
-                }
-            }
+            // The common retry, answered by an indexed lookup on the unique key rather than by an
+            // in-process cache. A cache would be a memory leak with no upside: it would hold one string per
+            // logged action for the life of the process on a log designed to grow forever, and it would not
+            // be the guarantee anyway — the UNIQUE index below is, which is what makes the answer correct
+            // across a restart and across two processes sharing the file.
+            if (entry.DedupKey is { } key
+                && await db.AuditEvents.AsNoTracking().AnyAsync(e => e.DedupKey == key))
+                return;
 
             var row = new PersistedAuditEvent
             {
@@ -262,13 +255,12 @@ public sealed class SqliteAuditLog(
 
             db.AuditEvents.Add(row);
             await db.SaveChangesAsync();
-            if (entry.DedupKey is { } written) _seenDedupKeys.TryAdd(written, 0);
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
-            // The UNIQUE dedup index firing on a concurrent retry: this action IS recorded, by whoever won
-            // the race. Not a failure, and deliberately not counted as one.
-            if (entry.DedupKey is { } key) _seenDedupKeys.TryAdd(key, 0);
+            // The UNIQUE dedup index firing on a concurrent retry that raced past the lookup above: this
+            // action IS recorded, by whoever won the race. Not a failure, and deliberately not counted as
+            // one — this catch is the half of the guarantee the lookup cannot make on its own.
         }
         catch (Exception ex)
         {
