@@ -4,6 +4,7 @@ using NArk.Abstractions.Assets;
 using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Core;
 using NArk.Core.Services;
 using NArk.Core.Transport;
 using NArk.Core.Wallet;
@@ -93,17 +94,35 @@ public class GameWallet(
         return contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
     }
 
-    /// <summary>Spendable balance in sats (sum of unlocked, in-bounds VTXOs). 0 on any sync error.</summary>
+    /// <summary>
+    /// What the player can spend RIGHT NOW, in sats. 0 on any sync error.
+    ///
+    /// <para>This used to sum every available coin, which is not the same set the spend path will take:
+    /// a spend also requires <c>CanSpendOffchain</c>, so a freshly-received coin that hasn't settled into
+    /// a batch yet counted towards the pill but could not pay for anything. The player read a number and
+    /// then got told they were short — see <see cref="GetBalanceBreakdownAsync"/> for the other half,
+    /// which is what the wallet page shows so the missing sats are accounted for rather than hidden.</para>
+    /// </summary>
     public virtual async Task<long> GetBalanceAsync(string walletId)
+        => (await GetBalanceBreakdownAsync(walletId)).Spendable;
+
+    /// <summary>
+    /// The balance split into what a spend can actually reach and what is still settling — the same
+    /// <c>CanSpendOffchain</c> test coin selection applies, so the two numbers add up to everything the
+    /// wallet holds and neither one lies. Both 0 on any sync error.
+    /// </summary>
+    public virtual async Task<(long Spendable, long Settling)> GetBalanceBreakdownAsync(string walletId)
     {
         try
         {
+            var now = new TimeHeight(DateTimeOffset.UtcNow, 0);
             var coins = await spendingService.GetAvailableCoins(walletId);
-            return coins.Sum(c => c.Amount.Satoshi);
+            var spendable = coins.Where(c => c.CanSpendOffchain(now)).Sum(c => c.Amount.Satoshi);
+            return (spendable, coins.Sum(c => c.Amount.Satoshi) - spendable);
         }
         catch
         {
-            return 0;
+            return (0, 0);
         }
     }
 
@@ -180,17 +199,110 @@ public class GameWallet(
         catch (Exception ex) { throw new GameWalletException("That isn't a valid Arkade address.", ex); }
     }
 
+    /// <summary>How many times a spend re-selects and tries again after losing a race for its own coins.</summary>
+    internal const int SpendAttempts = 3;
+
+    /// <summary>Pause between spend attempts; scaled by the attempt number so the wallet backs off.</summary>
+    internal static TimeSpan RetryBackoff { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Builds, signs and submits the spend — retrying against FRESH coin state when it loses a race.
+    ///
+    /// <para>The tab runs the SDK's own batch services, so the wallet's coins can be settled away by its
+    /// own background while the player is mid-flow. arkd then refuses the transaction
+    /// (<c>VTXO_ALREADY_SPENT</c>, <c>VTXO_ALREADY_REGISTERED</c>, "temporarily locked") even though the
+    /// player still holds the funds — the settlement handed them a NEW coin the tab hasn't caught up to.
+    /// One attempt made that the player's problem: a raw SDK string in the UI and a fee that never got
+    /// paid. So a refusal that names the coin state is treated as what it is — stale local knowledge —
+    /// and healed: ask arkd which of the inputs it considers spent, write that truth into local storage,
+    /// give the tab's own sync a beat to bring in the replacement, then select again from scratch.</para>
+    ///
+    /// <para>Only retried when arkd REFUSED the transaction, which is the whole point of matching on the
+    /// coin-state errors rather than on failure in general: a refused transaction does not exist, so
+    /// re-selecting cannot double-spend. Anything else surfaces immediately.</para>
+    /// </summary>
     private async Task<string> SpendAsync(string walletId, ArkTxOut[] outputs)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            ArkCoin[] coins;
+            try
+            {
+                coins = await SelectSpendableCoinsAsync(walletId, outputs);
+            }
+            catch (GameWalletException) { throw; }
+            catch (Exception ex)
+            {
+                throw new GameWalletException(
+                    "Couldn't read your coins just now. Check your connection and try again.", ex);
+            }
+
+            try
+            {
+                var txId = await spendingService.Spend(walletId, coins, outputs);
+                return txId.ToString();
+            }
+            catch (Exception ex) when (attempt < SpendAttempts && IsStaleCoinState(ex))
+            {
+                await ForgetSpentCoinsAsync(coins);
+                await Task.Delay(RetryBackoff * attempt);
+            }
+            catch (GameWalletException) { throw; }
+            catch (Exception ex) { throw new GameWalletException(Explain(ex), ex); }
+        }
+    }
+
+    /// <summary>
+    /// True when the failure is arkd REFUSING the transaction because the inputs are no longer the
+    /// wallet's to spend, or the SDK refusing to build it at all.
+    ///
+    /// <para>Deliberately narrow, because a retry that re-selects DIFFERENT coins would pay twice if the
+    /// first transaction had actually landed. Every signal matched here is raised before a transaction
+    /// can exist: <c>VTXO_ALREADY_SPENT</c> and <c>VTXO_ALREADY_REGISTERED</c> are arkd's codes for a
+    /// submission it rejected, and <see cref="AlreadyLockedVtxoException"/> / "temporarily locked" come
+    /// from the SDK's own per-input lock, taken before anything is submitted. Bare phrases like
+    /// "already spent" are NOT matched: they could just as easily surface from the bookkeeping the SDK
+    /// does AFTER a successful submit, and a false positive there is a double payment.</para>
+    /// </summary>
+    private static bool IsStaleCoinState(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is AlreadyLockedVtxoException) return true;
+            var m = e.Message;
+            if (m.Contains("VTXO_ALREADY_SPENT", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("VTXO_ALREADY_REGISTERED", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("temporarily locked", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Writes arkd's view of the attempted inputs into local storage, so the next selection stops
+    /// offering coins the operator has already seen spent. Asking arkd directly (rather than waiting for
+    /// the background sync) is what makes the retry converge instead of picking the same dead coin again.
+    /// Best-effort: on any transport error the retry simply proceeds on what it has.
+    /// </summary>
+    private async Task ForgetSpentCoinsAsync(IReadOnlyCollection<ArkCoin> attempted)
     {
         try
         {
-            var coins = await SelectSpendableCoinsAsync(walletId, outputs);
-            var txId = await spendingService.Spend(walletId, coins, outputs);
-            return txId.ToString();
+            var outpoints = attempted.Select(c => c.Outpoint).ToList();
+            await foreach (var vtxo in transport.GetVtxosByOutpoints(outpoints, spentOnly: true))
+                await vtxoStorage.UpsertVtxo(vtxo);
         }
-        catch (GameWalletException) { throw; }
-        catch (Exception ex) { throw new GameWalletException($"Send failed: {ex.Message}", ex); }
+        catch { /* the delay + re-selection still give the tab's own sync a chance to catch up */ }
     }
+
+    /// <summary>
+    /// A spend failure in the player's language. The SDK speaks gRPC status text and arkd speaks error
+    /// codes — "net_http_message_not_success_statuscode_reason, 400/409" told a player nothing except
+    /// that the game was broken. The detail is not lost: it rides on the inner exception for the console.
+    /// </summary>
+    private static string Explain(Exception ex) => IsStaleCoinState(ex)
+        ? "Your coins are being settled by the network right now. Give it a few seconds and try again."
+        : "That payment didn't go through. Your funds are safe — please try again in a moment.";
 
     // Explicit coin selection mirroring SelfCustodyWallet: exclude recoverable (swept/expired)
     // coins, cover each output asset with its carrier VTXOs, then the sats with the largest
@@ -224,13 +336,21 @@ public class GameWallet(
         }
 
         long required = outputs.Sum(o => o.Value.Satoshi);
+        var dust = (await transport.GetServerInfoAsync()).Dust.Satoshi;
         var btc = spendable
             .Where(c => !selected.Contains(c) && c.Assets is null or { Count: 0 })
             .OrderByDescending(c => c.TxOut.Value.Satoshi).ToList();
+        // Take BTC coins until the change this leaves is a real VTXO (at or above dust), not merely
+        // until the outputs are covered. Aiming at required + dust is the same bar the carrier fallback
+        // below uses, and for the same reason: the SDK moves sub-dust change to vout 0 while asset
+        // change still points at the LAST output, so a spend whose inputs carry assets must never end
+        // up with sub-dust change. It also replaces the old "always grab one spare coin" rule, which
+        // took a coin the spend did not need and left the SDK's one-MINUTE per-input lock sitting on
+        // it — that spare is exactly the coin a retry reaches for after losing a race, and it was
+        // locked by the attempt that failed.
         var i = 0;
-        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required && i < btc.Count)
+        while (selected.Sum(c => c.TxOut.Value.Satoshi) < required + dust && i < btc.Count)
             selected.Add(btc[i++]);
-        if (i < btc.Count) selected.Add(btc[i]);
 
         // A settlement round can consolidate the whole wallet into ONE VTXO that carries the sats
         // AND every hero the player owns. After that there is no pure-BTC coin left, so no fee could
@@ -242,7 +362,6 @@ public class GameWallet(
         // points at the LAST output, which would hand the player's heroes to the recipient.
         if (selected.Sum(c => c.TxOut.Value.Satoshi) < required)
         {
-            var dust = (await transport.GetServerInfoAsync()).Dust.Satoshi;
             foreach (var carrier in spendable
                          .Where(c => !selected.Contains(c) && c.Assets is { Count: > 0 })
                          .OrderByDescending(c => c.TxOut.Value.Satoshi))
@@ -264,7 +383,41 @@ public class GameWallet(
                 : "Not enough spendable sats (you need funds for the amount plus the network fee).");
         }
 
+        // The last line of defence for whatever the inputs are still carrying. Wherever the selected
+        // coins hold asset units the outputs do NOT consume, the SDK puts that leftover on the change
+        // output — but only when there IS one. Change below dust is moved to an OP_RETURN at vout 0
+        // while the asset packet still points at the LAST output, and change of exactly zero produces
+        // no change output at all; either way the leftover hero lands on the recipient. The carrier
+        // fallback above already guarantees this for the case it handles, but it is not the only way a
+        // carrier gets selected — covering an output asset picks one too, and that path can land here
+        // with a coin that holds two heroes and barely more than dust. Refuse rather than send one.
+        if (selected.Sum(c => c.TxOut.Value.Satoshi) - required < dust && LeavesAssetsBehind(selected, outputs))
+            throw new GameWalletException(
+                "Sending this would give away another hero riding on the same coin. " +
+                "Add a few more sats to your wallet and try again.");
+
         return [.. selected];
+    }
+
+    /// <summary>
+    /// True when the chosen inputs hold asset units the outputs don't spend — i.e. there is asset change,
+    /// and it therefore needs somewhere of the player's own to land. Mirrors the SDK's own
+    /// <c>HasAssetChange</c>, which is what decides that a change output is required.
+    /// </summary>
+    private static bool LeavesAssetsBehind(IEnumerable<ArkCoin> inputs, ArkTxOut[] outputs)
+    {
+        var held = new Dictionary<string, ulong>();
+        foreach (var coin in inputs)
+            foreach (var asset in coin.Assets ?? [])
+                held[asset.AssetId] = held.GetValueOrDefault(asset.AssetId) + asset.Amount;
+        if (held.Count == 0) return false;
+
+        var sent = new Dictionary<string, ulong>();
+        foreach (var output in outputs)
+            foreach (var asset in output.Assets ?? [])
+                sent[asset.AssetId] = sent.GetValueOrDefault(asset.AssetId) + asset.Amount;
+
+        return held.Any(kv => kv.Value > sent.GetValueOrDefault(kv.Key));
     }
 
     /// <summary>

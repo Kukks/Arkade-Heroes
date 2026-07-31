@@ -64,6 +64,14 @@ builder.Services.AddArkEfCoreStorage<WalletDbContext>();
 // NArk core services + the REST transport to arkd.
 builder.Services.AddArkCoreServices();
 builder.Services.AddArkRestTransport(networkConfig);
+// …with every indexer query filtered to P2TR scripts on the way out. arkd 400s the whole request if
+// one script in the batch isn't P2TR, and the SDK's post-spend poll takes its scripts off the
+// transaction's outputs — which, for anything that moves a hero, includes the asset packet's OP_RETURN.
+// Registered last so it is what IClientTransport resolves to; it wraps the SDK's own caching transport,
+// which stays resolvable on its own for cache invalidation. See P2trScriptFilteringTransport.
+builder.Services.AddSingleton<NArk.Core.Transport.IClientTransport>(sp =>
+    new ArkadeHeroes.Web.Wallet.P2trScriptFilteringTransport(
+        sp.GetRequiredService<NArk.Core.Transport.CachingClientTransport>()));
 
 builder.Services.AddSingleton<IIntentScheduler, SimpleIntentScheduler>();
 // The scheduler REQUIRES a renewal threshold — without it, it throws every intent-generation

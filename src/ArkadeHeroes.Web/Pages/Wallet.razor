@@ -112,6 +112,14 @@ else // Ready
         <div class="card balance-card">
             <h3>Balance</h3>
             <div class="balance"><b>@State.BalanceSats.ToString("N0")</b> <span>sats</span></div>
+            @* The wallet's own page is where the shortfall has to be explained, not just hinted at:
+               these sats are the player's, they are simply not spendable until the coin settles. *@
+            @if (State.SettlingSats > 0)
+            {
+                <p class="settling">
+                    +@State.SettlingSats.ToString("N0") sats still settling into a batch — not spendable yet.
+                </p>
+            }
             @if (_assets.Count > 0)
             {
                 <button class="asset-line" @onclick="() => _showAssets = true">
@@ -557,12 +565,12 @@ else // Ready
         try
         {
             _address ??= await WalletSvc.GetReceiveAddressAsync(_activeId);
-            var balance = await WalletSvc.GetBalanceAsync(_activeId);
+            var (balance, settling) = await WalletSvc.GetBalanceBreakdownAsync(_activeId);
             var vtxos = await WalletSvc.GetVtxosAsync(_activeId);
             _vtxoCount = vtxos.Count;
             _assets = await WalletSvc.GetAssetsAsync(_activeId);
             State.SetActiveWallet(_activeId, _address);
-            State.UpdateBalance(balance);
+            State.UpdateBalance(balance, settling);
             // Silently resume the game session ONCE (login if this wallet is registered),
             // then surface the player's roster size. Guarded so repeated balance refreshes
             // don't re-attempt (and re-log) a login for an unregistered wallet.

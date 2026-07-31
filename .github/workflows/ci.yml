@@ -156,6 +156,13 @@ jobs:
         with:
           node-version: '20'
 
+      # The E2E suite references ArkadeHeroes.Web, so that the BROWSER wallet's coin selection can be
+      # driven against a real arkd — the console wallet has its own, and the browser path is the one
+      # where picking the wrong coin sends a player's hero to the fee address. ArkadeHeroes.Web sets
+      # WasmBuildNative, so building it needs this workload, exactly as the unit-test job does.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
       - name: Start the Arkade regtest stack (arkd + emulator + bitcoin)
         run: node regtest/regtest.mjs start --profile ark --profile emulator
 

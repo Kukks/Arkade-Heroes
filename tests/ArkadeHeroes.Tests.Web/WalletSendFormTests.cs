@@ -51,6 +51,37 @@ public class WalletSendFormTests
     }
 
     /// <summary>
+    /// Sats that haven't settled into a batch are the wallet's but cannot be spent, so they are stated
+    /// separately instead of being added to the balance. The pill used to include them, which is how a
+    /// player came to read a number and then be told they were short by the very next action.
+    /// </summary>
+    [Fact]
+    public void SatsThatCannotBeSpentYetAreNamed_NotAddedToTheBalance()
+    {
+        using var ctx = new PageTestContext();
+        ctx.WithWallet(balanceSats: 5_000, settlingSats: 746_193);
+
+        var cut = ctx.Render<Wallet>();
+
+        cut.WaitForAssertion(() => Assert.Contains("746,193 sats still settling", cut.Markup));
+        // The headline figure stays at what can actually be spent.
+        Assert.DoesNotContain("751,193", cut.Markup);
+    }
+
+    /// <summary>A wallet with nothing in flight says nothing about settling.</summary>
+    [Fact]
+    public void NothingSettling_SaysNothing()
+    {
+        using var ctx = new PageTestContext();
+        ctx.WithWallet(balanceSats: 5_000);
+
+        var cut = ctx.Render<Wallet>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Balance", cut.Markup));
+        Assert.DoesNotContain("still settling", cut.Markup);
+    }
+
+    /// <summary>
     /// The receive address is what a zero-balance wallet is FOR, so the fix must not have hidden it along
     /// with the form. This is the reason the form is safe to omit, so it is pinned rather than assumed.
     /// </summary>

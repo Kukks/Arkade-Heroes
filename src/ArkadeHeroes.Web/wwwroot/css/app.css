@@ -970,6 +970,8 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 .pill { text-decoration: none; }
 .pill:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }
 .pill .bal { color: var(--accent); font-weight: 600; }
+/* Settling sats sit beside the balance, deliberately quieter: they are real, but nothing can spend them yet. */
+.pill .settling { color: var(--muted); font-size: .8rem; }
 
 /* --- Wallet page ---------------------------------------------------------- */
 .wallet-head { margin-bottom: 1.4rem; }
@@ -1017,6 +1019,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, .hero-card:focus-vi
 .balance-card .balance { font-family: var(--font-hud); }
 .balance-card .balance b { font-size: 2.1rem; letter-spacing: -.02em; color: var(--text); }
 .balance-card .balance span { color: var(--muted); font-size: .9rem; margin-left: .3rem; }
+.balance-card .settling { color: var(--muted); font-size: .86rem; margin: .35rem 0 0; }
 .chip.as-btn { cursor: pointer; }
 .chip.as-btn:hover { border-color: var(--accent); color: var(--text); }
 .chip.as-btn:disabled { opacity: .5; cursor: not-allowed; }

@@ -25,6 +25,15 @@
     <ProjectReference Include="..\..\src\ArkadeHeroes.Client\ArkadeHeroes.Client.csproj" />
     <ProjectReference Include="..\..\src\ArkadeHeroes.Client.Sdk\ArkadeHeroes.Client.Sdk.csproj" />
     <ProjectReference Include="..\..\src\ArkadeHeroes.Chain\ArkadeHeroes.Chain.csproj" />
+    <!--
+      The BROWSER wallet, so its coin selection can be driven against a real arkd. Nothing else here
+      needs it, but the one path that must never be shipped unproven — paying a fee out of a coin that
+      is also carrying the player's heroes — lives in ArkadeHeroes.Web and cannot be verified from the
+      console wallet, which has its own selection. A BlazorWebAssembly project referenced from a plain
+      net10.0 test project builds and loads fine (see tests/ArkadeHeroes.Tests.Web, which does the same):
+      the output is an ordinary managed assembly and the browser-only machinery is publish-side.
+    -->
+    <ProjectReference Include="..\..\src\ArkadeHeroes.Web\ArkadeHeroes.Web.csproj" />
   </ItemGroup>
 
 </Project>
