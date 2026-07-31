@@ -599,8 +599,9 @@ public class MoneyPathRaceGuardTests
     /// pot payout (a `wager-pot:`/`squad-pot:` memo — other payouts pass through, the PayoutProbeChain
     /// pattern), or item delivery — the deterministic stand-in for "the chain call failed after the
     /// deposit was verified paid".</summary>
-    private sealed class FailableChain(InMemoryChainService inner) : IChainService
+    private sealed class FailableChain(InMemoryChainService inner) : IChainService, ISimulatedChain
     {
+        public InMemoryChainService Simulator => inner;
         public InMemoryChainService Inner => inner;
         public volatile bool FailNextHeroMint;
         public volatile bool FailNextMergeExecute;
@@ -627,6 +628,7 @@ public class MoneyPathRaceGuardTests
         public Task<string> GetPlayerAddressAsync(string playerId, CancellationToken ct = default) => inner.GetPlayerAddressAsync(playerId, ct);
         public Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default) => inner.GetAddressBalanceSatsAsync(playerId, ct);
         public Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default) => inner.CreateFeeInvoiceAsync(memo, amountSats, ct);
+        public Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default) => inner.GetFeeInvoiceAsync(invoiceId, ct);
         public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default) => inner.IsInvoicePaidAsync(invoiceId, ct);
         public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default)
         {

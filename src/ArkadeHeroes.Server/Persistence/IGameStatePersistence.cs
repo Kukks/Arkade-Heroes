@@ -105,6 +105,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 // by signing a login challenge. Never store bearer credentials at rest.
                 Token = Guid.NewGuid().ToString("N"),
                 StarterClaimed = row.StarterClaimed,
+                StarterFeeInvoiceId = row.StarterFeeInvoiceId,
                 LoginPubKeyHex = row.LoginPubKeyHex,
                 StreakCount = row.StreakCount,
                 LastClaimDay = row.LastClaimDay,
@@ -309,6 +310,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 Id = player.Id,
                 Name = player.Name,
                 StarterClaimed = player.StarterClaimed,
+                StarterFeeInvoiceId = player.StarterFeeInvoiceId,
                 LoginPubKeyHex = player.LoginPubKeyHex,
                 StreakCount = player.StreakCount,
                 LastClaimDay = player.LastClaimDay,
@@ -320,6 +322,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         {
             row.Name = player.Name;
             row.StarterClaimed = player.StarterClaimed;
+            row.StarterFeeInvoiceId = player.StarterFeeInvoiceId;
             row.LoginPubKeyHex = player.LoginPubKeyHex;
             row.StreakCount = player.StreakCount;
             row.LastClaimDay = player.LastClaimDay;

@@ -53,9 +53,22 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return player;
     }
 
-    /// <summary>Claim the one-time starter heroes for the signed-in player.</summary>
-    public async Task<IReadOnlyList<HeroDto>> ClaimStartersAsync()
+    /// <summary>
+    /// Buy the one-time starter heroes for the signed-in player: quote the fee, pay it from the player's
+    /// own wallet, then claim. A hero costs what breeding one costs — including the first — so this is a
+    /// real payment, not a formality, and the heroes only exist once it lands.
+    /// </summary>
+    public async Task<IReadOnlyList<HeroDto>> ClaimStartersAsync(Action<string>? onProgress = null)
     {
+        var quote = await api.Heroes.RequestStartersAsync();
+        if (quote.Fee is { AmountSats: > 0 } fee)
+        {
+            var w = await wallet.GetActiveWalletAsync()
+                ?? throw new GameWalletException("Create a wallet first.");
+            onProgress?.Invoke($"Paying the {fee.AmountSats} sat claim fee…");
+            await DepositAndSettleAsync(w.Id, fee.PayToAddress, null, fee.AmountSats);
+        }
+        onProgress?.Invoke("Summoning your heroes…");
         var res = await api.Heroes.ClaimStartersAsync();
         // StarterClaimed has flipped — refresh the player so the UI hides the claim button.
         state.SetPlayer(await api.Players.MeAsync());

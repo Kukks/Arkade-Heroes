@@ -97,6 +97,10 @@ public record HeroDto(
 
 public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
+/// <summary>What the starter heroes cost, and the invoice to pay before claiming them. <c>Fee</c> is null
+/// when the server charges nothing, in which case the claim can be made straight away.</summary>
+public record StarterQuoteResponse(long FeeSats, int HeroCount, FeeInvoiceDto? Fee);
+
 // ── Breeding (two-phase commit–reveal) ─────────────────────────────────────
 
 /// <summary>Mode "invoice" (fee invoice, treasury mint) or "covenant" (parents+fee escrow deposit, emulator-enforced mint).</summary>
@@ -575,7 +579,10 @@ public record GameConfigDto(
     // available on this server" reads as a broken game rather than an unswitched-on feature. Appended
     // (defaulted false) so an older server that omits it deserializes to hidden — the safe direction,
     // since showing a faucet that does not exist is the failure worth avoiding.
-    bool DailyRewardEnabled = false)
+    bool DailyRewardEnabled = false,
+    /// <summary>What a starter claim costs in total — the breed fee at zero prior breeds, once per hero
+    /// minted. Published so the UI can price the claim before the player commits to it.</summary>
+    long StarterClaimFeeSats = 0)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -593,7 +600,8 @@ public record GameConfigDto(
         c.Combat.InnateAbilities,
         ArkadeHeroes.Core.GameConfigVersion.Compute(c),
         c.Combat.GearCounters,
-        c.DailyRewardEnabled);
+        c.DailyRewardEnabled,
+        ArkadeHeroes.Core.Genetics.StarterPolicy.ClaimFeeSats(c));
 }
 
 /// <summary>

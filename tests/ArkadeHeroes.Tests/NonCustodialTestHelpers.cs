@@ -22,8 +22,17 @@ internal static class NonCustodialTestHelpers
         return (client, player);
     }
 
-    public static async Task<List<HeroDto>> ClaimStartersAsync(this ArkadeHeroesClient client) =>
-        (await client.Heroes.ClaimStartersAsync()).Heroes.ToList();
+    /// <summary>
+    /// Full starter claim: quote → pay → claim. Starter heroes carry a fee (they cost what breeding one
+    /// costs), so every test that starts with a roster now walks the paid path — which is the point: the
+    /// flow every player takes on their first minute is the one under test, not a free shortcut past it.
+    /// </summary>
+    public static async Task<List<HeroDto>> ClaimStartersAsync(this ArkadeHeroesClient client)
+    {
+        var quote = await client.Heroes.RequestStartersAsync();
+        if (quote.Fee is { } fee) await client.PayInvoiceAsync(fee.InvoiceId);
+        return (await client.Heroes.ClaimStartersAsync()).Heroes.ToList();
+    }
 
     /// <summary>
     /// A server with the daily sats faucet open. It ships CLOSED

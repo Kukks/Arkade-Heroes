@@ -583,6 +583,13 @@ public class GameClient : IAsyncDisposable
     private async Task ClaimStarterAsync()
     {
         RequireSession();
+        // Starter heroes are bought, not given — one costs what breeding one costs.
+        var quote = await _api.Heroes.RequestStartersAsync();
+        if (quote.Fee is { AmountSats: > 0 } fee)
+        {
+            Console.WriteLine($"  {quote.HeroCount} generation-0 heroes: {quote.FeeSats} sats ({fee.AmountSats / quote.HeroCount} each, the price of breeding one)");
+            if (!await SettleInvoiceAsync(fee)) { Console.WriteLine("    couldn't pay the claim fee."); return; }
+        }
         var starter = await _api.Heroes.ClaimStartersAsync();
         Console.WriteLine("  ✓ two generation-0 heroes minted as Arkade assets:");
         foreach (var hero in starter.Heroes)

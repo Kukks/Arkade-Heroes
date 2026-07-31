@@ -88,6 +88,17 @@ public record OfferInfo(
 /// player-side actions (fee payments, transfers) by observing the chain. The
 /// server never holds or moves player keys or funds.
 /// </summary>
+/// <summary>
+/// A chain service that wraps the in-memory simulator. Test doubles decorate <see cref="IChainService"/>
+/// to inject failures, which used to break the dev endpoints — those reach past the interface to drive the
+/// simulator directly (paying an invoice as the player's own wallet would), and a decorator is not castable
+/// to it. Implementing this hands them the simulator underneath instead.
+/// </summary>
+public interface ISimulatedChain
+{
+    InMemoryChainService Simulator { get; }
+}
+
 public interface IChainService
 {
     Task<ChainInfo> GetInfoAsync(CancellationToken ct = default);
@@ -107,6 +118,13 @@ public interface IChainService
 
     /// <summary>Creates an invoice at a fresh treasury address for one game action.</summary>
     Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default);
+
+    /// <summary>
+    /// Looks up an invoice already billed, or null when the id is unknown. Lets a caller re-show an
+    /// outstanding invoice — the same address, for the same amount — instead of billing a second time for
+    /// something the player may have already paid.
+    /// </summary>
+    Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default);
 
     /// <summary>True once the invoice address has received at least the invoiced amount.</summary>
     Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default);
