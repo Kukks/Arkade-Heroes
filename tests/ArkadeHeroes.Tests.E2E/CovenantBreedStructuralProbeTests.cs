@@ -169,6 +169,97 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
         Assert.False(string.IsNullOrEmpty(response.SignedArkTx), "the honest breed must be emulator-co-signed");
     }
 
+    /// <summary>
+    /// THE GATE for "a breed must consume both parents as inputs".
+    ///
+    /// <para>BreedRetainAuthorized checks only OUTPUTS — AssetAtOutput for each parent and ChildAtOutput
+    /// for the child. Nothing in the leaf requires either parent vtxo to be spent. Read literally, a breed
+    /// could satisfy every check while leaving the escrowed parents untouched, then reclaim them after
+    /// expiry: the child gets minted for free and the parents survive.</para>
+    ///
+    /// <para>Whether that is reachable is the question this answers. The parents are UNIQUE single-unit
+    /// assets sitting in the escrow, so an attacker has nowhere else to source them from — if the asset
+    /// layer enforces conservation, an output claiming a parent with no corresponding input is already
+    /// invalid and the leaf needs nothing. If instead the emulator co-signs this, the hole is real.</para>
+    ///
+    /// <para>Either answer is worth having in the suite permanently: it pins WHY the output-only leaf is
+    /// safe, so a future change to asset conservation cannot silently reopen it.</para>
+    /// </summary>
+    [Fact]
+    public async Task Breed_WithoutConsumingTheParents_IsRefused()
+    {
+        var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
+        var serverInfo = await transport.GetServerInfoAsync();
+        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var isMain = serverInfo.Network == Network.Main;
+        var dust = serverInfo.Dust.Satoshi;
+
+        var speciesId = await IssueAsync();
+        var parentAId = await IssueAsync();
+        var parentBId = await IssueAsync();
+        var species = AssetId.FromString(speciesId);
+        var parentA = AssetId.FromString(parentAId);
+        var parentB = AssetId.FromString(parentBId);
+        var playerScript = ArkAddress.Parse(_funder.Address).ScriptPubKey;
+        var treasuryScript = ArkAddress.Parse(_treasury.Address).ScriptPubKey;
+
+        var (oraclePriv, oraclePk) = NewOracle();
+        const string breedingId = "e2e-breed-noconsume";
+        var refundAfter = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+
+        var parameters = new BreedEscrowParams(
+            _funder.Address, parentAId, parentBId, speciesId, _treasury.Address,
+            Fee, dust, Convert.ToHexString(oraclePk).ToLowerInvariant(), breedingId, refundAfter);
+        var contract = BreedEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
+        var contractAddr = contract.GetArkAddress().ToString(isMain);
+
+        await _funder.SendAssetAsync(contractAddr, parentAId, 1);
+        await _funder.SendAssetAsync(contractAddr, parentBId, 1);
+        await _funder.SendAsync(contractAddr, Fee);
+        var vtxos = await CovenantSpender.WaitForVtxosAsync(_funder, contract, 3, TimeSpan.FromSeconds(60));
+        var feeVtxo = vtxos.First(v => v.Assets is null or { Count: 0 });
+
+        var childMeta = BreedEscrowContracts.ChildMetadata(
+            new string('a', 64), 1, parentAId, parentBId, new string('b', 64), "probe-nonce");
+        var root = ArkadeCovenants.MetadataMerkleRoot(childMeta);
+        var oracleSig = new byte[64];
+        NBitcoin.Secp256k1.ECPrivKey.Create(oraclePriv).SignBIP340(root).WriteToSpan(oracleSig);
+
+        // ONLY the fee vtxo is spent. Both parent vtxos stay in the escrow, unspent and reclaimable —
+        // yet the packet still declares each parent as arriving at output 0, with NO input backing it.
+        var feeOnly = new[]
+        {
+            new CovenantSpender.CovenantInput(contract, "breed",
+                ArkadeCovenants.BreedRetainWitness(oracleSig, 2, feeOutputIndex: 1, 0, 1), feeVtxo),
+        };
+        AssetGroup Unbacked(AssetId id, ushort vout) => AssetGroup.Create(
+            id, null, [], [AssetOutput.Create(vout, 1)], []);   // no inputs — that is the whole cheat
+        AssetGroup Child(ushort vout) => AssetGroup.Create(
+            null, AssetRef.FromId(species), [], [AssetOutput.Create(vout, 1)], childMeta);
+
+        var refused = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
+            _funder, EmulatorUri, feeOnly,
+            [
+                new TxOut(Money.Satoshis((long)feeVtxo.Amount - Fee), playerScript),
+                new TxOut(Money.Satoshis(Fee), treasuryScript),
+            ],
+            extraPackets: [Packet.Create([Unbacked(parentA, 0), Unbacked(parentB, 0), Child(0)])]));
+
+        // RESULT: refused. So the output-only leaf is not exploitable this way — a breed cannot mint a
+        // child while leaving the escrowed parents intact, and BreedRetainAuthorized needs no input-side
+        // check to make that true.
+        //
+        // CAVEAT on what this proves. The spend differs from the honest one in TWO ways: the parents are
+        // unbacked AND only the fee vtxo is consumed. Either could be the reason it was rejected, so this
+        // pins the BEHAVIOUR (the attack fails) without isolating the MECHANISM (asset conservation vs
+        // something about the thin input set). Worth tightening with a control that consumes all three
+        // inputs while still declaring a parent unbacked — until then, do not cite this as proof that
+        // conservation is what closes the hole.
+        //
+        // The refusal must come from the chain/emulator, not from our own builder tripping over itself.
+        Assert.Contains("Emulator rejected", refused.Message);
+    }
+
     [Fact]
     public async Task BreedRefund_BothParentsHomeAfterExpiry_TheftRefused_PreExpiryRefused()
     {
