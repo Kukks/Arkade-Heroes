@@ -82,11 +82,12 @@ jobs:
   #
   # ON THE PR GATE as of this change, reversing the earlier call. Two things moved:
   #
-  #   • What it costs. This is a separate JOB, so it runs in PARALLEL with the unit job
-  #     rather than after it. The publish is still a native emscripten link, but the unit
-  #     job already pays one — a whole-solution Release build compiles ArkadeHeroes.Web,
-  #     which sets WasmBuildNative — so the two legs are comparable and the PR's wall clock
-  #     is the slower of them, not the sum.
+  #   • What it costs, MEASURED rather than assumed. This is a separate JOB, so it runs in
+  #     PARALLEL with the unit job rather than after it, and a PR's wall clock is the slower
+  #     leg rather than the sum. On the run that introduced it (30673219593) the unit job
+  #     took 2m30s and this one 5m38s, so it IS the slower leg and it roughly doubles PR
+  #     latency. That is the real price; 5-6 minutes is still a reasonable gate, and the
+  #     earlier estimate that the publish costs "minutes" on its own was pessimistic.
   #   • What it catches. It used to assert that pages draw with every backend unreachable,
   #     which is worth little on a push. It now fails on a page that renders while throwing
   #     in the console, on a price that disagrees with the server's config, and on an empty

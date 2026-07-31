@@ -101,10 +101,12 @@ A stub arkd would make a green test out of this and prove nothing about the cove
 
 ## Why it gates every PR
 
-It needs no infrastructure, and it runs as its own job — in parallel with the unit job, not after it. The
-publish is a native emscripten link, but the unit job already pays one (a whole-solution Release build
-compiles `ArkadeHeroes.Web`, which sets `WasmBuildNative`), so the PR's wall clock is the slower leg
-rather than the sum.
+It needs no infrastructure, and it runs as its own job — in parallel with the unit job, not after it, so a
+PR's wall clock is the slower leg rather than the sum.
+
+Measured on the run that introduced it (`30673219593`): **unit job 2m30s, this job 5m38s.** So it is the
+slower leg and it roughly doubles PR latency. That is the honest price, and it is worth paying at
+5-6 minutes — but it is a price, not a free ride, and it is the number to re-check if this job grows.
 
 That reverses an earlier call, on the strength of what the suite now catches: a page that renders while
 throwing, a price that disagrees with the server, an empty state standing in for a failed read. None of

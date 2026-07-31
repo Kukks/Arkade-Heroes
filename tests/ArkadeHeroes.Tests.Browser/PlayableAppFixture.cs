@@ -66,6 +66,11 @@ public sealed class PlayableAppFixture : IAsyncLifetime
     /// A typed SDK client against the same server the browser is using, for SEEDING. Tests use it to put
     /// real state in front of the browser (a hero that exists, a listing at a real price) so the assertion
     /// is "the page shows what the server holds" rather than "the page shows something".
+    ///
+    /// <para>A NEW client every time, deliberately. The SDK holds the player's bearer token on the client
+    /// after register/login, so a shared one would quietly re-authenticate every seeded player as whoever
+    /// registered last — and a test seeding two players to look at each other's heroes would be seeding
+    /// one. Callers hold the client they were given for as long as they need that identity.</para>
     /// </summary>
     public ArkadeHeroesClient Api => new(new HttpClient { BaseAddress = new Uri(BaseUrl) });
 
