@@ -4,6 +4,8 @@
 @inject GameSession Session
 @inject ArkadeHeroesClient Api
 @inject IJSRuntime JS
+@inject FaucetService Faucet
+@inject WalletCredentialStore Credentials
 @implements IDisposable
 
 <PageTitle>Wallet · Arkade Heroes</PageTitle>
@@ -41,6 +43,22 @@ else if (_view == View.NoWallet)
             <button class="btn ghost" @onclick="ImportAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_importText))">
                 @(_busy ? "Importing…" : "Import wallet")
             </button>
+
+            @* The other half of "your wallet is your account": if the phrase was saved to this browser,
+               coming back on a new device is picking it out of the password manager. *@
+            @if (_credentialsSupported)
+            {
+                <p class="muted" style="margin:1rem 0 .6rem">Or, if you saved it to your browser before:</p>
+                <button class="btn ghost" @onclick="RestoreFromBrowserAsync" disabled="@_credentialBusy">
+                    @(_credentialBusy ? "Looking…" : "Restore from this browser")
+                </button>
+                @if (_credentialNote is not null)
+                {
+                    <div class="status-line" style="margin-top:.6rem">
+                        <span class="dot @(_credentialOk ? "ok" : "bad")"></span> @_credentialNote
+                    </div>
+                }
+            }
         </div>
     </div>
 
@@ -98,6 +116,20 @@ else // Ready
                     @(_busy ? "…" : "↻ refresh")
                 </button>
             </div>
+            @* Test coins, on the networks that have a faucet. Never on mainnet — see FaucetPolicy. *@
+            @if (Faucet.Available)
+            {
+                <button class="btn ghost" style="margin-top:.8rem;width:100%"
+                        @onclick="RequestFaucetAsync" disabled="@_faucetBusy">
+                    @(_faucetBusy ? "Asking the faucet…" : "Get test sats")
+                </button>
+                @if (_faucetNote is not null)
+                {
+                    <div class="status-line" style="margin-top:.6rem">
+                        <span class="dot @(_faucetOk ? "ok" : "bad")"></span> @_faucetNote
+                    </div>
+                }
+            }
         </div>
     </div>
 
@@ -180,6 +212,28 @@ else // Ready
             </div>
             <button class="btn ghost" style="margin-top:1rem" @onclick="() => _revealed = false">Hide</button>
         }
+
+        @* Your wallet IS your account, so the phrase is the thing worth making portable. This hands it to
+           the browser's password manager — which is also the honest risk, stated rather than glossed. *@
+        @if (_credentialsSupported)
+        {
+            <div style="margin-top:1.2rem;border-top:1px solid var(--line);padding-top:1rem">
+                <p class="muted" style="margin:0 0 .7rem">
+                    Save it to this browser and it goes wherever your browser passwords go — including
+                    your other devices, if you sync them. That convenience is also the risk: anyone who
+                    reaches that account reaches this wallet. It doesn't replace writing the words down.
+                </p>
+                <button class="btn ghost" @onclick="SaveToBrowserAsync" disabled="@_credentialBusy">
+                    @(_credentialBusy ? "Saving…" : "Save phrase to this browser")
+                </button>
+                @if (_credentialNote is not null)
+                {
+                    <div class="status-line" style="margin-top:.6rem">
+                        <span class="dot @(_credentialOk ? "ok" : "bad")"></span> @_credentialNote
+                    </div>
+                }
+            </div>
+        }
     </div>
 
     @if (_showAssets)
@@ -240,10 +294,95 @@ else // Ready
     string? _sendError;
     bool _resumeTried;
 
+    // ── Faucet ───────────────────────────────────────────────────────────────
+    bool _faucetBusy;
+    bool _faucetOk;
+    string? _faucetNote;
+
+    // ── Browser credential manager ───────────────────────────────────────────
+    bool _credentialsSupported;
+    bool _credentialBusy;
+    bool _credentialOk;
+    string? _credentialNote;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnStateChanged;
+        // Asked once, up front: the buttons only exist where the browser can actually honour them
+        // (Chromium, over https). Everywhere else the phrase is still shown for manual backup.
+        _credentialsSupported = await Credentials.IsSupportedAsync();
         await LoadAsync();
+    }
+
+    async Task RequestFaucetAsync()
+    {
+        _faucetBusy = true;
+        _faucetNote = null;
+        try
+        {
+            var sats = await Faucet.RequestAsync();
+            _faucetOk = true;
+            _faucetNote = $"Asked for {sats:N0} sats — they'll appear once the network confirms them.";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            // Surface the faucet's own words: "try again" is useless when the real answer is a rate limit.
+            _faucetOk = false;
+            _faucetNote = ex.Message;
+        }
+        finally
+        {
+            _faucetBusy = false;
+        }
+    }
+
+    async Task SaveToBrowserAsync()
+    {
+        if (_activeId is null) return;
+        _credentialBusy = true;
+        _credentialNote = null;
+        try
+        {
+            _credentialOk = await Credentials.SaveAsync(_activeId);
+            _credentialNote = _credentialOk
+                ? "Saved. Your browser can now restore this wallet — treat it like any other saved password."
+                : "Your browser didn't save it. Write the words down instead.";
+        }
+        finally
+        {
+            _credentialBusy = false;
+        }
+    }
+
+    async Task RestoreFromBrowserAsync()
+    {
+        _credentialBusy = true;
+        _credentialNote = null;
+        try
+        {
+            if (await Credentials.LoadPhraseAsync() is not { } phrase)
+            {
+                _credentialOk = false;
+                _credentialNote = "Nothing saved for this site, or you dismissed the picker.";
+                return;
+            }
+            // Import through the normal path so the restored wallet is indistinguishable from a typed one.
+            var restored = await WalletSvc.ImportAsync(phrase);
+            State.SetActiveWallet(restored.Id, await WalletSvc.GetReceiveAddressAsync(restored.Id));
+            _credentialOk = true;
+            _credentialNote = "Wallet restored from your browser.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _credentialOk = false;
+            _credentialNote = ex.Message;
+        }
+        finally
+        {
+            _credentialBusy = false;
+        }
     }
 
     async Task LoadAsync()
