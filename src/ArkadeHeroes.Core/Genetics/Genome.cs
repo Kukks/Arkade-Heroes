@@ -54,6 +54,48 @@ public readonly struct Genome : IEquatable<Genome>
     public byte AppearanceTitleGene => Bytes[14];
     public byte AppearancePaletteGene => Bytes[15];
 
+    /// <summary>
+    /// The GRADE of this genome's statline: the tightest ceiling of the form 2^k−1 that contains every one
+    /// of its stat and growth genes. 255 for anything drawn from the full byte range — which is nearly
+    /// every gen-0, bred or fused hero — and 63 for a recruit minted at <c>StarterPolicy.RecruitStatCap</c>.
+    ///
+    /// <para>It reads back the cap the genome was MINTED at. <see cref="NewRecruit"/> draws each of those
+    /// ten genes uniformly from [0, cap], and the sample maximum is the sufficient statistic for the
+    /// ceiling of a uniform range. It is rounded UP to the next 2^k−1 rather than taken raw because the raw
+    /// maximum of ten draws averages well below the true cap (~232 of 255), so a raw estimate would grade
+    /// every full-range hero a notch light and quietly soften its opponents. Rounding up removes that bias
+    /// at the caps the game actually mints at, and makes the grade STABLE: sampling noise cannot move it,
+    /// only genuinely smaller genes can. A genome whose ten genes all land under half of their true cap —
+    /// about one in a thousand — grades one rung low, and is a genuinely weak statline when it does.</para>
+    ///
+    /// <para>Only the ten bytes that decide a statline are read (<see cref="StatValueGenes"/>), because
+    /// those are exactly the ones the capped mint squashes; element, skill, cooldown, appearance and trait
+    /// bytes say nothing about how hard a hero hits and must not move the grade.</para>
+    ///
+    /// <para>Pure integer arithmetic over bytes the client already holds, so a browser re-deriving a
+    /// gauntlet run computes the identical value: no floating point, no <c>Math.Pow</c> — which is not
+    /// guaranteed to agree bit-for-bit across platforms — and nothing the server gets to choose.</para>
+    /// </summary>
+    public byte StatGeneCeiling
+    {
+        get
+        {
+            var max = 0;
+            foreach (var i in StatValueGenes)
+                if (Bytes[i] > max) max = Bytes[i];
+
+            // 0, 1, 3, 7, …, 127, 255 — terminates at 255 because a byte cannot exceed it.
+            var ceiling = 0;
+            while (ceiling < max) ceiling = ceiling * 2 + 1;
+            return (byte)ceiling;
+        }
+    }
+
+    /// <summary>The genome bytes that feed <c>StatBlock.ComputeFor</c>: the five visible stat genes and the
+    /// five hidden growth genes. Exactly the set <see cref="NewRecruit"/> caps, which is what lets
+    /// <see cref="StatGeneCeiling"/> read that cap back.</summary>
+    private static ReadOnlySpan<byte> StatValueGenes => [0, 1, 2, 3, 4, 8, 9, 10, 11, 12];
+
     /// <summary>Base offset of the trait-category block in the reserved region.</summary>
     private const int TraitBase = 16;
 
@@ -96,6 +138,13 @@ public readonly struct Genome : IEquatable<Genome>
     ///
     /// <para>Still a pure function of the entropy, so anyone holding the seed can recompute the genome and
     /// check the server minted what it said it did.</para>
+    ///
+    /// <para>This is the game's general CAPPED MINT, not a recruit-only one: the recruit policy is simply
+    /// its best-known caller, at <c>StarterPolicy.RecruitStatCap</c>. <c>Gauntlet.GhostFor</c> is the other,
+    /// at the runner's own <see cref="StatGeneCeiling"/>. Two properties make that safe to build on and are
+    /// pinned by tests rather than assumed: at a cap of <b>255</b> the modulo is the identity, so this is
+    /// byte-for-byte <see cref="NewGen0"/>; and every cap is a genuine ceiling, so
+    /// <see cref="StatGeneCeiling"/> reads back the cap a genome was minted at.</para>
     /// </summary>
     public static Genome NewRecruit(ReadOnlySpan<byte> entropy, byte statCap)
     {

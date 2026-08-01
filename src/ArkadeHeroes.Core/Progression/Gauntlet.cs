@@ -16,8 +16,9 @@ public sealed record GauntletRun(int WavesCleared, IReadOnlyList<GauntletWave> W
 
 /// <summary>
 /// F1 — the solo PvE gauntlet: a hero runs a fixed ladder of commit-reveal-seeded GHOST opponents
-/// (deterministic gen-0 heroes derived from the run entropy, so the server can't pick soft foes), one
-/// full-HP fight per wave, ending at the first loss. Server-scored + fully client-replayable.
+/// (deterministic heroes derived from the run entropy and the runner's own level and genome grade, so the
+/// server can't pick soft foes), one full-HP fight per wave, ending at the first loss. Server-scored +
+/// fully client-replayable.
 ///
 /// The reward is deliberately anti-farmable: training-band XP that is fee-priced and HARD-CAPPED at
 /// <see cref="PveXpLevelCap"/> — the ONLY XP mint in the game, bounded so it can never seed the ladder
@@ -78,18 +79,52 @@ public static class Gauntlet
     /// See <see cref="Dungeon.GhostHandicap"/> for why the opener has to be expressed this way.</summary>
     public static double GhostHandicap(int heroLevel, int wave) => Content.GhostHandicap(heroLevel, wave);
 
-    /// <summary>The deterministic ghost for a wave — a gen-0 hero derived entirely from the run entropy
-    /// (so the client re-derives the same opponents; the server cannot substitute a weaker foe).</summary>
-    public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave, int heroLevel)
+    /// <summary>
+    /// The deterministic ghost for a wave — derived entirely from the run entropy (so the client re-derives
+    /// the same opponents; the server cannot substitute a weaker foe), at the RUNNER'S OWN GENOME GRADE as
+    /// well as its level.
+    ///
+    /// <para>Scaling only the level could never have carried the entry cohort. Every ghost used to be built
+    /// from <see cref="Genome.NewGen0"/> — raw hash bytes, mean stat gene 127 — while a bought recruit's
+    /// stat and growth genes are squashed into the bottom quarter of the byte, mean 31. That is a
+    /// MULTIPLICATIVE deficit in <c>StatBlock</c>: base stats read <c>10 + gene/4</c>, and per-level gains
+    /// read <c>1 + growthGene/64</c>, so a capped growth gene is locked to the minimum tier while its foe
+    /// gains up to four times as much. Raising the ghost's level raises the gap with it, which is why the
+    /// cohort paying a full breed fee cleared NOTHING 96-99% of the time at EVERY level, against ~44% for a
+    /// full-range hero — measured over 8000 seeded runs per level.</para>
+    ///
+    /// <para>The grade is a pure function of the runner's own genome, which the verifier already rebuilds
+    /// from the signed hero snapshot it replays against — so this adds no wire field, no persisted flag and
+    /// no server discretion. The server does not choose the grade any more than it chooses the entropy, and
+    /// deriving it from the genome rather than from an "is a recruit" bit is also what makes it reach the
+    /// cohorts a flag would miss: a hero bred from two recruits inherits their capped statline and was
+    /// locked out just as hard (95-99%, measured), while being no kind of recruit itself.</para>
+    ///
+    /// <para>Because <see cref="Genome.NewRecruit"/> at a ceiling of 255 is byte-for-byte
+    /// <see cref="Genome.NewGen0"/>, every runner whose statline reaches the top of the byte faces EXACTLY
+    /// the ghost this ladder always built — so this is not a difficulty cut for everyone, and stamped
+    /// replays of those runs still verify.</para>
+    ///
+    /// <para>Only the gauntlet is graded, and only on the GENOME. Gauntlet ghosts are content with no market
+    /// side: nothing about what a recruit is worth to another player moves, because
+    /// <c>StarterPolicy.RecruitStatCap</c> — the inflation valve that keeps a repeatable purchase from being
+    /// a lottery ticket — is untouched. Equipment is deliberately NOT part of the grade: it is not part of
+    /// the genome, and grading on it would pay a runner for unequipping.</para>
+    /// </summary>
+    public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave, Hero runner)
     {
-        var genome = Genome.NewGen0(CommitReveal.DeriveEntropy(entropy, "gauntlet-wave", wave.ToString()));
+        // The same capped mint a recruit is drawn from, at the RUNNER's ceiling rather than the recruit
+        // policy's — so the ghost's statline is graded like the hero it was built to fight.
+        var genome = Genome.NewRecruit(
+            CommitReveal.DeriveEntropy(entropy, "gauntlet-wave", wave.ToString()),
+            runner.Genome.StatGeneCeiling);
         var ghost = new Hero
         {
             Id = $"ghost-{wave}",
             OwnerId = "gauntlet",
             Name = $"Gauntlet Wave {wave}",
             Genome = genome,
-            Level = GhostLevel(heroLevel, wave),
+            Level = GhostLevel(runner.Level, wave),
         };
         foreach (var itemId in GhostGear(wave))
             ghost.Equipment.Equip(ItemCatalog.Find(itemId)!);
@@ -107,7 +142,7 @@ public static class Gauntlet
         var cleared = 0;
         for (var wave = 1; wave <= WaveCount; wave++)
         {
-            var ghost = GhostFor(entropyArr, wave, hero.Level);
+            var ghost = GhostFor(entropyArr, wave, hero);
             var fightSeed = CommitReveal.DeriveEntropy(entropyArr, "gauntlet-fight", wave.ToString());
             // The ghost carries a handicap only where the level floor ate the authored offset — exactly 1.0
             // (a no-op) on every other wave and for every hero above the floor.
