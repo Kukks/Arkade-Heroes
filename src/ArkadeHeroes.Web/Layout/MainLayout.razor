@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @inject WalletState Wallet
 @inject GameWallet GameWallet
+@inject RenewalUpkeep Upkeep
 @inject GameSession Session
 @inject TermsState Acceptance
 @inject NavigationManager Nav
@@ -88,9 +89,26 @@
     // would otherwise only discover by having a spend refused.
     private string PillTitle => !Wallet.Connected
         ? "Set up automatically when you press Play"
-        : Wallet.SettlingSats > 0
+        : (Wallet.SettlingSats > 0
             ? $"{Wallet.ActiveAddress} — {Wallet.SettlingSats:N0} sat still settling into a batch and not yet spendable"
-            : Wallet.ActiveAddress ?? "";
+            : Wallet.ActiveAddress ?? "") + UpkeepNote;
+
+    // The same doctrine as the settling figure above: money that moves without being named reads as
+    // theft. Coins expire, the wallet re-boards them before they do, and the Arkade operator charges a
+    // percentage of everything re-boarded to accept them — so a player who spent nothing can still watch
+    // the balance fall. The figure is the operator's own, via the SDK's estimator; nothing here invents it.
+    private RenewalQuote? _upkeep;
+    private long _upkeepQuotedFor = -1;
+
+    private string UpkeepNote => _upkeep is { } quote ? $" — upkeep {quote.Summary}" : "";
+
+    private async Task RefreshUpkeepAsync()
+    {
+        if (Wallet.ActiveWalletId is not { } id || Wallet.BalanceSats == _upkeepQuotedFor) return;
+        _upkeepQuotedFor = Wallet.BalanceSats;
+        _upkeep = await Upkeep.QuoteAsync(id);
+        StateHasChanged();
+    }
 
     // The active top-level section, so the parent nav item stays lit across its sub-pages.
     private string Section => _path switch
@@ -204,7 +222,13 @@
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
         InvokeAsync(() => { UpdateSection(); StateHasChanged(); });
 
-    void OnWalletChanged() => InvokeAsync(StateHasChanged);
+    void OnWalletChanged() => InvokeAsync(async () =>
+    {
+        StateHasChanged();
+        // Re-quoted only when the balance itself moved, so this costs one estimate per real change
+        // rather than one per redraw.
+        await RefreshUpkeepAsync();
+    });
 
     public void Dispose()
     {
