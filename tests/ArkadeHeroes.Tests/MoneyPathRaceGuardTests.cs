@@ -606,7 +606,10 @@ public class MoneyPathRaceGuardTests
     /// pot payout (a `wager-pot:`/`squad-pot:` memo — other payouts pass through, the PayoutProbeChain
     /// pattern), or item delivery — the deterministic stand-in for "the chain call failed after the
     /// deposit was verified paid".</summary>
-    private sealed class FailableChain(InMemoryChainService inner) : IChainService, ISimulatedChain
+    /// <remarks>INTERNAL rather than private so the owed-payout record tests can fault the same money paths
+    /// through the same seam — a second decorator over the same calls would be a second thing to keep in
+    /// step with <see cref="IChainService"/>.</remarks>
+    internal sealed class FailableChain(InMemoryChainService inner) : IChainService, ISimulatedChain
     {
         public InMemoryChainService Simulator => inner;
         public InMemoryChainService Inner => inner;
@@ -619,6 +622,16 @@ public class MoneyPathRaceGuardTests
         public volatile bool FailNextTournamentPrize;
         private int _tournamentPrizesPaid;
         public int TournamentPrizesPaid => Volatile.Read(ref _tournamentPrizesPaid);
+        /// <summary>Faults the next `season:` prize payout — the third of the three never-retried money paths,
+        /// which nothing could fault before.</summary>
+        public volatile bool FailNextSeasonPrize;
+        /// <summary>Faults the next `tournament-refund:` payout, so a test can prove a stranded entrant's
+        /// buy-in is recorded as OWED rather than lost.</summary>
+        public volatile bool FailNextTournamentRefund;
+        /// <summary>Faults the next paid-check. This is the UNKNOWN case and the reason it is separate from
+        /// the two above: the refund path cannot tell whether the buy-in ever cleared, so it must not be
+        /// recorded as a debt NOR as a non-debt.</summary>
+        public volatile bool FailNextPaidCheck;
 
         public Task<HeroMintResult> MintHeroAssetAsync(string toPlayerId, HeroMintData data, CancellationToken ct = default)
         {
@@ -636,7 +649,15 @@ public class MoneyPathRaceGuardTests
         public Task<long> GetAddressBalanceSatsAsync(string playerId, CancellationToken ct = default) => inner.GetAddressBalanceSatsAsync(playerId, ct);
         public Task<FeeInvoice> CreateFeeInvoiceAsync(string memo, long amountSats, CancellationToken ct = default) => inner.CreateFeeInvoiceAsync(memo, amountSats, ct);
         public Task<FeeInvoice?> GetFeeInvoiceAsync(string invoiceId, CancellationToken ct = default) => inner.GetFeeInvoiceAsync(invoiceId, ct);
-        public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default) => inner.IsInvoicePaidAsync(invoiceId, ct);
+        public Task<bool> IsInvoicePaidAsync(string invoiceId, CancellationToken ct = default)
+        {
+            if (FailNextPaidCheck)
+            {
+                FailNextPaidCheck = false;
+                throw new InvalidOperationException("Simulated paid-check fault (injected by test).");
+            }
+            return inner.IsInvoicePaidAsync(invoiceId, ct);
+        }
         public Task<ItemDeliveryResult> DeliverItemAssetAsync(string toPlayerId, string itemId, string itemName, CancellationToken ct = default)
         {
             if (FailNextItemDelivery)
@@ -653,6 +674,19 @@ public class MoneyPathRaceGuardTests
             {
                 FailNextPotPayout = false;
                 throw new InvalidOperationException("Simulated pot-payout fault (injected by test).");
+            }
+            if (FailNextSeasonPrize && memo.StartsWith("season:", StringComparison.Ordinal))
+            {
+                FailNextSeasonPrize = false;
+                throw new InvalidOperationException("Simulated season-prize fault (injected by test).");
+            }
+            // Checked BEFORE the `tournament:` arm below: a refund memo is `tournament-refund:`, which does
+            // not start with `tournament:`, but keeping the two apart by order as well as by prefix means a
+            // later rename of either tag cannot quietly make one seam swallow the other's payouts.
+            if (FailNextTournamentRefund && memo.StartsWith("tournament-refund:", StringComparison.Ordinal))
+            {
+                FailNextTournamentRefund = false;
+                throw new InvalidOperationException("Simulated tournament-refund fault (injected by test).");
             }
             if (memo.StartsWith("tournament:", StringComparison.Ordinal))
             {

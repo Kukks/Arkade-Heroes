@@ -49,6 +49,10 @@ if (!string.IsNullOrWhiteSpace(stateDbPath))
     // counter has to accumulate across the process, which is the only way a log that has gone deaf surfaces
     // as a number rather than as a warning nobody greps.
     builder.Services.AddSingleton<IAuditLog, SqliteAuditLog>();
+    // The durable record of payouts that did not complete cleanly — real sats owed to a NAMED player, which
+    // used to exist only as a log line that rotates away. Same file, same reasons; a SINGLETON for the same
+    // write-failure counter reason as the log above.
+    builder.Services.AddSingleton<IPayoutFailureLog, SqlitePayoutFailureLog>();
     // Hero-progression flush: identity events save inline, grinding rides this loop. Registered as a
     // resolvable singleton too so a test can force a deterministic flush instead of racing the timer.
     builder.Services.AddSingleton<HeroFlushService>();
@@ -61,6 +65,9 @@ else
     // (Game:StateDbPath), because a log that lives only in this process's memory records nothing a restart
     // could ever be asked about.
     builder.Services.AddSingleton<IAuditLog, NullAuditLog>();
+    // Same opt-in seam: with no database there is nowhere durable to record an owed payout, and the
+    // per-site ERROR logs are all that exists in that mode — exactly as they were before this table.
+    builder.Services.AddSingleton<IPayoutFailureLog, NullPayoutFailureLog>();
 }
 
 var app = builder.Build();
@@ -1155,6 +1162,38 @@ if (AdminGate.IsEnabled(adminToken))
         var events = await audit.ReadAsync(from, take ?? 100, subjectId, null, null, ct);
         return Results.Ok(new AuditPageDto(
             events, events.Count > 0 ? events[^1].Sequence : from, audit.WriteFailures));
+    });
+
+    // ── Payouts that did not complete cleanly ──────────────────────────────
+    // A pure READ of who is owed what. Behind the admin gate for the same reason the audit log is: it names
+    // players and amounts.
+    //
+    // The database is the source of truth, but it is not a usable interface — the server ships as a
+    // container and the file sits on a volume inside it, so "just query the table" means getting a sqlite3
+    // shell into production before anyone can find out that a player is owed money. This endpoint is the
+    // difference between a record existing and an operator being able to act on it.
+    //
+    // There is DELIBERATELY no settle, retry or pay action here, and there should not be one. Re-sending
+    // real sats is a decision a human makes after reading the `outcome` column — an endpoint that could
+    // pay from this table would be an automatic retry wearing a different name, and the `paid-not-booked`
+    // rows in it are exactly the ones where re-paying sends a prize twice.
+    admin.MapGet("/payout-failures", async (
+        long? after, int? take, string? outcome, string? player,
+        IPayoutFailureLog payouts, CancellationToken ct) =>
+    {
+        var from = after ?? 0;
+        var rows = await payouts.ReadAsync(from, take ?? 100, outcome, player, ct);
+        return Results.Ok(new
+        {
+            failures = rows.Select(r => new
+            {
+                id = r.Id, atUnixSeconds = r.AtUtc.ToUnixTimeSeconds(), playerId = r.PlayerId,
+                amountSats = r.AmountSats, payoutTag = r.PayoutTag, outcome = r.Outcome,
+                invoiceId = r.InvoiceId, failure = r.Failure,
+            }).ToList(),
+            after = rows.Count > 0 ? rows[^1].Id : from,
+            writeFailures = payouts.WriteFailures,
+        });
     });
 
     // ACTION — the strand refund (#103): a bracket that can never resolve pays every CLEARED buy-in back
