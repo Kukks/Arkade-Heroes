@@ -60,6 +60,56 @@ public class TournamentServerTests
         Assert.Equal(treasuryStart + BuyIn * 4 * 10 / 100, await chain.TreasuryBalanceAsync());
     }
 
+    /// <summary>
+    /// The BOOKS have to say what the BALANCE says. Every other fee-bearing flow in the game books its
+    /// income through <c>RecordInflowAsync</c>; tournament buy-ins did not, while the prizes were booked as
+    /// outflow all along. The effect was that a bracket which nets the house its rake read as a pure loss
+    /// on the economy card — 3600 out, nothing in — and an operator reconciling the ledger would conclude
+    /// tournaments were bleeding the treasury.
+    ///
+    /// The money was never wrong: the buy-ins really do reach the treasury (paying the fee invoice credits
+    /// it). Only the record of them was missing, which is exactly the class of fault that makes a durable
+    /// ledger untrustworthy — a record that is durable but wrong is worse than no record.
+    /// </summary>
+    [Fact]
+    public async Task Tournament_BooksTheBuyIns_AsInflow_SoTheLedgerAgreesWithTheBalance()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        var store = factory.Services.GetRequiredService<GameStore>();
+        var players = await FourPlayersAsync(factory);
+        var treasuryStart = await chain.TreasuryBalanceAsync();
+
+        var open = await players[0].Client.Tournament.OpenAsync(new OpenTournamentRequest(players[0].HeroId, BuyIn, 4));
+        var tid = open.Tournament.Id;
+        await players[0].Client.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        for (var i = 1; i < 4; i++)
+        {
+            var join = await players[i].Client.Tournament.JoinAsync(tid, new JoinTournamentRequest(players[i].HeroId));
+            await players[i].Client.Dev.PayInvoiceAsync(new { join.BuyIn.InvoiceId });
+        }
+
+        var resolved = await players[0].Client.Tournament.ResolveAsync(tid, new FightRequest("ledger-nonce"));
+
+        // Booked under the SAME tag the prizes leave under, so income and spend on this flow line up
+        // against each other instead of sitting in unrelated buckets.
+        var bookedIn = store.TreasuryInflowByTag.GetValueOrDefault("tournament");
+        var bookedOut = store.TreasuryOutflowByTag.GetValueOrDefault("tournament");
+        Assert.Equal(BuyIn * 4, bookedIn);
+        Assert.Equal(resolved.Prizes.Sum(), bookedOut);
+
+        // THE ASSERTION THAT MATTERS: the ledger's net and the treasury's actual movement are the same
+        // number. Booking only one side of a two-sided flow is what made them disagree.
+        //
+        // Scoped honestly to the in-memory chain, where a payout costs exactly its amount. On a real chain
+        // the treasury also funds the network fee of each payout (NArkChainService.PayoutAsync spends one
+        // output of exactly amountSats, so the fee comes off the treasury on top) and nothing books that,
+        // so the two sides will still differ by the accumulated chain cost. That is a SEPARATE unbooked
+        // flow, not this one, and it is why this asserts against the simulator rather than pretending to
+        // be a production-wide invariant.
+        Assert.Equal(await chain.TreasuryBalanceAsync() - treasuryStart, bookedIn - bookedOut);
+    }
+
     [Fact]
     public async Task Tournament_ResolvedBracket_IsClientVerifiable()
     {
@@ -286,6 +336,12 @@ public class TournamentServerTests
         Assert.Equal(BuyIn * 3, refund.RefundedSats);
         Assert.Equal(treasuryStart, await chain.TreasuryBalanceAsync());       // 3 in, 3 out — net zero
         Assert.Equal(BuyIn * 3, store.TreasuryOutflowByTag["tournament-refund"]);
+
+        // …and the BOOKS have to say net zero too. The refund side had the same missing-inflow fault as
+        // the resolve side: 3000 out and nothing in read as a pure loss on a flow that moved nothing.
+        // Only the buy-ins that actually CLEARED are booked — the unpaid fourth seat put nothing into the
+        // treasury, so booking it would invent income the treasury never received.
+        Assert.Equal(BuyIn * 3, store.TreasuryInflowByTag.GetValueOrDefault("tournament"));
     }
 
     [Fact]

@@ -23,7 +23,7 @@ public class GameRuleException(string message) : Exception(message);
 public class GameService(
     GameStore store, IChainService chain, ReceiptSigner receipts, IOptions<GameOptions> options,
     Persistence.IGameStatePersistence persistence, Persistence.IAuditLog audit,
-    ILogger<GameService>? logger = null)
+    Persistence.IPayoutFailureLog payoutFailures, ILogger<GameService>? logger = null)
 {
     private readonly GameOptions _options = options.Value;
 
@@ -39,6 +39,21 @@ public class GameService(
     private Task AuditAsync(string eventType, string? actorPlayerId, string?[] subjectIds, object payload,
         string? dedupKey = null)
         => audit.RecordAsync(new Persistence.AuditEntry(eventType, actorPlayerId, subjectIds, payload, dedupKey));
+
+    /// <summary>
+    /// Durably records a payout that did not complete cleanly. NEVER throws (see
+    /// <see cref="Persistence.IPayoutFailureLog"/>), which is what makes it safe to call from INSIDE the
+    /// catch blocks below — two of them sit in a loop over podium places or bracket entrants, and a throw
+    /// out of here would abort the loop, so recording one player's loss would cause the next player's.
+    ///
+    /// <paramref name="outcome"/> is the whole point: it says whether the sats moved. Passing
+    /// <see cref="Persistence.PayoutFailureOutcome.Owed"/> where the payout actually SUCCEEDED would tell an
+    /// operator to send a prize that has already been sent.
+    /// </summary>
+    private Task RecordPayoutFailureAsync(
+        string playerId, long amountSats, string payoutTag, string outcome, string? invoiceId, Exception failure)
+        => payoutFailures.RecordAsync(new Persistence.PayoutFailureEntry(
+            playerId, amountSats, payoutTag, outcome, invoiceId, failure));
 
     // The game-balance config the server runs under (economy from GameOptions; the rest from
     // GameConfig.Default unless retuned here).
@@ -1005,8 +1020,21 @@ public class GameService(
 
             // Every buy-in must have cleared before the bracket runs — an unpaid entry would leak the treasury.
             foreach (var e in session.Entrants)
+            {
                 if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct))
                     throw new GameRuleException("All buy-ins must be paid before the tournament can run.");
+                // …and a cleared buy-in is treasury INCOME, booked here because this is the one place the
+                // server establishes that it cleared. Without it the podium's prizes were booked as outflow
+                // against no matching inflow, so a bracket that nets the house its rake read as a pure loss
+                // on the ledger. The sats were never wrong — only the record of them.
+                //
+                // Under the SAME "tournament" tag the prizes leave under, so income and spend on this flow
+                // net against each other instead of sitting in unrelated buckets. Keyed on the buy-in
+                // invoice, which makes it idempotent per entrant (RecordInflowAsync early-returns on an
+                // invoice already tallied, and the durable row is keyed on it too) — so the retry a caller
+                // makes after a failed resolve cannot double-count, and neither can a restart.
+                await store.RecordInflowAsync(e.BuyInInvoiceId, "tournament", session.BuyInSats, ct);
+            }
 
             // Fight from the FILL-time locked snapshots — the set the published entrants-commitment binds
             // — via the SAME rebuild the client verifies with, so server resolution and client replay are
@@ -1041,7 +1069,7 @@ public class GameService(
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
                 var tag = $"tournament:{session.Id}:rank{i + 1}";
-                // A failed prize is never retried (documented v1 limit), so the LOG is the only record that
+                // A failed prize is never retried (documented v1 limit), so the RECORD is the only trace that
                 // this player is owed real sats — swallowing it silently made the debt unrecoverable.
                 // Payout and booking are caught separately ON PURPOSE: a booking failure means the sats DID
                 // move, and reading that as "unpaid" is exactly how a manual reconciliation double-pays.
@@ -1050,8 +1078,10 @@ public class GameService(
                 {
                     logger?.LogError(ex,
                         "Tournament prize payout FAILED and will never be retried: player {PlayerId} is owed "
-                        + "{Sats} sats for {Tag}. Settle it by hand — nothing else records this debt.",
-                        winnerPlayerId, prizes[i], tag);
+                        + "{Sats} sats for {Tag}. Recorded as {Outcome} — settle it by hand.",
+                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.Owed);
+                    await RecordPayoutFailureAsync(
+                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.Owed, null, ex);
                     continue;
                 }
                 try { await store.RecordOutflowAsync("tournament", prizes[i], ct); }
@@ -1061,6 +1091,8 @@ public class GameService(
                         "Tournament prize of {Sats} sats for {Tag} WAS PAID but could not be booked as "
                         + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
                         + "under-reports by this amount.", prizes[i], tag);
+                    await RecordPayoutFailureAsync(
+                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.PaidNotBooked, null, ex);
                 }
             }
             // Logged AFTER the podium loop so the entry reflects what was actually attempted, and keyed on
@@ -1129,27 +1161,54 @@ public class GameService(
                 // UNKNOWN, a failed payout leaves it OWED, and a failed booking means it was already PAID.
                 // A fault on any of them loses only THIS entrant's refund — it never aborts the rest with the
                 // bracket already durably marked refunded (mirrors the podium's per-prize catch). None are
-                // retried, so these logs are the only record that survives.
+                // retried, so the recorded outcome is the only trace that survives — and the three READ
+                // DIFFERENTLY to whoever settles them, which is why they are three outcomes and not one.
                 bool paid;
                 try { paid = await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct); }
                 catch (Exception ex)
                 {
                     logger?.LogError(ex,
                         "Tournament refund SKIPPED for player {PlayerId}: could not read whether buy-in "
-                        + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {Tag}. Check the "
-                        + "invoice by hand before paying anything.",
-                        e.PlayerId, e.BuyInInvoiceId, session.BuyInSats, tag);
+                        + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {Tag}. Recorded as "
+                        + "{Outcome} — check the invoice by hand before paying anything.",
+                        e.PlayerId, e.BuyInInvoiceId, session.BuyInSats, tag,
+                        Persistence.PayoutFailureOutcome.Unknown);
+                    await RecordPayoutFailureAsync(
+                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Unknown,
+                        e.BuyInInvoiceId, ex);
                     continue;
                 }
                 if (!paid) continue;
+
+                // This buy-in DID reach the treasury, and — as on the resolve path — nothing had ever booked
+                // it as income. The refund below books an outflow, so leaving the inflow unbooked made a
+                // net-zero event read as a pure loss. Only CLEARED buy-ins are booked: an unpaid seat put
+                // nothing in, and booking it would invent income the treasury never received.
+                //
+                // Caught on its own, unlike the resolve path's identical call, and the difference is
+                // deliberate: resolve books BEFORE anything is committed, so a throw there just fails a
+                // retryable request. Here the bracket is ALREADY durably marked refunded, so an escaping
+                // throw would strand every remaining entrant's refund permanently — the exact harm this
+                // loop's per-step catches exist to prevent. A book-keeping gap must not cost a refund.
+                try { await store.RecordInflowAsync(e.BuyInInvoiceId, "tournament", session.BuyInSats, ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogWarning(ex,
+                        "Tournament buy-in of {Sats} sats ({InvoiceId}) could not be booked as inflow before "
+                        + "refunding it. The refund itself is unaffected; treasury income now under-reports "
+                        + "by this amount.", session.BuyInSats, e.BuyInInvoiceId);
+                }
 
                 try { await chain.PayoutAsync(e.PlayerId, session.BuyInSats, tag, ct); }
                 catch (Exception ex)
                 {
                     logger?.LogError(ex,
                         "Tournament refund payout FAILED and will never be retried: player {PlayerId} paid a "
-                        + "buy-in and is owed {Sats} sats back for {Tag}. Settle it by hand — nothing else "
-                        + "records this debt.", e.PlayerId, session.BuyInSats, tag);
+                        + "buy-in and is owed {Sats} sats back for {Tag}. Recorded as {Outcome} — settle it "
+                        + "by hand.", e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Owed);
+                    await RecordPayoutFailureAsync(
+                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Owed,
+                        e.BuyInInvoiceId, ex);
                     continue;
                 }
                 refunded++;
@@ -1161,6 +1220,9 @@ public class GameService(
                         "Tournament refund of {Sats} sats for {Tag} WAS PAID but could not be booked as "
                         + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
                         + "under-reports by this amount.", session.BuyInSats, tag);
+                    await RecordPayoutFailureAsync(
+                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.PaidNotBooked,
+                        e.BuyInInvoiceId, ex);
                 }
             }
             // Actor is NULL: this is reachable from the operator console with no player behind it, and the
@@ -2762,7 +2824,7 @@ public class GameService(
                 for (var i = 0; i < standings.Count; i++)
                 {
                     var tag = $"season:{s}:rank{standings[i].Rank}";
-                    // Never retried (documented v1 limit), so the LOG is the only record of the debt. Payout
+                    // Never retried (documented v1 limit), so the RECORD is the only trace of the debt. Payout
                     // and booking are caught separately because a booking failure means the sats DID move —
                     // reading that as "unpaid" is how a manual reconciliation double-pays a champion.
                     try { await chain.PayoutAsync(standings[i].OwnerId, shares[i], tag, ct); }
@@ -2770,8 +2832,10 @@ public class GameService(
                     {
                         logger?.LogError(ex,
                             "Season prize payout FAILED and will never be retried: player {PlayerId} is owed "
-                            + "{Sats} sats for {Tag}. Settle it by hand — nothing else records this debt.",
-                            standings[i].OwnerId, shares[i], tag);
+                            + "{Sats} sats for {Tag}. Recorded as {Outcome} — settle it by hand.",
+                            standings[i].OwnerId, shares[i], tag, Persistence.PayoutFailureOutcome.Owed);
+                        await RecordPayoutFailureAsync(
+                            standings[i].OwnerId, shares[i], tag, Persistence.PayoutFailureOutcome.Owed, null, ex);
                         continue;
                     }
                     try { await store.RecordOutflowAsync("season", shares[i], ct); }
@@ -2781,6 +2845,9 @@ public class GameService(
                             "Season prize of {Sats} sats for {Tag} WAS PAID but could not be booked as "
                             + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
                             + "under-reports by this amount.", shares[i], tag);
+                        await RecordPayoutFailureAsync(
+                            standings[i].OwnerId, shares[i], tag,
+                            Persistence.PayoutFailureOutcome.PaidNotBooked, null, ex);
                     }
                 }
                 // Actor NULL: nobody asked for this — it happens as a side effect of somebody reading the

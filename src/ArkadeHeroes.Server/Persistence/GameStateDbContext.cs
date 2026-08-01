@@ -343,6 +343,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedTreasuryFlow> TreasuryFlows => Set<PersistedTreasuryFlow>();
     public DbSet<PersistedAuditEvent> AuditEvents => Set<PersistedAuditEvent>();
     public DbSet<PersistedAuditSubject> AuditEventSubjects => Set<PersistedAuditSubject>();
+    public DbSet<PersistedPayoutFailure> PayoutFailures => Set<PersistedPayoutFailure>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -398,6 +399,19 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
             e.HasIndex(x => x.SubjectId);
             e.HasOne(x => x.Event).WithMany(x => x.Subjects).HasForeignKey(x => x.Sequence)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Payouts that did not complete cleanly ──
+        modelBuilder.Entity<PersistedPayoutFailure>(e =>
+        {
+            // A value-generated integer key, which the SQLite provider emits as AUTOINCREMENT — so the id is
+            // a stable total order to page on and is never reused.
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            // The only two questions anyone asks of this table: "what is still owed" and "what do we owe
+            // THIS player". Deliberately NO unique index on PayoutTag — see PersistedPayoutFailure.
+            e.HasIndex(x => x.Outcome);
+            e.HasIndex(x => x.PlayerId);
         });
     }
 }
