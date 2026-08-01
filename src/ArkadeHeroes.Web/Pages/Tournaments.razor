@@ -65,9 +65,19 @@ else
             </label>
         </div>
         <button class="btn primary" style="margin-top:1rem" @onclick="DoOpen"
-                disabled="@(_busy || string.IsNullOrEmpty(_heroId) || _buyIn < 1)">
+                disabled="@(_busy || string.IsNullOrEmpty(_heroId) || _buyIn < 1 || !CanAfford(_buyIn))">
             @(_busy ? "Working…" : "Host bracket")
         </button>
+        @* Hosting pays the host's OWN buy-in (GameSession.OpenTournamentAsync pays it straight after the
+           open), so it is a spend like any other and gets the same up-front answer /gauntlet gives. *@
+        @if (_buyIn >= 1 && !CanAfford(_buyIn))
+        {
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot bad"></span>
+                You have @State.BalanceSats.ToString("N0") sats; hosting stakes @_buyIn.ToString("N0").
+                <a href="wallet">Top up your wallet →</a>
+            </div>
+        }
         @if (_status is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div> }
         @if (_error is not null) { <div class="status-line" style="margin-top:.9rem"><span class="dot bad"></span> @_error</div> }
     </div>
@@ -103,7 +113,12 @@ else
             <div class="card"><div class="match-row">
                 <span>Bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Joined / @t.Size joined</span>
                 <span class="spacer"></span>
-                <button class="btn primary sm" @onclick="() => DoJoin(t.Id)" disabled="@(_busy || string.IsNullOrEmpty(_heroId))">Join</button>
+                @if (!CanAfford(t.BuyInSats))
+                {
+                    <span class="hud">you have @State.BalanceSats.ToString("N0") sats — <a href="wallet">top up →</a></span>
+                }
+                <button class="btn primary sm" @onclick="() => DoJoin(t.Id)"
+                        disabled="@(_busy || string.IsNullOrEmpty(_heroId) || !CanAfford(t.BuyInSats))">Join</button>
             </div></div>
         }
         @foreach (var t in Resolvable)
@@ -293,6 +308,12 @@ else
     private IEnumerable<TournamentDto> OthersFull =>
         _tournaments.Where(t => t.Status == "full" && !t.Entrants.Any(e => e.PlayerId == MyId));
     private string Name(string? heroId) => heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "—";
+
+    /// <summary>Whether the wallet covers a buy-in. Both doors onto this page spend it — hosting pays the
+    /// host's own entry, joining pays the entrant's — so both gate on it. The figure is the server's own,
+    /// off the bracket (or the host's chosen stake), so there is no unknown-price case to wave through here;
+    /// a briefly stale balance on a cold load is re-rendered by OnState the moment it lands.</summary>
+    private bool CanAfford(long sats) => State.BalanceSats >= sats;
 
     /// <summary>
     /// Did MY entry take the bracket? Null while there is no champion (an open, full or refunded one).

@@ -409,15 +409,37 @@ else
                     <p class="muted" style="margin:0">Nothing equipped.</p>
                 }
             </div>
+            @* The picker used to offer the whole SHOP — every item in the catalogue, most of which this
+               player has never bought. Picking one produced "You hold 0 unit(s) of X", which is the server
+               being right about a question the page should never have asked. It offers what the player
+               HOLDS now, and says which of the two it is showing. *@
             @if (IsMine(h) && _catalog.Count > 0)
             {
-                <select class="equip-add" @bind="_equipPick" @bind:after="OnEquipPicked" disabled="@_busy">
-                    <option value="">＋ equip an item…</option>
-                    @foreach (var opt in _catalog)
-                    {
-                        <option value="@opt.Id">@opt.Slot · @opt.Name</option>
-                    }
-                </select>
+                @if (PickerItems.Count > 0)
+                {
+                    <select class="equip-add" @bind="_equipPick" @bind:after="OnEquipPicked" disabled="@_busy">
+                        <option value="">@PickerPlaceholder</option>
+                        @foreach (var opt in PickerItems)
+                        {
+                            <option value="@opt.Id">@opt.Slot · @opt.Name</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <p class="muted" style="margin:.6rem 0 0">
+                        You don't own any gear yet — the armory is on the <a href="gear">Gear</a> page.
+                    </p>
+                }
+                @if (_ownedReadFailed)
+                {
+                    @* Said out loud rather than silently showing the catalogue as if it were the inventory:
+                       the whole defect being fixed here is a list that looked like one thing and was another. *@
+                    <div class="status-line" style="margin-top:.5rem">
+                        <span class="dot bad"></span>
+                        <span>Couldn't read which items you own, so this lists the whole catalogue — anything you don't hold will be refused.</span>
+                    </div>
+                }
             }
             @if (_equipError is not null)
             {
@@ -612,6 +634,25 @@ else
     private bool _loading = true;
     private bool _error;
     private List<ItemDto> _catalog = new();
+
+    /// <summary>The item ids this player holds, or null for "we do not have them".
+    ///
+    /// <para>Deliberately SEPARATE from <see cref="_catalog"/> rather than a filter over it. The catalog is
+    /// also what <c>CounterGear</c> resolves this hero's EQUIPPED ids against for the build-shape chips, so
+    /// narrowing it in place would blank those chips for any item the hero is wearing — a second bug wearing
+    /// the first one's fix.</para></summary>
+    private HashSet<string>? _ownedItemIds;
+
+    /// <summary>An ownership read was ATTEMPTED and failed. Distinct from a null id set, which also covers
+    /// "we never asked" — and the two must not render the same, or a page that has not asked yet accuses
+    /// the server of a failure that never happened.</summary>
+    private bool _ownedReadFailed;
+
+    /// <summary>A read is in flight. Claimed BEFORE the first await: WASM is single-threaded, so setting it
+    /// ahead of the yield is what stops two OnChange events both passing the guard and firing the same
+    /// request twice.</summary>
+    private bool _ownedReading;
+
     private bool _busy;
     private string? _equipError;
     private string _equipPick = "";
@@ -696,6 +737,11 @@ else
                 try { _catalog = await Api.Items.ShopAsync(); }
                 catch { /* the equip picker is optional chrome */ }
             }
+            // Which of those the player actually HOLDS. Awaited AFTER the catalog rather than alongside it:
+            // the picker renders the intersection of the two, and two in-flight reads can land in either
+            // order — so a parallel pair would let one render paint a list computed from half the answer.
+            _ownedReadFailed = false;   // a fresh hero is a fresh chance to ask
+            await HydrateOwnedAsync();
             await LoadBidsAsync();
             // Name any DESTROYED parent in the lineage block. Optional chrome: a failure leaves the short
             // id, which is what the block showed before headstones existed.
@@ -804,6 +850,46 @@ else
     // Equip controls only for the signed-in owner of this hero.
     private bool IsMine(HeroDto h) => State.IsSignedIn && h.OwnerId == State.Player?.PlayerId;
 
+    /// <summary>What the picker offers: the player's own items, or — when that read failed — the catalogue,
+    /// under a line that says so. Ownership is the same predicate the server's equip gate uses, so this is
+    /// no longer a list of mostly-refusals; it is not a PROMISE, though, because the level gate and the
+    /// already-allocated-units gate can still refuse an item the player genuinely holds.</summary>
+    private List<ItemDto> PickerItems => _ownedItemIds is { } owned
+        ? _catalog.Where(i => owned.Contains(i.Id)).ToList()
+        : _catalog;
+
+    /// <summary>Names which list is on screen, so "your items" is never claimed over the whole shop.</summary>
+    private string PickerPlaceholder => _ownedItemIds is null
+        ? "＋ equip an item…"
+        : "＋ equip one of your items…";
+
+    /// <summary>
+    /// Read what this player holds — once.
+    ///
+    /// <para>Gated on OWNING this hero, which is the only state that renders a picker at all. Not merely a
+    /// saved request: <c>/api/items/mine</c> is authenticated, so asking anonymously answers 400 and puts a
+    /// failed-resource line in the browser console on every visitor's view of every hero page. The browser
+    /// suite asserts zero console output per page and caught exactly that.</para>
+    ///
+    /// <para>Also called from <c>OnState</c>, because on a COLD boot the shell resumes sign-in AFTER this
+    /// page has initialised — so at load time the hero was not yet "mine" and the read was correctly
+    /// skipped. Without the second chance the owner would then be shown the whole catalogue under a line
+    /// claiming their inventory could not be read, when it had simply never been asked for. Same startup
+    /// ORDER problem <c>/heroes?mine=1</c> already documents.</para>
+    ///
+    /// <para>At most one attempt per hero: OnChange fires on every balance refresh and VTXO arrival, and a
+    /// read that retried on each of those would be a request loop running behind an ordinary hero page.</para>
+    /// </summary>
+    private async Task HydrateOwnedAsync()
+    {
+        if (_ownedItemIds is not null || _ownedReadFailed || _ownedReading) return;
+        if (_hero is not { } h || !IsMine(h)) return;
+        _ownedReading = true;
+        try { _ownedItemIds = [.. await Api.Items.MineAsync()]; }
+        catch { _ownedReadFailed = true; }
+        finally { _ownedReading = false; }
+    }
+
     private async Task OnEquipPicked()
     {
         var itemId = _equipPick;
@@ -842,7 +928,13 @@ else
         finally { _busy = false; }
     }
 
-    private void OnState() => InvokeAsync(StateHasChanged);
+    // Sign-in can land after this page has already initialised, so the ownership read gets its second
+    // chance here (it no-ops once it has an answer). See HydrateOwnedAsync.
+    private void OnState() => InvokeAsync(async () =>
+    {
+        await HydrateOwnedAsync();
+        StateHasChanged();
+    });
 
     public void Dispose() => State.OnChange -= OnState;
 
