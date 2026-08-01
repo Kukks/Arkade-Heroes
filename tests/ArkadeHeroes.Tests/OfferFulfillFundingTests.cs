@@ -74,6 +74,50 @@ public class OfferFulfillFundingTests
         Assert.Equal(70_000L, fundedSats);
     }
 
+    [Fact]
+    public void CarrierFundsTheAskWhenNoPureBtcCoinIsLeft()
+    {
+        // The wallet's own background batch settle consolidates everything into ONE VTXO that
+        // holds the sats AND every hero the player owns. Excluding carriers outright leaves a
+        // player who owns any hero unable to buy anything at all, while the balance pill still
+        // reads the full amount — the live symptom was "need 25000 sats, have 0" on 1,118,306.
+        var consolidated = MakeCoin(1_118_306, vout: 0, assets: [new VtxoAsset("asset:hero", 1)]);
+
+        var (funding, fundedSats) = OfferFulfillFlow.SelectBuyerFunding([consolidated], askSats: 25_000);
+
+        Assert.Equal(new[] { 1_118_306L }, funding.Select(c => c.Amount.Satoshi));
+        Assert.Equal(1_118_306L, fundedSats);
+    }
+
+    [Fact]
+    public void CarrierFallbackTopsUpPureBtcThatCannotCoverTheAskAlone()
+    {
+        // Pure BTC is spent first and as far as it goes; carriers only close what is left, and
+        // largest-first — the same order the browser and console wallets fall back in.
+        var btc = MakeCoin(4_000, vout: 0);
+        var bigCarrier = MakeCoin(900_000, vout: 1, assets: [new VtxoAsset("asset:hero-a", 1)]);
+        var smallCarrier = MakeCoin(30_000, vout: 2, assets: [new VtxoAsset("asset:hero-b", 1)]);
+
+        var (funding, fundedSats) = OfferFulfillFlow.SelectBuyerFunding(
+            [btc, bigCarrier, smallCarrier], askSats: 25_000);
+
+        Assert.Equal(new[] { 4_000L, 900_000L }, funding.Select(c => c.Amount.Satoshi));
+        Assert.Equal(904_000L, fundedSats);
+    }
+
+    [Fact]
+    public void RecoverableCarrierIsStillExcludedFromTheFallback()
+    {
+        // The fallback must not reopen the door the recoverable filter closed: arkd rejects any
+        // spend that includes a swept or expired coin with VTXO_RECOVERABLE.
+        var sweptCarrier = MakeCoin(900_000, vout: 0, swept: true, assets: [new VtxoAsset("asset:hero", 1)]);
+
+        var (funding, fundedSats) = OfferFulfillFlow.SelectBuyerFunding([sweptCarrier], askSats: 25_000);
+
+        Assert.Empty(funding);
+        Assert.Equal(0L, fundedSats);
+    }
+
     /// <summary>In-memory ArkCoin (OP_TRUE leaf), same construction as the SDK's ArkCoinTests.</summary>
     private static ArkCoin MakeCoin(
         long sats, uint vout, bool swept = false, DateTimeOffset? expiresAt = null,
