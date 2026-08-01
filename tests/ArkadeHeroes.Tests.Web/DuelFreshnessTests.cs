@@ -116,20 +116,27 @@ public class DuelFreshnessTests
         cut.WaitForAssertion(() => Assert.Contains(Stale, cut.Markup));
 
         ctx.Dispose();   // what navigating away does
-
-        // Let a tick already dispatched at the instant of disposal finish before sampling. Sampling
-        // straight after Dispose RACED that in-flight request: it recorded itself after the baseline was
-        // read, so the assertion below saw a count that had moved. That failed about half the CI runs on
-        // main while passing every time locally and in isolation, which is exactly how a timing race
-        // presents. What this test is about is that no NEW poll starts, so the honest measurement is
-        // "the count stops changing", not "nothing lands after this line".
-        System.Threading.Thread.Sleep(200);
-        var afterQuiesce = api.Requested.Count;
+        var atDisposal = api.Requested.Count;
 
         // Several poll intervals go by with the page gone.
         System.Threading.Thread.Sleep(500);
 
-        Assert.Equal(afterQuiesce, api.Requested.Count);
+        // A RATE, not an equality — and that is the whole point of this shape.
+        //
+        // A tick already dispatched at the instant of disposal cannot be recalled: it is in flight, it
+        // will record itself, and no amount of waiting before sampling makes that deterministic. Asserting
+        // the count never moves failed about half the CI runs on main (f0194f3 and d1bf548 red, c725c66
+        // and 94bfc76 green) while passing every time locally, which is how a timing race presents. Adding
+        // a settle delay first did not fix it either — under contention the straggler simply lands later.
+        //
+        // So tolerate exactly one straggler and measure the thing that actually distinguishes the defect:
+        // a timer that OUTLIVED the page keeps firing every PollEvery, which is roughly six requests
+        // across this window, not one. Proven to still bite by commenting out _poll?.Dispose() in
+        // Duel.razor, which turns this red.
+        var landed = api.Requested.Count - atDisposal;
+        Assert.True(landed <= 1,
+            $"the poll kept running after the page was disposed: {landed} requests landed in 500ms "
+            + $"({Brisk.TotalMilliseconds}ms interval), so the timer outlived its page.");
     }
 
     /// <summary>
