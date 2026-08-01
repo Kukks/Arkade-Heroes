@@ -70,17 +70,26 @@ services:
       Chain__NArk__EmulatorUri: ${EMULATOR_URI:-http://host.docker.internal:7073}
       # SQLite file for NArk wallet storage + chain bookkeeping. Default (app):
       # arkade-heroes-chain.db in the working directory — i.e. the EPHEMERAL container
-      # layer. Pointed into the volume here: it holds the treasury wallet's derived keys.
+      # layer. Pointed into the volume here (and defaulted to the same path by the IMAGE):
+      # it holds the treasury wallet's SEED, so losing this file loses the treasury.
       Chain__NArk__DbPath: /data/arkade-heroes-chain.db
       #
       # *** TREASURY SEED PHRASE — REAL MONEY. NEVER GIVE THIS A DEFAULT. ***
-      # Fixed BIP-39 mnemonic for the treasury wallet. Default: EMPTY, and empty is the
-      # safe value — the app generates a mnemonic on first boot and persists it in the
-      # wallet storage above. Set it only to RESTORE an existing treasury.
+      # Fixed BIP-39 mnemonic for the treasury wallet. Default: EMPTY. Empty means the
+      # treasury is whatever the database above already holds — set this to RESTORE an
+      # existing treasury, and set it in general if you want the treasury to be
+      # recoverable from something other than that one file.
       # Supplied from .env, which is gitignored. If .env is absent this resolves to an
       # empty string, which is exactly the default behaviour.
       # Anyone who reads this value can spend the treasury.
       Chain__NArk__TreasuryMnemonic: ${TREASURY_MNEMONIC:-}
+      # Permission to generate a BRAND-NEW treasury when the database holds none.
+      # Default: false, and false is the safe value. The server cannot tell a first install
+      # from a database it just lost — both look like "no treasury" — so rather than guess
+      # it refuses to start and says so. Set this true ONLY for a deliberate fresh install
+      # with nothing to lose; on a server that already holds funds it is the difference
+      # between an error message and a permanently unspendable treasury.
+      Chain__NArk__AllowTreasuryAutoCreate: ${TREASURY_AUTO_CREATE:-false}
 
       # ── Durability ────────────────────────────────────────────────────────
       # SQLite file holding state a restart must not lose: players, the hero roster,

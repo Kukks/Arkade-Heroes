@@ -178,15 +178,48 @@ public class NArkChainService(
             var walletId = await GetKvAsync(TreasuryWalletKey, ct);
             if (walletId is null)
             {
+                // No treasury recorded. This is a genuine first install, OR the database that held
+                // the treasury is gone — a wrong DbPath, an unmounted volume, a container's writable
+                // layer discarded by a redeploy. The two are byte-for-byte identical from here, and
+                // generating a mnemonic answers them very differently: right once, and on the other
+                // path it rotates the treasury to a key nobody recorded and strands every sat at the
+                // old address, silently, while the server boots clean. So it is not guessed at.
+                //
+                // Checked BEFORE the first network call, so a misconfigured server fails on its own
+                // config rather than on whatever arkd happens to say.
+                if (string.IsNullOrWhiteSpace(options.TreasuryMnemonic) && !options.AllowTreasuryAutoCreate)
+                    throw new InvalidOperationException(
+                        $"No treasury wallet is recorded in the chain database at '{options.DbPath}', and no "
+                        + "treasury mnemonic is configured. Refusing to generate one: if this server ever held "
+                        + "funds, that would rotate the treasury to a brand-new key and permanently strand "
+                        + "everything at the old address. "
+                        + "To RESTORE an existing treasury, point Chain__NArk__DbPath at the database holding it "
+                        + "(a redeploy destroys anything not on a persistent volume), or set "
+                        + "Chain__NArk__TreasuryMnemonic to its seed phrase. "
+                        + "If this really is a first install with nothing to lose, set "
+                        + "Chain__NArk__AllowTreasuryAutoCreate=true.");
+
                 var serverInfo = await transport.GetServerInfoAsync(ct);
-                var mnemonic = string.IsNullOrWhiteSpace(options.TreasuryMnemonic)
+                var generated = string.IsNullOrWhiteSpace(options.TreasuryMnemonic);
+                var mnemonic = generated
                     ? new Mnemonic(Wordlist.English, WordCount.Twelve).ToString()
                     : options.TreasuryMnemonic;
                 var wallet = await WalletFactory.CreateWallet(mnemonic, null, serverInfo, ct);
                 await walletStorage.SaveWallet(wallet, ct);
                 walletId = wallet.Id;
                 await SetKvAsync(TreasuryWalletKey, walletId, ct);
-                logger.LogInformation("Created treasury wallet {WalletId}", walletId);
+                if (generated)
+                    // At WARNING, because a generated seed exists in exactly one place — the database
+                    // named in the message — and nobody has a copy. Losing that file loses the treasury,
+                    // and the operator is the only one who can fix that, so they have to be told they
+                    // now own a backup problem.
+                    logger.LogWarning(
+                        "Created a NEW treasury wallet {WalletId}. Its seed exists ONLY in {DbPath} — back that "
+                        + "file up, and keep it on storage that survives a redeploy. Set "
+                        + "Chain__NArk__TreasuryMnemonic to a phrase you hold to make the treasury recoverable "
+                        + "without it.", walletId, options.DbPath);
+                else
+                    logger.LogInformation("Restored treasury wallet {WalletId} from the configured mnemonic", walletId);
             }
 
             var address = await GetKvAsync(TreasuryAddressKey, ct);

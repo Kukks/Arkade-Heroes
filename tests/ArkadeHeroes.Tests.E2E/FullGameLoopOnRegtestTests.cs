@@ -31,6 +31,10 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Chain__NArk__ArkUri", "http://localhost:7070");
         Environment.SetEnvironmentVariable("Chain__NArk__EsploraUri", "http://localhost:3000/api");
         Environment.SetEnvironmentVariable("Chain__NArk__DbPath", _serverDbPath);
+        // A throwaway database per run, so this genuinely IS a first install and a generated treasury
+        // is what we want. The server will not generate one unless told — that refusal is what stops a
+        // deployment that merely LOST its database from minting itself a new treasury.
+        Environment.SetEnvironmentVariable("Chain__NArk__AllowTreasuryAutoCreate", "true");
         Environment.SetEnvironmentVariable("Game__BreedingCooldownBaseUnit", "00:00:02");
 
         _factory = new WebApplicationFactory<Program>();

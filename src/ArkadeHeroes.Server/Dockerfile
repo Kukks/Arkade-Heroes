@@ -118,6 +118,18 @@ VOLUME ["/data"]
 # container is recreated, which is exactly what a redeploy does.
 ENV Game__StateDbPath=/data/game.db
 
+# The chain database, for the same reason and with a sharper edge: it holds the TREASURY
+# WALLET's seed. The app's default is the RELATIVE arkade-heroes-chain.db, which resolves
+# against the WORKDIR below — /app, the writable layer — so a redeploy destroys the only
+# copy of the key controlling the game's money. compose has always set this; a platform
+# deploying this IMAGE directly never reads that file.
+#
+# The server no longer fills that gap by inventing a new treasury (it refuses to start
+# instead — Chain__NArk__AllowTreasuryAutoCreate), so getting this path wrong is now a loud
+# failure rather than a silent rotation. Same /data caveat as above: it needs a NAMED volume
+# or host mount to outlive the container.
+ENV Chain__NArk__DbPath=/data/arkade-heroes-chain.db
+
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
 
