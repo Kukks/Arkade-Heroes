@@ -95,9 +95,19 @@ else
             </p>
         }
         <button class="btn primary" style="margin-top:1rem" @onclick="DoOpen"
-                disabled="@(_busy || !LineupValid || string.IsNullOrEmpty(_oppOwner) || _wager < 1)">
+                disabled="@(_busy || !LineupValid || string.IsNullOrEmpty(_oppOwner) || _wager < 1 || !CanAffordOpen)">
             @(_busy ? "Working…" : "Challenge squad")
         </button>
+        @* The page already computed the total two lines up; before this it would still let you commit to it
+           with an empty wallet and answer with a rejection. Same treatment /gauntlet and /heroes use. *@
+        @if (!CanAffordOpen && _wager >= 1 && LineupValid)
+        {
+            <div class="status-line" style="margin-top:.7rem">
+                <span class="dot bad"></span>
+                You have @State.BalanceSats.ToString("N0") sats; @OpenShortfall.
+                <a href="wallet">Top up your wallet →</a>
+            </div>
+        }
         @if (_status is not null)
         {
             <div class="status-line" style="margin-top:.9rem"><span class="dot wait"></span> @_status</div>
@@ -128,7 +138,12 @@ else
                     <div class="match-row">
                         <span>A rival squad challenges yours · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
                         <span class="spacer"></span>
-                        <button class="btn primary sm" @onclick="() => DoAccept(m.MatchId)" disabled="@_busy">Accept</button>
+                        @if (!CanAffordAccept(m))
+                        {
+                            <span class="hud">you have @State.BalanceSats.ToString("N0") sats — <a href="wallet">top up →</a></span>
+                        }
+                        <button class="btn primary sm" @onclick="() => DoAccept(m.MatchId)"
+                                disabled="@(_busy || !CanAffordAccept(m))">Accept</button>
                     </div>
                 }
             </div>
@@ -269,6 +284,25 @@ else
     private long? MatchFee => MyLineup.All(x => !string.IsNullOrEmpty(x)) && TopLevel is { } lvl
         ? Pricing.MatchFee(_config, lvl)
         : null;
+
+    /// <summary>What opening this challenge takes out of the wallet: the stake plus the per-side match fee.
+    /// With the fee unread this is the WAGER ALONE — a strict lower bound, so the gate below can only ever
+    /// under-block. Greying out a real spend over a number we failed to read is the worse error, and it is
+    /// the rule /gauntlet and /heroes already follow.</summary>
+    private long OpenCost => _wager + (MatchFee ?? 0);
+
+    private bool CanAffordOpen => State.BalanceSats >= OpenCost;
+
+    /// <summary>Says which number the gate is quoting, so an unread fee never reads as the whole price.</summary>
+    private string OpenShortfall => MatchFee is null
+        ? $"the wager alone stakes {OpenCost:N0}, and a match fee is charged on top"
+        : $"this costs {OpenCost:N0} in total";
+
+    /// <summary>Whether the wallet covers ACCEPTING <paramref name="m"/>. Gated on the wager only: the
+    /// accepting side is charged a match fee too, but that fee is priced off the DEFENDER's lineup, which
+    /// this form does not hold — so the wager is the honest lower bound rather than a fee guessed off the
+    /// challenger's heroes. A wallet short of the bare stake cannot cover the real total either.</summary>
+    private bool CanAffordAccept(SquadMatchDto m) => State.BalanceSats >= m.WagerSats;
 
     private int? TopLevel
     {

@@ -238,11 +238,37 @@ else
                     <span class="hud">@t.Entrants/@t.Size · @t.BuyInSats.ToString("N0") sat buy-in</span>
                     <span class="spacer"></span>
                     @if (Stranded(t)) { <span class="chip">stranded</span> }
+                    @* The ONLY action on this page that a mis-click cannot take back, so the only one that
+                       asks. See the note on _confirmRefundId for why the other two deliberately do not. *@
                     @if (t.Status is "open" or "full")
                     {
-                        <button class="btn ghost sm" @onclick="() => RefundTournament(t.Id)" disabled="@_busy">Refund entrants</button>
+                        @if (_confirmRefundId == t.Id)
+                        {
+                            <button class="btn danger sm" @onclick="() => RefundTournament(t.Id)" disabled="@_busy">Yes — end it and pay back</button>
+                            <button class="btn ghost sm" @onclick="() => _confirmRefundId = null" disabled="@_busy">Cancel</button>
+                        }
+                        else
+                        {
+                            <button class="btn ghost sm" @onclick="() => _confirmRefundId = t.Id" disabled="@_busy">Refund entrants…</button>
+                        }
                     }
                 </div>
+                @if (_confirmRefundId == t.Id)
+                {
+                    @* Names the bracket, because these rows differ only by an id nobody reads carefully. And
+                       it does not promise the refund will happen: the server has the final say, and a row
+                       carrying no "stranded" chip may still be refundable (an OPEN bracket whose entrant hero
+                       was burned away qualifies and cannot be told apart from here). *@
+                    <div class="status-line" style="margin:.2rem 0 .9rem">
+                        <span class="dot bad"></span>
+                        <span>
+                            This <b>permanently ends</b> bracket <span class="mono">@t.Id</span> and pays every
+                            cleared buy-in back to its entrant — up to @t.Entrants × @t.BuyInSats.ToString("N0") sat
+                            of real money. It cannot be undone, and the bracket can never be played.
+                            If it can still be resolved the server will refuse.
+                        </span>
+                    </div>
+                }
             }
             <p class="muted" style="margin:.7rem 0 0">
                 A refund pays every CLEARED buy-in back to its entrant. The server refuses a bracket that can
@@ -260,6 +286,28 @@ else
     private string? _error;
     private string? _actionResult;
     private bool _busy;
+
+    /// <summary>
+    /// The bracket whose refund is one click from happening, or null. Refund is the ONE action on this page
+    /// that asks first, and the classification is the whole point — a prompt in front of an idempotent no-op
+    /// is worse than no prompt at all, because it teaches an operator to dismiss the one that matters.
+    ///
+    /// <para><b>Expire abandoned matches</b> — no prompt. Moves no money; it flips a status so each wallet can
+    /// reclaim its OWN stake, and the same lazy reconcile already runs on every <c>/api/matches</c> listing.
+    /// Clicking it only chooses the moment something was going to happen anyway.</para>
+    ///
+    /// <para><b>Settle ended seasons</b> — no prompt, despite paying real sats. It is the same call
+    /// <c>GET /api/leaderboard/season</c> makes on every anonymous page load, and the settled marker advances
+    /// under a lock before a sat moves. An operator cannot cause a payout here that an unauthenticated
+    /// visitor could not cause by loading the ranks page, and it cannot double-pay.</para>
+    ///
+    /// <para><b>Refund entrants</b> — prompts. Single-shot rather than idempotent (the second call is refused,
+    /// which is not the same thing), and the FIRST one is irreversible: the bracket is marked refunded
+    /// durably BEFORE any sat moves, so it can never be played afterwards even if whatever stranded it comes
+    /// back. It is offered on any unfinished bracket because the SERVER owns the rule, which means the
+    /// operator genuinely cannot tell from this page which clicks are refused and which end a bracket.</para>
+    /// </summary>
+    private string? _confirmRefundId;
 
     private async Task OnKey(KeyboardEventArgs args)
     {
@@ -303,7 +351,13 @@ else
 
     private Task SettleSeasons() => RunAction(t => Api.Admin.SettleSeasonsAsync(t));
 
-    private Task RefundTournament(string id) => RunAction(async t =>
+    private Task RefundTournament(string id)
+    {
+        _confirmRefundId = null;   // spent — a refusal must not leave the armed button sitting under the cursor
+        return RunRefund(id);
+    }
+
+    private Task RunRefund(string id) => RunAction(async t =>
     {
         var refund = await Api.Admin.RefundTournamentAsync(t, id);
         return new AdminActionResultDto("refund-tournament",

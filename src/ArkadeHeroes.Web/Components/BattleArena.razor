@@ -265,6 +265,27 @@
                 SetHp(hpSide, ev.TargetHpAfter);
                 _banner = "BURN"; _bannerKind = "crit";
                 break;
+
+            // ── A beat this build has never heard of ──────────────────────────────────────────────
+            // BattleEventKind is an enum the engine APPENDS to (see BattleLog.cs), and it reaches us as a
+            // string, so a server newer than this bundle is a routine state rather than a corruption. It
+            // used to fall through to nothing: no banner, no visual, and a log row that rendered as a bare
+            // "T7 · ". A turn that silently vanishes from a replay reads as a CORRECT replay — which is the
+            // one thing this arena must never do, because the replay is the fairness proof.
+            //
+            // So the gap is NAMED and nothing is invented for it. Deliberately no SetHp: TargetHpAfter is
+            // truthful for every kind the engine emits today, but for a kind we cannot interpret we also
+            // cannot know that TargetId points at either of these two fighters — and hpSide falls back to
+            // "b", so trusting it would let an unreadable beat drain the blue bar to a number the engine
+            // never reported. A stale-but-honest bar next to a line that says we could not read the beat
+            // beats a confident wrong one. The next understood beat carries its own authoritative HP anyway.
+            //
+            // No console write, on purpose: the browser suite asserts zero console output on every page,
+            // and an every-turn log would be noise that trains people to ignore the console.
+            default:
+                _actorSide = null;   // no lunge — a lunge claims this was an attack, and we do not know that
+                _banner = "???"; _bannerKind = "miss";
+                break;
         }
 
         _log.Add(LogFor(ev, actor == "a" ? A!.Name : B!.Name, target == "a" ? A!.Name : B!.Name));
@@ -301,8 +322,11 @@
                 line = $"{actorName}'s Crest reflects {ev.Damage}!"; kind = "crit"; break;
             case "Burned":
                 line = $"{targetName} is burned for {ev.Damage}"; kind = "super"; break;
+            // The unreadable beat, said out loud. The empty string this used to return rendered as a bare
+            // "T7 · " row — indistinguishable from a rendering glitch, and easy to read past entirely. The
+            // KIND is quoted because it is the one fact that makes the gap diagnosable from a screenshot.
             default:
-                line = ""; kind = "hit"; break;
+                line = $"an unrecognised beat ({ev.Kind}) — this client is older than the arena"; kind = "miss"; break;
         }
         var heal = ev.Kind == "SkillUsed" && ev.Healed > 0 ? $" (+{ev.Healed} HP)" : "";
         var fx = ev.Kind == "SkillUsed" ? ev.Effect switch

@@ -409,15 +409,37 @@ else
                     <p class="muted" style="margin:0">Nothing equipped.</p>
                 }
             </div>
+            @* The picker used to offer the whole SHOP — every item in the catalogue, most of which this
+               player has never bought. Picking one produced "You hold 0 unit(s) of X", which is the server
+               being right about a question the page should never have asked. It offers what the player
+               HOLDS now, and says which of the two it is showing. *@
             @if (IsMine(h) && _catalog.Count > 0)
             {
-                <select class="equip-add" @bind="_equipPick" @bind:after="OnEquipPicked" disabled="@_busy">
-                    <option value="">＋ equip an item…</option>
-                    @foreach (var opt in _catalog)
-                    {
-                        <option value="@opt.Id">@opt.Slot · @opt.Name</option>
-                    }
-                </select>
+                @if (PickerItems.Count > 0)
+                {
+                    <select class="equip-add" @bind="_equipPick" @bind:after="OnEquipPicked" disabled="@_busy">
+                        <option value="">@PickerPlaceholder</option>
+                        @foreach (var opt in PickerItems)
+                        {
+                            <option value="@opt.Id">@opt.Slot · @opt.Name</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <p class="muted" style="margin:.6rem 0 0">
+                        You don't own any gear yet — the armory is on the <a href="gear">Gear</a> page.
+                    </p>
+                }
+                @if (_ownedItemIds is null)
+                {
+                    @* Said out loud rather than silently showing the catalogue as if it were the inventory:
+                       the whole defect being fixed here is a list that looked like one thing and was another. *@
+                    <div class="status-line" style="margin-top:.5rem">
+                        <span class="dot bad"></span>
+                        <span>Couldn't read which items you own, so this lists the whole catalogue — anything you don't hold will be refused.</span>
+                    </div>
+                }
             }
             @if (_equipError is not null)
             {
@@ -612,6 +634,15 @@ else
     private bool _loading = true;
     private bool _error;
     private List<ItemDto> _catalog = new();
+
+    /// <summary>The item ids this player holds, or null for "we could not read them".
+    ///
+    /// <para>Deliberately SEPARATE from <see cref="_catalog"/> rather than a filter over it. The catalog is
+    /// also what <c>CounterGear</c> resolves this hero's EQUIPPED ids against for the build-shape chips, so
+    /// narrowing it in place would blank those chips for any item the hero is wearing — a second bug wearing
+    /// the first one's fix.</para></summary>
+    private HashSet<string>? _ownedItemIds;
+
     private bool _busy;
     private string? _equipError;
     private string _equipPick = "";
@@ -695,6 +726,21 @@ else
             {
                 try { _catalog = await Api.Items.ShopAsync(); }
                 catch { /* the equip picker is optional chrome */ }
+            }
+            // Which of those the player actually HOLDS. Awaited AFTER the catalog rather than alongside it:
+            // the picker renders the intersection of the two, and two in-flight reads can land in either
+            // order — so a parallel pair would let one render paint a list computed from half the answer.
+            // Player-scoped, not hero-scoped, so it is read once per visit like the catalog above; a failed
+            // read leaves it null and retries on the next hero, which is what the null branch renders.
+            //
+            // Gated on OWNING this hero, which is the only state that renders a picker at all. Not merely a
+            // saved request: /api/items/mine is authenticated, so asking anonymously answers 400 and puts a
+            // failed-resource line in the browser console on every visitor's view of every hero page. The
+            // browser suite asserts zero console output per page and caught exactly that.
+            if (_ownedItemIds is null && _hero is { } owned && IsMine(owned))
+            {
+                try { _ownedItemIds = [.. await Api.Items.MineAsync()]; }
+                catch { _ownedItemIds = null; }
             }
             await LoadBidsAsync();
             // Name any DESTROYED parent in the lineage block. Optional chrome: a failure leaves the short
@@ -803,6 +849,19 @@ else
 
     // Equip controls only for the signed-in owner of this hero.
     private bool IsMine(HeroDto h) => State.IsSignedIn && h.OwnerId == State.Player?.PlayerId;
+
+    /// <summary>What the picker offers: the player's own items, or — when that read failed — the catalogue,
+    /// under a line that says so. Ownership is the same predicate the server's equip gate uses, so this is
+    /// no longer a list of mostly-refusals; it is not a PROMISE, though, because the level gate and the
+    /// already-allocated-units gate can still refuse an item the player genuinely holds.</summary>
+    private List<ItemDto> PickerItems => _ownedItemIds is { } owned
+        ? _catalog.Where(i => owned.Contains(i.Id)).ToList()
+        : _catalog;
+
+    /// <summary>Names which list is on screen, so "your items" is never claimed over the whole shop.</summary>
+    private string PickerPlaceholder => _ownedItemIds is null
+        ? "＋ equip an item…"
+        : "＋ equip one of your items…";
 
     private async Task OnEquipPicked()
     {

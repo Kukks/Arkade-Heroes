@@ -95,12 +95,26 @@ else
                             }
                             else
                             {
-                                <button class="btn primary" @onclick="() => DoBuy(it)" disabled="@(_buyingId is not null)">
+                                <button class="btn primary" @onclick="() => DoBuy(it)"
+                                        disabled="@(_buyingId is not null || !CanAfford(it))">
                                     @(_buyingId == it.Id ? "Buying…" : "Buy")
                                 </button>
                             }
                         }
                     </div>
+                    @* A dead button with no explanation is its own defect, so the shortfall is named and the
+                       way out is a link rather than a guess. Same treatment /gauntlet and /heroes already use. *@
+                    @if (State.IsSignedIn && !_owned.Contains(it.Id) && !CanAfford(it))
+                    {
+                        <div class="status-line" style="margin-top:.5rem;font-size:.78rem">
+                            <span class="dot bad"></span>
+                            <span>
+                                You have @State.BalanceSats.ToString("N0") sats —
+                                @((it.PriceSats - State.BalanceSats).ToString("N0")) short.
+                                <a href="wallet">Top up →</a>
+                            </span>
+                        </div>
+                    }
                 </div>
             }
         </div>
@@ -181,6 +195,12 @@ else
             _buyStatus = null;
         }
     }
+
+    /// <summary>Whether the wallet covers this item's price. The price is always known here — it came off the
+    /// shop read that rendered the card — so unlike /gauntlet and /heroes there is no unknown-price case to
+    /// wave through. The balance can still be momentarily stale on a cold load; OnState re-renders when it
+    /// lands, which is what keeps a briefly-zero balance from parking a permanent "Buy" gate.</summary>
+    bool CanAfford(ItemDto it) => State.BalanceSats >= it.PriceSats;
 
     static string SlotHint(string slot) => slot switch
     {
