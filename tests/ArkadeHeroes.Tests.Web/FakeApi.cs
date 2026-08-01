@@ -22,6 +22,9 @@ public sealed class FakeApi : HttpMessageHandler
 {
     private readonly Dictionary<string, Func<HttpRequestMessage, HttpResponseMessage>> _routes = new();
 
+    /// <summary>Per-route latency, so replies can overtake each other (see <see cref="GetSlow"/>).</summary>
+    private readonly Dictionary<string, TimeSpan> _delays = new();
+
     /// <summary>Every path this handler was actually asked for, in order — lets a test assert that a page
     /// did NOT bill something (e.g. never POSTed a fee invoice just by being opened).</summary>
     public List<string> Requested { get; } = new();
@@ -32,6 +35,24 @@ public sealed class FakeApi : HttpMessageHandler
     public FakeApi Get<T>(string path, T body)
     {
         _routes[Key(HttpMethod.Get, path)] = _ => Json(body);
+        // Re-registering a route plainly also makes it fast again: swapping a slow answer for a quick one
+        // mid-test is how a reply gets to overtake an earlier one still on the wire.
+        _delays.Remove(Key(HttpMethod.Get, path));
+        return this;
+    }
+
+    /// <summary>
+    /// Serve GET <paramref name="path"/> only after <paramref name="delay"/>.
+    ///
+    /// <para>The seam for the one thing an instant fake cannot express: a response that was ISSUED first
+    /// but ARRIVES last. A page that keeps whichever request returned last, rather than whichever it
+    /// started last, shows the older answer — and no test can catch that while every route answers in
+    /// zero time and replies can never overtake each other.</para>
+    /// </summary>
+    public FakeApi GetSlow<T>(string path, T body, TimeSpan delay)
+    {
+        _routes[Key(HttpMethod.Get, path)] = _ => Json(body);
+        _delays[Key(HttpMethod.Get, path)] = delay;
         return this;
     }
 
@@ -63,20 +84,25 @@ public sealed class FakeApi : HttpMessageHandler
             "application/json"),
     };
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         // Match on the path alone: pages append paging query strings (?skip=0&take=24) that a test has no
         // reason to restate, and the distinction those make is not what any of these tests are about.
         var path = request.RequestUri!.AbsolutePath;
+        var key = Key(request.Method, path);
         Requested.Add($"{request.Method.Method} {path}");
 
-        if (_routes.TryGetValue(Key(request.Method, path), out var handler))
-            return Task.FromResult(handler(request));
+        // Read the latency at DISPATCH time, so a test can slow a route, fire a request, and then swap the
+        // route out — which is how a slow old answer gets to race a fast new one.
+        if (_delays.TryGetValue(key, out var delay)) await Task.Delay(delay, ct);
 
-        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+        if (_routes.TryGetValue(key, out var handler))
+            return handler(request);
+
+        return new HttpResponseMessage(HttpStatusCode.NotFound)
         {
             Content = JsonContent.Create(new ErrorResponse($"no stub for {request.Method} {path}")),
-        });
+        };
     }
 
     /// <summary>An <see cref="HttpClient"/> on this handler, based at the origin the app is served from.</summary>
