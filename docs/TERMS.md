@@ -1,6 +1,6 @@
 # Arkade Heroes — Terms of Use
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-01
 
 By creating a wallet or playing Arkade Heroes, you accept these terms. If you do not
 accept them, do not play.
@@ -76,13 +76,39 @@ transaction, unwind a trade, restore a burned hero, or refund a fee.
 
 ## 5. Fees, and what you actually pay
 
-Some actions cost satoshis: breeding, renaming a hero, death-match entry, tournament
-buy-ins, and a fee on marketplace sales. Current amounts are shown before you confirm.
+Here is everything the game charges you for. **The amount is shown before you confirm**,
+which matters more than it sounds: several of these are not flat numbers — they scale
+with your hero's level, or with how much it has already bred.
 
-**Marketplace sales.** Listing costs nothing. If your item sells, the sale is split
+These go to the game treasury:
+
+- **Recruiting a hero.** The first thing you pay, and payable again every time you
+  recruit another — it is not a one-off. A recruit costs what it costs to breed a hero
+  at the floor price.
+- **Breeding.** The fee doubles with each breed the two parents already have between
+  them, up to a cap, so a well-used line costs several times what a fresh pair does.
+- **Fusion**, on top of the two heroes it burns.
+- **Renaming a hero**, to claim a name nobody else can take.
+- **Gauntlet entry.** Scaled to your hero's level, and set deliberately above what a
+  run can drop. **It is a sink, not a source** — run it to level a hero, not to earn.
+- **Wagered matches, squad matches and death matches.** An entry fee on top of anything
+  staked — one per side, scaled to the level of the highest hero you field. A death
+  match costs more than an ordinary match, and absorb mode more again. **A friendly
+  match with nothing staked has no fee.**
+- **Tournaments.** The buy-in, plus a percentage of the pot the house keeps before the
+  rest is split between the winners.
+- **Items bought from the shop**, at the price shown.
+- **Marketplace sales** — see below.
+
+**Not every fee is ours.** The stud fee you pay to breed with someone else's hero goes
+to that hero's owner, and sats you bid on a hero go to whoever sells it to you. Those
+pass through us on the way; we do not keep them.
+
+**Marketplace sales.** Listing costs nothing. If it sells, the sale is split
 automatically by the contract: you receive the ask minus the marketplace fee, and the
 fee goes to the game treasury. **If it never sells, you are never charged** — you can
-take it back at any time and pay nothing.
+take it back at any time and pay nothing. Placing a bid is free in the same way:
+nothing is billed unless the owner accepts it.
 
 **Network fees** charged by Arkade are separate from ours and outside our control.
 

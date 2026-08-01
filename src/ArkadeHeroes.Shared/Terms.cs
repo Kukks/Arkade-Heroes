@@ -24,7 +24,12 @@ public static class Terms
     /// Blazor WASM and cannot hash a repo file at runtime, and a content hash would also re-prompt every
     /// player over a fixed typo.
     /// </summary>
-    public const int CurrentVersion = 1;
+    /// <remarks>
+    /// v2 — §5 named five charges and the game makes at least eleven. The one that mattered most was the
+    /// claim fee: recruiting a hero is the FIRST thing a player pays, and the document did not mention it.
+    /// A fee disclosure going from wrong to right is precisely what this constant re-asks for.
+    /// </remarks>
+    public const int CurrentVersion = 2;
 
     /// <summary>The canonical document, versioned in the repo alongside this constant.</summary>
     public const string DocumentPath = "docs/TERMS.md";

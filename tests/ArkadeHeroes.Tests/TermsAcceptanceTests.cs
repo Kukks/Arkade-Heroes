@@ -64,6 +64,10 @@ public class TermsAcceptanceTests
             Assert.NotNull(recovered.TermsAcceptedAtUtc);
             // The timestamp is evidence, not decoration — it has to come back as the same instant.
             Assert.Equal(acceptedAt.ToUnixTimeSeconds(), recovered.TermsAcceptedAtUtc!.Value.ToUnixTimeSeconds());
+            // …and the whole point of it surviving: the gate asks the same question again on the next load
+            // and gets "no". Someone who accepted the current document is not re-asked for having reloaded.
+            Assert.True(Terms.Satisfies(recovered.TermsAcceptedVersion),
+                "an acceptance of the CURRENT version must still satisfy the gate after a reload");
         }
         finally
         {
@@ -125,6 +129,27 @@ public class TermsAcceptanceTests
         // And the /players/me projection the browser actually reads carries the same stale version, so the
         // gate can see it without a second round trip.
         Assert.Equal(n, (await alice.Players.MeAsync()).TermsAcceptedVersion);
+    }
+
+    [Fact]
+    public async Task APlayerWhoAcceptedTheVersion1Terms_IsRepromptedByTodaysDocument()
+    {
+        // The concrete case the version-agnostic test above cannot see. Version 1's §5 named five charges —
+        // breeding, renaming, death-match entry, tournament buy-ins, a marketplace fee — and the game bills
+        // for several more, including the CLAIM FEE that is the first thing a new player ever pays. A player
+        // still sitting on that acceptance agreed to a fee list that was wrong, so they have to be asked
+        // again. This test fails if Terms.CurrentVersion is ever walked back to 1.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Accepted-V1");
+
+        // Recorded through the real endpoint, exactly as a v1 client did it: 1 is a version that existed,
+        // so it is still accepted for the record — it is simply no longer enough.
+        await alice.Players.AcceptTermsAsync(1);
+
+        var onFile = (await alice.Players.MeAsync()).TermsAcceptedVersion;
+        Assert.Equal(1, onFile);
+        Assert.False(Terms.Satisfies(onFile),
+            "a v1 acceptance predates the corrected fee disclosure in §5 — it must re-prompt");
     }
 
     [Fact]
