@@ -51,6 +51,19 @@ public class GauntletFlowTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.True(w.Result.WinnerId == hero.Id || w.Result.WinnerId == w.Ghost.Id);
         });
 
+        // …and it is the ghost that was actually FOUGHT, genome and all. The wave DTO is rebuilt server-side
+        // from the entropy plus the pre-run snapshot, and the ghost now takes its statline grade from that
+        // snapshot's genome as well as its level — so a reconstruction that dropped the genome half would
+        // still line up on level and still animate, while showing the player a different opponent from the
+        // one the fight log came from. This runner is a RECRUIT (ClaimStartersAsync), the cohort whose grade
+        // is not the full byte range, so the check has something to catch.
+        var runnerEntropy = Convert.FromHexString(run.EntropyHex);
+        var runner = FairnessAudit.RebuildHero(run.HeroSnapshot);
+        Assert.NotEqual(255, runner.Genome.StatGeneCeiling);
+        Assert.All(run.Waves, w => Assert.Equal(
+            Gauntlet.GhostFor(runnerEntropy, w.Wave, runner).Genome.ToHex(),
+            w.Ghost.GenomeHex));
+
         // The gauntlet receipt folds its XP into the receipt-replayed level (from a level-1 genesis) —
         // recomputed purely from the player-held receipt, not from the server's stored level.
         Assert.Equal(

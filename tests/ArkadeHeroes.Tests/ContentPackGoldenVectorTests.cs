@@ -101,19 +101,36 @@ public class ContentPackGoldenVectorTests
     /// and the awarded item. This is the end-to-end statement that routing the dungeon through authored
     /// data moved nothing a verifier recomputes: <c>FairnessAudit.VerifyGauntlet</c> replays exactly this.
     ///
-    /// THIS VECTOR WAS DELIBERATELY RE-BASELINED ONCE, and this is the "say why" the ratchet above demands.
-    /// The ladder authors wave 1 at the runner's level MINUS ONE, and for a level-1 hero that offset used to
-    /// evaporate against <c>Dungeon.GhostLevel</c>'s floor of 1 — so the entry cohort, and only the entry
-    /// cohort, opened against a peer instead of the softer foe the content asked for, and saw one fewer
-    /// distinct rung than everybody else. The floor is correct (there is no level 0, and the stat curve
-    /// refuses one), so the shortfall it eats is now paid on the damage axis instead
-    /// (<c>Dungeon.GhostHandicap</c>).
+    /// THIS VECTOR HAS BEEN DELIBERATELY RE-BASELINED TWICE, and this is the "say why" the ratchet above
+    /// demands. Both entries stay: the ratchet is a history, not a running total.
     ///
-    /// The blast radius was MEASURED rather than assumed: of the 120 runs below exactly 4 move — i = 0, 30,
-    /// 60 and 90 — and level 1 is the only hero level among them. Every run at level 2 through 30 hashes
-    /// byte-for-byte as it did before, because an unclamped wave's handicap is exactly 1.0 and multiplying a
-    /// damage roll by exactly 1.0 is exact. The honest consequence of the part that DID move is that a
-    /// level-1 gauntlet receipt stamped by an older build will not re-verify against this one.
+    /// (1) THE LEVEL-1 OPENER (PR #219). The ladder authors wave 1 at the runner's level MINUS ONE, and for
+    /// a level-1 hero that offset used to evaporate against <c>Dungeon.GhostLevel</c>'s floor of 1 — so the
+    /// entry cohort, and only the entry cohort, opened against a peer instead of the softer foe the content
+    /// asked for, and saw one fewer distinct rung than everybody else. The floor is correct (there is no
+    /// level 0, and the stat curve refuses one), so the shortfall it eats is paid on the damage axis instead
+    /// (<c>Dungeon.GhostHandicap</c>). Blast radius MEASURED rather than assumed: of the 120 runs below
+    /// exactly 4 moved — i = 0, 30, 60 and 90 — and level 1 was the only hero level among them. Every run at
+    /// level 2 through 30 hashed byte-for-byte as before, because an unclamped wave's handicap is exactly
+    /// 1.0 and multiplying a damage roll by exactly 1.0 is exact.
+    ///
+    /// (2) THE GHOST'S GENOME GRADE. <c>Gauntlet.GhostFor</c> used to build every ghost from
+    /// <c>Genome.NewGen0</c> — raw hash bytes — however weak the runner's own statline was, so a bought
+    /// recruit (stat and growth genes capped at 63 of 255) cleared NOTHING 96-99% of the time at EVERY
+    /// level against a full-range hero's ~44%. The ghost's genome is now drawn at the runner's own
+    /// <c>Genome.StatGeneCeiling</c>.
+    ///
+    /// Blast radius MEASURED, and it is one run: of the 120 heroes below, exactly ONE grades below the top
+    /// rung — i = 57, at level 28, ceiling 127 — and only its fight LOG moves; it cleared 0 waves before and
+    /// clears 0 now, so no reward, XP or drop in this vector changes at all. The other 119 hash byte-for-byte
+    /// as before, because <c>Genome.NewRecruit</c> at a ceiling of 255 is the identity on the hash bytes and
+    /// is therefore exactly <c>Genome.NewGen0</c> (pinned by
+    /// <see cref="GauntletGradeTests.MintingAtTheTopRungIsExactlyAGen0Mint"/>).
+    ///
+    /// The honest consequence of both changes together: a gauntlet receipt stamped by an older build will
+    /// not re-verify against this one IF it was run by a level-1 hero, or by a hero whose ten stat and
+    /// growth genes all sit below 128 — the latter being about one hero in a thousand among full-range
+    /// genomes, and every recruit.
     /// </summary>
     [Fact]
     public void GauntletRunsMatchTheirPreContentPackGoldenVector()
@@ -161,7 +178,7 @@ public class ContentPackGoldenVectorTests
         Assert.True(fullClears >= 5, $"only {fullClears} full clears — the drop path is barely covered");
         Assert.True(drops.Count >= 2, $"only {drops.Count} distinct drops — the pool pick is barely covered");
 
-        Assert.Equal("593d1d3af9b1ae3a69e08028a626fd8e67d7c747f42d513680a070e23164a24f", Hash(log.ToString()));
+        Assert.Equal("43a49c55bdeda975e0c16c820b9990652afc81589d021bf602781dccf256e2d8", Hash(log.ToString()));
     }
 
     private static readonly string[][] Sets =

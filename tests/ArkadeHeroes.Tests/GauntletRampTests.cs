@@ -159,7 +159,7 @@ public class GauntletRampTests
         var cleared = 0;
         for (var wave = 1; wave <= Gauntlet.WaveCount; wave++)
         {
-            var ghost = Gauntlet.GhostFor(entropy, wave, hero.Level);
+            var ghost = Gauntlet.GhostFor(entropy, wave, hero);
             var seed = CommitReveal.DeriveEntropy(entropy, "gauntlet-fight", wave.ToString());
             if (BattleEngine.Fight(hero, ghost, seed, GameConfig.Default).WinnerId != hero.Id) break;
             cleared++;
