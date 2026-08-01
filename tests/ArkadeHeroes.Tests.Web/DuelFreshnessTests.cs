@@ -116,12 +116,20 @@ public class DuelFreshnessTests
         cut.WaitForAssertion(() => Assert.Contains(Stale, cut.Markup));
 
         ctx.Dispose();   // what navigating away does
-        var atDisposal = api.Requested.Count;
+
+        // Let a tick already dispatched at the instant of disposal finish before sampling. Sampling
+        // straight after Dispose RACED that in-flight request: it recorded itself after the baseline was
+        // read, so the assertion below saw a count that had moved. That failed about half the CI runs on
+        // main while passing every time locally and in isolation, which is exactly how a timing race
+        // presents. What this test is about is that no NEW poll starts, so the honest measurement is
+        // "the count stops changing", not "nothing lands after this line".
+        System.Threading.Thread.Sleep(200);
+        var afterQuiesce = api.Requested.Count;
 
         // Several poll intervals go by with the page gone.
         System.Threading.Thread.Sleep(500);
 
-        Assert.Equal(atDisposal, api.Requested.Count);
+        Assert.Equal(afterQuiesce, api.Requested.Count);
     }
 
     /// <summary>
