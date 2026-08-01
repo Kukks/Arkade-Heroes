@@ -21,12 +21,34 @@ public class MatchmakingTests : IDisposable
     [Fact]
     public void XpAnnotationsMirrorTheConservedTransfer()
     {
-        Assert.Equal(Leveling.XpTransfer(5, 3), Matchmaking.XpIfWin(5, 3));
-        Assert.Equal(Leveling.XpTransfer(3, 5), Matchmaking.XpIfLose(5, 3));
+        // Both heroes rich enough to settle the whole gap, so this pins the SHAPE of the transfer.
+        const long solvent = 100_000;
+        Assert.Equal(Leveling.XpTransfer(5, 3), Matchmaking.XpIfWin(5, 3, solvent));
+        Assert.Equal(Leveling.XpTransfer(3, 5), Matchmaking.XpIfLose(5, 3, solvent));
         Assert.Equal(2, Matchmaking.LevelGap(5, 3));
         // Beating a far-weaker hero wins nothing; losing to a far-stronger one costs nothing.
-        Assert.Equal(0, Matchmaking.XpIfWin(20, 1));
-        Assert.Equal(0, Matchmaking.XpIfLose(1, 20));
+        Assert.Equal(0, Matchmaking.XpIfWin(20, 1, solvent));
+        Assert.Equal(0, Matchmaking.XpIfLose(1, 20, solvent));
+    }
+
+    /// <summary>
+    /// The clamp, at the helper level: a peer fight has a real gap, and a peer who owns nothing still
+    /// pays nothing. This is the pair <see cref="Leveling.PayableTransfer"/> exists to keep apart, and
+    /// quoting the first where the second is what happens is what the duel card was doing.
+    /// </summary>
+    [Fact]
+    public void XpAnnotationsAreClampedToWhatTheLoserOwns()
+    {
+        Assert.True(Leveling.XpTransfer(1, 1) > 0, "the raw peer gap must be non-zero, or this proves nothing");
+
+        // A fresh hero has banked nothing, so beating it wins nothing and losing to it costs nothing.
+        Assert.Equal(0, Matchmaking.XpIfWin(1, 1, opponentXp: 0));
+        Assert.Equal(0, Matchmaking.XpIfLose(1, 1, heroXp: 0));
+
+        // A loser part-way to the gap hands over exactly what it has — no more, and none minted.
+        var gap = Leveling.XpTransfer(1, 1);
+        Assert.Equal(gap - 1, Matchmaking.XpIfWin(1, 1, opponentXp: gap - 1));
+        Assert.Equal(gap, Matchmaking.XpIfWin(1, 1, opponentXp: gap + 5));
     }
 
     [Fact]
@@ -58,10 +80,14 @@ public class MatchmakingTests : IDisposable
         Assert.Equal(0, peer.LevelGap);
         Assert.Equal(7, far.LevelGap);
 
-        // XP swings are the conserved transfer for Alice's level-5 hero.
-        Assert.Equal(Leveling.XpTransfer(5, 5), peer.XpIfYouWin);   // peer win: the base
-        Assert.Equal(Leveling.XpTransfer(5, 12), far.XpIfYouWin);   // upset win: a lot
-        Assert.Equal(0, far.XpIfYouLose);                           // losing to the far hero costs nothing
+        // XP swings are the conserved transfer for Alice's level-5 hero, CLAMPED to what the loser owns —
+        // these heroes were levelled straight on the store, so they carry the banked XP of the level.
+        Assert.Equal(Leveling.PayableTransfer(5, 5, peer.Hero.Xp), peer.XpIfYouWin);   // peer win: the base
+        Assert.Equal(Leveling.PayableTransfer(5, 12, far.Hero.Xp), far.XpIfYouWin);    // upset win: a lot
+        Assert.Equal(0, far.XpIfYouLose);                                              // losing to the far hero costs nothing
+        // The clamp must not have flattened the peer/upset distinction this test is about.
+        Assert.True(peer.XpIfYouWin > 0 && far.XpIfYouWin > peer.XpIfYouWin,
+            "an upset must still pay more than a peer fight, or the ordering these annotations exist for is gone");
 
         // F2: the coarse favor label rides along the suggestion. The peer is "even"; the far hero is
         // an "underdog" shot — and since XpIfYouLose == 0 above, it's the "free shot" the UI badges.
@@ -79,6 +105,42 @@ public class MatchmakingTests : IDisposable
     [InlineData(13, 10, "favored")]  // 3 up
     public void Favor_LabelsByLevelGap(int mine, int theirs, string expected)
         => Assert.Equal(expected, Matchmaking.Favor(mine, theirs));
+
+    /// <summary>
+    /// The pre-stake pitch must quote a number the settle can actually PAY.
+    ///
+    /// <para>XP is a conserved transfer, and <see cref="Leveling.PayableTransfer"/> is the clamp that keeps
+    /// it conserved: a loser hands over its whole balance and no more, because crediting the winner the
+    /// unclamped figure would MINT XP. The suggestions annotated themselves with the raw
+    /// <see cref="Leveling.XpTransfer"/> gap instead, so the duel card advertised "win +40 / lose −40" over
+    /// a fight the rules then settled at "0 xp · 0 xp" — the 0 being the correct one.</para>
+    ///
+    /// <para>That is not a rounding difference on a cosmetic label. It is the pitch a player reads before
+    /// staking real sats, and it is wrong in exactly the region every new player starts in: a fresh hero
+    /// owns no XP, so it can pay nothing, so every fight against one is worth nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task Suggestions_QuoteAnXpSwingTheSettleCanActuallyPay()
+    {
+        var (alice, _) = await _factory.RegisterAsync("MM-Payable-A");
+        var (bob, _) = await _factory.RegisterAsync("MM-Payable-B");
+        var mine = (await alice.ClaimStartersAsync())[0];
+        await bob.ClaimStartersAsync();
+
+        var opps = await alice.Matches.MatchmakingAsync(mine.Id);
+        Assert.NotEmpty(opps);
+
+        // Non-vacuity, stated in the test: at least one suggestion must name a hero too poor to pay the
+        // raw gap, or every assertion below would hold against the unclamped transfer too.
+        Assert.Contains(opps, o => Leveling.XpTransfer(mine.Level, o.Hero.Level)
+                                 > Leveling.PayableTransfer(mine.Level, o.Hero.Level, o.Hero.Xp));
+
+        foreach (var o in opps)
+        {
+            Assert.Equal(Leveling.PayableTransfer(mine.Level, o.Hero.Level, o.Hero.Xp), o.XpIfYouWin);
+            Assert.Equal(Leveling.PayableTransfer(o.Hero.Level, mine.Level, mine.Xp), o.XpIfYouLose);
+        }
+    }
 
     [Fact]
     public async Task Suggestions_CarryPowerScore_OrderedByPowerGap()

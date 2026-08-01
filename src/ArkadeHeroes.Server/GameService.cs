@@ -2264,6 +2264,39 @@ public class GameService(
         return (session, session.JointEscrowAddress!, defender, MapGearDtos(escrowParams?.DefenderGear), feeInvoice);
     }
 
+    /// <summary>
+    /// The funding gates <see cref="SettleDeathMatchAsync"/> checks, read as a question.
+    ///
+    /// <para>A pure observation: it takes no lock, moves nothing, and settles nothing. That matters — the
+    /// caller is a client polling on a timer while its own deposits settle into arkd's indexer, and a
+    /// readiness read with a side effect would be a settle nobody asked for.</para>
+    ///
+    /// <para>Deliberately the SAME three conditions in the same order as the settle, and deliberately not
+    /// authoritative: the settle re-checks them under its per-match lock, because between an answer and a
+    /// POST the chain can move. This only stops a client having to learn "not yet" by collecting a 400.</para>
+    /// </summary>
+    public async Task<Shared.DeathMatchReadinessDto> DeathMatchReadinessAsync(
+        Player player, string deathMatchId, CancellationToken ct)
+    {
+        if (!store.DeathMatches.TryGetValue(deathMatchId, out var session))
+            throw new GameRuleException($"Unknown death-match '{deathMatchId}'.");
+        if (session.ChallengerPlayerId != player.Id && session.DefenderPlayerId != player.Id)
+            throw new GameRuleException("Only a participant can settle this death-match.");
+
+        // Resolved: never ready again, and asking the chain about a swept escrow proves nothing.
+        if (session.Completed)
+            return new Shared.DeathMatchReadinessDto(true, true, true, false, true);
+
+        var stakesFunded = await chain.IsDeathMatchEscrowFundedAsync(deathMatchId, ct);
+        var challengerFeePaid = session.ChallengerFeeInvoiceId is not null
+            && await chain.IsInvoicePaidAsync(session.ChallengerFeeInvoiceId, ct);
+        var defenderFeePaid = session.DefenderFeeInvoiceId is not null
+            && await chain.IsInvoicePaidAsync(session.DefenderFeeInvoiceId, ct);
+        return new Shared.DeathMatchReadinessDto(
+            stakesFunded, challengerFeePaid, defenderFeePaid,
+            stakesFunded && challengerFeePaid && defenderFeePaid, false);
+    }
+
     public async Task<(Shared.BattleResultDto Result, string WinnerHeroId, string LoserHeroId, Shared.HeroDto ChallengerSnapshot, Shared.HeroDto DefenderSnapshot, string ServerSeedHex, string EntropyHex, Shared.ProgressionReceiptDto Receipt, bool Minted, int TraitsAbsorbed, string? NewGenomeHex, Shared.HeroDto? NewHero)> SettleDeathMatchAsync(
         Player player, string deathMatchId, string nonce, CancellationToken ct)
     {
@@ -2631,8 +2664,11 @@ public class GameService(
                 return new Shared.OpponentSuggestionDto(
                     h.ToDto(), h.OwnerId,
                     Matchmaking.LevelGap(hero.Level, h.Level),
-                    Matchmaking.XpIfWin(hero.Level, h.Level),
-                    Matchmaking.XpIfLose(hero.Level, h.Level),
+                    // The PAYABLE swings, not the raw gap: this is the pre-stake pitch, so it has to be a
+                    // number the settle can honour. Each takes the LOSER's banked XP — theirs if I win,
+                    // mine if I lose — which is exactly what SettleDeathMatchAsync/FightAsync clamp to.
+                    Matchmaking.XpIfWin(hero.Level, h.Level, h.Xp, _config),
+                    Matchmaking.XpIfLose(hero.Level, h.Level, hero.Xp, _config),
                     oppPower,
                     Matchmaking.PowerGapPercent(heroPower, oppPower),
                     // F2: the free-underdog-shot label rides along the (level-based) conserved swings.

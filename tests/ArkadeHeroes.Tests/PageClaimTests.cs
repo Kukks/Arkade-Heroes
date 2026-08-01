@@ -209,9 +209,13 @@ public class PageClaimTests
     {
         // The witness: at exactly the gap where Matchmaking starts calling you an underdog, losing still
         // costs XP. The two thresholds are different numbers and always were.
+        // Quoted against a hero solvent enough to settle the whole gap, so this stays a claim about the
+        // two LEVEL thresholds — XpIfLose is now clamped to what the loser owns, and a broke hero would
+        // read as zero for a reason that has nothing to do with the gap being measured here.
         const int me = 5, them = me + 3;
+        const long solvent = 100_000;
         Assert.Equal("underdog", Matchmaking.Favor(me, them));
-        Assert.True(Matchmaking.XpIfLose(me, them) > 0,
+        Assert.True(Matchmaking.XpIfLose(me, them, solvent) > 0,
             "If an underdog by Favor's own definition now loses nothing, the strong claim would be true "
             + "again — and this test should be replaced by one that pins the two thresholds together.");
 
@@ -220,6 +224,35 @@ public class PageClaimTests
         // The page's own honest test is the free-shot flag, which checks the XP directly.
         Assert.Contains("o.XpIfYouLose == 0", duel);
     }
+
+    // ── Tournaments: the pot pays two, not three ────────────────────────────────
+
+    /// <summary>
+    /// /play told players a buy-in pot "splits across the top three". It never has.
+    /// <see cref="Tournament.PrizeWeights"/> is [70, 30] and <see cref="Tournament.Podium"/> returns the
+    /// champion and the final's loser, so there is no third place at any bracket size — a third entrant
+    /// who believed the card was promised a cut of real sats that no code path can pay.
+    ///
+    /// <para>Pinned to the CONSTANT rather than to the words, so adding a third weight one day makes this
+    /// fail loudly instead of leaving the copy quietly wrong in the other direction.</para>
+    /// </summary>
+    [Fact]
+    public void ThePlayPage_StatesTheTournamentSplitThePrizeWeightsActuallyPay()
+    {
+        var play = Visible(Page("Play.razor"));
+
+        Assert.Equal(2, Tournament.PrizeWeights.Count);
+        Assert.Equal([70, 30], Tournament.PrizeWeights);
+
+        // The lie, verbatim.
+        Assert.DoesNotContain("top three", play);
+        // And the truth, in the terms the weights set.
+        Assert.Contains("champion and runner-up", play);
+        Assert.Contains("70/30", play);
+    }
+
+    // The behavioural half — that a real bracket's podium is two deep — is already
+    // TournamentTests.Podium_IsChampionThenRunnerUp, so it is not restated here.
 
     // ── Achievements: most badges are revocable ─────────────────────────────────
 
@@ -292,8 +325,23 @@ public class PageClaimTests
     /// These files routinely QUOTE the wrong copy they replaced, in a note explaining why it went; a test
     /// that forbids a phrase has to be looking at the markup rather than at its own epitaph.
     /// </summary>
+    /// <summary>
+    /// The page with everything a player CANNOT see taken out — both comment forms.
+    ///
+    /// <para>Razor <c>@* *@</c> blocks were always stripped. C# <c>//</c> lines are stripped too, because
+    /// the convention in these pages is to record the wrong copy next to the fix that replaced it ("the
+    /// top-three claim was not true", "'An underdog risks nothing' was false") — and a
+    /// <c>DoesNotContain</c> that reads those comments fails on the very note explaining why the page is
+    /// now right. Mode lists live inside <c>@code</c>, where <c>//</c> is the only comment form available,
+    /// so this is not a rare case.</para>
+    ///
+    /// <para>Only comments that START a line, so a <c>//</c> inside a URL or a string literal is left
+    /// alone — those are page content and a claim could genuinely hide in one.</para>
+    /// </summary>
     private static string Visible(string source) =>
-        Regex.Replace(source, @"@\*.*?\*@", "", RegexOptions.Singleline);
+        Regex.Replace(
+            Regex.Replace(source, @"@\*.*?\*@", "", RegexOptions.Singleline),
+            @"^[ \t]*//.*$", "", RegexOptions.Multiline);
 
     private static string Read(string folder, string name)
     {

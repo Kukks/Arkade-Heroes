@@ -950,10 +950,58 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// re-mint the winner absorbing the loser's traits. Retries while stakes/fees settle, then CLIENT-VERIFIES
     /// the fight (and any absorb) from the revealed seed. Returns the outcome.
     /// </summary>
+    /// <summary>
+    /// Waits until the server says a settle would get past its funding gates — both heroes at the joint
+    /// escrow, both death-match fees cleared.
+    ///
+    /// <para>This exists because the alternative was finding out by attempting. Deposits take a while to
+    /// settle into arkd's indexer, so the browser POSTed the settle on a loop and read the refusal, leaving
+    /// FOURTEEN <c>POST /api/deathmatch/{id}/settle → 400</c> console errors behind a run that ended in a
+    /// perfectly good death-match. Chromium logs a console error for every failed fetch, so a working flow
+    /// was indistinguishable from a broken one — and the browser walk suite now asserts zero console errors,
+    /// so it is a gate as well as a bad habit. Asking is a 200 either way.</para>
+    ///
+    /// <para>Not authoritative and not a substitute for the settle's own gates, which still refuse an
+    /// unfunded settle whatever this said a moment earlier. Returns the last answer, or null if the
+    /// question could not be asked at all — a server without this endpoint answers 404, and one such error
+    /// is the whole cost, because the FIRST failed read stops the wait and hands straight back to the
+    /// settle loop below, which is exactly the behaviour that shipped before this existed.</para>
+    ///
+    /// <para><paramref name="pollEvery"/> and <paramref name="attempts"/> are the test seam — there is no
+    /// injectable clock here — and default to the live cadence.</para>
+    /// </summary>
+    public async Task<DeathMatchReadinessDto?> WaitForDeathMatchReadyAsync(
+        string deathMatchId, Action<string>? onProgress = null, TimeSpan? pollEvery = null, int attempts = 20)
+    {
+        var delay = pollEvery ?? TimeSpan.FromSeconds(3);
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            DeathMatchReadinessDto readiness;
+            try
+            {
+                readiness = await api.DeathMatch.ReadinessAsync(deathMatchId);
+            }
+            catch
+            {
+                return null;   // can't ask — fall through and let the settle be the authority
+            }
+            // Completed is "stop", not "wait": polling a resolved death-match would never end.
+            if (readiness.Ready || readiness.Completed) return readiness;
+            onProgress?.Invoke($"Stakes still settling — waiting ({attempt + 1}/{attempts})…");
+            await Task.Delay(delay);
+        }
+        return null;
+    }
+
     public async Task<DeathMatchOutcome> SettleDeathMatchAsync(string deathMatchId, Action<string>? onProgress = null)
     {
         onProgress?.Invoke("Resolving the death-match…");
         var nonce = RandomNonce();
+
+        // ASK first. The loop below is unchanged and still the authority — it just no longer has to be the
+        // way this browser DISCOVERS that the escrow has not landed yet.
+        await WaitForDeathMatchReadyAsync(deathMatchId, onProgress);
+
         DeathMatchSettleResponse? settle = null;
         ArkadeHeroesApiException? last = null;
         for (var attempt = 0; attempt < 20 && settle is null; attempt++)

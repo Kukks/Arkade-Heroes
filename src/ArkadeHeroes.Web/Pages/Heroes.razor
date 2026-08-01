@@ -140,6 +140,24 @@ else
     /// <summary>?mine=1 (e.g. right after Play claims your starters) opens the "Mine" tab first.</summary>
     [SupplyParameterFromQuery(Name = "mine")] public string? MineParam { get; set; }
 
+    /// <summary>
+    /// The link asked for Mine and we have not been able to honour it yet.
+    ///
+    /// <para>There is no "mine" to show while signed out, so the query string alone cannot open that tab —
+    /// it needs a session. On a COLD WASM boot the shell resumes sign-in after this page has already
+    /// initialised, so the condition was false at exactly the moment the link was read, and the answer was
+    /// then thrown away: <c>/heroes?mine=1</c> opened on All, showing a grid of other people's creatures
+    /// with no recruit card, which is the one thing the link exists to reach. Navigating to the same URL
+    /// inside the app always worked, because by then the session was up — the tell that this was a startup
+    /// ORDER problem and not a routing one.</para>
+    ///
+    /// <para>So the intent is held rather than discarded, and spent the moment sign-in lands. Spent
+    /// exactly once: <see cref="ArkadeHeroes.Web.Wallet.WalletState"/> raises OnChange for every balance
+    /// refresh and VTXO arrival, and an intent that re-applied on each of those would drag the tab back
+    /// under the player's cursor for the rest of the session.</para>
+    /// </summary>
+    private bool _minePending;
+
     private const int PageSize = 24;   // server-side page; "Load more" fetches the next
     private bool _hasMore;
     private bool _loadingMore;
@@ -161,13 +179,16 @@ else
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnStateChanged;
-        if (!string.IsNullOrEmpty(MineParam) && State.IsSignedIn) _mine = true;
+        _minePending = !string.IsNullOrEmpty(MineParam);
+        if (_minePending && State.IsSignedIn) { _mine = true; _minePending = false; }
         if (_mine) await LoadRecruitContextAsync();
         await LoadAsync();
     }
 
     async Task Show(bool mine)
     {
+        // Whatever the link wanted, the player has now said otherwise — and they get the last word.
+        _minePending = false;
         if (_mine == mine) return;
         _mine = mine;
         // Raised HERE, not just inside LoadAsync: the price read below awaits first, and without this the
@@ -193,23 +214,41 @@ else
         await RefreshBalanceAsync();
     }
 
+    /// <summary>
+    /// Which roster read is the current one — the page keeps whichever was ISSUED last, not whichever
+    /// happens to RETURN last.
+    ///
+    /// <para>Two are now genuinely in flight at once, and it is the deep-link path that puts them there:
+    /// a cold boot starts an ALL read while still signed out, then sign-in lands and starts a MINE read
+    /// before the first has come back. Whichever answered last used to win, so a slow ALL response would
+    /// drop other people's heroes into the page under the "Mine" tab — the exact confusion
+    /// <c>?mine=1</c> exists to prevent, arrived at from the other direction.</para>
+    /// </summary>
+    private int _rosterSeq;
+
     async Task LoadAsync()
     {
+        var seq = ++_rosterSeq;
         _loading = true;
         _error = false;
         _hasMore = false;
         try
         {
-            _heroes = _mine ? await Api.Heroes.MineAsync(0, PageSize) : await Api.Heroes.AllAsync(0, PageSize);
-            _hasMore = _heroes.Count == PageSize;   // a full page suggests there may be more
+            var heroes = _mine ? await Api.Heroes.MineAsync(0, PageSize) : await Api.Heroes.AllAsync(0, PageSize);
+            if (seq != _rosterSeq) return;          // superseded in flight; the newer read owns the page
+            _heroes = heroes;
+            _hasMore = heroes.Count == PageSize;    // a full page suggests there may be more
         }
         catch
         {
+            if (seq != _rosterSeq) return;          // a superseded read's failure is not this page's news
             _error = true;
         }
         finally
         {
-            _loading = false;
+            // Only the newest read may clear the spinner. An older one finishing later would otherwise
+            // declare the page loaded while the list it is showing is still on the wire.
+            if (seq == _rosterSeq) _loading = false;
         }
     }
 
@@ -274,7 +313,14 @@ else
         catch { /* balance stays at its last known value rather than taking the roster down with it */ }
     }
 
-    void OnStateChanged() => InvokeAsync(StateHasChanged);
+    void OnStateChanged() => InvokeAsync(async () =>
+    {
+        // The cold boot's second half: sign-in has landed, so the tab the link asked for is finally
+        // showable. Show() spends the intent, so this runs once however many times OnChange fires after.
+        if (_minePending && State.IsSignedIn)
+            await Show(true);
+        StateHasChanged();
+    });
 
     public void Dispose() => State.OnChange -= OnStateChanged;
 }
