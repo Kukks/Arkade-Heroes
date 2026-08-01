@@ -89,6 +89,13 @@ else
                 <span>Your bracket · <b class="mono">@t.BuyInSats.ToString("N0")</b> sat buy-in · @t.Joined / @t.Size joined</span>
                 <span class="spacer"></span>
                 <span class="chip">waiting for entrants</span>
+                @* A bracket needs as many distinct PLAYERS as it has seats — entries are one per player, so
+                   nobody can fill their own — which means a size-4 bracket in a small game can sit at 2/4
+                   forever with real sats escrowed in it. This is the way out, and it has to be ON THE PAGE:
+                   a player whose buy-in is stuck in a bracket that will never fill should not need an
+                   operator, and until this button existed that is exactly what they needed. Offered only
+                   while it is still filling — once full, the field is locked and it gets fought. *@
+                <button class="btn ghost sm" @onclick="() => DoCancel(t.Id)" disabled="@_busy">Call it off</button>
             </div></div>
         }
         @foreach (var t in Joinable)
@@ -346,6 +353,19 @@ else
 
     async Task DoJoin(string id) => await RunAction(async () =>
         await Session.JoinTournamentAsync(id, _heroId, s => { _status = s; StateHasChanged(); }));
+
+    /// <summary>
+    /// Calls off a bracket that is still filling; every cleared buy-in goes back to the entrant who paid it,
+    /// this player's and everyone else's. A plain server call with NO wallet leg — the refund is paid out of
+    /// the treasury, so unlike open/join there is nothing here to sign and no progress to report.
+    ///
+    /// <para>It deliberately announces nothing of its own. <see cref="RunAction"/> reloads either way, and a
+    /// called-off bracket comes back as <c>refunded</c> — so it leaves the "waiting for entrants" row and
+    /// reappears under the concluded ones already saying "your buy-in was returned", which is the same
+    /// sentence, from the server, about a state it can actually see. A hand-written success line here would
+    /// be a second copy of that claim, and one that would keep saying it if the reload disagreed.</para>
+    /// </summary>
+    async Task DoCancel(string id) => await RunAction(() => Api.Tournament.RefundAsync(id));
 
     async Task DoResolve(string id) => await RunAction(async () =>
     {

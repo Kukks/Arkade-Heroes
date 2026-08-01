@@ -181,11 +181,13 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             store.RehydratedHeroes[hero.Id] = 0;
         }
 
-        // Resolved and refunded brackets are NEVER rehydrated — both are TERMINAL. Their rows survive as
-        // audit markers, but putting one back into the live store would let it settle a SECOND time —
-        // paying the podium (or every buy-in) twice out of a treasury that can't print. Unsettled brackets
-        // are exactly the ones holding paid buy-ins.
-        foreach (var row in await db.Tournaments.AsNoTracking().Where(t => t.Status != "resolved" && t.Status != "refunded").ToListAsync(ct))
+        // Every bracket comes back, TERMINAL ONES INCLUDED. They used to be filtered out for fear that a
+        // settled bracket back in the live store could settle a second time — but what stops that is the
+        // STATUS, which rides along with it: resolve refuses anything not `full`, and both resolve and
+        // refund refuse a bracket that is already resolved or refunded. Filtering was belt to those braces,
+        // and it cost the whole record of who won a real-sats pot and what they were paid. Pinned by
+        // TournamentOutcomeDurabilityTests, which drives a restart and then tries to settle again.
+        foreach (var row in await db.Tournaments.AsNoTracking().ToListAsync(ct))
         {
             var session = new TournamentSession
             {
@@ -202,6 +204,24 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 {
                     PlayerId = e.PlayerId, HeroId = e.HeroId, BuyInInvoiceId = e.BuyInInvoiceId,
                 });
+            // The settled outcome, when there is one. Read back onto the SAME fields the live resolve
+            // writes, so every reader — the list DTO, the replay endpoint, the achievements count — works
+            // off one shape and none of them needs to know the bracket predates this process.
+            if (row.ResultJson is { } resultJson)
+            {
+                session.Result = System.Text.Json.JsonSerializer.Deserialize<Core.Combat.TournamentResult>(resultJson);
+                session.Prizes = row.PrizesJson is { } pj
+                    ? System.Text.Json.JsonSerializer.Deserialize<List<long>>(pj) ?? []
+                    : [];
+                session.EntrantSnapshots = row.EntrantSnapshotsJson is { } sj
+                    ? System.Text.Json.JsonSerializer.Deserialize<List<Shared.HeroDto>>(sj)
+                    : null;
+                session.Nonce = row.Nonce;
+                session.EntropyHex = row.EntropyHex;
+                session.EntrantsCommitmentHex = row.EntrantsCommitmentHex;
+                session.ConfigVersion = row.ConfigVersion;
+                session.ContentVersion = row.ContentVersion;
+            }
             store.Tournaments[session.Id] = session;
         }
 
@@ -366,7 +386,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         var row = await db.Tournaments.FindAsync([session.Id], ct);
         if (row is null)
         {
-            db.Tournaments.Add(new PersistedTournament
+            row = new PersistedTournament
             {
                 Id = session.Id,
                 OpenerPlayerId = session.OpenerPlayerId,
@@ -376,14 +396,37 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 CommitmentHex = session.CommitmentHex,
                 Status = session.Status,
                 EntrantsJson = entrantsJson,
-            });
+            };
+            db.Tournaments.Add(row);
         }
         else
         {
             row.Status = session.Status;
             row.EntrantsJson = entrantsJson;
         }
+        WriteOutcome(row, session);
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Copies the settled outcome onto the row, once the bracket has one. Deliberately WRITE-ONLY-WHEN-SET:
+    /// a session that is not resolved leaves every outcome column exactly as it found it, so a save driven
+    /// by some later status change can never blank a result that is already on disk. Resolve stamps all of
+    /// these before it marks the bracket resolved, so the record goes down complete or not at all.
+    /// </summary>
+    private static void WriteOutcome(PersistedTournament row, TournamentSession session)
+    {
+        if (session.Result is not { } result) return;
+        row.ResultJson = System.Text.Json.JsonSerializer.Serialize(result);
+        row.PrizesJson = System.Text.Json.JsonSerializer.Serialize(session.Prizes);
+        row.EntrantSnapshotsJson = session.EntrantSnapshots is { } snaps
+            ? System.Text.Json.JsonSerializer.Serialize(snaps)
+            : null;
+        row.Nonce = session.Nonce;
+        row.EntropyHex = session.EntropyHex;
+        row.EntrantsCommitmentHex = session.EntrantsCommitmentHex;
+        row.ConfigVersion = session.ConfigVersion;
+        row.ContentVersion = session.ContentVersion;
     }
 
     public async Task SaveFancyFindAsync(FancyFind find, CancellationToken ct = default)

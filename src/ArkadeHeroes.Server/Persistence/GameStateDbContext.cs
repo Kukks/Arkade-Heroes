@@ -46,9 +46,24 @@ public class PersistedPlayer
 }
 
 /// <summary>
-/// A durable tournament. <c>Result</c> and <c>Prizes</c> are deliberately NOT stored: a resolved bracket has
-/// already paid out, so the only thing worth surviving a restart is an UNRESOLVED bracket whose entrants
-/// have paid buy-ins. The resolved rows are kept purely as an audit marker (see the loader).
+/// A durable tournament — an UNRESOLVED bracket holding paid buy-ins, and the SETTLED OUTCOME of one that
+/// has run.
+///
+/// <para>The outcome used to be left out on the reasoning that a resolved bracket has already paid, so only
+/// an unresolved one was worth saving. That had it backwards: paying out is precisely what makes the record
+/// matter. The sats moved irreversibly and the only account of who took them lived in RAM, so a restart left
+/// a bracket that had really paid a real champion real bitcoin reporting no champion, no prize, and a 404 on
+/// its replay.</para>
+///
+/// <para>It is STORED rather than re-derived, though re-deriving looks free — the seed is here and
+/// <c>Tournament.Resolve</c> is deterministic in (entrants, seed, config). The third input is the problem:
+/// <c>GameConfigVersion.Compute</c> is a one-way hash, so a stamped version can be compared and never
+/// resolved back into the config it names, and the server holds only TODAY's. Re-running under today's rules
+/// can name a different CHAMPION, not merely a different prize. A plausible wrong winner on a real-money
+/// record is worse than an honest absence, so what is written here is what was actually paid.</para>
+///
+/// <para>Every outcome column is nullable and written as one block at resolve, so "unresolved" is the
+/// absence of the block rather than a second flag that could disagree with <c>Status</c>.</para>
 /// </summary>
 public class PersistedTournament
 {
@@ -62,6 +77,31 @@ public class PersistedTournament
     /// <summary>Entrants as JSON. They're a small collection always loaded with their parent, so a child
     /// table would buy nothing but a join.</summary>
     public required string EntrantsJson { get; set; }
+
+    // ── The settled outcome: null until this bracket resolves, then all of it at once ──
+
+    /// <summary>The resolved <c>TournamentResult</c> as JSON — champion, round count, and every bracket slot
+    /// including the byes. Stored whole rather than as a champion column because the bracket is what makes
+    /// the champion CHECKABLE: <c>FairnessAudit.VerifyTournament</c> re-runs the resolver and compares every
+    /// fought match, and a bye is distinguished by carrying no battle result at all.</summary>
+    public string? ResultJson { get; set; }
+    /// <summary>The podium prizes actually paid, champion first, as a JSON array of sats.</summary>
+    public string? PrizesJson { get; set; }
+    /// <summary>The FILL-time entrant hero snapshots the bracket was fought over, as JSON. Without these the
+    /// replay cannot be re-run at all — and re-running it against the heroes as they are TODAY would be a
+    /// different fight, since they level and re-gear afterwards.</summary>
+    public string? EntrantSnapshotsJson { get; set; }
+    /// <summary>The revealed nonce and the entropy derived from it — the commit-reveal's second half. The
+    /// seed above is worthless for verification without them.</summary>
+    public string? Nonce { get; set; }
+    public string? EntropyHex { get; set; }
+    /// <summary>The fill-time entrant-set commitment, which is what stops a substituted genome/level/gear
+    /// from re-resolving self-consistently. A replay is only worth having if this survives beside it.</summary>
+    public string? EntrantsCommitmentHex { get; set; }
+    /// <summary>The rules and content this was resolved under, so the replay stays honest about its own
+    /// terms. Null on anything resolved before stamping existed, which ran on the defaults.</summary>
+    public string? ConfigVersion { get; set; }
+    public string? ContentVersion { get; set; }
 }
 
 /// <summary>

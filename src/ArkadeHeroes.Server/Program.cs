@@ -819,18 +819,28 @@ api.MapPost("/tournament/{id}/resolve", async (string id, FightRequest request, 
         seedHex, entropyHex, prizes));
 });
 
-// Safety valve for a STRANDED bracket (an entrant hero lost to a restart, or burned/merged away): it can
-// never resolve, so every PAID buy-in goes back to its entrant. Any signed-in player may trigger it — a
-// still-resolvable bracket is refused, so the pot can't be unwound out from under a live tournament.
+// The way out of a bracket that is not going to be played. Two doors, both in RefundTournamentAsync: a
+// STRANDED bracket (an entrant hero lost to a restart, or burned/merged away) can never resolve, so anyone
+// may trigger its refund; and an ENTRANT may call off a bracket that is still OPEN — the case a two-player
+// game hits constantly, since entries are one-per-player and a size-4 bracket then waits forever. The
+// caller is passed through because the second door is the one that needs to know who is asking.
 api.MapPost("/tournament/{id}/refund", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
 {
-    game.Authenticate(BearerToken(http));
-    var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, ct);
+    var player = game.Authenticate(BearerToken(http));
+    var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, player, ct);
     return Results.Ok(new TournamentRefundResponse(ToTournamentDto(session), entrantsRefunded, refundedSats));
 });
 
+// UNFINISHED FIRST, then the cap. The store is durable now — it holds every bracket this server has ever
+// run, not just this process's — while the cap here is a flat 50 and tournament ids are random hex, so
+// ordering by id alone is arbitrary rather than newest-first. Settled history could therefore bury a
+// player's own LIVE bracket, and a bracket you cannot see is one you cannot join, resolve or call off while
+// your buy-in sits in it. History is what the cap is allowed to drop.
 api.MapGet("/tournament", (GameStore store) =>
-    Results.Ok(store.Tournaments.Values.OrderByDescending(t => t.Id).Select(ToTournamentDto).Take(50).ToList()));
+    Results.Ok(store.Tournaments.Values
+        .OrderBy(t => t.Status is "open" or "full" ? 0 : 1)
+        .ThenByDescending(t => t.Id)
+        .Select(ToTournamentDto).Take(50).ToList()));
 
 api.MapGet("/tournament/{id}", (string id, GameStore store) =>
     store.Tournaments.TryGetValue(id, out var t) ? Results.Ok(ToTournamentDto(t)) : Results.NotFound());
@@ -1205,7 +1215,10 @@ if (AdminGate.IsEnabled(adminToken))
         // The REQUEST, then the OUTCOME — two lines, because the service refuses a bracket that can still
         // be played. A request logged with no outcome after it is a refusal, and reads as one.
         app.Logger.LogInformation("ADMIN ACTION refund-tournament: requested for bracket {TournamentId}.", id);
-        var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, ct);
+        // NULL requester, deliberately: the console's one shared token names no player, so it can present
+        // no entrant's consent. The operator keeps the STRANDED-bracket door and does not get the
+        // call-off-an-open-bracket one — which is a door for the people whose sats are in it, not for us.
+        var (session, entrantsRefunded, refundedSats) = await game.RefundTournamentAsync(id, null, ct);
         app.Logger.LogInformation(
             "ADMIN ACTION refund-tournament: bracket {TournamentId} is now {Status}; {Entrants} entrant(s) "
             + "refunded {Sats} sat in total.", id, session.Status, entrantsRefunded, refundedSats);

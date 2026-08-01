@@ -1047,24 +1047,32 @@ public class GameService(
             var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, "tournament", session.Id, nonce);
             var result = Tournament.Resolve(entrants, entropy, _config);
 
-            session.Status = "resolved";   // commit BEFORE paying → no double-pay (mirrors the season settle marker)
-            // Make that commit DURABLE before a single sat moves: a crash mid-payout must not let a restart
-            // rehydrate this bracket as unresolved and pay the podium twice.
-            await persistence.SaveTournamentAsync(session, ct);
-            session.Result = result;
-            session.Nonce = nonce;
-            session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
-            session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
-        session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
-            session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
-
             // The pot is already treasury-held (paid buy-ins); the rake is simply what we DON'T pay out.
             // PrizePool clamps the rake to 0..100% so a misconfigured rake can never pay the podium above the pot.
             var pot = session.BuyInSats * session.Entrants.Count;
             var prizePool = Tournament.PrizePool(pot, _config.TournamentRakePct);
             var podium = Tournament.Podium(result);
             var prizes = SeasonPrize.Split(prizePool, podium.Count, Tournament.PrizeWeights);
+
+            session.Result = result;
             session.Prizes = prizes;
+            session.Nonce = nonce;
+            session.EntropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
+            session.ConfigVersion = ConfigVersion;   // stamp the rules this resolved under
+            session.ContentVersion = ContentVersion; // …and the gear/dungeons it resolved with
+            session.Status = "resolved";   // commit BEFORE paying → no double-pay (mirrors the season settle marker)
+            // Make that commit DURABLE before a single sat moves: a crash mid-payout must not let a restart
+            // rehydrate this bracket as unresolved and pay the podium twice.
+            //
+            // The OUTCOME rides down in the SAME write, which is why every field above is assigned before it
+            // rather than after: champion, prize split and replay are on disk before the first payout is
+            // attempted, so a crash halfway through the podium leaves a bracket that can still name who was
+            // owed what. Written after the payouts instead, the record would be missing in exactly the case
+            // it is most needed — and missing permanently, since none of this is recoverable once the
+            // process is gone (the config that produced it is a one-way stamp, and the fill-time entrant
+            // snapshots exist nowhere else).
+            await persistence.SaveTournamentAsync(session, ct);
+
             for (var i = 0; i < podium.Count && i < prizes.Count; i++)
             {
                 var winnerPlayerId = session.Entrants.First(e => e.HeroId == podium[i]).PlayerId;
@@ -1115,14 +1123,29 @@ public class GameService(
         finally { store.TournamentLock.Release(); }
     }
 
-    /// <summary>Refunds an UNRESOLVABLE bracket — one that can never run again: a FULL bracket whose
-    /// fill-time entrant snapshots are gone (never persisted, so a restart drops them and resolve refuses
-    /// without them), or an OPEN bracket that can never fill because an entrant hero was burned away. Every
-    /// buy-in that actually CLEARED goes back to its entrant and the bracket lands terminally <c>refunded</c>;
-    /// a bracket that can still be played is refused, so this is safe for anyone to trigger — it can't
-    /// unwind a live pot. Single-shot + double-refund-safe.</summary>
+    /// <summary>Refunds a bracket that is not going to be played, by either of two doors.
+    ///
+    /// <para>PROOF — the bracket can never run again: a FULL bracket whose fill-time entrant snapshots are
+    /// gone (never persisted, so a restart drops them and resolve refuses without them), or an OPEN bracket
+    /// that can never fill because an entrant hero was burned away. Anyone may trigger this; the proof does
+    /// not depend on who asks.</para>
+    ///
+    /// <para>CONSENT — <paramref name="requestedBy"/> is an entrant of a bracket that is still OPEN, and
+    /// wants out. This door exists because the first one cannot cover the commonest way a pot gets stuck:
+    /// entries are one-per-player, so a bracket needs as many distinct players as it has seats, and a size-4
+    /// one with two players in it simply waits forever with real sats escrowed. No proof of death is
+    /// available there — a new player could always sign up tomorrow — so the question is not "is it dead"
+    /// but "does someone with a stake in it want to stop". It is deliberately narrow: OPEN only, because
+    /// once a bracket is full its field is locked and committed, and letting an entrant leave THEN would be
+    /// a free look at the draw followed by an exit.</para>
+    ///
+    /// <para>Either way every buy-in that actually CLEARED goes back to its entrant and the bracket lands
+    /// terminally <c>refunded</c>. Nothing is transferred and nobody profits, so this can only ever unwind a
+    /// pot to the people who paid into it. Single-shot + double-refund-safe.</para></summary>
+    /// <param name="requestedBy">The player asking, or null for the operator console — which holds one
+    /// shared token that names nobody, so it can present no entrant's consent and gets the proof door only.</param>
     public async Task<(TournamentSession Session, int EntrantsRefunded, long RefundedSats)>
-        RefundTournamentAsync(string tournamentId, CancellationToken ct)
+        RefundTournamentAsync(string tournamentId, Player? requestedBy, CancellationToken ct)
     {
         if (!store.Tournaments.TryGetValue(tournamentId, out var session))
             throw new GameRuleException($"Unknown tournament '{tournamentId}'.");
@@ -1142,8 +1165,16 @@ public class GameService(
             var unresolvable = session.Status == "full"
                 ? session.EntrantSnapshots is not { Count: > 0 }
                 : session.Entrants.Any(e => !store.Heroes.ContainsKey(e.HeroId));
-            if (!unresolvable)
-                throw new GameRuleException("This tournament can still be resolved — refunds are only for a stranded bracket.");
+            // The second door (see the summary): an entrant calling off a bracket that is STILL OPEN. Checked
+            // against the entrant list rather than the opener, because everyone in it has paid the same
+            // buy-in and is stuck the same way — the host has no more right to their sats back than a joiner.
+            var calledOffByEntrant = session.Status == "open"
+                && requestedBy is not null
+                && session.Entrants.Any(e => e.PlayerId == requestedBy.Id);
+            if (!unresolvable && !calledOffByEntrant)
+                throw new GameRuleException(session.Status == "open"
+                    ? "Only an entrant can call off a bracket that is still open."
+                    : "This tournament can still be resolved — refunds are only for a stranded bracket.");
 
             session.Status = "refunded";   // commit BEFORE paying → no double-refund (mirrors the resolve marker)
             // Make that commit DURABLE before a single sat moves: a crash mid-refund must not let a restart

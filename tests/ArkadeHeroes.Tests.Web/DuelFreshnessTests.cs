@@ -17,6 +17,19 @@ namespace ArkadeHeroes.Tests.Web;
 /// uses — a timer, because there is no live channel to the server and adding one for this would be a lot
 /// of machinery for a fact that can be seconds stale without hurting anyone.</para>
 /// </summary>
+/// <remarks>
+/// Runs ALONE. <see cref="DisposingThePageStopsThePoll"/> measures a REQUEST RATE over a 500ms wall-clock
+/// window, and a rate is only meaningful when the clock it is measured against is the test's own. xUnit
+/// parallelises test classes by default, so on a two-core CI runner this window was shared with other
+/// classes rendering Blazor components — and a poll tick that should have been dispatched-and-done instead
+/// straggled into the sample, landing 2 where the assertion allows 1.
+///
+/// <para>That is the same race #230 already narrowed once, from an equality to a rate; the rate threshold
+/// is deliberately left exactly as it set it. Nothing here is loosened — the assertion still fails the
+/// moment the real defect returns (comment out <c>_poll?.Dispose()</c> in <c>Duel.razor</c> and it goes
+/// red), and the measurement is simply no longer taken while the CPU is somewhere else.</para>
+/// </remarks>
+[Collection(WallClockSensitive.Name)]
 public class DuelFreshnessTests
 {
     private const string Mine = "hero-mine";

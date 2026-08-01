@@ -408,7 +408,7 @@ public class TournamentServerTests
             // The `refunded` marker went durable BEFORE the first sat moved, so the restarted store must not
             // hold a live, stranded, refundable copy — snapshots are never persisted, so a rehydrated FULL
             // bracket WOULD pass the unresolvable gate and pay every buy-in back a second time.
-            try { await svc.RefundTournamentAsync(tid, CancellationToken.None); }
+            try { await svc.RefundTournamentAsync(tid, null, CancellationToken.None); }
             catch (GameRuleException) { /* expected: the bracket is terminal (filtered at load) */ }
             Assert.Equal(4, chain.RefundPayoutsPaid);   // the re-refund paid NOTHING — each buy-in came back exactly once
             if (store.Tournaments.TryGetValue(tid, out var zombie))
