@@ -348,7 +348,7 @@ public class HeroPersistenceTests
 
             // …so the strand refund fires: the bracket can never honor its commitment again, and every
             // paid buy-in comes back. Net-zero at the chain — the pot in, the pot out, no rake on a refund.
-            var (session, refunded, refundedSats) = await svc.RefundTournamentAsync(tid, CancellationToken.None);
+            var (session, refunded, refundedSats) = await svc.RefundTournamentAsync(tid, null, CancellationToken.None);
             Assert.Equal("refunded", session.Status);
             Assert.Equal(4, refunded);
             Assert.Equal(4 * 1000L, refundedSats);
