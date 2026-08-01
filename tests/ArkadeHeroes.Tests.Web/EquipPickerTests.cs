@@ -209,8 +209,11 @@ public class EquipPickerTests
     /// charm · matchup-neutral" about a hero visibly wearing one. That is a WRONG statement about combat,
     /// not a missing chip, which is what makes it worth a test of its own.</para>
     ///
-    /// <para>Needs <c>GearCounters</c> ON: the whole shape block is behind that flag, and with it off (the
-    /// shipped default) this test would render none of the markup it is about and pass for no reason.</para>
+    /// <para>Needs <c>GearCounters</c> ON: the whole shape block is behind that flag, and with it off this
+    /// test would render none of the markup it is about and pass for no reason. Turned on per-test because
+    /// <see cref="Fixtures.Config"/> leaves it off — note that this is the FIXTURE's default, not the
+    /// shipped one: <c>GameOptions.GearCounters</c> (and <c>InnateAbilities</c>) default to true, so a real
+    /// server publishes both ON and every other render here is of a config production never serves.</para>
     /// </summary>
     [Fact]
     public void NarrowingTheCatalogue_WouldLieAboutGearTheHeroIsWearing()
@@ -219,10 +222,11 @@ public class EquipPickerTests
         var wearing = Fixtures.Hero(HeroId, "Ashfang") with
         {
             Equipment = new Dictionary<string, string> { ["Armor"] = counterCharm.Id },
-            // A REAL 32-byte genome. The shared fixture's is 16, which Genome.FromHex rejects — and the page
-            // swallows that into "no shape", so the whole block this test is about would never render and the
-            // test would pass without asserting anything.
-            GenomeHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            // This used to override GenomeHex with a hand-written 32-byte value, because the shared fixture's
+            // was 16 bytes — which Genome.FromHex rejects, and the page swallows into "no shape", so the whole
+            // block this test is about would never render and the test would pass without asserting anything.
+            // The shared fixture now carries a real genome and FixtureGenomeTests keeps it that way, so the
+            // override is gone and this test exercises the same hero every other test does.
         };
 
         using var ctx = HeroPage(api =>
