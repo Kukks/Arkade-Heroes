@@ -326,6 +326,25 @@ else
     private DuelOutcome? _duel;
     private string? _resolvedMatchId;   // the just-resolved match, for the shareable replay link
 
+    /// <summary>
+    /// How often the match list re-reads itself while this page is open.
+    ///
+    /// <para>A duel is resolved by the CHALLENGER, so the defender's copy of it changes because of
+    /// something that happens in someone else's browser. Drawn once, it could never be right again: the
+    /// challenger pressed "Duel!", the pot moved, and the defender kept reading "Accepted — waiting for
+    /// the challenger to fight" until they refreshed by hand. Polled rather than pushed, and for the same
+    /// reason <see cref="ArkadeHeroes.Web.Components.ChallengeAlert"/> polls — there is no live channel to
+    /// the server, and one built for this would be a lot of machinery for a fact that can be seconds
+    /// stale without hurting anyone.</para>
+    ///
+    /// <para>Tighter than the alert's thirty seconds because the audiences differ: that is a background
+    /// badge telling you something is waiting, this is a player watching a staked fight they cannot start.</para>
+    ///
+    /// <para>A parameter only so a test does not have to wait out the live cadence. The router never sets
+    /// it — <c>/duel</c> takes no route values — and nothing else does either.</para>
+    /// </summary>
+    [Parameter] public TimeSpan PollEvery { get; set; } = TimeSpan.FromSeconds(15);
+
     // Match categorisation, by whether my roster holds the challenger/defender hero.
     private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();
     private IEnumerable<MatchDto> ToAccept => _matches.Where(m => m.Status == "open" && MineIds.Contains(m.DefenderHeroId));
@@ -380,10 +399,58 @@ else
     private bool? IWon(MatchDto m) =>
         m.Result is not { } r ? null : MineIds.Contains(r.WinnerId);
 
+    private Timer? _poll;
+
     protected override async Task OnInitializedAsync()
     {
         State.OnChange += OnState;
         await LoadAsync();
+        _poll = new Timer(_ => _ = PollTickAsync(), null, PollEvery, PollEvery);
+    }
+
+    /// <summary>
+    /// The timer's own callback, and the reason it is not simply <c>async _ => await InvokeAsync(...)</c>
+    /// the way <see cref="ArkadeHeroes.Web.Components.ChallengeAlert"/> writes it.
+    ///
+    /// <para>That component rides the shell and is never disposed while the app is running. This is a
+    /// PAGE, so navigating away disposes it — and a tick already queued at that moment reaches
+    /// <c>InvokeAsync</c> after the renderer has gone and throws <see cref="ObjectDisposedException"/>.
+    /// From a <c>TimerCallback</c> that exception is unobserved: nothing awaits it, so it surfaces as a
+    /// console error on a player who did nothing but leave the page — and the browser walk suite asserts
+    /// zero console errors.</para>
+    ///
+    /// <para>Swallowed rather than guarded with a flag, because the teardown is a race no flag closes: the
+    /// component can be disposed after the check and before the dispatch. There is nothing to report here
+    /// anyway — the page this would have redrawn no longer exists.</para>
+    /// </summary>
+    async Task PollTickAsync()
+    {
+        try { await InvokeAsync(PollAsync); }
+        catch (ObjectDisposedException) { /* navigated away mid-tick; nothing left to refresh */ }
+    }
+
+    /// <summary>
+    /// Re-reads the match list on a timer so a duel resolved in the OTHER player's browser lands here too.
+    ///
+    /// <para>Matches only — not the roster, not the config. Those change when this player does something,
+    /// and this page already reloads them when they do; the match list is the one thing on the screen that
+    /// a stranger can change.</para>
+    ///
+    /// <para>Stands down while an action is in flight: <see cref="RunAction"/> reloads everything itself
+    /// when it finishes, and a poll landing mid-challenge would swap the list out from under a staking
+    /// player for no gain.</para>
+    /// </summary>
+    async Task PollAsync()
+    {
+        if (_busy || _loading || !State.IsSignedIn || !_heroesLoaded) return;
+        try { await LoadMatchesAsync(); }
+        catch
+        {
+            // A dropped poll is not news. _matchesLoaded keeps whatever it already was, so a single failed
+            // re-read cannot turn a correct screen into "Couldn't read your matches" — which would be a
+            // worse page than the stale one this poll exists to replace.
+        }
+        StateHasChanged();
     }
 
     async Task LoadAsync()
@@ -411,9 +478,24 @@ else
         catch { /* price unknown — the fee line stays off rather than quoting a zero */ }
     }
 
+    /// <summary>
+    /// Which match read is the current one — same discipline as the roster's <c>_rosterSeq</c> on the
+    /// Heroes page, and needed here for the same reason the poll exists.
+    ///
+    /// <para>Adding a timer means a read can still be on the wire when the next tick fires, or when an
+    /// action finishes and reloads. Keeping whichever RETURNED last rather than whichever was ISSUED last
+    /// lets an older list land on top of a newer one — which would put the duel back to "accepted" after
+    /// the resolution had already arrived. That is precisely the staleness the poll was added to remove,
+    /// so leaving the race open would have made the fix its own defect.</para>
+    /// </summary>
+    private int _matchesSeq;
+
     async Task LoadMatchesAsync()
     {
-        _matches = await Api.Matches.ListAsync();
+        var seq = ++_matchesSeq;
+        var matches = await Api.Matches.ListAsync();
+        if (seq != _matchesSeq) return;   // superseded in flight; a newer read already owns the page
+        _matches = matches;
         _matchesLoaded = true;
         _matchesError = null;
         // Resolve the opponent heroes' names for display (my own are already cached from the roster).
@@ -509,7 +591,11 @@ else
         StateHasChanged();
     });
 
-    public void Dispose() => State.OnChange -= OnState;
+    public void Dispose()
+    {
+        State.OnChange -= OnState;
+        _poll?.Dispose();
+    }
 
     /// <summary>
     /// Re-attempts the roster read a few times, backing off. Deliberately bounded: past a few seconds the
