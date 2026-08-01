@@ -73,8 +73,14 @@ does and its default. Two things worth knowing before a real deployment:
   them — and heroes are money-bearing assets, not cache.
 - **`Chain__NArk__TreasuryMnemonic` is the treasury seed phrase — real bitcoin on mainnet.**
   It has no default and is never baked into an image; it is read from `.env`, which is
-  gitignored and excluded from the Docker build context. Leave it empty unless restoring an
-  existing treasury (empty = generate one on first boot and persist it to the volume).
+  gitignored and excluded from the Docker build context. Empty means the treasury is whatever
+  the chain database on the volume already holds; set it to restore one, and set it in general
+  if you want the treasury recoverable from something other than that single file.
+- **`Chain__NArk__DbPath` must stay on the `arkade-state` volume too** — it holds the treasury
+  wallet's seed. If no treasury is recorded there, the server REFUSES to start rather than
+  generating one, because it cannot tell a first install from a database that was lost and
+  guessing wrong rotates the treasury to a key nobody has. A deliberate fresh install says so
+  with `Chain__NArk__AllowTreasuryAutoCreate=true`; the refusal message names every option.
 
 Images are published to GHCR by `.github/workflows/docker-publish.yml`, tagged by commit SHA
 and by branch/tag.
@@ -89,9 +95,14 @@ Heroes become real Arkade assets (amount 1, genome sealed in genesis metadata, c
 #    ports to avoid local collisions. Includes the Arkade Script emulator (:7073).
 node regtest/regtest.mjs start --profile ark --profile emulator
 
-# 2. Run the game server in NArk mode
-#    (bash)        Chain__Mode=NArk dotnet run --project src/ArkadeHeroes.Server
-#    (PowerShell)  $env:Chain__Mode="NArk"; dotnet run --project src/ArkadeHeroes.Server
+# 2. Run the game server in NArk mode. AllowTreasuryAutoCreate lets it generate a treasury
+#    for this throwaway regtest database — without it a server that finds none refuses to
+#    start, since it cannot tell a fresh install from a database that was lost. Never set
+#    it on a deployment holding value.
+#    (bash)        Chain__Mode=NArk Chain__NArk__AllowTreasuryAutoCreate=true \
+#                    dotnet run --project src/ArkadeHeroes.Server
+#    (PowerShell)  $env:Chain__Mode="NArk"; $env:Chain__NArk__AllowTreasuryAutoCreate="true"
+#                  dotnet run --project src/ArkadeHeroes.Server
 
 # 3. Fund the treasury (address: GET http://localhost:5210/api/chain/info, also in server logs)
 node regtest/regtest.mjs ark send --to <treasury tark1…> --amount 200000 --password secret

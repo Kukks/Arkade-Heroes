@@ -32,15 +32,23 @@ this is the same story a human can drive by hand.
 
 ```bash
 # bash
-Chain__Mode=NArk Game__WagerEscrowRefundAfter=00:00:20 \
+Chain__Mode=NArk Chain__NArk__AllowTreasuryAutoCreate=true \
+  Game__WagerEscrowRefundAfter=00:00:20 \
   dotnet run --project src/ArkadeHeroes.Server
 # PowerShell
-$env:Chain__Mode="NArk"; $env:Game__WagerEscrowRefundAfter="00:00:20"
+$env:Chain__Mode="NArk"; $env:Chain__NArk__AllowTreasuryAutoCreate="true"
+$env:Game__WagerEscrowRefundAfter="00:00:20"
 dotnet run --project src/ArkadeHeroes.Server
 ```
 
 The server listens on `http://localhost:5210`. `Game__WagerEscrowRefundAfter=00:00:20`
 makes the refund demo (step 6) reachable in seconds instead of 24h.
+
+`Chain__NArk__AllowTreasuryAutoCreate=true` is what lets the server generate a treasury
+for this throwaway regtest database. Without it a server that finds no treasury recorded
+REFUSES to start rather than minting one — because it cannot tell a fresh install from a
+database that was lost, and guessing wrong rotates a real treasury to a key nobody has.
+Never set it on a deployment holding value.
 
 Fund the treasury (its address is in the server log, or `GET /api/chain/info`):
 ```bash
