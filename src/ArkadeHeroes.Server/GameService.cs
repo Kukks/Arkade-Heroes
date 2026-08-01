@@ -1020,8 +1020,21 @@ public class GameService(
 
             // Every buy-in must have cleared before the bracket runs — an unpaid entry would leak the treasury.
             foreach (var e in session.Entrants)
+            {
                 if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct))
                     throw new GameRuleException("All buy-ins must be paid before the tournament can run.");
+                // …and a cleared buy-in is treasury INCOME, booked here because this is the one place the
+                // server establishes that it cleared. Without it the podium's prizes were booked as outflow
+                // against no matching inflow, so a bracket that nets the house its rake read as a pure loss
+                // on the ledger. The sats were never wrong — only the record of them.
+                //
+                // Under the SAME "tournament" tag the prizes leave under, so income and spend on this flow
+                // net against each other instead of sitting in unrelated buckets. Keyed on the buy-in
+                // invoice, which makes it idempotent per entrant (RecordInflowAsync early-returns on an
+                // invoice already tallied, and the durable row is keyed on it too) — so the retry a caller
+                // makes after a failed resolve cannot double-count, and neither can a restart.
+                await store.RecordInflowAsync(e.BuyInInvoiceId, "tournament", session.BuyInSats, ct);
+            }
 
             // Fight from the FILL-time locked snapshots — the set the published entrants-commitment binds
             // — via the SAME rebuild the client verifies with, so server resolution and client replay are
@@ -1166,6 +1179,25 @@ public class GameService(
                     continue;
                 }
                 if (!paid) continue;
+
+                // This buy-in DID reach the treasury, and — as on the resolve path — nothing had ever booked
+                // it as income. The refund below books an outflow, so leaving the inflow unbooked made a
+                // net-zero event read as a pure loss. Only CLEARED buy-ins are booked: an unpaid seat put
+                // nothing in, and booking it would invent income the treasury never received.
+                //
+                // Caught on its own, unlike the resolve path's identical call, and the difference is
+                // deliberate: resolve books BEFORE anything is committed, so a throw there just fails a
+                // retryable request. Here the bracket is ALREADY durably marked refunded, so an escaping
+                // throw would strand every remaining entrant's refund permanently — the exact harm this
+                // loop's per-step catches exist to prevent. A book-keeping gap must not cost a refund.
+                try { await store.RecordInflowAsync(e.BuyInInvoiceId, "tournament", session.BuyInSats, ct); }
+                catch (Exception ex)
+                {
+                    logger?.LogWarning(ex,
+                        "Tournament buy-in of {Sats} sats ({InvoiceId}) could not be booked as inflow before "
+                        + "refunding it. The refund itself is unaffected; treasury income now under-reports "
+                        + "by this amount.", session.BuyInSats, e.BuyInInvoiceId);
+                }
 
                 try { await chain.PayoutAsync(e.PlayerId, session.BuyInSats, tag, ct); }
                 catch (Exception ex)
