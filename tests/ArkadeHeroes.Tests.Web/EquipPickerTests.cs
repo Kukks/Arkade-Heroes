@@ -138,6 +138,41 @@ public class EquipPickerTests
     }
 
     /// <summary>
+    /// A cold deep-link to your own hero still ends up with your items.
+    ///
+    /// <para>The shell resumes sign-in AFTER a page has initialised on a cold WASM boot — the startup ORDER
+    /// problem <c>/heroes?mine=1</c> already documents. At load time the hero is therefore not yet "mine",
+    /// and the ownership read is correctly skipped; without a second chance when sign-in lands, the owner is
+    /// left looking at the whole catalogue under a line claiming their inventory could not be read, when it
+    /// had simply never been asked for. Two untrue statements at once, which is what this whole change is
+    /// about not doing.</para>
+    /// </summary>
+    [Fact]
+    public void SignInLandingAfterTheFirstRender_StillGetsYourItemsRatherThanAFalseReadFailure()
+    {
+        var ctx = new PageTestContext();   // NOT signed in yet — the cold-boot order
+        ctx.Api.GetFails($"/api/heroes/{HeroId}/tombstone", System.Net.HttpStatusCode.NotFound);
+        ctx.Api.Get($"/api/heroes/{HeroId}", Fixtures.Hero(HeroId, "Ashfang"));
+        ctx.Api.Get($"/api/receipts/hero/{HeroId}", Array.Empty<ProgressionReceiptDto>());
+        ctx.Api.Get("/api/chain/info", Fixtures.ChainInfo());
+        ctx.Api.Get($"/api/heroes/{HeroId}/timeline", new HeroTimelineDto(HeroId, [], Complete: true, null));
+        ctx.Api.Get("/api/bids", Array.Empty<BidDto>());
+        ctx.Api.Get("/api/items", new[] { Owned, NeverBought });
+        ctx.Api.Get("/api/items/mine", new[] { Owned.Id });
+
+        var cut = ctx.Render<HeroDetail>(p => p.Add(x => x.Id, HeroId));
+        cut.WaitForAssertion(() => Assert.Contains("Equipment", cut.Markup));
+        Assert.DoesNotContain("GET /api/items/mine", ctx.Api.Requested);   // correctly not asked yet
+
+        ctx.SignIn();   // the shell's login lands
+
+        cut.WaitForAssertion(() => Assert.Contains("one of your items", cut.Markup));
+        Assert.DoesNotContain("Couldn't read which items you own", cut.Markup);
+        Assert.DoesNotContain(Options(cut), o => o.Contains(NeverBought.Name));
+        ctx.Dispose();
+    }
+
+    /// <summary>
     /// Someone else's hero must not trigger the ownership read at all.
     ///
     /// <para>Not a tidiness point. <c>/api/items/mine</c> is AUTHENTICATED, so asking about a hero you do
