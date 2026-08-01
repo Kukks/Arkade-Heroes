@@ -209,9 +209,13 @@ public class PageClaimTests
     {
         // The witness: at exactly the gap where Matchmaking starts calling you an underdog, losing still
         // costs XP. The two thresholds are different numbers and always were.
+        // Quoted against a hero solvent enough to settle the whole gap, so this stays a claim about the
+        // two LEVEL thresholds — XpIfLose is now clamped to what the loser owns, and a broke hero would
+        // read as zero for a reason that has nothing to do with the gap being measured here.
         const int me = 5, them = me + 3;
+        const long solvent = 100_000;
         Assert.Equal("underdog", Matchmaking.Favor(me, them));
-        Assert.True(Matchmaking.XpIfLose(me, them) > 0,
+        Assert.True(Matchmaking.XpIfLose(me, them, solvent) > 0,
             "If an underdog by Favor's own definition now loses nothing, the strong claim would be true "
             + "again — and this test should be replaced by one that pins the two thresholds together.");
 

@@ -14,11 +14,30 @@ public static class Matchmaking
     /// <summary>How evenly matched two heroes are — smaller is closer. The ranking key for suggested opponents.</summary>
     public static int LevelGap(int heroLevel, int opponentLevel) => Math.Abs(heroLevel - opponentLevel);
 
-    /// <summary>XP the hero would GAIN by beating this opponent (0 when the opponent is far weaker — no farming down the ladder).</summary>
-    public static long XpIfWin(int heroLevel, int opponentLevel) => Leveling.XpTransfer(heroLevel, opponentLevel);
+    // Both swings below are quoted through Leveling.PayableTransfer — the clamp a settle actually pays —
+    // and NOT through the raw Leveling.XpTransfer gap. They are read before a player stakes real sats, so
+    // a figure the rules cannot honour is a false promise, not a rounding difference: the raw gap billed a
+    // duel against a fresh hero as "win +40 / lose −40" and the settle then moved "0 xp · 0 xp", the 0
+    // being the correct one. Paying the 40 would MINT XP, which is the defect PayableTransfer exists to
+    // prevent — so the pitch is what had to move, and it takes the LOSER's banked XP to compute.
 
-    /// <summary>XP the hero would LOSE if it lost to this opponent (0 when the opponent is far stronger — an upset costs the underdog nothing).</summary>
-    public static long XpIfLose(int heroLevel, int opponentLevel) => Leveling.XpTransfer(opponentLevel, heroLevel);
+    /// <summary>
+    /// XP the hero would GAIN by beating this opponent — <see cref="Leveling.PayableTransfer"/> against
+    /// <paramref name="opponentXp"/>, i.e. what the opponent can actually hand over. 0 when the opponent is
+    /// far weaker (no farming down the ladder) AND 0 when it is too poor to pay, which is every fresh hero.
+    /// </summary>
+    /// <param name="opponentXp">The opponent's XP toward its next level — the loser's balance here.</param>
+    public static long XpIfWin(int heroLevel, int opponentLevel, long opponentXp, GameConfig? config = null)
+        => Leveling.PayableTransfer(heroLevel, opponentLevel, opponentXp, config);
+
+    /// <summary>
+    /// XP the hero would LOSE if it lost to this opponent — <see cref="Leveling.PayableTransfer"/> against
+    /// <paramref name="heroXp"/>, i.e. what the hero can actually hand over. 0 when the opponent is far
+    /// stronger (an upset costs the underdog nothing) AND 0 when the hero owns nothing to lose.
+    /// </summary>
+    /// <param name="heroXp">The hero's XP toward its next level — the loser's balance here.</param>
+    public static long XpIfLose(int heroLevel, int opponentLevel, long heroXp, GameConfig? config = null)
+        => Leveling.PayableTransfer(opponentLevel, heroLevel, heroXp, config);
 
     /// <summary>Coarse pre-stake favorability from the challenger's view (combat has variance — no precise %). Threshold 3 levels.</summary>
     public static string Favor(int heroLevel, int opponentLevel) => (heroLevel - opponentLevel) switch

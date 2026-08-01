@@ -2631,8 +2631,11 @@ public class GameService(
                 return new Shared.OpponentSuggestionDto(
                     h.ToDto(), h.OwnerId,
                     Matchmaking.LevelGap(hero.Level, h.Level),
-                    Matchmaking.XpIfWin(hero.Level, h.Level),
-                    Matchmaking.XpIfLose(hero.Level, h.Level),
+                    // The PAYABLE swings, not the raw gap: this is the pre-stake pitch, so it has to be a
+                    // number the settle can honour. Each takes the LOSER's banked XP — theirs if I win,
+                    // mine if I lose — which is exactly what SettleDeathMatchAsync/FightAsync clamp to.
+                    Matchmaking.XpIfWin(hero.Level, h.Level, h.Xp, _config),
+                    Matchmaking.XpIfLose(hero.Level, h.Level, hero.Xp, _config),
                     oppPower,
                     Matchmaking.PowerGapPercent(heroPower, oppPower),
                     // F2: the free-underdog-shot label rides along the (level-based) conserved swings.
