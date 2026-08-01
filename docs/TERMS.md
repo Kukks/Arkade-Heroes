@@ -76,8 +76,8 @@ transaction, unwind a trade, restore a burned hero, or refund a fee.
 
 ## 5. Fees, and what you actually pay
 
-Most things you do here cost satoshis, and **the amount is shown before you confirm**.
-That matters more than it sounds: several of these are not flat numbers — they scale
+Here is everything the game charges you for. **The amount is shown before you confirm**,
+which matters more than it sounds: several of these are not flat numbers — they scale
 with your hero's level, or with how much it has already bred.
 
 These go to the game treasury:
