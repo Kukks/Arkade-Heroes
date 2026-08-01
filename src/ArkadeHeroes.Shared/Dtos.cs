@@ -282,6 +282,31 @@ public record DeathMatchDto(
     string DeathMatchId, string ChallengerHeroId, string DefenderHeroId,
     string Status, bool Absorb, string? WinnerHeroId);
 
+/// <summary>
+/// Whether a settle would get past its funding gates yet — the same three facts
+/// <c>SettleDeathMatchAsync</c> checks before it does anything, asked as a QUESTION rather than found out
+/// by attempting.
+///
+/// <para>It exists because attempting was the client's only way to find out. A deposit takes a while to
+/// settle into arkd's indexer, so the browser POSTed the settle on a loop and collected a 400 each time
+/// until the chain caught up — fourteen console errors on a run that ended in a perfectly good death-match.
+/// Chromium logs a console error for every failed fetch, so a SUCCESSFUL flow looked like a broken one,
+/// which is how a team learns to stop reading the console.</para>
+///
+/// <para>The 400s themselves stay: the settle's own gates are the authority and must refuse an unfunded
+/// settle whatever any client believes. This is only how a client learns to stop asking too early.</para>
+/// </summary>
+public record DeathMatchReadinessDto(
+    /// <summary>Both heroes (and their staked gear) sit at the one joint escrow.</summary>
+    bool StakesFunded,
+    bool ChallengerFeePaid,
+    bool DefenderFeePaid,
+    /// <summary>The conjunction — a settle attempted now would get past the gates.</summary>
+    bool Ready,
+    /// <summary>Already resolved, so there is nothing left to settle and never will be. Distinct from
+    /// <see cref="Ready"/> being false: one is "wait", the other is "stop".</summary>
+    bool Completed);
+
 // ── PvE gauntlet (F1): open (commit + fee) → pay → run (5 ghost waves) ──────
 
 public record GauntletOpenRequest(string HeroId);

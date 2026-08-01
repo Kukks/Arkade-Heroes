@@ -635,6 +635,16 @@ api.MapPost("/deathmatch/{id}/settle", async (string id, DeathMatchSettleRequest
     return Results.Ok(new DeathMatchSettleResponse(result, winner, loser, challSnap, defSnap, seed, entropy, receipt, minted, absorbed, newGenome, newHero, game.ConfigVersion, game.ContentVersion));
 });
 
+// Is a settle worth attempting yet? The browser stakes a hero, then waits for the deposits to settle into
+// arkd's indexer — and its only way to find out used to be to POST the settle and read the 400. Chromium
+// logs a console error for every failed fetch, so a SUCCESSFUL death-match left fourteen errors behind it.
+// Same three facts, asked instead of attempted. The settle's own gates are unchanged and still authoritative.
+api.MapGet("/deathmatch/{id}/readiness", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    return Results.Ok(await game.DeathMatchReadinessAsync(player, id, ct));
+});
+
 api.MapGet("/deathmatch/{id}/escrow", async (string id, IChainService chain, CancellationToken ct) =>
     await chain.GetDeathMatchEscrowParamsAsync(id, ct) is { } p ? Results.Ok(p) : Results.NotFound());
 

@@ -11,6 +11,9 @@ public sealed class DeathMatchApi(ArkadeHeroesClient client)
     public Task<MatchReplayDto> ReplayAsync(string deathMatchId) => client.GetAsync<MatchReplayDto>($"/api/deathmatch/{deathMatchId}/replay");
     public Task<DeathMatchOpenResponse> OpenAsync(DeathMatchOpenRequest req) => client.PostAsync<DeathMatchOpenResponse>("/api/deathmatch/open", req);
     public Task<DeathMatchAcceptResponse> AcceptAsync(string deathMatchId) => client.PostAsync<DeathMatchAcceptResponse>($"/api/deathmatch/{deathMatchId}/accept");
+    /// <summary>Whether <see cref="SettleAsync"/> would get past its funding gates yet — poll this rather
+    /// than learning "not yet" from a 400, which a browser console reports as a failure on a healthy run.</summary>
+    public Task<DeathMatchReadinessDto> ReadinessAsync(string deathMatchId) => client.GetAsync<DeathMatchReadinessDto>($"/api/deathmatch/{deathMatchId}/readiness");
     public Task<DeathMatchSettleResponse> SettleAsync(string deathMatchId, DeathMatchSettleRequest req) => client.PostAsync<DeathMatchSettleResponse>($"/api/deathmatch/{deathMatchId}/settle", req);
     public Task<DeathMatchJointEscrowParams> EscrowAsync(string deathMatchId) => client.GetAsync<DeathMatchJointEscrowParams>($"/api/deathmatch/{deathMatchId}/escrow");
 }
