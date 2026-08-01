@@ -121,6 +121,33 @@ public class OutcomeVisibilityTests
         cut.WaitForAssertion(() => Assert.Contains("Verification FAILED", cut.Markup));
     }
 
+    /// <summary>
+    /// The same click when the server can no longer produce the bracket — a reachable state, not a
+    /// hypothetical: <c>PersistedTournament</c> deliberately stores neither <c>Result</c> nor <c>Prizes</c>,
+    /// so after a restart an already-resolved bracket answers <c>/replay</c> with a 404 and reports no
+    /// champion at all. Verification then cannot complete either.
+    ///
+    /// <para>The rule is that a Verify click always produces something. It must not silently do nothing —
+    /// which is the original defect — and it must not print an empty results card that reads as "this
+    /// bracket had no matches in it". It says both true things: the rounds are unreadable, and why the
+    /// recompute could not be run.</para>
+    /// </summary>
+    [Fact]
+    public void Tournament_VerifyingStillAnswersWhenTheBracketCannotBeFetched()
+    {
+        // No stub for /api/tournament/t-1 or its replay: FakeApi 404s anything unregistered, which is
+        // exactly what a restarted server does with a bracket whose result it no longer holds.
+        using var ctx = SignedTournaments(Bracket("resolved", MyHero, championPrizeSats: 7_000));
+
+        var cut = ctx.Render<Tournaments>();
+        cut.WaitForAssertion(() => Assert.DoesNotContain("loading brackets", cut.Markup));
+
+        cut.FindAll("button").First(b => b.TextContent.Trim() == "Verify").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Verification FAILED", cut.Markup));
+        Assert.Contains("round-by-round bracket couldn't be read", cut.Markup);
+    }
+
     // ── Squad 3v3: the side that did not press "Fight!" ──────────────────────
 
     private static readonly string[] MyLineup = ["mine-1", "mine-2", "mine-3"];

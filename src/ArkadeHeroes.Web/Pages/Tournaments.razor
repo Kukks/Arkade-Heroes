@@ -372,6 +372,11 @@ else
                 try { bracket = (await Api.Tournament.ReplayAsync(id)).Bracket; }
                 catch { /* the rounds are a nicety; the verdict is the point, and the card says they're missing */ }
                 if (seq != _verifySeq) return;   // superseded in flight; a newer verify owns the page
+                // _shown is set past the catch on purpose, so a bracket whose rounds could NOT be fetched
+                // still opens the results block. A resolved bracket keeps neither its result nor its prizes
+                // across a server restart (PersistedTournament stores neither), so /replay 404s for a real
+                // and reachable bracket — and bailing out there would put the verify badge back where it
+                // started: running to completion with nowhere to draw.
                 var dto = _tournaments.FirstOrDefault(t => t.Id == id);
                 _shown = new ShownBracket(id, dto?.ChampionHeroId, dto?.ChampionPrizeSats ?? 0, bracket, null);
             }
