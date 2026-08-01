@@ -126,21 +126,39 @@ else
                 }
                 else
                 {
+                    @* Read off the LIST, so it is on screen the moment the page loads and for EVERY entrant.
+                       "champion Ashfang" was already here and was not enough: a player had to recognise their
+                       own hero's name to learn they had won, and nothing anywhere said what the pot paid.
+                       ChampionPrizeSats has ridden along on this DTO the whole time, unread. *@
+                    @if (IWon(t) is { } won)
+                    {
+                        <span class="chip @(won ? "ok" : "bad")">
+                            @(won
+                                ? t.ChampionPrizeSats > 0 ? $"you won — {t.ChampionPrizeSats:N0} sat" : "you won"
+                                : "knocked out")
+                        </span>
+                    }
                     <span class="chip">@(t.ChampionHeroId is not null ? $"champion {Name(t.ChampionHeroId)}" : "resolved")</span>
-                    <button class="btn ghost sm" @onclick="() => DoVerify(t.Id)" disabled="@_verifying">Verify</button>
+                    <button class="btn ghost sm" @onclick="() => DoVerify(t.Id)" disabled="@(_verifyingId is not null)">
+                        @(_verifyingId == t.Id ? "Verifying…" : "Verify")
+                    </button>
                 }
             </div></div>
         }
     }
 
-    @if (_result is not null)
+    @* Gated on _shown, not on the resolve RESPONSE. This block used to be reachable only by the one player
+       who pressed "Run bracket!", which is why pressing Verify anywhere else ran the whole recompute and
+       then drew nothing at all: the verdict badge lives in here, and for everybody else "in here" did not
+       exist. _shown is filled either by resolving or by verifying, so every entrant can reach it. *@
+    @if (_shown is { } shown)
     {
         <div class="page-head" style="margin-top:1.8rem">
             <h3 style="margin:0">Bracket results</h3>
-            <span class="hud">champion @Name(_result.Tournament.ChampionHeroId)</span>
+            <span class="hud">champion @Name(shown.ChampionHeroId)</span>
         </div>
         <div class="card">
-            @foreach (var round in _result.Bracket.GroupBy(m => m.Round).OrderBy(g => g.Key))
+            @foreach (var round in shown.Bracket.GroupBy(m => m.Round).OrderBy(g => g.Key))
             {
                 <div class="hud" style="margin:.5rem 0">Round @(round.Key + 1)</div>
                 @foreach (var m in round.OrderBy(m => m.Index))
@@ -152,17 +170,38 @@ else
                     </div>
                 }
             }
-            <div class="status-line" style="margin-top:.8rem"><span class="dot ok"></span>
-                <span>Prizes: @string.Join(" · ", _result.Prizes.Select((p, i) => $"#{i + 1} {p:N0} sat"))</span>
-            </div>
+            @* The rounds are fetched separately from the verdict and can fail on their own. Saying so beats
+               an empty card that reads as "this bracket had no matches in it". *@
+            @if (shown.Bracket.Count == 0)
+            {
+                <div class="status-line muted"><span class="dot bad"></span>
+                    <span>The round-by-round bracket couldn't be read — the verdict below stands on its own.</span>
+                </div>
+            }
+            @* The full podium split is in the resolve response only. Everyone else gets the champion's prize
+               off the tournament DTO — less detail, but a real number rather than an invented one. *@
+            @if (shown.Prizes is { Count: > 0 } prizes)
+            {
+                <div class="status-line" style="margin-top:.8rem"><span class="dot ok"></span>
+                    <span>Prizes: @string.Join(" · ", prizes.Select((p, i) => $"#{i + 1} {p:N0} sat"))</span>
+                </div>
+            }
+            else if (shown.ChampionPrizeSats > 0)
+            {
+                <div class="status-line" style="margin-top:.8rem"><span class="dot ok"></span>
+                    <span>Champion's prize: <b class="mono">@shown.ChampionPrizeSats.ToString("N0")</b> sat</span>
+                </div>
+            }
             <div class="match-row" style="margin-top:.9rem">
                 <span class="hud">Don't trust the pot — recompute it</span>
                 <span class="spacer"></span>
-                <button class="btn ghost sm" @onclick="() => DoVerify(_result!.Tournament.Id)" disabled="@_verifying">
-                    @(_verifying ? "Verifying…" : "Verify in my browser")
+                <button class="btn ghost sm" @onclick="() => DoVerify(shown.Id)" disabled="@(_verifyingId is not null)">
+                    @(_verifyingId == shown.Id ? "Verifying…" : "Verify in my browser")
                 </button>
             </div>
-            @if (_verify is { } v)
+            @* Keyed to the bracket on screen: with a Verify button on every concluded row, an unkeyed badge
+               would report the last recompute against whichever bracket happened to be drawn. *@
+            @if (_verify is { } v && v.Id == shown.Id)
             {
                 <div class="status-line" style="margin-top:.5rem">
                     <span class="dot @(v.Ok ? "ok" : "bad")"></span>
@@ -187,10 +226,40 @@ else
     /// 0 made the page state as fact that the house takes NOTHING out of a real-money pot whenever the
     /// config read failed — a confident wrong price is worse than no price.</summary>
     private int? _rakePct;
-    private bool _loading = true, _busy, _heroesLoaded, _verifying;
+    private bool _loading = true, _busy, _heroesLoaded;
     private string? _status, _error, _loadError;
-    private TournamentResolveResponse? _result;
-    private (bool Ok, string Detail)? _verify;
+
+    /// <summary>
+    /// The bracket whose result is on screen — whoever produced it.
+    ///
+    /// <para>This used to be the <see cref="TournamentResolveResponse"/> itself, which only the entrant who
+    /// pressed "Run bracket!" is ever handed. Every other entrant — the CHAMPION included — had it null
+    /// forever, so the results block never rendered for them, and because the verify badge lives inside
+    /// that block their Verify click ran the whole recompute and produced no pixels and no console error.
+    /// Sourcing the same fields from data every reader can fetch is the entire fix.</para>
+    /// </summary>
+    private ShownBracket? _shown;
+
+    /// <summary>A finished bracket, flattened out of whichever of the two sources produced it.
+    /// <c>Prizes</c> is the full podium split and is null when it came from the public replay, which does
+    /// not carry one — the champion's own prize is on the tournament DTO either way.</summary>
+    private sealed record ShownBracket(
+        string Id, string? ChampionHeroId, long ChampionPrizeSats,
+        IReadOnlyList<TournamentMatchDto> Bracket, IReadOnlyList<long>? Prizes);
+
+    /// <summary>The bracket a recompute is running against, or null when none is. Replaces a bare bool: with
+    /// a Verify button on every concluded row, the page has to say WHICH row is working.</summary>
+    private string? _verifyingId;
+
+    /// <summary>The last verdict, and the bracket it belongs to. Unkeyed, it would be drawn against whatever
+    /// bracket was on screen.</summary>
+    private (string Id, bool Ok, string Detail)? _verify;
+
+    /// <summary>Which recompute owns the page — same discipline as the Duel page's <c>_matchesSeq</c>. The
+    /// buttons are all disabled while one runs, but that only takes effect at the NEXT render, so a second
+    /// click dispatched in the window between could still start a second verify and let a slow first
+    /// verdict land on top of it.</summary>
+    private int _verifySeq;
 
     private string? MyId => _mine.FirstOrDefault()?.OwnerId;
     private IEnumerable<TournamentDto> Joinable => _tournaments.Where(t => t.Status == "open" && !t.Entrants.Any(e => e.PlayerId == MyId));
@@ -217,6 +286,21 @@ else
     private IEnumerable<TournamentDto> OthersFull =>
         _tournaments.Where(t => t.Status == "full" && !t.Entrants.Any(e => e.PlayerId == MyId));
     private string Name(string? heroId) => heroId is not null && _names.TryGetValue(heroId, out var n) ? n : "—";
+
+    /// <summary>
+    /// Did MY entry take the bracket? Null while there is no champion (an open, full or refunded one).
+    ///
+    /// <para>Answered from the ENTRANT record rather than from my current roster, because the two can
+    /// disagree: a champion who has since sold or transferred the winning hero still won this bracket, and
+    /// a roster read that came back short must not quietly demote them to "knocked out".</para>
+    ///
+    /// <para>The same shape as <c>Duel.razor</c>'s <c>IWon(m)</c>, against this page's own DTO — three
+    /// pages have now had this bug and each answers it off the list every player can read.</para>
+    /// </summary>
+    private bool? IWon(TournamentDto t) =>
+        t.ChampionHeroId is not { } champion
+            ? null
+            : t.Entrants.Any(e => e.HeroId == champion && e.PlayerId == MyId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -265,7 +349,9 @@ else
 
     async Task DoResolve(string id) => await RunAction(async () =>
     {
-        _result = await Session.ResolveTournamentAsync(id, s => { _status = s; StateHasChanged(); });
+        var resolved = await Session.ResolveTournamentAsync(id, s => { _status = s; StateHasChanged(); });
+        _shown = new ShownBracket(resolved.Tournament.Id, resolved.Tournament.ChampionHeroId,
+            resolved.Tournament.ChampionPrizeSats, resolved.Bracket, resolved.Prizes);
         await DoVerify(id);   // recompute the just-run bracket in the browser so the trust badge is immediate
     });
 
@@ -273,10 +359,40 @@ else
     // badge, never a page error. Works for any resolved bracket the player can see.
     async Task DoVerify(string id)
     {
-        _verifying = true; _verify = null; StateHasChanged();
-        try { _verify = await Session.VerifyTournamentAsync(id); }
-        catch (Exception ex) { _verify = (false, ex.Message); }
-        finally { _verifying = false; }
+        var seq = ++_verifySeq;
+        _verifyingId = id; _verify = null; StateHasChanged();
+        try
+        {
+            // The bracket itself. Fetched here only when this bracket is not already the one on screen, so
+            // resolving does not throw away the richer response it just received (the public replay carries
+            // no prize split) — and so a second Verify on the same row is a verdict, not a re-download.
+            if (_shown?.Id != id)
+            {
+                IReadOnlyList<TournamentMatchDto> bracket = [];
+                try { bracket = (await Api.Tournament.ReplayAsync(id)).Bracket; }
+                catch { /* the rounds are a nicety; the verdict is the point, and the card says they're missing */ }
+                if (seq != _verifySeq) return;   // superseded in flight; a newer verify owns the page
+                // _shown is set past the catch on purpose, so a bracket whose rounds could NOT be fetched
+                // still opens the results block. A resolved bracket keeps neither its result nor its prizes
+                // across a server restart (PersistedTournament stores neither), so /replay 404s for a real
+                // and reachable bracket — and bailing out there would put the verify badge back where it
+                // started: running to completion with nowhere to draw.
+                var dto = _tournaments.FirstOrDefault(t => t.Id == id);
+                _shown = new ShownBracket(id, dto?.ChampionHeroId, dto?.ChampionPrizeSats ?? 0, bracket, null);
+            }
+
+            var verdict = await Session.VerifyTournamentAsync(id);
+            if (seq != _verifySeq) return;
+            _verify = (id, verdict.Ok, verdict.Detail);
+        }
+        catch (Exception ex)
+        {
+            if (seq != _verifySeq) return;
+            _verify = (id, false, ex.Message);
+        }
+        // Only the current recompute may hand the buttons back — an older one finishing late must not
+        // re-enable them under a newer one that is still running.
+        finally { if (seq == _verifySeq) _verifyingId = null; }
     }
 
     async Task RunAction(Func<Task> action)

@@ -191,32 +191,63 @@ else
                     <div class="match-row muted">
                         <span>Your squad vs a rival · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
                         <span class="spacer"></span>
-                        <span class="chip">resolved</span>
+                        @* The row was a bare "resolved" chip, on BOTH sides — so the player who did not press
+                           "Fight!" was never told the score, who won, or that a replay existed. Every one of
+                           those facts was already on the SquadMatchDto this row is drawn from; nothing read
+                           past .Status. Same treatment /duel's History row already gives m.Result. *@
+                        @if (IWon(m) is { } won)
+                        {
+                            <span class="mono" style="font-size:.82rem">@Score(m)</span>
+                            <span class="chip @(won ? "ok" : "bad")">@(won ? "won" : "lost")</span>
+                            <button class="btn ghost sm" @onclick="() => Watch(m)">Watch</button>
+                        }
+                        else
+                        {
+                            @* Over, but the server attached no result — say only what is known. *@
+                            <span class="chip">resolved</span>
+                        }
                     </div>
                 }
             </div>
         }
     }
 
-    @if (_outcome is not null)
+    @* Driven by _view, which either the resolve response OR a row of the match list can fill — the block
+       itself no longer cares which. Guarded on a non-empty duel list because a list-sourced result is not
+       one this browser just produced: indexing straight into Duels[0] on the strength of a status was a
+       crash waiting for the first result the server records without them. *@
+    @if (_view is { } view && view.Result.Duels.Count > 0)
     {
-        var r = _outcome.Result.Result;
-        var duel = r.Duels[_duelIndex];
+        var r = view.Result;
+        var duel = r.Duels[Math.Min(_duelIndex, r.Duels.Count - 1)];
         <div class="page-head" style="margin-top:1.8rem">
-            <h3 style="margin:0">Squad match — duel @(_duelIndex + 1) of 3</h3>
-            <span class="hud">best of 3 · @r.ChallengerWins–@r.DefenderWins</span>
+            <h3 style="margin:0">Squad match — duel @(_duelIndex + 1) of @r.Duels.Count</h3>
+            @* Stated from the viewer's own side. The DTO speaks challenger/defender, which reads backwards
+               for a defender — and half the audience for this block is now the defender. *@
+            <span class="hud">best of 3 · @view.MyWins–@view.TheirWins</span>
         </div>
         <BattleArena A="duel.Challenger" B="duel.Defender" Fight="duel.Result" OnFinished="NextDuel" />
         @if (_duelIndex >= r.Duels.Count - 1)
         {
             <div class="card" style="margin-top:1.2rem">
                 <div class="status-line"><span class="dot ok"></span>
-                    <span><b>@(r.ChallengerWon ? "Your squad" : "The rival squad")</b> wins the best-of-3 (@r.ChallengerWins–@r.DefenderWins) — <b class="mono">@_outcome.Result.WinnerPayoutSats.ToString("N0")</b> sats to the winner</span>
+                    <span><b>@(view.IWon ? "Your squad" : "The rival squad")</b> wins the best-of-3 (@view.MyWins–@view.TheirWins)@(view.WinnerPayoutSats is { } payout ? $" — {payout:N0} sats to the winner" : "")</span>
                 </div>
-                <div class="status-line" style="margin-top:.7rem">
-                    <span class="dot @(_outcome.FairnessOk ? "ok" : "bad")"></span>
-                    <span class="mono" style="font-size:.78rem">@(_outcome.FairnessOk ? $"fairness ✓ {_outcome.FairnessDetail}" : $"fairness ✗ server cheated: {_outcome.FairnessDetail}")</span>
-                </div>
+                @* A fairness audit is something THIS browser ran while resolving; a replay pulled out of the
+                   match list has not had one. Saying so beats an absent line that reads as a silent pass. *@
+                @if (view.FairnessOk is { } fair)
+                {
+                    <div class="status-line" style="margin-top:.7rem">
+                        <span class="dot @(fair ? "ok" : "bad")"></span>
+                        <span class="mono" style="font-size:.78rem">@(fair ? $"fairness ✓ {view.FairnessDetail}" : $"fairness ✗ server cheated: {view.FairnessDetail}")</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="status-line muted" style="margin-top:.7rem">
+                        <span class="mono" style="font-size:.78rem">replayed from your match list — no fairness audit ran in this browser</span>
+                    </div>
+                }
             </div>
         }
     }
@@ -247,8 +278,30 @@ else
             return picked.Count == 0 ? null : picked.Max(h => h.Level);
         }
     }
-    private SquadOutcome? _outcome;
+    /// <summary>
+    /// The finished squad match currently on screen, from whichever side is looking at it.
+    ///
+    /// <para>This used to be the <see cref="SquadOutcome"/> straight off <c>ResolveSquadAsync</c>, and only
+    /// the CHALLENGER ever gets one — so the defender's whole experience of a staked 3v3 ending was their
+    /// row turning into the word "resolved". The score, the winner and all three fights were sitting in
+    /// <c>SquadMatchDto.Result</c> on the list the row was already drawn from.</para>
+    /// </summary>
+    private SquadView? _view;
     private int _duelIndex;
+
+    /// <summary>
+    /// A finished 3v3 plus the two things only the resolving browser can know, both nullable so the block
+    /// can state what it has instead of implying what it hasn't: the payout (the list DTO carries the wager,
+    /// not the settlement) and the fairness verdict (an audit this browser ran, not a fact it was told).
+    /// </summary>
+    private sealed record SquadView(
+        string MatchId, SquadResultDto Result, bool IAmChallenger,
+        long? WinnerPayoutSats, bool? FairnessOk, string FairnessDetail)
+    {
+        public bool IWon => IAmChallenger == Result.ChallengerWon;
+        public int MyWins => IAmChallenger ? Result.ChallengerWins : Result.DefenderWins;
+        public int TheirWins => IAmChallenger ? Result.DefenderWins : Result.ChallengerWins;
+    }
 
     private string? MyOwnerId => _mine.FirstOrDefault()?.OwnerId;
     private List<string> MyLineup => new() { _slot0, _slot1, _slot2 };
@@ -280,6 +333,21 @@ else
     /// (status × my role) now renders somewhere — which is the property that was missing, not any one row.
     /// </summary>
     private IEnumerable<SquadMatchDto> History => _matches.Where(m => m.Status == "resolved" && Mine(m));
+
+    /// <summary>Which side of a match is mine. A match only reaches this page because one of my heroes is in
+    /// it, so "not on the challenger lineup" means the defender. A match of mine against myself is read as
+    /// the challenger — the same tie-break the server's own payout takes.</summary>
+    private bool IAmChallenger(SquadMatchDto m) => m.ChallengerLineup.Any(MineIds.Contains);
+
+    /// <summary>Did MY squad take the pot? Null while the server has attached no result — "over" and "over,
+    /// and here is who won" are different facts and the row says only the one it has.</summary>
+    private bool? IWon(SquadMatchDto m) =>
+        m.Result is not { } r ? null : IAmChallenger(m) == r.ChallengerWon;
+
+    /// <summary>The best-of-3 from MY side of the table, mine first.</summary>
+    private string Score(SquadMatchDto m) =>
+        m.Result is not { } r ? ""
+            : IAmChallenger(m) ? $"{r.ChallengerWins}–{r.DefenderWins}" : $"{r.DefenderWins}–{r.ChallengerWins}";
 
     protected override async Task OnInitializedAsync()
     {
@@ -331,13 +399,29 @@ else
 
     async Task DoResolve(string id) => await RunAction("Resolving…", async () =>
     {
-        _outcome = await Session.ResolveSquadAsync(id, s => { _status = s; StateHasChanged(); });
+        var outcome = await Session.ResolveSquadAsync(id, s => { _status = s; StateHasChanged(); });
+        // Only the challenger may resolve (see ToResolve), so this side is mine by construction.
+        _view = new SquadView(id, outcome.Result.Result, IAmChallenger: true,
+            outcome.Result.WinnerPayoutSats, outcome.FairnessOk, outcome.FairnessDetail);
         _duelIndex = 0;
     });
 
+    /// <summary>
+    /// Play a finished match back from the row. Entirely local — the duels, both lineups' snapshots and
+    /// every blow ride along on <see cref="SquadMatchDto.Result"/>, so there is no fetch here and therefore
+    /// no read to race against the poll-less loads this page already does.
+    /// </summary>
+    void Watch(SquadMatchDto m)
+    {
+        if (m.Result is not { } r) return;
+        _view = new SquadView(m.MatchId, r, IAmChallenger(m),
+            WinnerPayoutSats: null, FairnessOk: null, FairnessDetail: "");
+        _duelIndex = 0;
+    }
+
     void NextDuel()
     {
-        if (_outcome is not null && _duelIndex < _outcome.Result.Result.Duels.Count - 1)
+        if (_view is not null && _duelIndex < _view.Result.Duels.Count - 1)
         {
             _duelIndex++;
             StateHasChanged();
