@@ -120,6 +120,11 @@ public class GauntletGradeTests
         // DOWN on sampling noise — taking the second-largest gene instead would misgrade about 1% of EVERY
         // cohort, handing a softer ladder to heroes that never needed one and re-baselining the replay
         // vectors to do it. That trade is refused here on purpose; changing this is a deliberate act.
+        // This first line is also a deliberate tripwire on the recruit cap itself. The grade lands on a rung
+        // of the form 2^k−1, and 63 IS one, so a recruit is graded exactly. Retune the cap to something off
+        // a rung — 60, say — and this goes red, which is the point: the ghost would then be drawn a little
+        // above the runner rather than level with it. That is a small effect, not a return of the bug, but
+        // whoever moves the cap should see it rather than discover it in a clear-rate months later.
         var genes = new byte[Genome.Size];
         foreach (var i in StatAndGrowthGenes) genes[i] = StarterPolicy.RecruitStatCap;
         Assert.Equal(StarterPolicy.RecruitStatCap, new Genome(genes).StatGeneCeiling);
