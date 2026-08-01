@@ -74,8 +74,14 @@
                 + "covenant. The winner takes the pot.", Sats),
             new("Squad 3v3", "squad", "🛡", "Three heroes a side, best of three, position matters. The "
                 + "same escrow as a duel with more to think about.", Sats),
-            new("Tournaments", "tournaments", "🏆", "A bracket with a buy-in. The pot splits across the "
-                + "top three, and the house takes a small rake.", Sats),
+            // "The top three" was simply not true: Tournament.PrizeWeights is [70, 30] and Podium()
+            // returns the champion and the final's loser, so there is no third place at ANY bracket size.
+            // A card telling players a real-sats pot pays three ways when it pays two is the same class of
+            // wrong as a mislabelled entry fee. The 70/30 is a compiled-in Core constant so it is safe to
+            // state; the rake is operator-configurable, so it stays qualitative here — /tournaments quotes
+            // the live number, which is the page that can read it.
+            new("Tournaments", "tournaments", "🏆", "A bracket with a buy-in. The champion and runner-up "
+                + "split the pot 70/30, and the house takes a small rake.", Sats),
             new("Death-match", "deathmatch", "💀", "Winner takes everything and the loser's hero is "
                 + "destroyed forever. The winner can absorb a trait it was beaten by.", Gone),
         ]),
