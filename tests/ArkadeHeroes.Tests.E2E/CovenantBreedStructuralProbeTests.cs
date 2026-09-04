@@ -82,7 +82,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -146,7 +146,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
                 new TxOut(Money.Satoshis(dust), thiefScript),                 // stolen parentA (out 2)
             ],
             extraPackets: [Packet.Create([ParentPt(parentA, 0, 2), ParentPt(parentB, 1, 0), Child(0)])]));
-        Assert.Contains("Emulator rejected", parentTheft.Message);
+        Assert.Contains("Emulator tx failed", parentTheft.Message);
 
         // ── Cheat: STEAL the child — route it to a thief output (2) instead of the player at 0
         //    → ChildAtOutput(0) refuses (the child group's vout != 0).
@@ -158,7 +158,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
                 new TxOut(Money.Satoshis(dust), thiefScript),                 // stolen child (out 2)
             ],
             extraPackets: [Packet.Create([ParentPt(parentA, 0, 0), ParentPt(parentB, 1, 0), Child(2)])]));
-        Assert.Contains("Emulator rejected", childTheft.Message);
+        Assert.Contains("Emulator tx failed", childTheft.Message);
 
         // ── Honest breed: both parents retained → player (output 0), child minted → player
         //    (output 0), fee → treasury (output 1) → co-signed.
@@ -190,7 +190,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -257,7 +257,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
         // conservation is what closes the hole.
         //
         // The refusal must come from the chain/emulator, not from our own builder tripping over itself.
-        Assert.Contains("Emulator rejected", refused.Message);
+        Assert.Contains("Emulator tx failed", refused.Message);
     }
 
     [Fact]
@@ -265,7 +265,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -325,7 +325,7 @@ public class CovenantBreedStructuralProbeTests : IAsyncLifetime
             _funder, EmulatorUri, RefundInputs(refundAfter),
             [new TxOut(Money.Satoshis(total), thiefScript)],
             extraPackets: [RefundPacket()]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         // Canonical honest refund (submit exactly ONCE): both parents home, co-signed.
         var refund = await CovenantSpender.SpendManyAsync(

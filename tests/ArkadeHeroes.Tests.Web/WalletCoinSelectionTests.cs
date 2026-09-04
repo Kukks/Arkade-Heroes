@@ -74,7 +74,7 @@ public class WalletCoinSelectionTests
             () => wallet.SendSatsAsync(WalletId, Destination, 5_000));
 
         Assert.Contains("Not enough spendable sats", ex.Message);
-        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default!, default!);
+        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default(ArkCoin[])!, default!);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public class WalletCoinSelectionTests
             () => wallet.SendAssetAsync(WalletId, Destination, HeroAsset));
 
         Assert.Contains("another hero", ex.Message);
-        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default!, default!);
+        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default(ArkCoin[])!, default!);
     }
 
     [Fact]
@@ -237,9 +237,13 @@ public class WalletCoinSelectionTests
 
     // ── Fixtures ─────────────────────────────────────────────────────────────────────────────────
 
+    // Keyed on the argument that distinguishes the explicit-coins overload from the auto-selecting
+    // one, not on an argument COUNT: the SDK adds optional trailing parameters (it grew a packets
+    // one), and a count silently stops matching any call rather than failing where the change was.
     private static ArkCoin[] Inputs(ISpendingService spending, int call = 1) =>
         (ArkCoin[])spending.ReceivedCalls()
-            .Where(c => c.GetMethodInfo().Name == nameof(ISpendingService.Spend) && c.GetArguments().Length == 4)
+            .Where(c => c.GetMethodInfo().Name == nameof(ISpendingService.Spend)
+                        && c.GetArguments() is [_, ArkCoin[], ..])
             .ElementAt(call - 1).GetArguments()[1]!;
 
     private static (GameWallet Wallet, ISpendingService Spending) Wallet(params ArkCoin[] coins)

@@ -5,6 +5,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NArk.Core.Helpers;
 using NArk.Core.Services;
@@ -75,7 +76,7 @@ public static class CovenantSpender
     /// Spends a covenant VTXO through the named function. <paramref name="gameOutputs"/>
     /// are the value outputs the covenant constrains; the packet output is appended here.
     /// </summary>
-    public static Task<EmulatorSubmitResponse> SpendAsync(
+    public static Task<EmulatorSubmitTxResult> SpendAsync(
         SelfCustodyWallet actor,
         Uri emulatorUri,
         ArkadeArtifactContract contract,
@@ -96,7 +97,7 @@ public static class CovenantSpender
     /// asset-vin remap path rebuilds it from the asset packet alone, so input
     /// order must stay deterministic (it does: ShuffleInputs=false).
     /// </summary>
-    public static Task<EmulatorSubmitResponse> SpendManyAsync(
+    public static Task<EmulatorSubmitTxResult> SpendManyAsync(
         SelfCustodyWallet actor,
         Uri emulatorUri,
         IReadOnlyList<CovenantInput> inputs,
@@ -115,7 +116,7 @@ public static class CovenantSpender
     /// Service-level core of the covenant spend — usable from any NArk service
     /// graph (a player wallet or the game server's own DI container).
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> SpendManyCoreAsync(
+    public static async Task<EmulatorSubmitTxResult> SpendManyCoreAsync(
         global::NArk.Core.Transport.IClientTransport transport,
         ISafetyService safetyService,
         IWalletProvider walletProvider,
@@ -263,10 +264,15 @@ public static class CovenantSpender
             }
         }
 
-        var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));
-        return await emulator.SubmitTxAsync(new EmulatorSubmitRequest(
-            arkTx.ToBase64(),
-            checkpoints.Select(c => c.Psbt.ToBase64()).ToArray()), ct);
+        // Emulator v0.0.7+ refuses any input that does not carry the transaction which funded
+        // it ("missing prevout tx for input N") — it needs those outputs to run introspection.
+        // The field rides the PSBT's unknown map, which no signature covers, so it is attached
+        // after signing and just before submitting.
+        var checkpointPsbts = checkpoints.Select(c => c.Psbt).ToList();
+        await arkTx.AttachPrevArkTxsAsync(checkpointPsbts, new PrevArkTxProvider(transport), ct);
+
+        return await EmulatorEndpoint.Client(emulatorUri).SubmitTxAsync(
+            arkTx.ToBase64(), [.. checkpointPsbts.Select(p => p.ToBase64())], ct);
     }
 }
 
@@ -293,8 +299,7 @@ public static class CovenantProbe
     {
         var transport = funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulator = new EmulatorClient(new Uri(emulatorUri.ToString().TrimEnd('/') + "/"));
-        var emulatorInfo = await emulator.GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
 
         var contract = new ArkadeArtifactContract(
             "probe", serverInfo.SignerKey, emulatorInfo.SignerPubkey,
@@ -309,6 +314,6 @@ public static class CovenantProbe
             funder, emulatorUri, contract, "probe", scriptWitness, vtxo,
             [new TxOut(Money.Satoshis((long)vtxo.Amount), ArkAddress.Parse(funder.Address))], ct);
 
-        return new ProbeResult(addressText, fundingTxId, response.SignedArkTx, response.SignedCheckpointTxs.Length);
+        return new ProbeResult(addressText, fundingTxId, response.SignedArkTx, response.SignedCheckpointTxs.Count);
     }
 }

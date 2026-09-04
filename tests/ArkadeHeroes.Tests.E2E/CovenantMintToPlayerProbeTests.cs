@@ -58,7 +58,7 @@ public class CovenantMintToPlayerProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -93,7 +93,7 @@ public class CovenantMintToPlayerProbeTests : IAsyncLifetime
                 AssetGroup.Create(inputAsset, null, [AssetInput.Create(0, 1)], [], []),   // input burned
                 AssetGroup.Create(null, null, [], [AssetOutput.Create(0, 1)], []),        // fresh mint → out 0
             ])]));
-        Assert.Contains("Emulator rejected", wrong.Message);
+        Assert.Contains("Emulator tx failed", wrong.Message);
 
         // ── Cheat: smuggle a SECOND fresh asset at output 0 → 0xed count == 2 refuses.
         var extra = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
@@ -104,7 +104,7 @@ public class CovenantMintToPlayerProbeTests : IAsyncLifetime
                 AssetGroup.Create(null, null, [], [AssetOutput.Create(0, 1)], []),
                 AssetGroup.Create(null, null, [], [AssetOutput.Create(0, 1)], []),        // 2nd asset at out 0
             ])]));
-        Assert.Contains("Emulator rejected", extra.Message);
+        Assert.Contains("Emulator tx failed", extra.Message);
 
         // ── Honest: fresh mint → output 0 paying the player, input burned → co-signed.
         var response = await CovenantSpender.SpendManyAsync(

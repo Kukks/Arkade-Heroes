@@ -55,7 +55,7 @@ public class CovenantAssetAtWitnessOutputProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
         var funderScript = ArkAddress.Parse(_funder.Address).ScriptPubKey;
@@ -88,14 +88,14 @@ public class CovenantAssetAtWitnessOutputProbeTests : IAsyncLifetime
             _funder, EmulatorUri, Inputs(0), [new TxOut(Money.Satoshis(fund), funderScript)],
             extraPackets: [Packet.Create(
                 [AssetGroup.Create(asset, null, [AssetInput.Create(0, 1)], [], [])])]));
-        Assert.Contains("Emulator rejected", burn.Message);
+        Assert.Contains("Emulator tx failed", burn.Message);
 
         // ── Cheat: the witness points at output 0 but the asset is routed to output 1.
         var wrongIndex = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _funder, EmulatorUri, Inputs(0),
             [new TxOut(Money.Satoshis(dust), funderScript), new TxOut(Money.Satoshis(fund - dust), otherScript)],
             extraPackets: [Passthrough(1)]));
-        Assert.Contains("Emulator rejected", wrongIndex.Message);
+        Assert.Contains("Emulator tx failed", wrongIndex.Message);
 
         // ── Honest: asset → output 0, witness points at 0 → co-signed.
         var response = await CovenantSpender.SpendManyAsync(

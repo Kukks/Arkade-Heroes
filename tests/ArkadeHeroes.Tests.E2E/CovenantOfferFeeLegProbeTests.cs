@@ -83,7 +83,7 @@ public class CovenantOfferFeeLegProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
 
         var itemId = await IssueItemAsync();
@@ -132,7 +132,7 @@ public class CovenantOfferFeeLegProbeTests : IAsyncLifetime
             extraPackets: [Packet.Create(
                 [AssetGroup.Create(item, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(1, 1)], [])])],
             fundingCoins: funding));
-        Assert.Contains("Emulator rejected", skipped.Message);
+        Assert.Contains("Emulator tx failed", skipped.Message);
 
         // ── Cheat B (the sharper one): pay the RIGHT amounts, but route the fee to the BUYER.
         //    If only the amount were pinned this would pass and the "fee" would be self-refunding.
@@ -149,7 +149,7 @@ public class CovenantOfferFeeLegProbeTests : IAsyncLifetime
             extraPackets: [Packet.Create(
                 [AssetGroup.Create(item, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(2, 1)], [])])],
             fundingCoins: funding));
-        Assert.Contains("Emulator rejected", redirected.Message);
+        Assert.Contains("Emulator tx failed", redirected.Message);
 
         // ── Honest: through the REAL buyer flow, not a hand-built spend. OfferFulfillFlow reads the
         //    fee off the params and emits the 3-element witness itself, so this co-signing is also the

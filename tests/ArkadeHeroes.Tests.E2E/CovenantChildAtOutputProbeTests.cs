@@ -54,7 +54,7 @@ public class CovenantChildAtOutputProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
         var funderScript = ArkAddress.Parse(_funder.Address).ScriptPubKey;
@@ -84,7 +84,7 @@ public class CovenantChildAtOutputProbeTests : IAsyncLifetime
             _funder, EmulatorUri, Inputs(),
             [new TxOut(Money.Satoshis(dust), funderScript), new TxOut(Money.Satoshis(fund - dust), strangerScript)],
             extraPackets: [Packet.Create([Child(1)])]));
-        Assert.Contains("Emulator rejected", elsewhere.Message);
+        Assert.Contains("Emulator tx failed", elsewhere.Message);
 
         // ── Honest: the child at output 0 → co-signed.
         var response = await CovenantSpender.SpendManyAsync(

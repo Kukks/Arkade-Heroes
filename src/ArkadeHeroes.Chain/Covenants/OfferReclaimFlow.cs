@@ -5,6 +5,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NArk.Core.Services;
 using NBitcoin;
@@ -29,7 +30,7 @@ public static class OfferReclaimFlow
 {
     /// <summary>Reclaims from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
     /// <returns>The emulator's co-signed response for the reclaim transaction.</returns>
-    public static Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static Task<EmulatorSubmitTxResult> ReclaimAsync(
         SelfCustodyWallet seller,
         Uri emulatorUri,
         OfferParams offer,
@@ -45,7 +46,7 @@ public static class OfferReclaimFlow
     /// of this covenant spend rather than each carrying its own.
     /// </summary>
     /// <returns>The emulator's co-signed response for the reclaim transaction.</returns>
-    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static async Task<EmulatorSubmitTxResult> ReclaimAsync(
         IServiceProvider services,
         string walletId,
         string sellerAddress,
@@ -57,7 +58,7 @@ public static class OfferReclaimFlow
     {
         var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
 
         if (sellerAddress != offer.SellerAddress)
             throw new InvalidOperationException(

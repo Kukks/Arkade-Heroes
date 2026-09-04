@@ -1,5 +1,6 @@
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NBitcoin;
 
@@ -97,7 +98,7 @@ public class CovenantOfferCarrierFundingProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 25_000, offerDust = 2_000;
 

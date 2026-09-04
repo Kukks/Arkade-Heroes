@@ -63,6 +63,6 @@ public class CovenantSpendTests : IAsyncLifetime
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => CovenantProbe.RunAsync(
             _funder, EmulatorUri, arkadeScript: [0x00], scriptWitness: []));
 
-        Assert.Contains("Emulator rejected", ex.Message);
+        Assert.Contains("Emulator tx failed", ex.Message);
     }
 }

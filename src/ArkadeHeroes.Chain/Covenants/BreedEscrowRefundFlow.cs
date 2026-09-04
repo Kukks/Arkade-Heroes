@@ -6,6 +6,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NArk.Core.Services;
 using NBitcoin;
@@ -24,7 +25,7 @@ namespace ArkadeHeroes.Chain.Covenants;
 public static class BreedEscrowRefundFlow
 {
     /// <summary>Reclaims from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
-    public static Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static Task<EmulatorSubmitTxResult> ReclaimAsync(
         SelfCustodyWallet wallet,
         Uri emulatorUri,
         BreedEscrowParams parameters,
@@ -39,7 +40,7 @@ public static class BreedEscrowRefundFlow
     /// container OR a browser's Blazor DI), so the console and the browser share ONE implementation
     /// of this covenant spend rather than each carrying its own.
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static async Task<EmulatorSubmitTxResult> ReclaimAsync(
         IServiceProvider services,
         string walletId,
         string playerAddress,
@@ -51,7 +52,7 @@ public static class BreedEscrowRefundFlow
     {
         var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
         var contract = BreedEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
 
         if (playerAddress != parameters.PlayerAddress)

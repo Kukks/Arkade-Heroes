@@ -120,7 +120,7 @@ public class ClientRefundFlowTests : IAsyncLifetime
         Assert.Equal(_alice.Address, parameters.ChallengerAddress);
         var transport = _alice.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var (challengerContract, _) = WagerEscrowContracts.Build(
             parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
         Assert.Equal(open.EscrowAddress,

@@ -1,5 +1,6 @@
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NBitcoin;
 
@@ -83,7 +84,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 8_000, offerDust = 2_000;
 
@@ -118,7 +119,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 8_000;
 
@@ -155,7 +156,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
             ],
             extraPackets: [packet],
             fundingCoins: funding));
-        Assert.Contains("Emulator rejected", underpay.Message);
+        Assert.Contains("Emulator tx failed", underpay.Message);
 
         // And the buyer walked away with nothing — the item never moved.
         Assert.DoesNotContain(await _buyer.GetAssetsAsync(), a => a.AssetId == itemId && a.Amount > 0);
@@ -173,7 +174,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 8_000;
 
@@ -214,7 +215,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 8_000;
 
@@ -265,7 +266,7 @@ public class CovenantOfferProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         const long ask = 12_000;
 

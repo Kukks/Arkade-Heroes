@@ -1,4 +1,4 @@
-using ArkadeHeroes.Chain.Covenants;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 
 namespace ArkadeHeroes.Tests;
@@ -67,7 +67,7 @@ public class EmulatorPacketTests
 
         var parsed = Extension.FromScript(script);
         var record = Assert.IsType<UnknownPacket>(
-            parsed.Packets.Single(p => p.PacketType == EmulatorPacket.TypeByte));
+            parsed.Packets.Single(p => p.PacketType == EmulatorPacket.PacketTypeId));
         Assert.Equal(
             Convert.ToHexString(packet.SerializePacketData()),
             Convert.ToHexString(record.Data));

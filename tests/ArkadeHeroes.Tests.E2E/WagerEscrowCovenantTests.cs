@@ -59,7 +59,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
 
         // Match open: the server commits to a seed BEFORE stakes are funded —
         // the commitment, the players, AND the oracle key are baked into the
@@ -134,20 +134,20 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         var forged = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, SettleInputs(serverSeed, SignSettle(forgerKey, true)),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
-        Assert.Contains("Emulator rejected", forged.Message);
+        Assert.Contains("Emulator tx failed", forged.Message);
 
         // 2. CROSS-BRANCH replay: the oracle's signature for the DEFENDER
         //    branch cannot authorize the challenger branch.
         var crossBranch = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, SettleInputs(serverSeed, SignSettle(oracleKey, challengerWon: false)),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
-        Assert.Contains("Emulator rejected", crossBranch.Message);
+        Assert.Contains("Emulator tx failed", crossBranch.Message);
 
         // 3. Wrong seed — the commit gate fails even with a valid oracle sig.
         var wrongSeed = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, SettleInputs(CommitReveal.NewSeed(), honestSig),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]));
-        Assert.Contains("Emulator rejected", wrongSeed.Message);
+        Assert.Contains("Emulator tx failed", wrongSeed.Message);
 
         // 4. Short pot — pays the winner less than the pot, siphoning the rest.
         var shortPot = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
@@ -156,7 +156,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
                 new TxOut(Money.Satoshis(Pot - 2_000), challengerPkScript),
                 new TxOut(Money.Satoshis(2_000), defenderPkScript),
             ]));
-        Assert.Contains("Emulator rejected", shortPot.Message);
+        Assert.Contains("Emulator tx failed", shortPot.Message);
 
         // 5. WRONG SCRIPT — the full pot (right amount, valid sig + seed) paid to
         //    the DEFENDER's script under the challenger-won branch. PayTo's baked
@@ -165,7 +165,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         var wrongScript = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(Pot), defenderPkScript)]));
-        Assert.Contains("Emulator rejected", wrongScript.Message);
+        Assert.Contains("Emulator tx failed", wrongScript.Message);
 
         // 6. Honest settle: oracle-authorized branch, revealed seed, full pot.
         var balanceBefore = await _challenger.GetBalanceSatsAsync();
@@ -173,7 +173,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
             _challenger, EmulatorUri, SettleInputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(Pot), challengerPkScript)]);
         Assert.False(string.IsNullOrEmpty(response.SignedArkTx));
-        Assert.Equal(2, response.SignedCheckpointTxs.Length);
+        Assert.Equal(2, response.SignedCheckpointTxs.Count);
 
         await _challenger.WaitForBalanceAsync(balanceBefore + Pot, TimeSpan.FromSeconds(45));
     }
@@ -183,7 +183,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
 
         // A match nobody ever accepted: the challenger staked, the defender
         // vanished. The refund leaf lets the challenger reclaim after expiry
@@ -231,7 +231,7 @@ public class WagerEscrowCovenantTests : IAsyncLifetime
         var theft = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, RefundInputs(refundAfter),
             [new TxOut(Money.Satoshis(Stake), thiefScript)]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         var balanceBefore = await _challenger.GetBalanceSatsAsync();
         var refund = await CovenantSpender.SpendManyAsync(
