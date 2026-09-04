@@ -16,6 +16,9 @@ dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --rarity --population 
 
 # What the XP mint pays, straight from Gauntlet.Resolve.
 dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --xp --samples 4000
+
+# Whether a new player can afford to climb, and what would have to move if not.
+dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --afford --budget 100000
 ```
 
 Everything is seeded, so a finding is reproducible by quoting its seed.
@@ -51,6 +54,22 @@ PvP cannot make up the difference: it only moves XP between heroes, and it is sa
 population as a whole (the 20-player arena run ended with the treasury up 463,760). This is the finding
 that explains the leaderboard: after 150 duels, 45 gauntlets, 56 trials and 28 squad matches, every hero
 in the top five was still level 1.
+
+`--afford` re-prices that climb under candidate settings. It is analysis, not advocacy — every row
+changes who earns sats:
+
+```
+  as shipped:              213 runs     186,970 sats   SHORT by 86,970
+  coefficient 45 -> 20       116 runs     101,200 sats   SHORT by 1,200
+  base 80 -> 40, coeff 20     98 runs      85,900 sats   affordable
+  2.0x xp per run            109 runs      95,650 sats   affordable
+  dungeon bonus 250 -> 0     213 runs     133,720 sats   SHORT by 33,720
+```
+
+The load-bearing row is the last one: **entry-fee changes alone cannot close the gap.** Even making PvE
+free at the door — which `Gauntlet.FeeBonusSats` exists specifically to prevent, since the bonus is what
+keeps PvE a treasury sink rather than a faucet — still leaves a climber 33,720 short. Only the curve or
+the yield reaches affordability.
 
 **A better genome does not help in PvE.** Ghosts are drawn at the runner's own `StatGeneCeiling`, so a
 bred hero faces bred-grade ghosts and clears no more waves than a recruit does (44% vs 40% zero-wave).

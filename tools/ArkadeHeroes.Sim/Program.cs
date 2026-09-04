@@ -29,6 +29,12 @@ internal static class SimMain
             return 0;
         }
 
+        if (args.Contains("--afford"))
+        {
+            Console.WriteLine(Affordability.Render(Arg(args, "--samples", 2000), seed, Arg(args, "--budget", 100_000)));
+            return 0;
+        }
+
         Console.WriteLine($"Arkade Heroes playthrough — {players} players, {rounds} rounds, seed {seed}");
         Console.WriteLine();
 
