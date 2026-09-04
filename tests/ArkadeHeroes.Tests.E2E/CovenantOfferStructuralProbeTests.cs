@@ -76,7 +76,7 @@ public class CovenantOfferStructuralProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
 
         var itemId = await IssueItemAsync();
@@ -119,7 +119,7 @@ public class CovenantOfferStructuralProbeTests : IAsyncLifetime
             extraPackets: [Packet.Create(
                 [AssetGroup.Create(item, null, [AssetInput.Create(0, 1)], [], [])])],   // burned
             fundingCoins: funding));
-        Assert.Contains("Emulator rejected", burn.Message);
+        Assert.Contains("Emulator tx failed", burn.Message);
 
         // ── Honest fulfil through the REAL flow → co-signed, buyer receives the item.
         var response = await OfferFulfillFlow.FulfillAsync(_buyer, EmulatorUri, offer);
@@ -132,7 +132,7 @@ public class CovenantOfferStructuralProbeTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
 
         var itemId = await IssueItemAsync();
@@ -174,7 +174,7 @@ public class CovenantOfferStructuralProbeTests : IAsyncLifetime
                 LockTime: new LockTime((uint)refundAfter))],
             [new TxOut(Money.Satoshis(offerDust), thiefScript)],
             extraPackets: [ItemToOut0()]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         // ── Honest reclaim through the REAL flow (submit exactly ONCE) → co-signed,
         //    the item returns to the seller.

@@ -58,7 +58,7 @@ public class OfferFulfillCovenantTests : IAsyncLifetime
     {
         var transport = _seller.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
 
         // The offer covenant: whoever spends this VTXO must pay the seller
         // exactly AskPrice at a witness-chosen output index.
@@ -81,7 +81,7 @@ public class OfferFulfillCovenantTests : IAsyncLifetime
                 new TxOut(Money.Satoshis(AskPrice - 1_000), sellerPkScript),
                 new TxOut(Money.Satoshis(OfferValue - AskPrice + 1_000), takerPkScript),
             ]));
-        Assert.Contains("Emulator rejected", underpay.Message);
+        Assert.Contains("Emulator tx failed", underpay.Message);
 
         // 2. Honest fulfillment: seller gets the ask, taker keeps the spread.
         var response = await CovenantSpender.SpendAsync(

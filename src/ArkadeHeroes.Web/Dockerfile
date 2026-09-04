@@ -50,7 +50,7 @@ COPY external/dotnet-sdk/Directory.Build.props external/dotnet-sdk/version.json 
 COPY external/dotnet-sdk/NArk/NArk.csproj                             external/dotnet-sdk/NArk/
 COPY external/dotnet-sdk/NArk.Core/NArk.Core.csproj                   external/dotnet-sdk/NArk.Core/
 COPY external/dotnet-sdk/NArk.Abstractions/NArk.Abstractions.csproj   external/dotnet-sdk/NArk.Abstractions/
-COPY external/dotnet-sdk/NArk.Swaps/NArk.Swaps.csproj                 external/dotnet-sdk/NArk.Swaps/
+COPY external/dotnet-sdk/NArk.Arkade/NArk.Arkade.csproj               external/dotnet-sdk/NArk.Arkade/
 COPY external/dotnet-sdk/NArk.Storage.EfCore/NArk.Storage.EfCore.csproj external/dotnet-sdk/NArk.Storage.EfCore/
 
 RUN test -f external/dotnet-sdk/NArk.Core/NArk.Core.csproj || { \

@@ -92,7 +92,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -142,20 +142,20 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
         var forged = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(serverSeed, SignSettle(forgerPriv, matchId, true)),
             [new TxOut(Money.Satoshis(total), challengerScript)], extraPackets: [HonestPacket()]));
-        Assert.Contains("Emulator rejected", forged.Message);
+        Assert.Contains("Emulator tx failed", forged.Message);
 
         // ── Cheat: CROSS-BRANCH replay — the oracle's DEFENDER-branch sig can't
         //    authorize settleToChallenger (its baked message differs).
         var crossBranch = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(serverSeed, SignSettle(oraclePriv, matchId, challengerWon: false)),
             [new TxOut(Money.Satoshis(total), challengerScript)], extraPackets: [HonestPacket()]));
-        Assert.Contains("Emulator rejected", crossBranch.Message);
+        Assert.Contains("Emulator tx failed", crossBranch.Message);
 
         // ── Cheat: WRONG seed — the commit gate fails even with a valid oracle sig.
         var wrongSeed = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(CommitReveal.NewSeed(), honestSig),
             [new TxOut(Money.Satoshis(total), challengerScript)], extraPackets: [HonestPacket()]));
-        Assert.Contains("Emulator rejected", wrongSeed.Message);
+        Assert.Contains("Emulator tx failed", wrongSeed.Message);
 
         // ── Cheat: KEEP THE LOSER ALIVE — route D to its own second output.
         var keepAlive = Packet.Create(
@@ -167,7 +167,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
             _challenger, EmulatorUri, Inputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(dust), challengerScript), new TxOut(Money.Satoshis(dust), challengerScript)],
             extraPackets: [keepAlive]));
-        Assert.Contains("Emulator rejected", alive.Message);
+        Assert.Contains("Emulator tx failed", alive.Message);
 
         // ── Cheat: route the LOSER to the WINNER's output (0).
         var toWinner = Packet.Create(
@@ -178,13 +178,13 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
         var loserToWinner = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(total), challengerScript)], extraPackets: [toWinner]));
-        Assert.Contains("Emulator rejected", loserToWinner.Message);
+        Assert.Contains("Emulator tx failed", loserToWinner.Message);
 
         // ── Cheat: pay the WINNER's hero to the WRONG script.
         var wrongDest = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(total), wrongScript)], extraPackets: [HonestPacket()]));
-        Assert.Contains("Emulator rejected", wrongDest.Message);
+        Assert.Contains("Emulator tx failed", wrongDest.Message);
 
         // ── Honest settle: valid oracle sig on THIS branch, revealed seed, winner's
         //    hero at output 0 paying the winner, loser's hero burned → co-signed.
@@ -192,7 +192,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
             _challenger, EmulatorUri, Inputs(serverSeed, honestSig),
             [new TxOut(Money.Satoshis(total), challengerScript)], extraPackets: [HonestPacket()]);
         Assert.False(string.IsNullOrEmpty(response.SignedArkTx), "the honest joint settle must be emulator-co-signed");
-        Assert.Equal(2, response.SignedCheckpointTxs.Length);
+        Assert.Equal(2, response.SignedCheckpointTxs.Count);
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -264,7 +264,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -341,7 +341,7 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
                 AssetGroup.Create(gAsset, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
                 AssetGroup.Create(dAsset, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(0, 1)], []),
             ])]));
-        Assert.Contains("Emulator rejected", theftHero.Message);
+        Assert.Contains("Emulator tx failed", theftHero.Message);
 
         // ── Cheat: pull in the DEFENDER's shared-gear unit (same asset G, 2 units in one group)
         //    → AssetInputSumIs(G, 1) refuses (inSum 2 != 1). numGroups stays 2, so 0xec is the teeth.
@@ -356,19 +356,19 @@ public class CovenantDeathMatchProbeTests : IAsyncLifetime
                 AssetGroup.Create(cAsset, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(0, 1)], []),
                 AssetGroup.Create(gAsset, null, [AssetInput.Create(1, 1), AssetInput.Create(2, 1)], [AssetOutput.Create(0, 2)], []),
             ])]));
-        Assert.Contains("Emulator rejected", theftGear.Message);
+        Assert.Contains("Emulator tx failed", theftGear.Message);
 
         // ── Cheat: route my hero to the WRONG script → AssetAtOutput refuses.
         var wrongDest = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, MyInputs(refundAfter),
             [new TxOut(Money.Satoshis(myTotal), wrongScript)], extraPackets: [MyPacket()]));
-        Assert.Contains("Emulator rejected", wrongDest.Message);
+        Assert.Contains("Emulator tx failed", wrongDest.Message);
 
         // ── Honest challenger reclaim (submit once): C + my G unit → me, co-signed.
         var reclaim = await CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, MyInputs(refundAfter),
             [new TxOut(Money.Satoshis(myTotal), challengerScript)], extraPackets: [MyPacket()]);
         Assert.False(string.IsNullOrEmpty(reclaim.SignedArkTx), "the honest post-expiry reclaim must be emulator-co-signed");
-        Assert.Equal(2, reclaim.SignedCheckpointTxs.Length);
+        Assert.Equal(2, reclaim.SignedCheckpointTxs.Count);
     }
 }

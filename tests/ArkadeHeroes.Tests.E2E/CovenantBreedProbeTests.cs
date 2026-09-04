@@ -1,5 +1,6 @@
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NBitcoin;
 
@@ -45,7 +46,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
 
         // Covenant VTXO whose single leaf runs a trivially-true arkade script
         // (OP_TRUE) — the probe isolates the ISSUANCE question from covenant
@@ -96,7 +97,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
         var expectedEmulator = new EmulatorPacket(
             [new EmulatorEntry(0, opTrue, [])]).SerializePacketData();
         var survivedEmulator = extension.Packets
-            .FirstOrDefault(p => p.PacketType == EmulatorPacket.TypeByte)?.SerializePacketData();
+            .FirstOrDefault(p => p.PacketType == EmulatorPacket.PacketTypeId)?.SerializePacketData();
         Assert.NotNull(survivedEmulator);
         Assert.Equal(Convert.ToHexString(expectedEmulator), Convert.ToHexString(survivedEmulator!));
 
@@ -122,7 +123,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
         const long fund = 12_000;
 
@@ -197,7 +198,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
         const long fund = 12_000;
         byte[] opTrue = [0x51];
@@ -264,7 +265,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
         var isMain = serverInfo.Network == Network.Main;
         const long fund = 12_000;
@@ -366,7 +367,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
         var isMain = serverInfo.Network == Network.Main;
         byte[] opTrue = [0x51];
@@ -472,7 +473,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
         // arkd, so a rejected cheat leaves the VTXOs unspent for the next try.
         // Every packet conserves assets (parents in+out, child mint), so arkd
         // is satisfied and ONLY the covenant is the gatekeeper.
-        Task<EmulatorSubmitResponse> Attempt(List<AssetGroup> groups, byte[] sig, long feePaid)
+        Task<EmulatorSubmitTxResult> Attempt(List<AssetGroup> groups, byte[] sig, long feePaid)
         {
             var total = carriers.Sum(v => (long)v.Amount);
             return CovenantSpender.SpendManyAsync(
@@ -490,18 +491,18 @@ public class CovenantBreedProbeTests : IAsyncLifetime
         // 1. WRONG-ROOT signature (oracle signed other bytes) — CSFS refuses.
         var badSig = await Assert.ThrowsAnyAsync<Exception>(() =>
             Attempt(HonestGroups(), SignRoot(System.Security.Cryptography.SHA256.HashData([0xba, 0xad])), feeSats));
-        Assert.Contains("Emulator rejected", badSig.Message);
+        Assert.Contains("Emulator tx failed", badSig.Message);
 
         // 2. WRONG SPECIES (child controlled by parentA, not the species) —
         //    arkd accepts (parentA exists), the 0xe7 species pin refuses.
         var wrongSpecies = await Assert.ThrowsAnyAsync<Exception>(() =>
             Attempt([Pt(parentAId, iA), Pt(parentBId, iB), Child(parentAId)], SignRoot(honestRoot), feeSats));
-        Assert.Contains("Emulator rejected", wrongSpecies.Message);
+        Assert.Contains("Emulator tx failed", wrongSpecies.Message);
 
         // 3. FEE THEFT (pays 1000, not 2000) — the payTo pin refuses.
         var feeTheft = await Assert.ThrowsAnyAsync<Exception>(() =>
             Attempt(HonestGroups(), SignRoot(honestRoot), 1_000));
-        Assert.Contains("Emulator rejected", feeTheft.Message);
+        Assert.Contains("Emulator tx failed", feeTheft.Message);
 
         // 4. HONEST breed — parents retained, child minted, fee paid.
         var honest = await Attempt(HonestGroups(), SignRoot(honestRoot), feeSats);
@@ -526,7 +527,7 @@ public class CovenantBreedProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var funderScript = global::NArk.Abstractions.ArkAddress.Parse(_funder.Address).ScriptPubKey;
         var isMain = serverInfo.Network == Network.Main;
         const long fund = 12_000;
@@ -597,7 +598,9 @@ public class CovenantBreedProbeTests : IAsyncLifetime
                     extraPackets: [Packet.Create([Child()])]);
                 winners.Add(fn);
             }
-            catch (InvalidOperationException) { /* mismatch */ }
+            // The emulator refuses a mismatched candidate with an HTTP 500; InvalidOperationException
+            // covers the SDK's own "not co-signed" guard. Either means: this encoding is not the one.
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException) { }
         }
             // ctrl_txid is REVERSED (internal) order — same as the 0xf1/0xf2 family.
             Assert.Equal("rev", winners.Single());

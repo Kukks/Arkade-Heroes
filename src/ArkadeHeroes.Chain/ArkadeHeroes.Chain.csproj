@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ArkadeHeroes.Core\ArkadeHeroes.Core.csproj" />
     <ProjectReference Include="..\..\external\dotnet-sdk\NArk\NArk.csproj" />
+    <ProjectReference Include="..\..\external\dotnet-sdk\NArk.Arkade\NArk.Arkade.csproj" />
     <ProjectReference Include="..\..\external\dotnet-sdk\NArk.Storage.EfCore\NArk.Storage.EfCore.csproj" />
   </ItemGroup>
 

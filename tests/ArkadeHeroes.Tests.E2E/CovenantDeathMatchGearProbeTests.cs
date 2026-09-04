@@ -88,7 +88,7 @@ public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
 
         var cHeroId = await IssueAsync(1);
@@ -174,7 +174,7 @@ public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
                 AssetGroup.Create(gearX, null, InputsOf(ordered, gearX), [AssetOutput.Create(0, 2)], []),
                 AssetGroup.Create(gearY, null, InputsOf(ordered, gearY), [AssetOutput.Create(1, 1)], []),
             ])]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         // ── Cheat: GEAR-SHORTCHANGE — only 1 of gearX's 2 units delivered to output 0
         //    (the other burned) → the amount==2 check refused.
@@ -187,7 +187,7 @@ public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
                 AssetGroup.Create(gearX, null, InputsOf(ordered, gearX), [AssetOutput.Create(0, 1)], []), // 1 of 2
                 AssetGroup.Create(gearY, null, InputsOf(ordered, gearY), [AssetOutput.Create(0, 1)], []),
             ])]));
-        Assert.Contains("Emulator rejected", shortchange.Message);
+        Assert.Contains("Emulator tx failed", shortchange.Message);
 
         // ── Honest geared settle: winner hero + gearX(2) + gearY(1) → output 0,
         //    loser hero burned → co-signed.
@@ -256,7 +256,7 @@ public class CovenantDeathMatchGearProbeTests : IAsyncLifetime
                 AssetGroup.Create(gearX, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(0, 1)], []),
                 AssetGroup.Create(gearY, null, [AssetInput.Create(2, 1)], [AssetOutput.Create(0, 1)], []),
             ])]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         // ── Honest challenger reclaim (submit once): cHero + 1 gearX → challenger, co-signed.
         var chalReclaim = await CovenantSpender.SpendManyAsync(

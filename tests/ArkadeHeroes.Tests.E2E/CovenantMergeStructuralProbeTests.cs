@@ -81,7 +81,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -143,7 +143,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
                 AssetGroup.Create(sacrificeAsset, null, [AssetInput.Create(1, 1)], [], []),
                 MintGroup(0),
             ])]));
-        Assert.Contains("Emulator rejected", mintTheft.Message);
+        Assert.Contains("Emulator tx failed", mintTheft.Message);
 
         // ── Cheat: keep the "burned" base ALIVE — route it to output 2 → AssetBurned refuses.
         var resale = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
@@ -159,7 +159,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
                 AssetGroup.Create(sacrificeAsset, null, [AssetInput.Create(1, 1)], [], []),
                 MintGroup(0),
             ])]));
-        Assert.Contains("Emulator rejected", resale.Message);
+        Assert.Contains("Emulator tx failed", resale.Message);
 
         // ── Honest merge: base + sacrifice burned, fused → player (output 0), fee → treasury.
         var response = await CovenantSpender.SpendManyAsync(
@@ -179,7 +179,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -241,7 +241,7 @@ public class CovenantMergeStructuralProbeTests : IAsyncLifetime
             _funder, EmulatorUri, RefundInputs(refundAfter),
             [new TxOut(Money.Satoshis(total), thiefScript)],
             extraPackets: [RefundPacket()]));
-        Assert.Contains("Emulator rejected", theft.Message);
+        Assert.Contains("Emulator tx failed", theft.Message);
 
         // Canonical honest refund (submit exactly ONCE): each hero home, co-signed.
         var refund = await CovenantSpender.SpendManyAsync(

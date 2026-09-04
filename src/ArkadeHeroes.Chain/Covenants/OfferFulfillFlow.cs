@@ -6,6 +6,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NArk.Core.Services;
 using NBitcoin;
@@ -24,7 +25,7 @@ namespace ArkadeHeroes.Chain.Covenants;
 public static class OfferFulfillFlow
 {
     /// <summary>Fulfils the offer from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
-    public static Task<EmulatorSubmitResponse> FulfillAsync(
+    public static Task<EmulatorSubmitTxResult> FulfillAsync(
         SelfCustodyWallet buyer, Uri emulatorUri, OfferParams offer, CancellationToken ct = default)
         => FulfillAsync(buyer.Services, buyer.WalletId, buyer.Address, emulatorUri, offer, ct);
 
@@ -33,13 +34,13 @@ public static class OfferFulfillFlow
     /// container OR a browser's Blazor DI). Pays the seller the ask from the buyer's own coins
     /// and delivers the item to <paramref name="buyerAddress"/>.
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> FulfillAsync(
+    public static async Task<EmulatorSubmitTxResult> FulfillAsync(
         IServiceProvider services, string walletId, string buyerAddress,
         Uri emulatorUri, OfferParams offer, CancellationToken ct = default)
     {
         var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
 
         var contract = OfferContracts.Build(offer, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
         var offerVtxo = (await CovenantSpender.WaitForVtxosCoreAsync(

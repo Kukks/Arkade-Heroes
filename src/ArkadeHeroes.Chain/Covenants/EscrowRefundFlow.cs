@@ -6,6 +6,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Services;
 using NBitcoin;
 
@@ -40,7 +41,7 @@ public static class EscrowRefundFlow
 {
     /// <summary>Refunds from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
     /// <returns>The emulator's co-signed response for the refund transaction.</returns>
-    public static Task<EmulatorSubmitResponse> RefundAsync(
+    public static Task<EmulatorSubmitTxResult> RefundAsync(
         SelfCustodyWallet wallet,
         Uri emulatorUri,
         WagerEscrowParams parameters,
@@ -61,7 +62,7 @@ public static class EscrowRefundFlow
     /// make this fail, never steal.
     /// </summary>
     /// <returns>The emulator's co-signed response for the refund transaction.</returns>
-    public static async Task<EmulatorSubmitResponse> RefundAsync(
+    public static async Task<EmulatorSubmitTxResult> RefundAsync(
         IServiceProvider services,
         string walletId,
         string playerAddress,
@@ -73,7 +74,7 @@ public static class EscrowRefundFlow
     {
         var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
 
         var (challengerContract, defenderContract) =
             WagerEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);

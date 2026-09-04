@@ -1,9 +1,11 @@
 using NArk.Abstractions.Contracts;
 using NArk.Abstractions.Extensions;
 using NArk.Abstractions.Scripts;
+using NArk.Arkade.Crypto;
 using NArk.Core.Scripts;
 using NBitcoin;
 using NBitcoin.Scripting;
+using NBitcoin.Secp256k1;
 
 namespace ArkadeHeroes.Chain.Covenants;
 
@@ -25,7 +27,7 @@ public sealed record ArkadeContractFunction(string Name, byte[] ArkadeScript, Lo
 ///   &lt;tweak(emulatorKey, fnScript)&gt; OP_CHECKSIGVERIFY &lt;operatorKey&gt; OP_CHECKSIG
 ///
 /// where the emulator key is tweaked per function by its Arkade Script
-/// (<see cref="ArkadeScriptTweak"/>), matching the emulator's
+/// (<see cref="ArkadeTweak"/>), matching the emulator's
 /// <c>ReadArkadeScript</c> leaf validation. Function arguments are NEVER baked
 /// into the script (that would break the funding-time tweak); they ride the
 /// EmulatorPacket entry witness as the VM's initial stack.
@@ -49,15 +51,26 @@ public class ArkadeArtifactContract : ArkContract
         _functions = new Dictionary<string, (ArkadeContractFunction, ScriptBuilder)>();
         foreach (var function in functions)
         {
-            var tweaked = ArkadeScriptTweak
-                .ComputeCovenantPublicKey(emulatorSignerKeyHex, function.ArkadeScript)
-                .ToXOnlyPubKey();
+            var tweaked = ECXOnlyPubKey.Create(
+                ArkadeTweak.Tweak(ParseEmulatorKey(emulatorSignerKeyHex), function.ArkadeScript).ToBytes());
             ScriptBuilder condition = new NofNMultisigTapScript([tweaked]);
             if (function.LockTime is { } lockTime)
                 condition = new CompositeTapScript(new LockTimeTapScript(lockTime), condition);
             var leaf = new CollaborativePathArkTapScript(serverKey, condition);
             _functions[function.Name] = (function, leaf);
         }
+    }
+
+    /// <summary>Accepts the emulator's key as 33-byte compressed or 32-byte x-only hex.</summary>
+    private static ECPubKey ParseEmulatorKey(string hex)
+    {
+        var bytes = Convert.FromHexString(hex);
+        return bytes.Length switch
+        {
+            33 => ECPubKey.Create(bytes),
+            32 => ECPubKey.Create([0x02, .. bytes]),
+            _ => throw new ArgumentException($"Expected a 32 or 33 byte key, got {bytes.Length}.", nameof(hex)),
+        };
     }
 
     public override string Type => "arkade-artifact";

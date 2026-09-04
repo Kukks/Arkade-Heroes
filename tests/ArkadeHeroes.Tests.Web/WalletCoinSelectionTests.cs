@@ -74,7 +74,7 @@ public class WalletCoinSelectionTests
             () => wallet.SendSatsAsync(WalletId, Destination, 5_000));
 
         Assert.Contains("Not enough spendable sats", ex.Message);
-        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default!, default!);
+        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default(ArkCoin[])!, default!);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public class WalletCoinSelectionTests
             () => wallet.SendAssetAsync(WalletId, Destination, HeroAsset));
 
         Assert.Contains("another hero", ex.Message);
-        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default!, default!);
+        await spending.DidNotReceiveWithAnyArgs().Spend(default!, default(ArkCoin[])!, default!);
     }
 
     [Fact]

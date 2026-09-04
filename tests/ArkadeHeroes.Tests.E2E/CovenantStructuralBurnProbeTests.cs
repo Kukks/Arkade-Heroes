@@ -69,7 +69,7 @@ public class CovenantStructuralBurnProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var dust = serverInfo.Dust.Satoshi;
 
@@ -134,7 +134,7 @@ public class CovenantStructuralBurnProbeTests : IAsyncLifetime
             _funder, EmulatorUri, Inputs(),
             [new TxOut(Money.Satoshis(dust), winnerScript), new TxOut(Money.Satoshis(dust), winnerScript)],
             extraPackets: [keepAlive]));
-        Assert.Contains("Emulator rejected", cheatA.Message);
+        Assert.Contains("Emulator tx failed", cheatA.Message);
 
         // ── Cheat B: route the loser to the WINNER's output (0) — a sneaky
         //    "return both to the winner". AssetBurned finds L at output 0 → refused.
@@ -147,7 +147,7 @@ public class CovenantStructuralBurnProbeTests : IAsyncLifetime
             _funder, EmulatorUri, Inputs(),
             [new TxOut(Money.Satoshis(total), winnerScript)],
             extraPackets: [toWinner]));
-        Assert.Contains("Emulator rejected", cheatB.Message);
+        Assert.Contains("Emulator tx failed", cheatB.Message);
 
         // ── Cheat C: burn the loser correctly but pay the WINNER's asset to the
         //    WRONG script. AssetAtOutput's 0xd1 output-script check → refused.
@@ -155,7 +155,7 @@ public class CovenantStructuralBurnProbeTests : IAsyncLifetime
             _funder, EmulatorUri, Inputs(),
             [new TxOut(Money.Satoshis(total), wrongScript)],
             extraPackets: [HonestPacket()]));
-        Assert.Contains("Emulator rejected", cheatC.Message);
+        Assert.Contains("Emulator tx failed", cheatC.Message);
 
         // ── Honest settle: winner asset → winner (output 0), loser asset BURNED.
         //    The emulator co-signs — the structural checks are satisfied with NO
@@ -166,6 +166,6 @@ public class CovenantStructuralBurnProbeTests : IAsyncLifetime
             extraPackets: [HonestPacket()]);
         Assert.False(string.IsNullOrEmpty(response.SignedArkTx),
             "the honest burn-one/return-one settle must be emulator-co-signed");
-        Assert.Equal(2, response.SignedCheckpointTxs.Length);
+        Assert.Equal(2, response.SignedCheckpointTxs.Count);
     }
 }

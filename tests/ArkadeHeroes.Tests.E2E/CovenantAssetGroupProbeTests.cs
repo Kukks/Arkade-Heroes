@@ -52,7 +52,7 @@ public class CovenantAssetGroupProbeTests : IAsyncLifetime
     {
         var transport = _funder.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
         var funderScript = ArkAddress.Parse(_funder.Address).ScriptPubKey;
 
@@ -77,7 +77,7 @@ public class CovenantAssetGroupProbeTests : IAsyncLifetime
             _funder, EmulatorUri, [new(wrongContract, "check", [], wrongVtxo)],
             [new TxOut(Money.Satoshis((long)wrongVtxo.Amount), funderScript)],
             extraPackets: [Packet.Create([AssetGroup.Create(asset, null, [AssetInput.Create(0, 2)], [AssetOutput.Create(0, 2)], [])])]));
-        Assert.Contains("Emulator rejected", refused.Message);
+        Assert.Contains("Emulator tx failed", refused.Message);
 
         // ── Honest: exactly ONE asset group AND that asset's input sum == 2 → co-signed.
         var leaf = new List<byte>();

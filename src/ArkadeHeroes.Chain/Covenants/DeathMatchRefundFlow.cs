@@ -6,6 +6,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Arkade.Emulator;
 using NArk.Core.Assets;
 using NArk.Core.Services;
 using NBitcoin;
@@ -22,7 +23,7 @@ namespace ArkadeHeroes.Chain.Covenants;
 public static class DeathMatchRefundFlow
 {
     /// <summary>Reclaims from a <see cref="SelfCustodyWallet"/> (console/tests).</summary>
-    public static Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static Task<EmulatorSubmitTxResult> ReclaimAsync(
         SelfCustodyWallet wallet,
         Uri emulatorUri,
         DeathMatchJointEscrowParams parameters,
@@ -37,7 +38,7 @@ public static class DeathMatchRefundFlow
     /// container OR a browser's Blazor DI), so the console and the browser share ONE implementation
     /// of this covenant spend rather than each carrying its own.
     /// </summary>
-    public static async Task<EmulatorSubmitResponse> ReclaimAsync(
+    public static async Task<EmulatorSubmitTxResult> ReclaimAsync(
         IServiceProvider services,
         string walletId,
         string playerAddress,
@@ -49,7 +50,7 @@ public static class DeathMatchRefundFlow
     {
         var transport = services.GetRequiredService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync(ct);
-        var emulatorInfo = await new EmulatorClient(emulatorUri).GetInfoAsync(ct);
+        var emulatorInfo = await EmulatorEndpoint.Client(emulatorUri).GetInfoAsync(ct);
         var contract = DeathMatchEscrowContracts.BuildJoint(parameters, serverInfo.SignerKey, emulatorInfo.SignerPubkey);
 
         var isChallenger = playerAddress == parameters.ChallengerAddress;

@@ -85,7 +85,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
     {
         var transport = _challenger.GetService<global::NArk.Core.Transport.IClientTransport>();
         var serverInfo = await transport.GetServerInfoAsync();
-        var emulatorInfo = await new EmulatorClient(EmulatorUri).GetInfoAsync();
+        var emulatorInfo = await EmulatorEndpoint.Client(EmulatorUri).GetInfoAsync();
         var isMain = serverInfo.Network == Network.Main;
 
         var serverSeed = CommitReveal.NewSeed();
@@ -150,7 +150,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
             [new TxOut(Money.Satoshis(total), chalScript)],
             extraPackets: [Packet.Create([BurnWinner(), BurnLoser(),
                 AssetGroup.Create(null, AssetRef.FromId(species), [], [AssetOutput.Create(0, 1)], meta2)])]));
-        Assert.Contains("Emulator rejected", badGenome.Message);
+        Assert.Contains("Emulator tx failed", badGenome.Message);
 
         // ── Cheat: wrong-winner — the oracle signs the DEFENDER-win outcome, but this leaf bakes the
         //    challenger-win message → the outcome CSFS refuses.
@@ -160,7 +160,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
                 Sign(oraclePriv, ArkadeCovenants.DeathMatchAbsorbMintMessage(matchId, challengerWon: false)))),
             [new TxOut(Money.Satoshis(total), chalScript)],
             extraPackets: [Packet.Create([BurnWinner(), BurnLoser(), Mint(0)])]));
-        Assert.Contains("Emulator rejected", wrongWinner.Message);
+        Assert.Contains("Emulator tx failed", wrongWinner.Message);
 
         // ── Cheat: force a mint with a KEEP signature — the oracle signed the passthrough/keep
         //    message (DeathMatchSettleMessage), not the absorb-mint message → the mint leaf refuses.
@@ -170,7 +170,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
                 Sign(oraclePriv, ArkadeCovenants.DeathMatchSettleMessage(matchId, challengerWon: true)))),
             [new TxOut(Money.Satoshis(total), chalScript)],
             extraPackets: [Packet.Create([BurnWinner(), BurnLoser(), Mint(0)])]));
-        Assert.Contains("Emulator rejected", forceMint.Message);
+        Assert.Contains("Emulator tx failed", forceMint.Message);
 
         // ── Cheat: keep the LOSER hero alive — route it to output 1 instead of burning → AssetBurned refuses.
         var loserSurvives = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
@@ -180,7 +180,7 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
                 BurnWinner(),
                 AssetGroup.Create(loserHero, null, [AssetInput.Create(1, 1)], [AssetOutput.Create(1, 1)], []),
                 Mint(0)])]));
-        Assert.Contains("Emulator rejected", loserSurvives.Message);
+        Assert.Contains("Emulator tx failed", loserSurvives.Message);
 
         // ── Cheat: keep the OLD WINNER hero alive — route it to output 1 → AssetBurned refuses.
         var winnerSurvives = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
@@ -189,14 +189,14 @@ public class CovenantDeathMatchAbsorbProbeTests : IAsyncLifetime
             extraPackets: [Packet.Create([
                 AssetGroup.Create(winnerHero, null, [AssetInput.Create(0, 1)], [AssetOutput.Create(1, 1)], []),
                 BurnLoser(), Mint(0)])]));
-        Assert.Contains("Emulator rejected", winnerSurvives.Message);
+        Assert.Contains("Emulator tx failed", winnerSurvives.Message);
 
         // ── Cheat: mint the absorbed hero to the WRONG script — output 0 pays the defender → MintToPlayer refuses.
         var wrongScript = await Assert.ThrowsAnyAsync<Exception>(() => CovenantSpender.SpendManyAsync(
             _challenger, EmulatorUri, Inputs(honestWitness),
             [new TxOut(Money.Satoshis(total), defScript)],
             extraPackets: [Packet.Create([BurnWinner(), BurnLoser(), Mint(0)])]));
-        Assert.Contains("Emulator rejected", wrongScript.Message);
+        Assert.Contains("Emulator tx failed", wrongScript.Message);
 
         // ── Honest absorb-mint: burn BOTH heroes, mint the absorbed hero (group 2) under species at
         //    output 0 → the winner. Co-signed (submit once).

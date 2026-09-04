@@ -303,7 +303,7 @@ public class NArkChainService(
             _emulatorProbed = true;
             try
             {
-                var emulator = new Covenants.EmulatorClient(new Uri(options.EmulatorUri.TrimEnd('/') + "/"));
+                var emulator = Covenants.EmulatorEndpoint.Client(options.EmulatorUri);
                 using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 probeCts.CancelAfter(TimeSpan.FromSeconds(5));
                 _emulatorSignerKey = (await emulator.GetInfoAsync(probeCts.Token)).SignerPubkey;
