@@ -17,6 +17,15 @@ internal static class SimMain
         var seed = Arg(args, "--seed", 1);
         var verbose = args.Contains("--verbose");
 
+        foreach (var name in new[] { "--players", "--rounds", "--population", "--generations", "--samples", "--budget" })
+        {
+            if (Array.IndexOf(args, name) >= 0 && Arg(args, name, 1) <= 0)
+            {
+                Console.Error.WriteLine($"{name} must be greater than zero.");
+                return 2;
+            }
+        }
+
         if (args.Contains("--rarity"))
         {
             Console.WriteLine(RarityCurve.Render(Arg(args, "--population", 2000), Arg(args, "--generations", 8), seed));

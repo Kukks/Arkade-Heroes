@@ -1,3 +1,4 @@
+using System.Net;
 using ArkadeHeroes.Chain.Covenants;
 using ArkadeHeroes.Chain.NArk;
 using NArk.Arkade.Emulator;
@@ -598,9 +599,11 @@ public class CovenantBreedProbeTests : IAsyncLifetime
                     extraPackets: [Packet.Create([Child()])]);
                 winners.Add(fn);
             }
-            // The emulator refuses a mismatched candidate with an HTTP 500; InvalidOperationException
-            // covers the SDK's own "not co-signed" guard. Either means: this encoding is not the one.
-            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException) { }
+            // A mismatched candidate is refused by the emulator as an HTTP 500, and nothing else in
+            // this spend produces one. Narrow deliberately: a transport failure carries a null status
+            // and a construction failure is not an HttpRequestException at all, so both propagate
+            // rather than silently dropping a candidate and making winners.Single() lie.
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.InternalServerError) { }
         }
             // ctrl_txid is REVERSED (internal) order — same as the 0xf1/0xf2 family.
             Assert.Equal("rev", winners.Single());

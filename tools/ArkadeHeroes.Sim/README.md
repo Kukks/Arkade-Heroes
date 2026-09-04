@@ -5,7 +5,7 @@ in-memory chain) and reports what the playerbase was actually able to do. The in
 economics — every player starts on `InMemoryChainService.FaucetSats` and invoices genuinely debit them —
 so running out of sats is a real outcome, not a simulation artifact.
 
-Three modes:
+Four modes:
 
 ```bash
 # A populated arena: N personas taking weighted turns across R rounds.

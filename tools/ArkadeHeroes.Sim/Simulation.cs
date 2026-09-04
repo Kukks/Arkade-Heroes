@@ -74,18 +74,33 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
             var persona = personas[i % personas.Length];
             var api = new ArkadeHeroesClient(_factory.CreateClient());
             var name = $"{persona}{i:D2}";
-            var dto = await api.Players.RegisterAsync(
-                new RegisterPlayerRequest(name, $"sim-wallet-{seed}-{i:D3}"));
-            if (dto.Token is { } t) api.SetAuthToken(t);
 
-            var player = new Player { Id = dto.PlayerId, Name = name, Persona = persona, Api = api };
-            player.StartingSats = dto.BalanceSats;
-            _players.Add(player);
+            Player player;
+            try
+            {
+                var dto = await api.Players.RegisterAsync(
+                    new RegisterPlayerRequest(name, $"sim-wallet-{seed}-{i:D3}"));
+                if (dto.Token is { } t) api.SetAuthToken(t);
+                player = new Player { Id = dto.PlayerId, Name = name, Persona = persona, Api = api };
+                player.StartingSats = dto.BalanceSats;
+                _players.Add(player);
+                _tally.Record("register", Outcome.Ok);
+            }
+            catch (Exception ex)
+            {
+                // Onboarding is the one thing that must not abort the run: the report IS the point,
+                // and a player who cannot sign up is itself a finding worth printing.
+                _tally.Record("register", ex is ArkadeHeroesApiException ? Outcome.Refused : Outcome.Broken, ex.Message);
+                continue;
+            }
 
             // Everyone buys their opening roster; two heroes is the minimum that can breed.
-            await RecruitAsync(player);
-            await RecruitAsync(player);
+            await Attempt(player, "recruit", round: 0);
+            await Attempt(player, "recruit", round: 0);
         }
+
+        if (_players.Count == 0)
+            throw new InvalidOperationException("No player could sign up; there is nothing to simulate.");
     }
 
     // ── The turn ────────────────────────────────────────────────────────────────
