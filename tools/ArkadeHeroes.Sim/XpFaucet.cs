@@ -57,8 +57,47 @@ public static class XpFaucet
         sb.AppendLine($"  PvE XP is capped at level {Gauntlet.PveXpLevelCap}; above it the mint pays nothing and");
         sb.AppendLine("  XP only moves between heroes. A hero holding zero XP therefore cannot lose any,");
         sb.AppendLine("  so a staked duel between two such heroes transfers nothing and ranks nothing.");
+        sb.AppendLine();
+        sb.Append(Climb(samples, seed));
         return sb.ToString();
     }
+
+    /// What it costs an ungeared recruit — the hero a new player actually has — to climb, measuring the
+    /// mint's yield at each level rather than assuming a flat rate.
+    private static string Climb(int samples, int seed)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("COST TO CLIMB (ungeared recruit, gauntlet only)");
+        sb.AppendLine($"  {"to level",8} {"xp needed",10} {"xp/run",7} {"runs",6} {"fee/run",8} {"sats",10} {"cumulative",11}");
+
+        long cumulativeSats = 0;
+        var cumulativeRuns = 0;
+        for (var level = 1; level < Gauntlet.PveXpLevelCap; level++)
+        {
+            var rng = new Random(seed + level);
+            long xp = 0;
+            for (var i = 0; i < samples; i++)
+            {
+                var hero = HeroAt(level, StarterPolicy.RecruitStatCap, rng);
+                xp += Gauntlet.XpForRun(level, Gauntlet.Resolve(hero, Entropy(rng)).WavesCleared);
+            }
+            var perRun = (double)xp / samples;
+            var need = Leveling.XpToNext(level);
+            var runs = (int)Math.Ceiling(need / perRun);
+            var fee = Gauntlet.Fee(level);
+            cumulativeRuns += runs;
+            cumulativeSats += runs * fee;
+            sb.AppendLine($"  {level + 1,8} {need,10} {perRun,7:F1} {runs,6} {fee,8} {runs * fee,10:N0} {cumulativeSats,11:N0}");
+        }
+
+        sb.AppendLine($"  Reaching the XP cap (level {Gauntlet.PveXpLevelCap}) takes {cumulativeRuns} runs " +
+                      $"costing {cumulativeSats:N0} sats,");
+        sb.AppendLine($"  against a starting balance of {InMemoryStartingSats:N0}. Each run is also behind a cooldown.");
+        return sb.ToString();
+    }
+
+    /// Mirrors InMemoryChainService.FaucetSats — the simulated wallet a new player starts with.
+    private const long InMemoryStartingSats = 100_000;
 
     private static Hero HeroAt(int level, byte statCap, Random rng) => new()
     {
