@@ -40,19 +40,14 @@ public class DailyLoopTests : IClassFixture<WebApplicationFactory<Program>>, IDi
     [Fact]
     public async Task CompletingADuelWin_AddsTheQuestBonus()
     {
-        // A staked (wager>0) invoice-mode duel produces an in-window "match" receipt; the winner
+        // A staked (wager>0) duel produces an in-window "match" receipt; the winner
         // gets the "Win a duel" bonus IF that quest is in today's rotation (date-derived; guarded).
         var (alice, _) = await _factory.RegisterAsync("Daily-Duel-A");
         var (bob, _) = await _factory.RegisterAsync("Daily-Duel-B");
         var aliceHero = (await alice.ClaimStartersAsync())[0];
         var bobHero = (await bob.ClaimStartersAsync())[0];
 
-        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero.Id, bobHero.Id, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Matches.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        var (open, _) = await alice.StakedMatchAsync(bob, aliceHero.Id, bobHero.Id, 1000);
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("daily-duel-nonce"));
 
         var winnerClient = fight.Result.WinnerId == aliceHero.Id ? alice : bob;

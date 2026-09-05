@@ -181,11 +181,11 @@ public static class SeasonSettlement
                     if (mine is null || theirs is null) throw new ArkadeHeroesApiException("a side has no hero to field");
 
                     var open = await challenger.Api.Matches.OpenAsync(
-                        new OpenMatchRequest(mine.Id, theirs.Id, 500, "invoice"));
-                    if (open.StakeInvoice is { } s) await Pay(challenger, s.InvoiceId);
+                        new OpenMatchRequest(mine.Id, theirs.Id, 500));
+                    await challenger.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
                     if (open.MatchFeeInvoice is { } f) await Pay(challenger, f.InvoiceId);
                     var accept = await defender.Api.Matches.AcceptAsync(open.MatchId);
-                    if (accept.StakeInvoice is { } ds) await Pay(defender, ds.InvoiceId);
+                    await defender.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
                     if (accept.MatchFeeInvoice is { } df) await Pay(defender, df.InvoiceId);
 
                     var fight = await challenger.Api.Matches.FightAsync(open.MatchId, new FightRequest(Nonce()));

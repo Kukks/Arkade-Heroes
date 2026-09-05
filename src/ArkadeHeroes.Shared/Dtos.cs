@@ -188,7 +188,10 @@ public record StarterQuoteResponse(long FeeSats, int HeroCount, FeeInvoiceDto? F
 
 // ── Breeding (two-phase commit–reveal) ─────────────────────────────────────
 
-/// <summary>Mode "invoice" (fee invoice, treasury mint) or "covenant" (parents+fee escrow deposit, emulator-enforced mint).</summary>
+/// <summary>Mode "invoice" (fee to the treasury, treasury mints) or "covenant" (parents + fee escrow
+/// deposit, emulator-enforced mint). Left on "invoice" deliberately: NEITHER path holds another player's
+/// sats, so unlike a wagered match this is a fairness choice rather than a custody one, and the web client
+/// already asks for covenant. Flipping it belongs with the work that makes covenant breeding the only path.</summary>
 public record BreedCommitRequest(string ParentAId, string ParentBId, string Mode = "invoice");
 
 /// <summary>In covenant mode <see cref="Invoice"/> is null and <see cref="EscrowAddress"/>/<see cref="EscrowFeeSats"/> are set.</summary>
@@ -375,8 +378,10 @@ public record TrialsRunResponse(
 
 // ── Matches (two-phase commit–reveal, optional wager escrow) ───────────────
 
-/// <summary>Mode "invoice" (server-observed stakes, treasury payout) or "covenant" (emulator-enforced escrow settlement).</summary>
-public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0, string Mode = "invoice");
+/// <summary>How a match settles. A WAGERED match is always "covenant" — the server refuses "invoice" for
+/// one, because that path put both stakes in treasury addresses and paid the pot back out again, so the
+/// operator held player money in between. An unwagered match holds nothing and the field is inert.</summary>
+public record OpenMatchRequest(string ChallengerHeroId, string DefenderHeroId, long WagerSats = 0, string Mode = "covenant");
 
 public record OpenMatchResponse(
     string MatchId, string CommitmentHex, long WagerSats, string Status,

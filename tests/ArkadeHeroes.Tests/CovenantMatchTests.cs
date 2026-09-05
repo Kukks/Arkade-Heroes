@@ -76,12 +76,26 @@ public class CovenantMatchTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(start - wager - loserFee, loserBalance);
     }
 
+    /// <summary>Asking for the covenant with nothing at stake used to be REFUSED; it is normalised now,
+    /// since what an escrow protects — somebody else's sats — is absent. The surviving refusal is the
+    /// mirror image, in <c>CovenantRefundTests</c>: a WAGER asking for custody.</summary>
     [Fact]
-    public async Task CovenantModeRequiresAWager()
+    public async Task CovenantModeWithNoWager_IsJustAnUnwageredMatch_AndBuildsNoEscrow()
     {
         var (alice, _) = await _factory.RegisterAsync("C-NoWager");
         var heroes = await alice.ClaimStartersAsync();
-        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
-            () => alice.Matches.OpenAsync(new OpenMatchRequest(heroes[0].Id, heroes[1].Id, 0, "covenant")));
+
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(heroes[0].Id, heroes[1].Id, 0, "covenant"));
+
+        Assert.Equal(0, open.WagerSats);
+        Assert.Null(open.EscrowAddress);
+        Assert.Equal(0, open.EscrowStakeSats);
+        Assert.Null(open.StakeInvoice);
+        Assert.Null(open.MatchFeeInvoice);
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Matches.EscrowAsync(open.MatchId));
+
+        // …and still a real, fightable match rather than a husk.
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("no-wager"));
+        Assert.Equal(0, fight.WinnerPayoutSats);
     }
 }

@@ -85,6 +85,41 @@ internal static class NonCustodialTestHelpers
     public static Task TransferAssetAsync(this ArkadeHeroesClient client, string assetId, string toPlayerId) =>
         client.Dev.TransferAssetAsync(new { AssetId = assetId, ToPlayerId = toPlayerId });
 
+    /// <summary>
+    /// A wagered duel, opened and funded on both sides, ready to fight. Bundled because a staked match is
+    /// covenant-only now: each side stakes into its OWN escrow and pays its own match fee, where the
+    /// removed treasury path was a single invoice each. Every staked-match test wants these five lines and
+    /// none of them are the thing under test.
+    /// </summary>
+    public static async Task<(OpenMatchResponse Open, AcceptMatchResponse Accept)> StakedMatchAsync(
+        this ArkadeHeroesClient challenger, ArkadeHeroesClient defender,
+        string challengerHeroId, string defenderHeroId, long wagerSats)
+    {
+        var open = await challenger.Matches.OpenAsync(
+            new OpenMatchRequest(challengerHeroId, defenderHeroId, wagerSats));
+        await challenger.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        var accept = await defender.Matches.AcceptAsync(open.MatchId);
+        await defender.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        if (open.MatchFeeInvoice is { } cf) await challenger.PayInvoiceAsync(cf.InvoiceId);
+        if (accept.MatchFeeInvoice is { } df) await defender.PayInvoiceAsync(df.InvoiceId);
+        return (open, accept);
+    }
+
+    /// <summary>The squad equivalent of <see cref="StakedMatchAsync"/>.</summary>
+    public static async Task<(SquadOpenResponse Open, SquadAcceptResponse Accept)> StakedSquadAsync(
+        this ArkadeHeroesClient challenger, ArkadeHeroesClient defender,
+        IReadOnlyList<string> challengerLineup, IReadOnlyList<string> defenderLineup, long wagerSats)
+    {
+        var open = await challenger.Squad.OpenAsync(
+            new OpenSquadMatchRequest(challengerLineup, defenderLineup, wagerSats));
+        await challenger.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        var accept = await defender.Squad.AcceptAsync(open.MatchId);
+        await defender.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        if (open.MatchFeeInvoice is { } cf) await challenger.PayInvoiceAsync(cf.InvoiceId);
+        if (accept.MatchFeeInvoice is { } df) await defender.PayInvoiceAsync(df.InvoiceId);
+        return (open, accept);
+    }
+
     /// <summary>Full breed flow: commit → pay invoice → reveal.</summary>
     public static async Task<(BreedCommitResponse Commit, BreedRevealResponse Reveal)> BreedAsync(
         this ArkadeHeroesClient client, string parentAId, string parentBId, string nonce)

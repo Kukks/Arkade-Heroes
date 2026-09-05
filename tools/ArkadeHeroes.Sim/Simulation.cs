@@ -254,12 +254,14 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
 
         var wager = 500L * (1 + _rng.Next(4));
         var open = await p.Api.Matches.OpenAsync(
-            new OpenMatchRequest(mine.Id, pick.Hero.Id, wager, "invoice"));
-        if (open.StakeInvoice is { } s) await Pay(p, s.InvoiceId);
+            new OpenMatchRequest(mine.Id, pick.Hero.Id, wager));
+        // Staked play is covenant-only: each side funds its OWN escrow and the pot settles from there,
+        // so there is no stake invoice to pay and the treasury never holds the money.
+        await p.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
         if (open.MatchFeeInvoice is { } f) await Pay(p, f.InvoiceId);
 
         var accept = await defender.Api.Matches.AcceptAsync(open.MatchId);
-        if (accept.StakeInvoice is { } ds) await Pay(defender, ds.InvoiceId);
+        await defender.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
         if (accept.MatchFeeInvoice is { } df) await Pay(defender, df.InvoiceId);
 
         var fight = await p.Api.Matches.FightAsync(open.MatchId, new FightRequest(Nonce()));
@@ -313,11 +315,11 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         if (other is null) return Did.No("nobody else fields three heroes");
 
         var open = await p.Api.Squad.OpenAsync(new OpenSquadMatchRequest(
-            [.. mine.Select(h => h.Id)], [.. theirs.Select(h => h.Id)], 500, "invoice"));
-        if (open.StakeInvoice is { } s) await Pay(p, s.InvoiceId);
+            [.. mine.Select(h => h.Id)], [.. theirs.Select(h => h.Id)], 500));
+        await p.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
         if (open.MatchFeeInvoice is { } f) await Pay(p, f.InvoiceId);
         var accept = await other.Api.Squad.AcceptAsync(open.MatchId);
-        if (accept.StakeInvoice is { } ds) await Pay(other, ds.InvoiceId);
+        await other.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
         if (accept.MatchFeeInvoice is { } df) await Pay(other, df.InvoiceId);
         await p.Api.Squad.ResolveAsync(open.MatchId, new FightRequest(Nonce()));
         return Did.Yes;

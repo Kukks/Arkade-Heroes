@@ -140,14 +140,9 @@ public class HeroTimelineTests : IClassFixture<WebApplicationFactory<Program>>
         var mine = (await alice.RecruitAsync(4)).Take(3).Select(h => h.Id).ToList();
         var theirs = (await bob.RecruitAsync(4)).Take(3).Select(h => h.Id).ToList();
 
-        // Squad matches are staked by design (a covenant match with no wager is refused), so the relay
-        // under test has to be walked the way a player walks it.
-        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Squad.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        // A squad relay only scores when it is staked, so the flow under test has to be walked the way a
+        // player walks it — both escrows funded, both fees paid.
+        var (open, _) = await alice.StakedSquadAsync(bob, mine, theirs, 1000);
         await alice.Squad.ResolveAsync(open.MatchId, new FightRequest("tl-squad-nonce"));
 
         var tl = await alice.Heroes.TimelineAsync(mine[0]);

@@ -157,11 +157,11 @@ public class ClientGameLoopTests : IDisposable
         var bobHero = all.First(h => h.OwnerId != aliceId);
 
         // The marquee flow end-to-end through the client: challenge auto-stakes
-        // (invoice mode → dev pay-invoice), bob accepts (auto-stakes his side),
+        // (covenant escrow → dev stake-escrow), bob accepts (auto-stakes his side),
         // alice resolves the duel — the whole staked lifecycle over the real
         // command dispatch, not just the server API.
         await alice.ExecuteAsync(["heroes"]);
-        await alice.ExecuteAsync(["challenge", aliceHero.Id, bobHero.Id, "1000"]);
+        await alice.ExecuteAsync(["challenge", aliceHero.Id, bobHero.Id, "1000", "covenant"]);
 
         var opened = Assert.Single(await _observer.Matches.ListAsync());
         await bob.ExecuteAsync(["accept", opened.MatchId]);

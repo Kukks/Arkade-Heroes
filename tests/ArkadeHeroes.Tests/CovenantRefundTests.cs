@@ -58,16 +58,35 @@ public class CovenantRefundTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task EscrowParamsEndpoint_404ForInvoiceModeMatches()
+    public async Task EscrowParamsEndpoint_404ForAMatchWithNothingAtStake()
     {
-        var (alice, _) = await _factory.RegisterAsync("R-Invoice");
-        var (bob, _) = await _factory.RegisterAsync("R-Invoice2");
+        // The old version asked this of an INVOICE-mode wagered match. There is no such thing now — a
+        // wagered match is covenant-only — so the remaining case is a friendly one, which stakes nothing
+        // and therefore has no escrow to describe.
+        var (alice, _) = await _factory.RegisterAsync("R-Friendly");
+        var (bob, _) = await _factory.RegisterAsync("R-Friendly2");
         var aliceHeroes = await alice.ClaimStartersAsync();
         var bobHeroes = await bob.ClaimStartersAsync();
         var open = await alice.Matches.OpenAsync(
-            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, 2_000, "invoice"));
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id));
 
+        Assert.Null(open.EscrowAddress);
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Matches.EscrowAsync(open.MatchId));
+    }
+
+    /// <summary>The treasury never holds a stake, so the custodial path is refused rather than quietly
+    /// upgraded — a caller that asked for it is told it is gone.</summary>
+    [Fact]
+    public async Task AWageredMatchCannotBeOpenedInTheCustodialMode()
+    {
+        var (alice, _) = await _factory.RegisterAsync("R-NoCustody");
+        var (bob, _) = await _factory.RegisterAsync("R-NoCustody2");
+        var aliceHeroes = await alice.ClaimStartersAsync();
+        var bobHeroes = await bob.ClaimStartersAsync();
+
+        var refused = await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Matches.OpenAsync(
+            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, 2_000, "invoice")));
+        Assert.Contains("never holds your stake", refused.Message);
     }
 
     [Fact]

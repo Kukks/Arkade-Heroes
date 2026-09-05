@@ -429,11 +429,11 @@ public static class Onboarding
             var defender = _cohort.FirstOrDefault(x => x.Id == pick.OwnerPlayerId);
             if (defender is null) return Said.No("The suggested opponent is not one of us.");
 
-            var open = await p.Api.Matches.OpenAsync(new OpenMatchRequest(mine.Id, pick.Hero.Id, Wager, "invoice"));
-            if (open.StakeInvoice is { } s) await PayAsync(p, "duel stake", s);
+            var open = await p.Api.Matches.OpenAsync(new OpenMatchRequest(mine.Id, pick.Hero.Id, Wager));
+            await p.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (open.MatchFeeInvoice is { } f) await PayAsync(p, "duel fee", f);
             var accept = await defender.Api.Matches.AcceptAsync(open.MatchId);
-            if (accept.StakeInvoice is { } ds) await PayAsync(defender, "duel stake", ds);
+            await defender.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (accept.MatchFeeInvoice is { } df) await PayAsync(defender, "duel fee", df);
 
             var fight = await p.Api.Matches.FightAsync(open.MatchId, new FightRequest(Nonce()));
@@ -454,11 +454,11 @@ public static class Onboarding
             var other = _cohort.FirstOrDefault(x => x.Id != p.Id && x.Roster.Count > 0);
             if (other is null) return Said.No("Nobody else fields a hero.");
             var open = await p.Api.Squad.OpenAsync(new OpenSquadMatchRequest(
-                [.. p.Roster.Take(3).Select(h => h.Id)], [.. other.Roster.Take(3).Select(h => h.Id)], Wager, "invoice"));
-            if (open.StakeInvoice is { } s) await PayAsync(p, "squad stake", s);
+                [.. p.Roster.Take(3).Select(h => h.Id)], [.. other.Roster.Take(3).Select(h => h.Id)], Wager));
+            await p.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (open.MatchFeeInvoice is { } f) await PayAsync(p, "squad fee", f);
             var accept = await other.Api.Squad.AcceptAsync(open.MatchId);
-            if (accept.StakeInvoice is { } ds) await PayAsync(other, "squad stake", ds);
+            await other.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (accept.MatchFeeInvoice is { } df) await PayAsync(other, "squad fee", df);
             var resolved = await p.Api.Squad.ResolveAsync(open.MatchId, new FightRequest(Nonce()));
             if (resolved.Result.ChallengerWon) p.Income += resolved.WinnerPayoutSats;
