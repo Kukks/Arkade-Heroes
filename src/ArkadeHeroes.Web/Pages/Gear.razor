@@ -32,6 +32,20 @@
         Bought <b>@_justBought</b> — equip it from <a href="heroes?mine=1">one of your heroes</a>.
     </div></div>
 }
+@if (_sellStatus is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot wait"></span> @_sellStatus</div></div>
+}
+@if (_sellError is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot bad"></span> @_sellError</div></div>
+}
+@if (_listed is not null)
+{
+    <div class="card"><div class="status-line"><span class="dot ok"></span>
+        <b>@_listed.ItemName</b> is resting on the <a href="market">market</a> at @_listed.AskSats.ToString("N0") sats.
+    </div></div>
+}
 @* Said out loud, because the consequence of not knowing is spending sats on a duplicate. *@
 @if (_ownedError is not null && State.IsSignedIn)
 {
@@ -103,6 +117,28 @@ else
                             </button>
                         }
                     </div>
+                    @* A spare unit is dead stock: gear is allocated per hero, so anything beyond what you can
+                       arm sits idle. Listing it is the only way to get sats back out. *@
+                    @if (State.IsSignedIn && Units(it.Id) > 0)
+                    {
+                        @if (_sellingId == it.Id)
+                        {
+                            <div class="status-line" style="margin-top:.5rem;gap:.4rem;flex-wrap:wrap">
+                                <input type="number" class="mono" style="width:7.5rem" @bind="_sellAsk" min="1" />
+                                <span class="muted" style="font-size:.78rem">sats</span>
+                                <button class="btn primary" @onclick="() => DoSell(it)"
+                                        disabled="@(_listingId is not null || _sellAsk < 1)">
+                                    @(_listingId == it.Id ? "Listing…" : "List it")
+                                </button>
+                                <button class="btn ghost" @onclick="CancelSell" disabled="@(_listingId is not null)">Cancel</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn ghost" style="margin-top:.5rem" @onclick="() => StartSell(it)"
+                                    disabled="@(_listingId is not null)">Sell a spare</button>
+                        }
+                    }
                     @* A dead button with no explanation is its own defect, so the shortfall is named and the
                        way out is a link rather than a guess. Same treatment /gauntlet and /heroes already use. *@
                     @if (State.IsSignedIn && !CanAfford(it))
@@ -135,6 +171,49 @@ else
     private string? _buyStatus;
     private string? _buyError;
     private string? _justBought;
+    private string? _sellingId;
+    private string? _listingId;
+    private long _sellAsk;
+    private string? _sellStatus;
+    private string? _sellError;
+    private OfferDto? _listed;
+
+    /// <summary>The catalog price is the ask's starting point — the only number a seller and a buyer both
+    /// already know. It is a default, not a floor; the field is editable.</summary>
+    void StartSell(ItemDto it)
+    {
+        _sellingId = it.Id;
+        _sellAsk = it.PriceSats;
+        _sellError = null;
+        _listed = null;
+    }
+
+    void CancelSell() => (_sellingId, _sellError) = (null, null);
+
+    async Task DoSell(ItemDto it)
+    {
+        _listingId = it.Id;
+        _sellError = null;
+        _listed = null;
+        _sellStatus = "Preparing the listing…";
+        try
+        {
+            _listed = await Session.ListItemAsync(it.Id, _sellAsk, s => { _sellStatus = s; StateHasChanged(); });
+            _sellingId = null;
+            // The unit is escrowed in the offer covenant now, so it is no longer stock this player can arm.
+            _owned[it.Id] = Math.Max(0, Units(it.Id) - 1);
+        }
+        catch (Exception ex)
+        {
+            _sellError = ex.Message;
+        }
+        finally
+        {
+            _listingId = null;
+            _sellStatus = null;
+        }
+    }
+
     /// <summary>Item id → units held. A COUNT, not a set: a second unit is a legitimate purchase, because
     /// gear is allocated per hero and one unit arms exactly one of them.</summary>
     private readonly Dictionary<string, long> _owned = new();
