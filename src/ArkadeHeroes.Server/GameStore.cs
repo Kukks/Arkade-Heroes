@@ -519,6 +519,9 @@ public sealed class TournamentSession
     /// (FairnessAudit.ComputeEntrantsCommitment) and published on the tournament DTO — so a client can pin
     /// the snapshots independently of the replay and a server can't substitute a genome/level/gear.</summary>
     public string? EntrantsCommitmentHex { get; set; }
+    /// <summary>When the bracket FILLED, starting the unpaid-buy-in abandonment window. Not persisted, like
+    /// the snapshots beside it — and a full bracket without snapshots is already unconditionally refundable.</summary>
+    public DateTimeOffset? FilledAt { get; set; }
 }
 
 /// <summary>In-process game state. v1 keeps everything in memory; the chain is the durable layer for heroes.

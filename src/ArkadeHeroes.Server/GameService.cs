@@ -994,6 +994,7 @@ public class GameService(
             // what the bracket runs over (a hero re-geared/levelled after joining fights at fill state).
             session.EntrantSnapshots = session.Entrants.Select(e => GetHero(e.HeroId).ToDto()).ToList();
             session.EntrantsCommitmentHex = Shared.FairnessAudit.ComputeEntrantsCommitment(session.EntrantSnapshots);
+            session.FilledAt = DateTimeOffset.UtcNow;
         }
         // Durable BEFORE the buy-in invoice reaches the player: once they can pay it, the bracket holding
         // their sats has to survive a restart. (No-op unless persistence is configured.)
@@ -1126,9 +1127,9 @@ public class GameService(
     /// <summary>Refunds a bracket that is not going to be played, by either of two doors.
     ///
     /// <para>PROOF — the bracket can never run again: a FULL bracket whose fill-time entrant snapshots are
-    /// gone (never persisted, so a restart drops them and resolve refuses without them), or an OPEN bracket
-    /// that can never fill because an entrant hero was burned away. Anyone may trigger this; the proof does
-    /// not depend on who asks.</para>
+    /// gone (never persisted, so a restart drops them and resolve refuses without them) or that is stuck on a
+    /// buy-in left unpaid past its abandonment window, or an OPEN bracket that can never fill because an
+    /// entrant hero was burned away. Anyone may trigger this; the proof does not depend on who asks.</para>
     ///
     /// <para>CONSENT — <paramref name="requestedBy"/> is an entrant of a bracket that is still OPEN, and
     /// wants out. This door exists because the first one cannot cover the commonest way a pot gets stuck:
@@ -1158,12 +1159,13 @@ public class GameService(
             // The unresolvable gate, split by phase because resolvability is phase-dependent post-#104:
             // a FULL bracket fights from its fill-time locked EntrantSnapshots, NOT the live store — a
             // hero burned or transferred after fill still fights as its snapshot, so hero presence has no
-            // bearing; the ONLY dead state is the snapshots being gone (never persisted; a restart drops
-            // them). An OPEN bracket has no snapshots yet and lives on its heroes: it can still fill and
-            // resolve unless an entrant hero was burned away — and heroes are persisted, so a restart no
-            // longer strands it (nor may a stranger refund a forming pot out from under its entrants).
+            // bearing; it is dead when those snapshots are gone (never persisted; a restart drops them), or
+            // when resolve's OTHER precondition has run out of time (see below). An OPEN bracket has no
+            // snapshots yet and lives on its heroes: it can still fill and resolve unless an entrant hero
+            // was burned away — and heroes are persisted, so a restart no longer strands it (nor may a
+            // stranger refund a forming pot out from under its entrants).
             var unresolvable = session.Status == "full"
-                ? session.EntrantSnapshots is not { Count: > 0 }
+                ? session.EntrantSnapshots is not { Count: > 0 } || await AbandonedOnAnUnpaidBuyInAsync(session, ct)
                 : session.Entrants.Any(e => !store.Heroes.ContainsKey(e.HeroId));
             // The second door (see the summary): an entrant calling off a bracket that is STILL OPEN. Checked
             // against the entrant list rather than the opener, because everyone in it has paid the same
@@ -1271,6 +1273,20 @@ public class GameService(
             return (session, refunded, refundedSats);
         }
         finally { store.TournamentLock.Release(); }
+    }
+
+    /// <summary>The second way a FULL bracket dies: a buy-in still outstanding after it has sat full for
+    /// <see cref="GameOptions.TournamentUnpaidBuyInGrace"/>, which resolve will never accept. The WINDOW is
+    /// what stops this becoming the exit a full bracket must not have — inside it an unpaid buy-in is a
+    /// player who has not paid YET, and refunding then is a free look at the locked draw followed by an
+    /// exit.</summary>
+    private async Task<bool> AbandonedOnAnUnpaidBuyInAsync(TournamentSession session, CancellationToken ct)
+    {
+        if (session.FilledAt is not { } filledAt
+            || DateTimeOffset.UtcNow < filledAt + _options.TournamentUnpaidBuyInGrace) return false;
+        foreach (var e in session.Entrants)
+            if (!await chain.IsInvoicePaidAsync(e.BuyInInvoiceId, ct)) return true;
+        return false;
     }
 
     /// <summary>How many generation-0 heroes a starter claim mints. See <see cref="StarterPolicy"/>.</summary>

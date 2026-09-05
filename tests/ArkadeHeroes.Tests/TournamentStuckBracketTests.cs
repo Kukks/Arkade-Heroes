@@ -161,6 +161,115 @@ public class TournamentStuckBracketTests
         Assert.Equal(escrowed, await chain.TreasuryBalanceAsync());
     }
 
+    /// <summary>A size-2 bracket FULL on a seat its taker never paid for: Alice's buy-in is escrowed, Mallory's is not.</summary>
+    private static async Task<(string Tid, ArkadeHeroesClient Alice, long TreasuryBeforeBracket)>
+        FullOnOneUnpaidSeatAsync(WebApplicationFactory<Program> factory, InMemoryChainService chain, string tag)
+    {
+        var (alice, _) = await factory.RegisterAsync($"{tag}-Alice");
+        var (mallory, _) = await factory.RegisterAsync($"{tag}-Mallory");
+        var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
+        var malloryHero = (await mallory.ClaimStartersAsync())[0].Id;
+
+        var treasuryBeforeBracket = await chain.TreasuryBalanceAsync();
+        var open = await alice.Tournament.OpenAsync(new OpenTournamentRequest(aliceHero, BuyIn, 2));
+        await alice.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        await mallory.Tournament.JoinAsync(open.Tournament.Id, new JoinTournamentRequest(malloryHero));
+
+        Assert.Equal("full", (await alice.Tournament.GetAsync(open.Tournament.Id)).Status);
+        Assert.Equal(treasuryBeforeBracket + BuyIn, await chain.TreasuryBalanceAsync());
+        return (open.Tournament.Id, alice, treasuryBeforeBracket);
+    }
+
+    /// <summary>The deadlock: a seat nobody pays for left the bracket both unresolvable and unrefundable.</summary>
+    [Fact]
+    public async Task AFullBracketStrandedOnAnUnpaidBuyIn_RefundsOncePastTheWindow()
+    {
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.UseSetting("Game:TournamentUnpaidBuyInGrace", "00:00:00"));
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        chain.FundTreasury(100_000);
+
+        var (tid, alice, treasuryBeforeBracket) = await FullOnOneUnpaidSeatAsync(factory, chain, "Deadlock");
+
+        var cannotResolve = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Tournament.ResolveAsync(tid, new FightRequest("00ff")));
+        Assert.Contains("buy-ins must be paid", cannotResolve.Message);
+
+        var refund = await alice.Tournament.RefundAsync(tid);
+
+        Assert.Equal("refunded", refund.Tournament.Status);
+        Assert.Equal(1, refund.EntrantsRefunded);      // Alice only — the unpaid seat is owed nothing
+        Assert.Equal(BuyIn, refund.RefundedSats);
+        Assert.Equal(treasuryBeforeBracket, await chain.TreasuryBalanceAsync());
+    }
+
+    [Fact]
+    public async Task AFullBracketStrandedOnAnUnpaidBuyIn_IsNotRefundableInsideTheWindow()
+    {
+        using var factory = new WebApplicationFactory<Program>();   // the default 24h window
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        chain.FundTreasury(100_000);
+
+        var (tid, alice, _) = await FullOnOneUnpaidSeatAsync(factory, chain, "TooSoon");
+
+        var escrowed = await chain.TreasuryBalanceAsync();
+        var refused = await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => alice.Tournament.RefundAsync(tid));
+        Assert.Contains("can still be resolved", refused.Message);
+
+        Assert.Equal("full", (await alice.Tournament.GetAsync(tid)).Status);
+        Assert.Equal(escrowed, await chain.TreasuryBalanceAsync());
+    }
+
+    /// <summary><see cref="AnEntrant_CannotCallOffABracketOnceItIsFull"/>, restated with the window expired.</summary>
+    [Fact]
+    public async Task AFullBracketEveryoneHasPaidFor_StaysUnrefundableHoweverLongItSits()
+    {
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.UseSetting("Game:TournamentUnpaidBuyInGrace", "00:00:00"));
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        chain.FundTreasury(100_000);
+
+        var (alice, _) = await factory.RegisterAsync("Paid-Alice");
+        var (bob, _) = await factory.RegisterAsync("Paid-Bob");
+        var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
+        var bobHero = (await bob.ClaimStartersAsync())[0].Id;
+
+        var open = await alice.Tournament.OpenAsync(new OpenTournamentRequest(aliceHero, BuyIn, 2));
+        await alice.Dev.PayInvoiceAsync(new { open.BuyIn.InvoiceId });
+        var join = await bob.Tournament.JoinAsync(open.Tournament.Id, new JoinTournamentRequest(bobHero));
+        await bob.Dev.PayInvoiceAsync(new { join.BuyIn.InvoiceId });
+
+        var escrowed = await chain.TreasuryBalanceAsync();
+        var refused = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Tournament.RefundAsync(open.Tournament.Id));
+        Assert.Contains("can still be resolved", refused.Message);
+        Assert.Equal(escrowed, await chain.TreasuryBalanceAsync());
+    }
+
+    /// <summary>The console's token names no player, so this passes only if the strand is on the proof door.</summary>
+    [Fact]
+    public async Task TheOperatorConsole_CanRefundABracketStrandedOnAnUnpaidBuyIn()
+    {
+        const string token = "s3cret-operator-token";
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("Game:AdminToken", token);
+            b.UseSetting("Game:TournamentUnpaidBuyInGrace", "00:00:00");
+        });
+        var chain = (InMemoryChainService)factory.Services.GetRequiredService<IChainService>();
+        chain.FundTreasury(100_000);
+
+        var (tid, _, treasuryBeforeBracket) = await FullOnOneUnpaidSeatAsync(factory, chain, "Operator");
+
+        var admin = new ArkadeHeroesClient(factory.CreateClient());
+        var refund = await admin.Admin.RefundTournamentAsync(token, tid);
+
+        Assert.Equal("refunded", refund.Tournament.Status);
+        Assert.Equal(1, refund.EntrantsRefunded);
+        Assert.Equal(BuyIn, refund.RefundedSats);
+        Assert.Equal(treasuryBeforeBracket, await chain.TreasuryBalanceAsync());
+    }
+
     /// <summary>
     /// An entrant who joined but never PAID is not owed anything back. Only sats that actually reached the
     /// treasury are returned — "refunding" an unpaid seat would pay out money the treasury never took in,
