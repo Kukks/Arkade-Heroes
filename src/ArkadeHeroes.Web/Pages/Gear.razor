@@ -127,11 +127,18 @@ else
                                 <input type="number" class="mono" style="width:7.5rem" @bind="_sellAsk" min="1" />
                                 <span class="muted" style="font-size:.78rem">sats</span>
                                 <button class="btn primary" @onclick="() => DoSell(it)"
-                                        disabled="@(_listingId is not null || _sellAsk < 1)">
+                                        disabled="@(_listingId is not null || _sellAsk <= ListingFee)">
                                     @(_listingId == it.Id ? "Listing…" : "List it")
                                 </button>
                                 <button class="btn ghost" @onclick="CancelSell" disabled="@(_listingId is not null)">Cancel</button>
                             </div>
+                            @if (ListingFee > 0)
+                            {
+                                <p class="muted" style="margin:.35rem 0 0;font-size:.78rem">
+                                    The @ListingFee.ToString("N0")-sat marketplace fee comes out of the sale, so you
+                                    receive <b>@(Math.Max(0, _sellAsk - ListingFee).ToString("N0")) sats</b>.
+                                </p>
+                            }
                         }
                         else
                         {
@@ -171,6 +178,7 @@ else
     private string? _buyStatus;
     private string? _buyError;
     private string? _justBought;
+    private GameConfigDto? _config;
     private string? _sellingId;
     private string? _listingId;
     private long _sellAsk;
@@ -178,15 +186,17 @@ else
     private string? _sellError;
     private OfferDto? _listed;
 
-    /// <summary>The catalog price is the ask's starting point — the only number a seller and a buyer both
-    /// already know. It is a default, not a floor; the field is editable.</summary>
+    /// <summary>The catalogue price RAISED TO CLEAR THE LISTING FEE — entry-tier items cost less than the
+    /// default fee, so the price alone was an ask the server refuses.</summary>
     void StartSell(ItemDto it)
     {
         _sellingId = it.Id;
-        _sellAsk = it.PriceSats;
+        _sellAsk = Math.Max(it.PriceSats, ListingFee + 1);
         _sellError = null;
         _listed = null;
     }
+
+    private long ListingFee => _config?.OfferListingFeeSats ?? 0;
 
     void CancelSell() => (_sellingId, _sellError) = (null, null);
 
@@ -236,6 +246,8 @@ else
         try { _items = await Api.Items.ShopAsync(); }
         catch { _error = true; }
         finally { _loading = false; }
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* unknown fee: the ask falls back to the catalogue price */ }
         await HydrateOwnedAsync();
     }
 

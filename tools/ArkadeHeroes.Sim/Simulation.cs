@@ -124,9 +124,9 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
     private static (string Action, int Weight)[] Weights(Persona persona) => persona switch
     {
         Persona.Grinder => [("gauntlet", 34), ("trials", 22), ("duel", 20), ("equip", 8), ("buyitem", 8), ("daily", 8)],
-        Persona.Breeder => [("breed", 30), ("stud", 20), ("sellhero", 16), ("gauntlet", 14), ("recruit", 10), ("merge", 10)],
+        Persona.Breeder => [("breed", 28), ("stud", 18), ("sellhero", 14), ("gauntlet", 12), ("recruit", 10), ("merge", 10), ("gift", 8)],
         Persona.Duelist => [("duel", 40), ("deathmatch", 18), ("gauntlet", 16), ("equip", 10), ("buyitem", 8), ("squad", 8)],
-        Persona.Trader => [("buyoffer", 26), ("sellhero", 24), ("buyitem", 18), ("bid", 14), ("recruit", 10), ("gauntlet", 8)],
+        Persona.Trader => [("buyoffer", 22), ("sellhero", 20), ("buyitem", 16), ("sellitem", 14), ("bid", 12), ("recruit", 8), ("gauntlet", 8)],
         Persona.Whale => [("tournament", 30), ("squad", 22), ("duel", 18), ("buyitem", 12), ("recruit", 10), ("buyoffer", 8)],
         _ => [("daily", 26), ("gauntlet", 26), ("duel", 18), ("trials", 14), ("buyitem", 8), ("breed", 8)],
     };
@@ -165,6 +165,8 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
                 "buyoffer" => await BuyOfferAsync(p),
                 "bid" => await BidAsync(p),
                 "daily" => await DailyAsync(p),
+                "gift" => await GiftAsync(p),
+                "sellitem" => await SellItemAsync(p),
                 _ => throw new InvalidOperationException($"unknown action {action}"),
             };
             _tally.Record(action, did.Ok ? Outcome.Ok : Outcome.Refused, did.Reason);
@@ -432,6 +434,36 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         if (mine.Count < 3) return Did.No("keeping my last two heroes");
         var hero = mine[^1];
         var offer = await p.Api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, 2_000 + 500 * _rng.Next(8)));
+        await p.Api.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+        return Did.Yes;
+    }
+
+    private async Task<Did> GiftAsync(Player p)
+    {
+        var mine = (await p.Api.Heroes.MineAsync()).ToList();
+        if (mine.Count < 3) return Did.No("keeping my last two heroes");
+        var other = _players.FirstOrDefault(x => x.Id != p.Id);
+        if (other is null) return Did.No("nobody to give one to");
+        // Skip anything resting on the market: its asset is in the offer covenant, not the sender's wallet.
+        var listedIds = (await p.Api.Offers.ListAsync()).Select(o => o.HeroId).ToHashSet();
+        var hero = mine.LastOrDefault(h => !listedIds.Contains(h.Id));
+        if (hero is null) return Did.No("every spare hero is listed for sale");
+        if (hero.AssetId is not { } asset) return Did.No("hero has no on-chain asset yet");
+
+        // The sender's own wallet moves the asset; the server only confirms what the chain shows.
+        await p.Api.Dev.TransferAssetAsync(new { AssetId = asset, ToPlayerId = other.Id });
+        await p.Api.Heroes.TransferAsync(hero.Id, new TransferRequest(other.Id));
+        return Did.Yes;
+    }
+
+    private async Task<Did> SellItemAsync(Player p)
+    {
+        var held = await p.Api.Items.MineAsync();
+        var spare = held.FirstOrDefault(kv => kv.Value > 0);
+        if (spare.Key is null) return Did.No("own no gear to sell");
+        var fee = (await p.Api.Chain.InfoAsync()).Config?.OfferListingFeeSats ?? 0;
+        var offer = await p.Api.Offers.CreateItemAsync(
+            new CreateOfferRequest(spare.Key, fee + 500 + 100 * _rng.Next(6)));
         await p.Api.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
         return Did.Yes;
     }
