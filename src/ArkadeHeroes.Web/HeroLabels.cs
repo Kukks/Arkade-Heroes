@@ -19,20 +19,35 @@ internal static class HeroLabels
     public static string Option(HeroDto hero, IEnumerable<HeroDto> among)
     {
         var label = Describe(hero);
-        return IsAmbiguous(hero, among, h => Describe(h) == label) ? $"{label} · #{Tag(hero)}" : label;
+        var clashing = Clashing(hero, among, h => Describe(h) == label);
+        return clashing.Count == 0 ? label : $"{label} · #{Tag(hero, clashing)}";
     }
 
     /// <summary>The hero's name for prose — a confirmation, a result line — disambiguated the same way.</summary>
     public static string Name(HeroDto hero, IEnumerable<HeroDto> among)
-        => IsAmbiguous(hero, among, h => h.Name == hero.Name) ? $"{hero.Name} #{Tag(hero)}" : hero.Name;
+    {
+        var clashing = Clashing(hero, among, h => h.Name == hero.Name);
+        return clashing.Count == 0 ? hero.Name : $"{hero.Name} #{Tag(hero, clashing)}";
+    }
 
     private static string Describe(HeroDto hero)
         => $"{hero.Name} — lvl {hero.Level} · {hero.Rarity?.Tier ?? "Common"}";
 
-    private static bool IsAmbiguous(HeroDto hero, IEnumerable<HeroDto> among, Func<HeroDto, bool> collides)
-        => among.Any(h => h.Id != hero.Id && collides(h));
+    private static List<HeroDto> Clashing(HeroDto hero, IEnumerable<HeroDto> among, Func<HeroDto, bool> collides)
+        => among.Where(h => h.Id != hero.Id && collides(h)).ToList();
 
-    /// <summary>The tail of the hero's id: server-minted, unique, and the same handle its detail page shows.</summary>
-    private static string Tag(HeroDto hero)
-        => hero.Id.Length <= 4 ? hero.Id : hero.Id[^4..];
+    /// <summary>
+    /// The shortest tail of the hero's id that separates it from the heroes it clashes with — server-minted,
+    /// unique, and the same handle its detail page shows. Lengthened rather than fixed at four characters
+    /// because "long enough in practice" is not a guarantee, and this is the text a player destroys a hero by.
+    /// </summary>
+    private static string Tag(HeroDto hero, List<HeroDto> clashing)
+    {
+        for (var length = 4; length < hero.Id.Length; length++)
+        {
+            var tail = hero.Id[^length..];
+            if (!clashing.Any(h => h.Id.EndsWith(tail, StringComparison.Ordinal))) return tail;
+        }
+        return hero.Id;
+    }
 }

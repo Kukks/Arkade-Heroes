@@ -58,6 +58,20 @@ public class HeroLabelTests
     }
 
     [Fact]
+    public void TwinsWhoseIdsAlsoShareATailGetTagsLongEnoughToSeparateThem()
+    {
+        // A fixed-length tag is only unique in practice. In the one place this text matters — choosing
+        // which hero to burn — "in practice" is not good enough, so the tag grows until it separates.
+        var a = Fixtures.Hero("hero-1111-aaaa", "Crimson Vanguard Vale");
+        var b = Fixtures.Hero("hero-2222-aaaa", "Crimson Vanguard Vale");
+        List<ArkadeHeroes.Shared.HeroDto> roster = [a, b];
+
+        var (first, second) = (HeroLabels.Option(a, roster), HeroLabels.Option(b, roster));
+        Assert.NotEqual(first, second);
+        Assert.NotEqual(HeroLabels.Name(a, roster), HeroLabels.Name(b, roster));
+    }
+
+    [Fact]
     public void AHeroIsNotAmbiguousWithItself()
     {
         var only = Fixtures.Hero("hero-aaaa", "Crimson Vanguard Vale");
