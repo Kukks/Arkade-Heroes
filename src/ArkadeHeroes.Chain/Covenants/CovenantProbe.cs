@@ -177,9 +177,10 @@ public static class CovenantSpender
         // a timelocked leaf with plain funding coins.
         var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
 
-        // Mixed covenant + actor-funding spends: NBitcoin orders the ark tx's
-        // inputs by outpoint (BIP69), not by our coin order, so NArk's asset-vin
-        // remap fires and rebuilds the extension output from the ASSET packet
+        // Mixed covenant + actor-funding spends: NBitcoin may reorder the ark tx's
+        // inputs (the SDK's own note says "e.g. by amount", even with ShuffleInputs
+        // false), so NArk's asset-vin remap fires and rebuilds the extension output
+        // from the ASSET packet
         // alone — silently dropping the EmulatorPacket. Its input order is only
         // known AFTER construction, so we correct the extension here (rebuild it
         // with the EmulatorPacket's vins pointing at each covenant input's ACTUAL

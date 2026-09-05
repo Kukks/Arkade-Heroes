@@ -22,6 +22,9 @@ dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --afford --budget 1000
 
 # Whether a fight is worth watching, straight from BattleEngine.Fight.
 dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --combat --samples 6000
+
+# What CombatConfig's default-off flags would actually change.
+dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --flags --samples 40000
 ```
 
 Everything is seeded, so a finding is reproducible by quoting its seed.
@@ -87,21 +90,56 @@ Per `LeaderboardBuilder`, a zero-XP win also confers no rank, by design.
 
 | power gap | favourite wins | avg turns |
 |---|---|---|
-| 0–9% | 61.0% | 6.2 |
+| 0–9% | 61.2% | 6.2 |
 | 20–29% | 88.3% | 5.8 |
 | 40–49% | 99.3% | 4.6 |
 | 50%+ | 99.9% | 3.0 |
-| **matchmade (4 nearest)** | **64.1%** | **6.6** |
+| **matchmade (4 nearest)** | **64.2%** | **6.6** |
 
 `PowerScore` predicts cleanly and monotonically, which is the win-rate check its own doc comment asks
 for. The number that matters is the last row: served an opponent the way the game actually suggests
-one, the mean gap is 7.4% and the favourite wins **64%** over ~6.6 turns — the better hero usually
+one, the mean gap is 7.5% and the favourite wins **64%** over ~6.6 turns — the better hero usually
 wins, so investment means something, but loses often enough to be worth watching. No fight hit the
 60-turn cap.
+
+Equal-power pairs are excluded from every favourite-win rate: they have no favourite, so counting one
+would be scoring an arbitrary side choice. They are reported separately instead (13 of 6,000 in the
+random field, 78 of 6,000 matchmade — ties are likelier there by construction, since the suggestion
+list is drawn from the nearest by power).
 
 It also shows how much work matchmaking is doing. In a *random* field, 45% of pairings sit above a
 50% gap, where the favourite wins 99.9% in three turns — an execution, not a battle. The suggestion
 list is load-bearing for fun, not a convenience.
+
+**The dormant combat flags would buy almost nothing.** `--flags --samples 40000 --seed 21` replays the
+same 40,000 matchups under each of `CombatConfig`'s default-off flags (they ship off so replays stay
+verifiable; each is waiting on a coordinated client+server release):
+
+| config | favourite wins | avg turns | win rate of the *rarer* hero |
+|---|---|---|---|
+| default (all off) | 82.9% | 6.3 | 50.6% |
+| `ElementAwareSelection` | 83.0% | 6.3 | 50.7% |
+| `InnateAbilities` | 82.9% | 6.3 | 51.0% |
+| both | 83.0% | 6.3 | 51.1% |
+
+At n=40,000 the 95% interval is about ±0.5pp, so the aggregate rows are flat and `InnateAbilities`'
++0.4pp on rarity sits right at the resolution limit. That matters because `InnateAbilities` exists
+specifically *"so rarity/breeding start to matter in the fight, not just on the card"* — and a rarer
+hero wins ~51% of fights with it on, against ~50.6% without. For a breeding game, that is the price
+of the whole rarity ladder in combat terms.
+
+This is **not** "rarity is broken": the code is explicit that cosmetic rarity carries zero
+`PowerScore` weight and touches combat only through the capped (≤5%) affinity modifier, and rarity
+still drives collectibility, `/api/rarest` and resale. The finding is narrower — *the flag held back
+for a coordinated release does not achieve its stated combat goal*, so if rarity is meant to swing
+fights, the lever has to be bigger than this.
+
+Two caveats on the method, stated because they bound the claim. The field is bred **six generations
+deep** on purpose: `InnateAbilities` buys proc chances with trait rarity, and a gen-1 hero is ~94%
+Common, so a shallow field measures nothing (the first version of this run made exactly that mistake).
+And "favourite wins" is a *symmetric* metric, so a flag that improves move-selection quality for both
+sides can be invisible in it — the check for that is turn count, which would fall if kills got faster,
+and it does not move.
 
 **Rarity works; breeding throughput is what gates it.** `--rarity`: non-Common heroes are 5.8% of
 generation 1 and 28% by generation 10. The arena run produced 9 births in total, which is why it saw

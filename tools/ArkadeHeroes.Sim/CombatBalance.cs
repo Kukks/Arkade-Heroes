@@ -35,7 +35,18 @@ public static class CombatBalance
             if (pa == 0 || pb == 0) continue;
 
             var result = BattleEngine.Fight(a, b, Entropy(rng));
-            var favourite = pa >= pb ? a.Id : b.Id;
+            if (result.Turns >= BattleEngine.MaxTurns) timeouts++;
+
+            // An equal-score pair has no favourite, so folding it in would score an arbitrary
+            // side choice as a favourite outcome. Counted on its own instead.
+            if (pa == pb)
+            {
+                mirrors++;
+                if (result.WinnerId == a.Id) mirrorWins++;
+                continue;
+            }
+
+            var favourite = pa > pb ? a.Id : b.Id;
             var gap = (int)Math.Round(100.0 * Math.Abs(pa - pb) / Math.Max(pa, pb));
             var bucket = Math.Min(gap / 10 * 10, 50);
 
@@ -43,9 +54,6 @@ public static class CombatBalance
             buckets[bucket] = (cur.Fights + 1,
                 cur.FavouriteWins + (result.WinnerId == favourite ? 1 : 0),
                 cur.Turns + result.Turns);
-
-            if (result.Turns >= BattleEngine.MaxTurns) timeouts++;
-            if (pa == pb) { mirrors++; if (result.WinnerId == a.Id) mirrorWins++; }
         }
 
         var sb = new StringBuilder();
@@ -85,7 +93,7 @@ public static class CombatBalance
         var pool = Enumerable.Range(0, 40).Select(_ => RandomHero(rng, "P")).ToList();
         var scored = pool.Select(h => (Hero: h, Power: PowerScore.Compute(h))).Where(x => x.Power > 0).ToList();
 
-        int fights = 0, favouriteWins = 0, gapSum = 0;
+        int fights = 0, favouriteWins = 0, gapSum = 0, ties = 0;
         long turns = 0;
         for (var i = 0; i < samples; i++)
         {
@@ -97,10 +105,14 @@ public static class CombatBalance
             var them = candidates[rng.Next(candidates.Count)];
 
             var result = BattleEngine.Fight(me.Hero, them.Hero, Entropy(rng));
-            var favourite = me.Power >= them.Power ? me.Hero.Id : them.Hero.Id;
+            turns += result.Turns;
+            // Ties are likelier here than in a random field — the suggestion list is drawn from the
+            // NEAREST by power — so excluding them from the favourite rate matters more, not less.
+            if (me.Power == them.Power) { ties++; continue; }
+
+            var favourite = me.Power > them.Power ? me.Hero.Id : them.Hero.Id;
             if (result.WinnerId == favourite) favouriteWins++;
             gapSum += (int)Math.Round(100.0 * Math.Abs(me.Power - them.Power) / Math.Max(me.Power, them.Power));
-            turns += result.Turns;
             fights++;
         }
 
@@ -108,9 +120,10 @@ public static class CombatBalance
         var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine($"  MATCHMADE (opponent drawn from the 4 nearest by power, as the game suggests them)");
-        sb.AppendLine($"    {fights} fights   mean power gap {(double)gapSum / fights,4:F1}%   " +
+        sb.AppendLine($"    {fights} decided fights   mean power gap {(double)gapSum / fights,4:F1}%   " +
                       $"favourite wins {100.0 * favouriteWins / fights:F1}%   " +
-                      $"avg turns {(double)turns / fights:F1}");
+                      $"avg turns {(double)turns / (fights + ties):F1}" +
+                      (ties > 0 ? $"   ({ties} equal-power fights excluded)" : ""));
         return sb.ToString();
     }
 
