@@ -18,7 +18,7 @@ Grounded in: `docs/research/arkade-kitties.md` (on-chain asset + breeding contra
 | 8–12 | **Growth genes** (per-stat gain per level — hidden potential) |
 | 13 | Cooldown gene (breeding recovery, like kitties byte 15) |
 | 14–15 | Appearance (name palette + title; console art stand-in) |
-| 16–31 | Reserved, zero in v1 (future trait-map versions) |
+| 16–31 | **Trait map**: 8 dominant/recessive categories (6 cosmetic + ElementAffinity, Temperament) — see `Core/Genetics/Traits.cs`. Zeroed on gen-0 and on recruits, so rarity can only enter the world by breeding mutation |
 
 Growth genes are the breeding meta: invisible at level 1, dominant at high level, so lineages matter more than stat screens.
 
@@ -30,13 +30,14 @@ Growth genes are the breeding meta: invisible at level 1, dominant at high level
 
 ### Progression
 
-- XP: a **conserved transfer** on staked wins only — the winner gains, and the loser loses, `max(0, 40 + 12·(loserLevel − winnerLevel))` (so it zeroes past a 4-level gap — no farming down the ladder — and the loser can delevel). Friendly (unstaked) matches award no XP and don't count toward the ranked leaderboard. Curve `80 + 45·level^1.35`, cap 50.
-- Skills: level 1 `Strike`; level 3 gene-A skill; level 6 gene-B skill; level 9 `Elemental Burst`.
+- XP: a **conserved transfer** on staked wins only — the winner gains, and the loser loses, `max(0, 40 + 12·(loserLevel − winnerLevel))` (so it zeroes past a 4-level gap — no farming down the ladder — and the loser can delevel), **clamped to what the loser actually owns** (`Leveling.PayableTransfer`; without the clamp, beating a hero at the level-1/0-XP floor MINTS the difference). Friendly (unstaked) matches award no XP and don't count toward the ranked leaderboard. Curve `80 + 45·level^1.35`, cap 50.
+- The **only XP mint** is the PvE gauntlet (`Gauntlet.XpForRun`), and it pays nothing at or past `xpLevelCap` (10). Trials award a title/score, not XP; duels and squad matches only move XP between heroes. So a hero that has never run the gauntlet has nothing to win or lose in a staked fight — measured at ~84% of staked duels in a fresh arena. See `tools/ArkadeHeroes.Sim`.
+- Skills: `Strike` plus the **gene-A skill from level 1** (so no hero is ever Strike-only); gene-B at level 6; `Elemental Burst` at level 9. The three levels are `CombatConfig.GeneSkillALevel/GeneSkillBLevel/BurstLevel`, not constants.
 - Equipment: 3 slots (weapon/armor/trinket), fixed catalog, flat stat mods, priced in sats. Each item type is a **fungible Arkade asset** (issued lazily by the treasury on first sale, supply 1000, species-controlled, item id in genesis metadata). Buying pays the price and delivers one unit to the player's wallet; equipping allocates a held unit (one unit backs at most one equipped hero); unequip frees it. Loadouts don't travel on hero transfer — item assets stay with the seller's wallet, so the server strips equipment when a hero changes owners. Banco-style item trading between players is live (resting covenant offers — see the covenant roadmap below).
 
 ### Combat
 
-Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative by speed, skill choice by highest expected damage off cooldown, damage = `power · scale / (defense + 25)` with element ring multipliers (1.3×/0.75×), crit (luck), dodge (speed), ±10% variance — all rolls from a seeded xoshiro256** stream. Max 60 turns, then HP-fraction decision. Output is a replayable `BattleResult` event log; the match seed is commit–reveal over both players' nonces, so either player can re-run the engine and verify the outcome.
+Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative by speed, skill choice by `CombatConfig.SelectionPolicy` — **`Tactical` by default**, which opens with a buff, debuffs a durable target and drains when hurt, so status skills are worth casting (`Greedy` is the original always-max-damage behaviour) — damage = `power · scale / (defense + 25)` with element ring multipliers (1.3×/0.75×), crit (luck), dodge (speed), ±10% variance — all rolls from a seeded xoshiro256** stream. Max 60 turns, then HP-fraction decision. Output is a replayable `BattleResult` event log; the match seed is commit–reveal over both players' nonces, so either player can re-run the engine and verify the outcome.
 
 ## 2. Chain integration (ArkadeHeroes.Chain) — covenant-first, non-custodial
 
@@ -65,7 +66,7 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 3. Heroes/items are **species-controlled asset groups** with the exact delta discipline the covenants require (retain Δ0 / fresh-mint Δ1).
 4. Fees, stakes, and payouts are plain Arkade transactions with fixed destinations — the outputs the covenants pin (`scriptPubKey == SingleSig(...)`, `value >= pot`).
 
-**Covenant plumbing already in code** (`src/ArkadeHeroes.Chain/Covenants/`): `ArkadeScriptTweak` (the `ArkScriptHash` tagged-hash key tweak that binds a tapleaf to a script, ported from the emulator) and `EmulatorClient` (`/v1/info`, `/v1/tx`). The regtest stack's emulator is probed at startup and its signer key is surfaced through `/api/chain/info` — clients can compute covenant keys themselves.
+**Covenant plumbing is the SDK's** (2026-09-05): the `ArkScriptHash` tagged-hash tweak, the Emulator Packet and the emulator REST client now come from **`NArk.Arkade`** (`ArkadeTweak`, `EmulatorPacket`, `EmulatorClient`), and the game's own copies were deleted after being proven byte-identical. What stays in `src/ArkadeHeroes.Chain/Covenants/` is the composition on top: the covenant bytecode builders (`ArkadeCovenants`), the per-contract leaves (`ArkadeArtifactContract`), the spend pipeline (`CovenantSpender`) and the per-mechanic escrow/refund flows. The regtest emulator is probed at startup and its signer key is surfaced through `/api/chain/info`, so clients can compute covenant keys themselves.
 
 ### v1 execution mode — real assets, server-executed shapes
 
@@ -90,12 +91,16 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 
 **Shipped since this roadmap was written (as of 2026-07-09):** the covenant surface now spans FIVE escrows, all STRUCTURALLY enforced (asset/tx introspection opcodes — not oracle-outcome trust) with a trustless timelocked reclaim on each: **wager**, **merge** (burn two heroes → mint one trait-concentrated fused hero — `MergeAuthorized`), **breed** (parents retained, child bound by group-output), **hero/item offers** (fully oracle-less — pay-the-seller + conservation), and **hardcore death-match** (JOINT escrow, winner-takes-all + permadeath; covenant-staked gear routes to the winner; opt-in **trait-absorb** — on a provably-fair roll the winner RE-MINTS absorbing the loser's rarer traits, both heroes burned, proven live). The oracle is now a *verifiable relay* of only off-chain-computable facts (fight winner, genome), each client-recomputable. A hand-written typed **`ArkadeHeroes.Client.Sdk`** (12 resource facades over the HTTP API) is consumed by the console client + all tests. **Gate: 173 unit + 50 E2E green.** Filed upstream: [arkade-os/arkd#1146](https://github.com/arkade-os/arkd/issues/1146) (timelocked-txid poisoning).
 
+**Shipped since, and not described above (2026-09-05).** This document still reads as a breed-and-duel game; the modes that exist now are **gauntlet** (PvE ladder, the only XP mint), **trials** (endless affix ladder, scored not XP-bearing), **duel** (wagered 1v1), **squad** (3v3), **death-match** (permadeath, optional trait-absorb), **tournaments** (bracket + rake), **seasons** (ranked ladder + prize pool), **breeding/stud/merge**, **marketplace offers and bids**, **daily rewards**, and **achievements**. There is a full **Blazor WASM frontend** (`src/ArkadeHeroes.Web`) alongside the console client, with an in-browser non-custodial wallet. Progression is governed by `GameConfig`, whose verification-critical half (genome, rarity, affinity, curve, combat) is shared client+server at compile time and version-stamped onto every outcome, so retuning it is a coordinated release rather than a config edit. Balance is measurable rather than asserted — see `tools/ArkadeHeroes.Sim`. **Gate: 1068 unit + 140 bUnit + 59 E2E green.**
+
 ## 3. Topology
 
 ```
-ArkadeHeroes.Client (console)
-        │ REST (ArkadeHeroes.Shared DTOs)
-ArkadeHeroes.Server (ASP.NET minimal API)
+ArkadeHeroes.Client (console)      ArkadeHeroes.Web (Blazor WASM + in-browser wallet)
+        │                                   │
+        └──── REST (ArkadeHeroes.Shared DTOs, via ArkadeHeroes.Client.Sdk) ────┘
+                              │
+                    ArkadeHeroes.Server (ASP.NET minimal API)
         │ ArkadeHeroes.Core (rules)   ArkadeHeroes.Chain (IChainService)
         │                                   ├── InMemoryChainService (unit tests, offline dev)
         │                                   └── NArkChainService → arkd :7070 (regtest denigiri)
