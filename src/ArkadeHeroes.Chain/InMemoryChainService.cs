@@ -490,6 +490,10 @@ public class InMemoryChainService : IChainService
         string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId,
         long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default)
     {
+        if (bidSats <= 0) throw new InvalidOperationException("The bid must be positive.");
+        if (feeSats < 0 || feeSats >= bidSats)
+            throw new InvalidOperationException(
+                $"The marketplace fee ({feeSats}) must be non-negative and below the bid ({bidSats}).");
         await GetPlayerAddressAsync(bidderPlayerId, ct);
         await GetPlayerAddressAsync(ownerPlayerId, ct);
         _bidEscrows[bidId] = new BidEscrow(
@@ -507,6 +511,17 @@ public class InMemoryChainService : IChainService
         if (!_bidEscrows.TryGetValue(bidId, out var escrow))
             throw new InvalidOperationException($"Unknown bid escrow {bidId}.");
         if (escrow.BidderId != playerId) throw new InvalidOperationException("Not the bidder.");
+        // Funding is one-way. A real bidder cannot pay the same escrow twice into the same VTXO, and a
+        // second deduction here would let a test bill a player for a bid they already made.
+        lock (escrow)
+        {
+            if (escrow.Funded) throw new InvalidOperationException("Bid escrow already funded.");
+            FundOnce(escrow, playerId);
+        }
+    }
+
+    private void FundOnce(BidEscrow escrow, string playerId)
+    {
         var paid = false;
         _playerBalances.AddOrUpdate(playerId, _ => throw new InvalidOperationException("No wallet."),
             (_, bal) => { if (bal < escrow.BidSats) return bal; paid = true; return bal - escrow.BidSats; });

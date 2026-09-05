@@ -88,6 +88,32 @@ public class BidEscrowChainTests
     }
 
     [Fact]
+    public async Task ABidIsFundedOnce_NeverTwice()
+    {
+        // A second deduction would bill a player for a bid they already made.
+        var (chain, bidder, _, hero) = await ArenaAsync();
+        await AcceptedAsync(chain, hero);
+        chain.FundBidEscrowFromPlayer(bidder, "bid-1");
+        var after = await chain.GetAddressBalanceSatsAsync(bidder);
+
+        Assert.Throws<InvalidOperationException>(() => chain.FundBidEscrowFromPlayer(bidder, "bid-1"));
+        Assert.Equal(after, await chain.GetAddressBalanceSatsAsync(bidder));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-1, 0)]
+    [InlineData(1_000, 1_000)]   // a cut that swallows the whole bid
+    [InlineData(1_000, -1)]
+    public async Task ABidTheCovenantCouldNotHonour_IsRefusedBeforeItIsStored(long bid, long fee)
+    {
+        var (chain, _, _, hero) = await ArenaAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            chain.CreateBidEscrowAsync("bid-bad", "bidder", "owner", hero, bid, fee, 1_800_000_000));
+        Assert.Null(await chain.GetBidEscrowParamsAsync("bid-bad"));
+    }
+
+    [Fact]
     public async Task TheParamsRebuildTheCovenantTheBidderReclaimsWith()
     {
         var (chain, _, _, hero) = await ArenaAsync();

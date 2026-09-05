@@ -1230,7 +1230,13 @@ public class NArkChainService(
         return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.BidEscrowParams>(json);
     }
 
-    /// <summary>Funded means SATS here, not an asset — the offer mirrored.</summary>
+    /// <summary>
+    /// Funded means SATS here, not an asset — the offer mirrored. EXACTLY the bid, in exactly one VTXO, the
+    /// same rule <see cref="IsBtcStake"/> enforces for a wager stake. The fulfil leaf pins three output
+    /// amounts but binds no total input value, so anything at this address beyond the bid is value the
+    /// fulfiller could sweep alongside it. Failing closed on a surplus keeps the flow from completing a sale
+    /// that would quietly cost the bidder the excess.
+    /// </summary>
     public async Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default)
     {
         var parameters = await GetBidEscrowParamsAsync(bidId, ct);
@@ -1240,33 +1246,31 @@ public class NArkChainService(
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
         var vtxos = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct))
             .DistinctBy(v => v.OutPoint).ToList();
-        return vtxos.Aggregate(0UL, (sum, v) => sum + v.Amount) >= (ulong)parameters.BidSats;
+        return vtxos.Count == 1 && IsBtcStake(vtxos[0], parameters.BidSats);
     }
 
-    /// <summary>A spent escrow VTXO is the evidence; while the bid rests its VTXO is unspent.</summary>
+    /// <summary>
+    /// A spend alone does not say WHICH leaf ran, and the two are not interchangeable: a reclaim pays the
+    /// bidder back, so counting one as a settle would mark a hero sold that never moved. The HERO is the
+    /// discriminator — fulfil is the only leaf that moves it, and it pins the destination — so the question
+    /// is asked of the asset, not of an output that a co-spent input could also have produced.
+    /// </summary>
     public async Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default)
     {
         var parameters = await GetBidEscrowParamsAsync(bidId, ct);
         if (parameters is null) return false;
         var (contract, _) = await BuildBidContractAsync(parameters, ct);
         var script = contract.GetArkAddress().ScriptPubKey.ToHex();
-        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
-        var spent = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
-            .Where(v => v.ArkTxid is not null)
-            .ToList();
-        if (spent.Count == 0) return false;
+        var bidderScript = ArkAddress.Parse(parameters.BidderAddress).ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script, bidderScript });
 
-        // A spend is either the fulfil or the reclaim, and they are NOT interchangeable: the reclaim pays
-        // the bidder back, so treating it as a settle would mark a hero sold that never moved. The fulfil
-        // is the one that pays the OWNER, so that output is what distinguishes them.
-        var ownerScript = ArkAddress.Parse(parameters.OwnerAddress).ScriptPubKey.ToHex();
-        foreach (var vtxo in spent)
-        {
-            var siblings = await vtxoStorage.GetVtxos(
-                scripts: [ownerScript], includeSpent: true, cancellationToken: ct);
-            if (siblings.Any(s => s.OutPoint.Hash.ToString() == vtxo.ArkTxid)) return true;
-        }
-        return false;
+        var spent = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
+            .Any(v => v.ArkTxid is not null);
+        if (!spent) return false;
+
+        var atBidder = await vtxoStorage.GetVtxos(scripts: [bidderScript], cancellationToken: ct);
+        return atBidder.Any(v => v.Assets is { Count: > 0 } assets
+                                 && assets.Any(a => a.AssetId == parameters.HeroAssetId));
     }
 
     public async Task<OfferInfo> CreateOfferAsync(
