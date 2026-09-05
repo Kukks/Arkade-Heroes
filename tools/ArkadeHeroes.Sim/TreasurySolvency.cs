@@ -486,18 +486,17 @@ public static class TreasurySolvency
                 sb.AppendLine($"  current season       #{_season.SeasonNumber}, pot {_season.PotSats:N0} sats, {_season.Standings.Count} ranked — settles only after it ENDS");
             sb.AppendLine();
 
-            // The tally is meant to explain the balance. Where it does not, the difference is attributable,
-            // and naming the attribution is the whole point of printing this.
+            // The books are meant to explain the balance; any gap is a path that moved sats without
+            // booking them. Deliberately NOT attributed to a named suspect any more: this harness found
+            // the duel/squad stakes unbooked, that was fixed, and a hard-coded subtraction of the pot
+            // outflow now reads as a NEGATIVE residual and reports a defect that is no longer there.
             var booked = _final.TotalInflowSats - _final.TotalOutflowSats;
             var unaccounted = _final.TreasuryBalanceSats - booked;
-            var potOutflow = _final.OutflowByTag.GetValueOrDefault("wager") + _final.OutflowByTag.GetValueOrDefault("squad");
             sb.AppendLine("LEDGER RECONCILIATION");
             sb.AppendLine($"  real treasury balance         {_final.TreasuryBalanceSats,13:N0}");
             sb.AppendLine($"  booked inflow - booked outflow{booked,13:N0}");
-            sb.AppendLine($"  unaccounted                   {unaccounted,13:N0}");
-            sb.AppendLine($"  duel + squad pot outflow      {potOutflow,13:N0}   (stakes entered the treasury but were never booked as inflow)");
-            sb.AppendLine($"  residual                      {unaccounted - potOutflow,13:N0}   "
-                + $"{(unaccounted - potOutflow == 0 ? "<- ZERO: the gap is EXACTLY the unbooked stakes" : "<- unexplained; another path is mis-booked too")}");
+            sb.AppendLine($"  unaccounted                   {unaccounted,13:N0}   "
+                + $"{(unaccounted == 0 ? "<- the books account for every sat" : "<- a path moved sats without booking them")}");
             sb.AppendLine($"  swallowed ledger writes: {_final.LedgerWriteFailures}   heroes minted {_final.HeroesMinted} / burned {_final.HeroesBurned}");
             sb.AppendLine();
 

@@ -105,6 +105,10 @@ public static class MarketLiquidity
         private long _openingWallets;
         private long _openingTreasury;
         private int _browsed, _foundNothing, _couldNotAfford, _allTooDear, _bought;
+        // Rounds where the trader had nothing to list, so nothing was ever offered to the server.
+        // Counted apart from refusals: folding them in would attribute to the game listings it
+        // never saw, and inflate the share of attempts it turned away.
+        private int _listSkipped;
         private long _toSellers, _toTreasury;
 
         public Tally Tally { get; } = new();
@@ -229,7 +233,7 @@ public static class MarketLiquidity
         private async Task ListItemAsync(Trader t, int round)
         {
             var owned = await t.Api.Items.MineAsync();
-            if (owned.Count == 0) throw new Refusal("hold no gear unit that is free to list");
+            if (owned.Count == 0) { _listSkipped++; throw new Refusal("hold no gear unit that is free to list"); }
             var itemId = owned[_rng.Next(owned.Count)];
             var reference = _shopPrice.GetValueOrDefault(itemId, 0);
             await ListAsync(t, round, "item", itemId, reference,
@@ -241,7 +245,7 @@ public static class MarketLiquidity
             var listed = _listings.Where(l => l.Seller.Id == t.Id && l.Kind == "hero" && l.Resting)
                 .Select(l => l.What).ToHashSet(StringComparer.Ordinal);
             var mine = (await t.Api.Heroes.MineAsync()).Where(h => !listed.Contains(h.Id)).ToList();
-            if (mine.Count == 0) throw new Refusal("own no hero that is not already listed");
+            if (mine.Count == 0) { _listSkipped++; throw new Refusal("own no hero that is not already listed"); }
             var hero = mine[_rng.Next(mine.Count)];
             await ListAsync(t, round, "hero", hero.Id, _heroReference,
                 ask => t.Api.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, ask)));
@@ -405,15 +409,18 @@ public static class MarketLiquidity
         private void AppendListings(StringBuilder sb)
         {
             var attempted = _listings.Count
-                            + Tally.Count("list-item", Outcome.Refused) + Tally.Count("list-hero", Outcome.Refused);
+                            + Tally.Count("list-item", Outcome.Refused) + Tally.Count("list-hero", Outcome.Refused)
+                            - _listSkipped;
             var sold = _listings.Count(l => l.SoldRound is not null);
             var pulled = _listings.Count(l => l.PulledRound is not null);
             var stillResting = _listings.Count(l => l.Resting);
             sb.AppendLine();
             sb.AppendLine("LISTINGS");
-            sb.AppendLine($"  attempted {attempted}   accepted {_listings.Count}   "
-                          + $"refused before they existed {attempted - _listings.Count} ({Pct(attempted - _listings.Count, attempted)})"
+            sb.AppendLine($"  offered to the game {attempted}   accepted {_listings.Count}   "
+                          + $"REFUSED {attempted - _listings.Count} ({Pct(attempted - _listings.Count, attempted)})"
                           + $", of which the fee floor blocked {_blocked.Count}");
+            sb.AppendLine($"  (a further {_listSkipped} rounds had nothing to list and were never offered — "
+                          + "excluded above, so the refusal rate is the game's and not the harness's)");
             sb.AppendLine($"  of the {_listings.Count} that existed:  SOLD {sold} ({Pct(sold, _listings.Count)})   "
                           + $"pulled by the seller {pulled} ({Pct(pulled, _listings.Count)})   "
                           + $"still resting {stillResting} ({Pct(stillResting, _listings.Count)})");

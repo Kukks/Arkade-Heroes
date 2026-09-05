@@ -437,14 +437,14 @@ else
         Reads(heroes) is not { } reads ? null : (reads.Sum(r => r.XpIfYouWin), reads.Sum(r => r.XpIfYouLose));
 
     /// <summary>Ranking key, so the closest fights sit first the way /duel's server-ranked list does.</summary>
-    private int? MeanGap(List<HeroDto> heroes) =>
-        Reads(heroes) is not { } reads ? null : reads.Sum(r => r.PowerGapPercent) / 3;
+    private double? MeanGap(List<HeroDto> heroes) =>
+        Reads(heroes) is not { } reads ? null : reads.Average(r => (double)r.PowerGapPercent);
 
     // Opponents: other owners holding >=3 heroes; the defender lineup is their first three.
     private IEnumerable<(string Owner, List<HeroDto> Heroes)> Opponents =>
         _all.Where(h => h.OwnerId != MyOwnerId).GroupBy(h => h.OwnerId).Where(g => g.Count() >= 3)
             .Select(g => (Owner: g.Key, Heroes: g.Take(3).ToList()))
-            .OrderBy(o => MeanGap(o.Heroes) ?? int.MaxValue)
+            .OrderBy(o => MeanGap(o.Heroes) ?? double.MaxValue)
             .ThenBy(o => o.Owner, StringComparer.Ordinal);
 
     private bool AnyScored => Opponents.Any(o => MeanGap(o.Heroes) is not null);
@@ -501,6 +501,12 @@ else
             _matches = await Api.Squad.ListAsync();
             _heroesLoaded = true;
             _loadError = null;
+            // A resolve moves XP and therefore power, and this runs straight after one. The cached
+            // reads were scored against the PRE-fight rosters, and LoadReadsAsync skips a hero it has
+            // already seen — so without dropping them the picker keeps quoting the old fight.
+            _reads.Clear();
+            foreach (var slot in MyLineup)
+                await LoadReadsAsync(slot);
         }
         catch (Exception ex)
         {
