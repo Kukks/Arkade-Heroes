@@ -418,7 +418,7 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
     {
         var hero = await PickHeroAsync(p);
         if (hero is null) return Did.No("no hero to equip");
-        var owned = await p.Api.Items.MineAsync();
+        var owned = (await p.Api.Items.MineAsync()).Keys.ToList();
         if (owned.Count == 0) return Did.No("own no gear");
         await p.Api.Heroes.EquipAsync(hero.Id, new EquipRequest(owned[_rng.Next(owned.Count)]));
         return Did.Yes;
