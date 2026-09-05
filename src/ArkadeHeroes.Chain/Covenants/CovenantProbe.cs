@@ -170,23 +170,12 @@ public static class CovenantSpender
 
         var builder = new TransactionHelpers.ArkTransactionBuilder(
             transport, safetyService, walletProvider, intentStorage);
+        // The ark tx's locktime and per-input sequences are the SDK's job now:
+        // ConstructArkTransaction takes the max locktime across the coins and gives each one
+        // 0xFFFFFFFE or 0xFFFFFFFF by whether it is actually timelocked. We used to re-apply
+        // that here and force 0xFFFFFFFE on EVERY input, which is wrong for a spend that mixes
+        // a timelocked leaf with plain funding coins.
         var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
-
-        // Timelocked leaves: arkd requires the CHECKPOINT and the ARK tx to
-        // carry the SAME locktime (each side's canonical form is derived from
-        // the other — mismatches surface as CHECKPOINT_MISMATCH/ARK_TX_MISMATCH).
-        // The checkpoint got it from coin.LockTime; apply it to the ark tx too.
-        var lockTime = inputs.Max(i => i.LockTime?.Value ?? 0);
-        if (lockTime > 0)
-        {
-            var gtx = arkTx.GetGlobalTransaction();
-            gtx.LockTime = new LockTime(lockTime);
-            foreach (var txin in gtx.Inputs)
-                txin.Sequence = new Sequence(0xFFFFFFFE);
-            var relocked = PSBT.FromTransaction(gtx, serverInfo.Network, PSBTVersion.PSBTv0);
-            relocked.UpdateFrom(arkTx);
-            arkTx = relocked;
-        }
 
         // Mixed covenant + actor-funding spends: NBitcoin orders the ark tx's
         // inputs by outpoint (BIP69), not by our coin order, so NArk's asset-vin

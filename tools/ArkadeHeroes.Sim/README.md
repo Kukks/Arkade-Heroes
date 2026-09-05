@@ -19,6 +19,9 @@ dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --xp --samples 4000
 
 # Whether a new player can afford to climb, and what would have to move if not.
 dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --afford --budget 100000
+
+# Whether a fight is worth watching, straight from BattleEngine.Fight.
+dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --combat --samples 6000
 ```
 
 Everything is seeded, so a finding is reproducible by quoting its seed.
@@ -79,6 +82,26 @@ Breeding a better hero pays in PvP and pays nothing here.
 duels transferred zero XP. PvP only moves XP between heroes, and a hero holding none can lose none — so
 until a hero has been through the PvE mint, a staked duel costs both players a fee and changes nothing.
 Per `LeaderboardBuilder`, a zero-XP win also confers no rank, by design.
+
+**Combat and matchmaking are the part that most clearly works.** `--combat --samples 6000 --seed 13`:
+
+| power gap | favourite wins | avg turns |
+|---|---|---|
+| 0–9% | 61.0% | 6.2 |
+| 20–29% | 88.3% | 5.8 |
+| 40–49% | 99.3% | 4.6 |
+| 50%+ | 99.9% | 3.0 |
+| **matchmade (4 nearest)** | **64.1%** | **6.6** |
+
+`PowerScore` predicts cleanly and monotonically, which is the win-rate check its own doc comment asks
+for. The number that matters is the last row: served an opponent the way the game actually suggests
+one, the mean gap is 7.4% and the favourite wins **64%** over ~6.6 turns — the better hero usually
+wins, so investment means something, but loses often enough to be worth watching. No fight hit the
+60-turn cap.
+
+It also shows how much work matchmaking is doing. In a *random* field, 45% of pairings sit above a
+50% gap, where the favourite wins 99.9% in three turns — an execution, not a battle. The suggestion
+list is load-bearing for fun, not a convenience.
 
 **Rarity works; breeding throughput is what gates it.** `--rarity`: non-Common heroes are 5.8% of
 generation 1 and 28% by generation 10. The arena run produced 9 births in total, which is why it saw
