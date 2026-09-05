@@ -84,6 +84,14 @@ public interface IGameStatePersistence
     /// to reclaim.</summary>
     Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default);
 
+    /// <summary>An unsettled death-match, whose joint escrow holds both heroes and their staked gear. Written
+    /// at open and again at accept — acceptance IS the defender staking, and updates the only two fields that
+    /// move after open (that flag and their fee invoice), so a row frozen at open would read as unstaked.</summary>
+    Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default);
+
+    /// <summary>Drops a death-match once it settles; the joint escrow is spent and the loser is burned.</summary>
+    Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default);
+
     /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
     /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
     /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
@@ -129,6 +137,8 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
@@ -379,6 +389,26 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                     EscrowAddress = row.EscrowAddress, FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
                 };
         }
+
+        // Death-matches come back so /reclaim can still name the joint escrow holding both heroes and the
+        // gear staked with them. Rows are deleted at settle, so anything here is unsettled.
+        foreach (var row in await db.DeathMatches.AsNoTracking().ToListAsync(ct))
+            store.DeathMatches[row.Id] = new DeathMatchSession
+            {
+                Id = row.Id,
+                ChallengerPlayerId = row.ChallengerPlayerId, DefenderPlayerId = row.DefenderPlayerId,
+                ChallengerHeroId = row.ChallengerHeroId, DefenderHeroId = row.DefenderHeroId,
+                ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
+                JointEscrowAddress = row.JointEscrowAddress,
+                ChallengerGearItemIds =
+                    System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.ChallengerGearJson) ?? [],
+                DefenderGearItemIds =
+                    System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.DefenderGearJson) ?? [],
+                ChallengerFeeInvoiceId = row.ChallengerFeeInvoiceId,
+                DefenderFeeInvoiceId = row.DefenderFeeInvoiceId,
+                Accepted = row.Accepted, Absorb = row.Absorb, SpeciesId = row.SpeciesId,
+                CreatedAt = row.CreatedAt,
+            };
 
         // Tombstones come back UNFILTERED, exactly as sales do and for the same reason: a headstone is a
         // historical fact, not a live position. It holds nothing and gates nothing, and it is the ONLY
@@ -954,6 +984,42 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         if (await db.EscrowSessions.FindAsync([sessionId], ct) is { } row)
         {
             db.EscrowSessions.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    public async Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.DeathMatches.FindAsync([session.Id], ct) is { } row)
+        {
+            row.Accepted = session.Accepted;
+            row.DefenderFeeInvoiceId = session.DefenderFeeInvoiceId;
+        }
+        else
+            db.DeathMatches.Add(new PersistedDeathMatchSession
+            {
+                Id = session.Id,
+                ChallengerPlayerId = session.ChallengerPlayerId, DefenderPlayerId = session.DefenderPlayerId,
+                ChallengerHeroId = session.ChallengerHeroId, DefenderHeroId = session.DefenderHeroId,
+                ServerSeed = session.ServerSeed, CommitmentHex = session.CommitmentHex,
+                JointEscrowAddress = session.JointEscrowAddress,
+                ChallengerGearJson = System.Text.Json.JsonSerializer.Serialize(session.ChallengerGearItemIds),
+                DefenderGearJson = System.Text.Json.JsonSerializer.Serialize(session.DefenderGearItemIds),
+                ChallengerFeeInvoiceId = session.ChallengerFeeInvoiceId,
+                DefenderFeeInvoiceId = session.DefenderFeeInvoiceId,
+                Accepted = session.Accepted, Absorb = session.Absorb, SpeciesId = session.SpeciesId,
+                CreatedAt = session.CreatedAt,
+            });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.DeathMatches.FindAsync([deathMatchId], ct) is { } row)
+        {
+            db.DeathMatches.Remove(row);
             await db.SaveChangesAsync(ct);
         }
     }

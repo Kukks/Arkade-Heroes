@@ -60,6 +60,8 @@ public class RenameSessionRaceTests
         public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) => inner.SaveBreedingAsync(session, ct);
         public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) => inner.SaveMergeAsync(session, ct);
         public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => inner.DeleteEscrowSessionAsync(sessionId, ct);
+        public Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default) => inner.SaveDeathMatchAsync(session, ct);
+        public Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default) => inner.DeleteDeathMatchAsync(deathMatchId, ct);
         public Task LoadIntoAsync(GameStore store, CancellationToken ct = default) => inner.LoadIntoAsync(store, ct);
         public Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default) => inner.SaveItemPurchaseAsync(purchase, ct);
         public Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default) => inner.SaveTournamentAsync(session, ct);
