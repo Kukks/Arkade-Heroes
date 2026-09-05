@@ -1,14 +1,13 @@
 using ArkadeHeroes.Shared;
 using ArkadeHeroes.Web.Pages;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
+using ArkadeHeroes.Web.Wallet;
 
 namespace ArkadeHeroes.Tests.Web;
 
-/// <summary>
-/// Hero transfer has had a server endpoint and an SDK method all along, and the public player lookup exists
-/// expressly to serve it (<c>Program.cs:283</c>). Nothing in the browser called it — so a hero could be sold
-/// but not given.
-/// </summary>
+/// <summary>Hero transfer has had a server endpoint and an SDK method all along, and the public player
+/// lookup exists expressly to serve it. Nothing in the browser called it — a hero could be sold, not given.</summary>
 public class HeroGiftTests
 {
     private const string HeroId = "hero-mine";
@@ -55,7 +54,6 @@ public class HeroGiftTests
     [Fact]
     public void TheRecipientMustBeResolvedBeforeAnythingCanBeSent()
     {
-        // The safety property: an unchecked id is not sendable — Send does not exist until the id resolves.
         using var ctx = HeroPage();
         ctx.Api.Get("/api/players/player-2", Fixtures.Player(id: "player-2", name: "Brenna"));
         var cut = Render(ctx);
@@ -117,6 +115,36 @@ public class HeroGiftTests
 
         cut.WaitForAssertion(() => Assert.Contains("Emberwake", cut.Markup));
         Assert.DoesNotContain("Send to Brenna", cut.Markup);
+    }
+
+    [Fact]
+    public void EditingTheIdAfterACheck_DisarmsSend()
+    {
+        using var ctx = HeroPage();
+        ctx.Api.Get("/api/players/player-2", Fixtures.Player(id: "player-2", name: "Brenna"));
+        var cut = Render(ctx);
+
+        Click(cut, "Gift");
+        cut.Find("input[placeholder='recipient player id']").Input("player-2");
+        Click(cut, "Check");
+        cut.WaitForAssertion(() => Assert.Contains("Send to Brenna", cut.Markup));
+
+        cut.Find("input[placeholder='recipient player id']").Input("player-3");
+
+        Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Contains("Send to", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHandoverAlreadyOnChain_IsFinishedWithoutSendingAgain()
+    {
+        // The recovery path: send landed, confirm timed out. Proven by the ABSENCE of a wallet here — any
+        // attempt to send would throw before returning.
+        using var ctx = HeroPage();
+        ctx.Api.Post($"/api/heroes/{HeroId}/transfer", new TransferResponse(Fixtures.Hero(HeroId, "Ashfang", ownerId: "player-2")));
+
+        var hero = await ctx.Services.GetRequiredService<GameSession>().GiftHeroAsync(HeroId, "player-2");
+
+        Assert.Equal("player-2", hero.OwnerId);
     }
 
     [Fact]

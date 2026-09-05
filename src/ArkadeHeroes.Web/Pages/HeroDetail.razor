@@ -137,8 +137,7 @@ else
                         }
                     }
 
-                    @* Irreversible, and addressed by an opaque id — so the recipient is RESOLVED TO A NAME
-                       before anything moves. A mistyped id must not be able to send a hero to a stranger. *@
+                    @* Irreversible and addressed by an opaque id, so the recipient is RESOLVED TO A NAME first. *@
                     @if (!_gifting)
                     {
                         <button class="btn ghost" style="margin-left:.4rem" @onclick="StartGift" disabled="@_busy">🎁 Gift</button>
@@ -715,6 +714,7 @@ else
     private string _giftTo = "";
     private string? _resolvedId;
     private string _resolvedName = "";
+    private string _resolvedPlayerId = "";
     private string? _giftStatus;
     private string? _giftError;
     private bool _innateAbilities;
@@ -740,8 +740,7 @@ else
         _error = false;
         _grave = null;
         _graves.Clear();
-        // Blazor REUSES this component across a hero change (every lineage link is one), so a form left open
-        // would aim at the NEW hero — one click from giving away the wrong one, since DoGift reads Id.
+        // Blazor REUSES this component across a hero change, so a form left open would aim at the NEW hero.
         CancelGift();
         CancelRename();
 
@@ -978,16 +977,21 @@ else
 
     private void StartGift() { _gifting = true; _giftError = null; _resolvedId = null; }
 
-    private void CancelGift() { _gifting = false; _giftError = null; _resolvedId = null; _giftTo = ""; }
+    private void CancelGift() { _gifting = false; _giftError = null; _giftTo = ""; }
 
     /// <summary>Turns an opaque id into a NAME the sender can recognise before they part with a hero.</summary>
     private async Task ResolveGift()
     {
         _busy = true; _giftError = null;
+        // Captured BEFORE the await: reading the field after would pair the name that came back with
+        // whatever id has since been typed — "Send to Alice", sending to Bob.
+        var asked = _giftTo.Trim();
         try
         {
-            var target = await Api.Players.GetAsync(_giftTo.Trim());
+            var target = await Api.Players.GetAsync(asked);
+            if (_giftTo.Trim() != asked) return;   // they moved on; this answer is about a different id
             _resolvedName = target.Name;
+            _resolvedPlayerId = target.PlayerId;   // the canonical id, not what was typed
             _resolvedId = _giftTo;
         }
         catch (Exception ex) { _giftError = ex.Message; _resolvedId = null; }
@@ -999,7 +1003,7 @@ else
         _busy = true; _giftError = null;
         try
         {
-            await Session.GiftHeroAsync(Id, _giftTo.Trim(), s => { _giftStatus = s; StateHasChanged(); });
+            await Session.GiftHeroAsync(Id, _resolvedPlayerId, s => { _giftStatus = s; StateHasChanged(); });
             // It is no longer this player's hero, so the page they are on is no longer about them.
             Nav.NavigateTo("heroes?mine=1");
         }
