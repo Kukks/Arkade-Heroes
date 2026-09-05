@@ -64,7 +64,13 @@ else
             <div class="status-line muted" style="margin-top:.4rem">Pick three <b>distinct</b> heroes.</div>
         }
 
-        <div class="muted" style="margin:1rem 0 .4rem;font-size:.82rem">Opponent squad:</div>
+        <div class="muted" style="margin:1rem 0 .4rem;font-size:.82rem">
+            Opponent squad@(AnyScored ? " (closest match first)" : ""):
+        </div>
+        @if (_loadingOpps)
+        {
+            <div class="status-line"><span class="dot wait"></span> reading the matchups…</div>
+        }
         @if (!Opponents.Any())
         {
             <div class="status-line muted">No opponents yet — another player needs three heroes.</div>
@@ -75,11 +81,33 @@ else
                 @foreach (var o in Opponents)
                 {
                     <button class="oppcard @(o.Owner == _oppOwner ? "sel" : "")" @onclick="() => _oppOwner = o.Owner">
-                        <div class="oppcard-head"><b>Rival squad</b></div>
-                        <div class="mono oppcard-stats">@string.Join(" · ", o.Heroes.Select(h => $"{h.Name} L{h.Level}"))</div>
+                        <div class="oppcard-head">
+                            <b>Rival squad</b>
+                            @if (SquadFavor(o.Heroes) is { } favor)
+                            {
+                                <span class="chip @(favor == "favored" ? "ok" : "")">@favor</span>
+                            }
+                        </div>
+                        @for (var i = 0; i < o.Heroes.Count; i++)
+                        {
+                            <div class="mono oppcard-stats">@SlotLine(i, o.Heroes[i])</div>
+                        }
+                        @if (XpSwing(o.Heroes) is { } xp)
+                        {
+                            <div class="mono oppcard-xp">
+                                win all 3 <b class="pos">+@xp.Win</b> / lose all 3 <b class="neg">-@xp.Lose</b> xp
+                            </div>
+                        }
                     </button>
                 }
             </div>
+            @if (!LineupValid)
+            {
+                <div class="muted" style="margin:.2rem 0 0;font-size:.78rem">
+                    Fill all three slots to read each pairing — how far apart the two heroes are in power,
+                    and who the fight favours.
+                </div>
+            }
         }
 
         <label style="margin-top:1rem">Wager (sats, each side stakes this)
@@ -275,7 +303,12 @@ else
     private string _slot0 = "", _slot1 = "", _slot2 = "";
     private string _oppOwner = "";
     private long _wager = 1000;
-    private bool _loading = true, _busy, _heroesLoaded;
+    private bool _loading = true, _busy, _heroesLoaded, _loadingOpps;
+
+    /// <summary>Matchmaking reads keyed by MY hero, then by the opponent it was scored against. A squad
+    /// match is three positional duels, so one squad's read is three of these — one per slot.</summary>
+    private readonly Dictionary<string, Dictionary<string, OpponentSuggestionDto>> _reads = new();
+
     private string? _status, _error, _loadError;
     private GameConfigDto? _config;
 
@@ -341,12 +374,80 @@ else
     private List<string> MyLineup => new() { _slot0, _slot1, _slot2 };
     private bool LineupValid => MyLineup.All(x => !string.IsNullOrEmpty(x)) && MyLineup.Distinct().Count() == 3;
     private string Slot(int i) => i == 0 ? _slot0 : i == 1 ? _slot1 : _slot2;
-    private void SetSlot(int i, string v) { if (i == 0) _slot0 = v; else if (i == 1) _slot1 = v; else _slot2 = v; }
+
+    async Task SetSlot(int i, string v)
+    {
+        if (i == 0) _slot0 = v; else if (i == 1) _slot1 = v; else _slot2 = v;
+        await LoadReadsAsync(v);
+    }
+
+    /// <summary>Cached per hero: re-picking a slot must not re-ask for an answer that cannot have changed.</summary>
+    async Task LoadReadsAsync(string heroId)
+    {
+        if (string.IsNullOrEmpty(heroId) || _reads.ContainsKey(heroId)) return;
+        _loadingOpps = true;
+        try
+        {
+            var read = await Api.Matches.MatchmakingAsync(heroId);
+            _reads[heroId] = read.GroupBy(s => s.Hero.Id).ToDictionary(g => g.Key, g => g.First());
+        }
+        catch
+        {
+            // Guidance sits on top of a picker that works without it, so a failed read leaves cards bare.
+        }
+        finally { _loadingOpps = false; }
+    }
+
+    /// <summary>Null when the slot is empty, or that opponent fell outside the capped page of suggestions.</summary>
+    private OpponentSuggestionDto? Read(int slot, string oppHeroId) =>
+        Slot(slot) is { Length: > 0 } mine
+        && _reads.TryGetValue(mine, out var byOpponent)
+        && byOpponent.TryGetValue(oppHeroId, out var read) ? read : null;
+
+    private string SlotLine(int slot, HeroDto opp)
+    {
+        var who = $"S{slot + 1} {opp.Name} L{opp.Level}";
+        return Read(slot, opp.Id) is not { } r ? who
+            : $"{who} · pow {r.PowerScore} (Δ{r.PowerGapPercent}%) · {r.Favor}";
+    }
+
+    /// <summary>Null unless ALL three are scored — the aggregates below never speak for an unscored slot.</summary>
+    private List<OpponentSuggestionDto>? Reads(List<HeroDto> heroes)
+    {
+        if (heroes.Count < 3) return null;
+        var reads = new List<OpponentSuggestionDto>(3);
+        for (var i = 0; i < 3; i++)
+        {
+            if (Read(i, heroes[i].Id) is not { } r) return null;
+            reads.Add(r);
+        }
+        return reads;
+    }
+
+    /// <summary>How the best-of-3 leans: the majority of the three positional reads, because two slots take
+    /// the pot. Not a new threshold — <c>Matchmaking.Favor</c> still classifies each pairing.</summary>
+    private string? SquadFavor(List<HeroDto> heroes) =>
+        Reads(heroes) is not { } reads ? null
+            : reads.Count(r => r.Favor == "favored") >= 2 ? "favored"
+            : reads.Count(r => r.Favor == "underdog") >= 2 ? "underdog"
+            : "even";
+
+    /// <summary>The extremes of a swing the server settles PER SLOT — sweep all three, or drop all three.</summary>
+    private (long Win, long Lose)? XpSwing(List<HeroDto> heroes) =>
+        Reads(heroes) is not { } reads ? null : (reads.Sum(r => r.XpIfYouWin), reads.Sum(r => r.XpIfYouLose));
+
+    /// <summary>Ranking key, so the closest fights sit first the way /duel's server-ranked list does.</summary>
+    private double? MeanGap(List<HeroDto> heroes) =>
+        Reads(heroes) is not { } reads ? null : reads.Average(r => (double)r.PowerGapPercent);
 
     // Opponents: other owners holding >=3 heroes; the defender lineup is their first three.
     private IEnumerable<(string Owner, List<HeroDto> Heroes)> Opponents =>
         _all.Where(h => h.OwnerId != MyOwnerId).GroupBy(h => h.OwnerId).Where(g => g.Count() >= 3)
-            .Select(g => (g.Key, g.Take(3).ToList()));
+            .Select(g => (Owner: g.Key, Heroes: g.Take(3).ToList()))
+            .OrderBy(o => MeanGap(o.Heroes) ?? double.MaxValue)
+            .ThenBy(o => o.Owner, StringComparer.Ordinal);
+
+    private bool AnyScored => Opponents.Any(o => MeanGap(o.Heroes) is not null);
     private List<string> OppLineup =>
         Opponents.FirstOrDefault(o => o.Owner == _oppOwner).Heroes?.Select(h => h.Id).ToList() ?? new();
 
@@ -400,6 +501,12 @@ else
             _matches = await Api.Squad.ListAsync();
             _heroesLoaded = true;
             _loadError = null;
+            // A resolve moves XP and therefore power, and this runs straight after one. The cached
+            // reads were scored against the PRE-fight rosters, and LoadReadsAsync skips a hero it has
+            // already seen — so without dropping them the picker keeps quoting the old fight.
+            _reads.Clear();
+            foreach (var slot in MyLineup)
+                await LoadReadsAsync(slot);
         }
         catch (Exception ex)
         {

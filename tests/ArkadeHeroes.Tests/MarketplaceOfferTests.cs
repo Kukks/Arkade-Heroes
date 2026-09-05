@@ -23,6 +23,43 @@ public class MarketplaceOfferTests : IClassFixture<WebApplicationFactory<Program
     private static Task<CreateOfferResponse> ListAsync(ArkadeHeroesClient seller, string itemId, long ask)
         => seller.Offers.CreateItemAsync(new CreateOfferRequest(itemId, ask));
 
+    // The "recently sold" strip is captioned "covenant delivered · seller paid" on /market. A seller
+    // taking their own unsold listing back closes the offer into the SAME state a sale does, so
+    // filtering on `closed` alone put reclaims under that caption and told buyers a price had been
+    // paid that nobody paid.
+
+    [Fact]
+    public async Task RecentlySold_ExcludesAListingTheSellerTookBack()
+    {
+        var (seller, _) = await _factory.RegisterAsync("M-Reclaim-S");
+        var hero = (await seller.ClaimStartersAsync())[0];
+
+        var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, 9_000));
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+        // The listing has to go ACTIVE before it can close: only an active offer is reconciled, and it
+        // is that reconcile — seeing the asset gone — that closes it. Without this read the offer stays
+        // pending, never reaches `closed`, and the assertion below passes without testing anything.
+        await seller.Offers.ListAsync();
+        await seller.Dev.ReclaimOfferAsync(new { OfferId = offer.OfferId });
+
+        Assert.DoesNotContain(await seller.Offers.SoldAsync(24), o => o.OfferId == offer.OfferId);
+    }
+
+    [Fact]
+    public async Task RecentlySold_StillShowsAListingThatActuallySold()
+    {
+        var (seller, _) = await _factory.RegisterAsync("M-Sold-S");
+        var (buyer, _) = await _factory.RegisterAsync("M-Sold-B");
+        var hero = (await seller.ClaimStartersAsync())[0];
+
+        var offer = await seller.Offers.CreateHeroAsync(new CreateHeroOfferRequest(hero.Id, 9_000));
+        await seller.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
+        await buyer.Dev.FulfillOfferAsync(new { OfferId = offer.OfferId });
+        await buyer.Offers.ClaimHeroAsync(offer.OfferId);
+
+        Assert.Contains(await seller.Offers.SoldAsync(24), o => o.OfferId == offer.OfferId);
+    }
+
     [Fact]
     public async Task Offer_ListFundFulfil_ItemMovesAndSellerPaid()
     {

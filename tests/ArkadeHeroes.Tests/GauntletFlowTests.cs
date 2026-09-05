@@ -71,6 +71,25 @@ public class GauntletFlowTests : IClassFixture<WebApplicationFactory<Program>>
             ReceiptVerifier.ReplayLevel(hero.Id, [run.Receipt]));
     }
 
+    /// <summary>The cooldown was enforced and persisted but never mapped onto the wire, so a client could
+    /// only discover a resting hero by pressing Run and taking the refusal — the most-hit wall of a new
+    /// player's first session. The page test covers the button; this covers the field reaching it.</summary>
+    [Fact]
+    public async Task Gauntlet_TheRestItImposes_IsVisibleOnTheHero()
+    {
+        var (client, _) = await _factory.RegisterAsync("G-Cooldown");
+        var hero = (await client.ClaimStartersAsync())[0];
+        Assert.Null(hero.GauntletCooldownUntil);
+
+        var open = await client.Gauntlet.OpenAsync(hero.Id);
+        await client.PayInvoiceAsync(open.FeeInvoice.InvoiceId);
+        await client.Gauntlet.RunAsync(open.GauntletId, "cooldown-nonce");
+
+        var after = (await client.Heroes.MineAsync()).Single(h => h.Id == hero.Id);
+        Assert.NotNull(after.GauntletCooldownUntil);
+        Assert.True(after.GauntletCooldownUntil > DateTimeOffset.UtcNow);
+    }
+
     [Fact]
     public async Task Gauntlet_PastLevelCap_AwardsZeroXp()
     {

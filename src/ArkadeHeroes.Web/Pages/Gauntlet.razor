@@ -69,8 +69,17 @@ else
                 <span><b>@hero.Name</b> has reached level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap, so this run banks <b>no XP</b>. The gear drop still applies.</span>
             </div>
         }
+        @* The most-hit refusal of a new player's first session, and until now the only way to learn it
+           was to press Run and take the 400 — the server enforced the rest but never sent it. *@
+        @if (Resting is { } until)
+        {
+            <div class="status-line" style="margin-top:.9rem">
+                <span class="dot"></span>
+                <span><b>@Picked?.Name</b> is resting after its last run — ready @until.ToLocalTime().ToString("HH:mm:ss").</span>
+            </div>
+        }
         <button class="btn primary" style="margin-top:1.1rem" @onclick="DoRun"
-                disabled="@(_running || string.IsNullOrEmpty(_heroId) || !CanAfford)">
+                disabled="@(_running || string.IsNullOrEmpty(_heroId) || !CanAfford || Resting is not null)">
             @if (_running)
             {
                 <text>Running…</text>
@@ -190,6 +199,11 @@ else
     /// <summary>An unknown price counts as affordable — better to let the server refuse than to grey out a
     /// button over a number we failed to read. Same rule the recruit button on /heroes uses.</summary>
     private bool CanAfford => Fee is not { } fee || State.BalanceSats >= fee;
+
+    /// <summary>When the picked hero is still on gauntlet cooldown, else null. A cooldown that has
+    /// already lapsed reads as ready, so a stale roster fetch cannot lock the button shut.</summary>
+    private DateTimeOffset? Resting =>
+        Picked?.GauntletCooldownUntil is { } until && until > DateTimeOffset.UtcNow ? until : null;
 
     private GauntletOutcome? _outcome;
     private int _waveIndex;      // the wave currently animating in the arena
