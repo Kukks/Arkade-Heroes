@@ -187,6 +187,34 @@ public class PersistedHero
 }
 
 /// <summary>
+/// An unsettled death-match: the same unnameable-escrow defect as <see cref="PersistedEscrowSession"/>, at
+/// the highest stakes the game has — the joint escrow holds BOTH heroes and the gear staked with them, and
+/// one of those heroes is going to be burned. No <c>Completed</c> column: a settled row is DELETED, so
+/// anything still here is live by construction.
+/// </summary>
+public class PersistedDeathMatchSession
+{
+    public required string Id { get; set; }
+    public required string ChallengerPlayerId { get; set; }
+    public required string DefenderPlayerId { get; set; }
+    public required string ChallengerHeroId { get; set; }
+    public required string DefenderHeroId { get; set; }
+    public required byte[] ServerSeed { get; set; }
+    public required string CommitmentHex { get; set; }
+    public string? JointEscrowAddress { get; set; }
+    /// <summary>Each side's equipped-item ids at OPEN. Address-critical — the escrow's leaves bake these
+    /// gear stakes, so a rebuild that lost them derives a different address entirely.</summary>
+    public required string ChallengerGearJson { get; set; }
+    public required string DefenderGearJson { get; set; }
+    public string? ChallengerFeeInvoiceId { get; set; }
+    public string? DefenderFeeInvoiceId { get; set; }
+    public required bool Accepted { get; set; }
+    public required bool Absorb { get; set; }
+    public required string SpeciesId { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
 /// An unfinished breeding or fusion. Durable for a reason the gauntlet's row is not: in COVENANT mode the
 /// escrow holds both parent HEROES as well as the fee, and <c>ListReclaimableAsync</c> finds them by walking
 /// the in-memory session dictionary. Losing that row did not merely cost a fee — it made the escrow
@@ -449,6 +477,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedRenameSession> Renames => Set<PersistedRenameSession>();
     public DbSet<PersistedGauntletSession> Gauntlets => Set<PersistedGauntletSession>();
     public DbSet<PersistedEscrowSession> EscrowSessions => Set<PersistedEscrowSession>();
+    public DbSet<PersistedDeathMatchSession> DeathMatches => Set<PersistedDeathMatchSession>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
     public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
@@ -471,6 +500,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedRenameSession>().HasKey(x => x.HeroId);
         modelBuilder.Entity<PersistedGauntletSession>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedEscrowSession>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedDeathMatchSession>().HasKey(x => x.Id);
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);
