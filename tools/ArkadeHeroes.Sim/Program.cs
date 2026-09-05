@@ -38,6 +38,18 @@ internal static class SimMain
             return 0;
         }
 
+        if (args.Contains("--market"))
+        {
+            Console.WriteLine(await MarketLiquidity.RenderAsync(players, rounds, seed));
+            return 0;
+        }
+
+        if (args.Contains("--treasury"))
+        {
+            Console.WriteLine(await TreasurySolvency.RenderAsync(players, rounds, seed));
+            return 0;
+        }
+
         if (args.Contains("--trials"))
         {
             Console.WriteLine(TrialsYield.Render(Arg(args, "--samples", 2000), seed));
