@@ -183,6 +183,11 @@ public class GameService(
         throw new GameRuleException("Invalid or missing bearer token.");
     }
 
+    /// <summary>Who is calling, or null — for a PUBLIC endpoint that shows a signed-in caller a little more
+    /// than an anonymous one. An absent or stale token is not an error on those routes.</summary>
+    public Player? WhoIs(string? token) =>
+        token is not null && store.PlayersByToken.TryGetValue(token, out var player) ? player : null;
+
     /// <summary>Issues a fresh single-use login nonce (and prunes expired ones).</summary>
     public string IssueLoginChallenge()
     {
