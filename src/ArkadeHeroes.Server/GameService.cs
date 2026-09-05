@@ -1641,6 +1641,15 @@ public class GameService(
             // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
             await store.RecordInflowAsync(session.Id, "breed", session.FeeSats, ct);
         }
+        // No spent escrow to refuse a second reveal with, and a paid invoice reads paid forever — so the
+        // CHILD is the latch: a hero already carrying this session's seed was minted by an earlier reveal a
+        // crash cut off before it dropped the row. Hand it back with the proof that made it, never a second.
+        else if (store.Heroes.Values.FirstOrDefault(h => h.ServerSeedHex == serverSeedHex) is { } alreadyMinted)
+        {
+            child = alreadyMinted;
+            nonce = alreadyMinted.PlayerNonce ?? nonce;
+            entropyHex = alreadyMinted.EntropyHex ?? entropyHex;
+        }
         else
         {
             child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
