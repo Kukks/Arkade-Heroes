@@ -3125,6 +3125,15 @@ public class GameService(
             }
             else
             {
+                // Both legs of the pass-through, or the books lie: in invoice mode the two stakes were
+                // paid INTO the treasury (verified above) and the pot is paid back out of it. Booking
+                // only the outflow made a profitable arena read as a pure loss — the same defect the
+                // tournament resolve already fixed for buy-ins. Idempotent per invoice.
+                if (session.ChallengerInvoiceId is not null)
+                    await store.RecordInflowAsync(session.ChallengerInvoiceId, "wager", session.WagerSats, ct);
+                if (session.DefenderInvoiceId is not null)
+                    await store.RecordInflowAsync(session.DefenderInvoiceId, "wager", session.WagerSats, ct);
+
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"wager-pot:{session.Id}", ct);
                 await store.RecordOutflowAsync("wager", winnerPayout, ct);
@@ -3389,6 +3398,13 @@ public class GameService(
             }
             else
             {
+                // Same pass-through as the duel path: book the stakes that came in, not just the pot
+                // that goes back out.
+                if (session.ChallengerInvoiceId is not null)
+                    await store.RecordInflowAsync(session.ChallengerInvoiceId, "squad", session.WagerSats, ct);
+                if (session.DefenderInvoiceId is not null)
+                    await store.RecordInflowAsync(session.DefenderInvoiceId, "squad", session.WagerSats, ct);
+
                 var winnerOwnerId = challengerWon ? session.ChallengerPlayerId : session.DefenderPlayerId!;
                 await chain.PayoutAsync(winnerOwnerId, winnerPayout, $"squad-pot:{session.Id}", ct);
                 await store.RecordOutflowAsync("squad", winnerPayout, ct);
@@ -3737,8 +3753,12 @@ public class GameService(
         // Reconcile still-active offers first, so one that just sold surfaces here immediately.
         foreach (var offer in store.Offers.Values.Where(o => o.Status == "active").ToList())
             await ReconcileOfferAsync(offer, ct);
-        return store.Offers.Values.Where(o => o.Status == "closed")
-            .OrderByDescending(o => o.CreatedAt).Take(Math.Clamp(take, 1, 24)).ToList();
+        // `Sold != false` rather than `== true`: a fee-free item offer closes unprobed (null), and
+        // dropping those would empty the strip for an operator who turned the marketplace fee off.
+        // What must not appear is a close PROVEN to be a reclaim — the page captions this "covenant
+        // delivered · seller paid", and neither is true of a seller taking their own listing back.
+        return store.Offers.Values.Where(o => o.Status == "closed" && o.Sold != false)
+            .OrderByDescending(o => o.ClosedAt ?? o.CreatedAt).Take(Math.Clamp(take, 1, 24)).ToList();
     }
 
     /// <summary>One offer's current listing, reconciled against on-chain truth.</summary>
@@ -3784,6 +3804,10 @@ public class GameService(
             // transition reaches this branch.
             var probed = offer.ListingFeeSats > 0 || offer.Kind == "hero";
             var sold = probed && await chain.WasOfferSoldAsync(offer.Id, ct);
+            // Keep the answer. It was computed for three purposes and thrown away, which left the
+            // "recently sold" strip unable to tell a sale from a reclaim and calling both sold.
+            offer.Sold = probed ? sold : null;
+            offer.ClosedAt = DateTimeOffset.UtcNow;
             // The asset LEFT the covenant, which is the moment the listing's outcome is decided. Actor is
             // NULL because from here the two spends are only distinguishable by whether the treasury got
             // its cut — the buyer, if there was one, is not knowable from this observation. `sold: false`
@@ -4082,6 +4106,8 @@ public class GameService(
         await AuditAsync(Persistence.AuditEventType.HeroTransferred, buyer.Id, [hero.Id, sellerId, offer.Id],
             new { heroId = hero.Id, fromPlayerId = sellerId, toPlayerId = buyer.Id, assetId = hero.AssetId, strippedGear, reason = "marketplace-sale", offerId = offer.Id, salePriceSats = offer.AskSats });
         offer.Status = "closed";
+        offer.Sold = true;
+        offer.ClosedAt ??= DateTimeOffset.UtcNow;
         // A CONFIRMED sale — the chain shows the buyer holding the hero, so the fulfil ran and its
         // covenant paid the treasury its cut. ReconcileOfferAsync now proves the same thing a second
         // way (the treasury leg of the spending transaction), and both book under this one key, so the

@@ -380,6 +380,16 @@ public class OfferListing
     /// even after its asset has LEFT the seller's wallet — so <c>pending</c> alone cannot answer "is the
     /// item still held?", which is what the free-to-sell check needs.</summary>
     public bool AssetDeposited { get; set; }
+
+    /// <summary>Whether this listing's close was a SALE rather than a seller reclaim. Tri-state: null
+    /// means the close was seen but not probed (a fee-free item offer is genuinely unknowable from the
+    /// read that closes it), so a caller must not assert either way. Recorded AT the close, because
+    /// <see cref="Status"/> <c>closed</c> is the same state a reclaim lands in.</summary>
+    public bool? Sold { get; set; }
+
+    /// <summary>When the listing closed — which is what "recently sold" means. <see cref="CreatedAt"/>
+    /// is listing time, so ordering on it sorts by when things went UP for sale.</summary>
+    public DateTimeOffset? ClosedAt { get; set; }
 }
 
 /// <summary>A pending/resolved 3v3 squad match: two 3-hero lineups sharing one wager escrow (reused from the
