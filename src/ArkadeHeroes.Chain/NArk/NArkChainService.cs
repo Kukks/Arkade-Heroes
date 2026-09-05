@@ -1189,6 +1189,86 @@ public class NArkChainService(
         return (contract, serverInfo);
     }
 
+    // ── Hero-bid escrows: the offer covenant with the roles swapped ────
+
+    private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
+        BuildBidContractAsync(Covenants.BidEscrowParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        return (Covenants.BidEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey), serverInfo);
+    }
+
+    public async Task<string> CreateBidEscrowAsync(
+        string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId,
+        long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        if (bidSats <= 0) throw new InvalidOperationException("The bid must be positive.");
+        if (feeSats < 0 || feeSats >= bidSats)
+            throw new InvalidOperationException(
+                $"The marketplace fee ({feeSats}) must be non-negative and below the bid ({bidSats}).");
+
+        var bidderAddress = await GetPlayerAddressAsync(bidderPlayerId, ct);
+        var ownerAddress = await GetPlayerAddressAsync(ownerPlayerId, ct);
+        if (feeSats > 0) await EnsureTreasuryAsync(ct);
+
+        var parameters = new Covenants.BidEscrowParams(
+            bidderAddress, ownerAddress, heroAssetId, bidSats, bidId, refundAfterUnixSeconds,
+            feeSats, feeSats > 0 ? _treasuryAddress : null);
+        await SetKvAsync($"bid:{bidId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+
+        var (contract, serverInfo) = await BuildBidContractAsync(parameters, ct);
+        var address = contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
+        logger.LogInformation("Bid {BidId}: {Address} (hero {Hero}, bid {Bid}, reclaim after {Refund})",
+            bidId, address, heroAssetId, bidSats, refundAfterUnixSeconds);
+        return address;
+    }
+
+    public async Task<Covenants.BidEscrowParams?> GetBidEscrowParamsAsync(string bidId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"bid:{bidId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.BidEscrowParams>(json);
+    }
+
+    /// <summary>Funded means SATS here, not an asset — the offer mirrored.</summary>
+    public async Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default)
+    {
+        var parameters = await GetBidEscrowParamsAsync(bidId, ct);
+        if (parameters is null) return false;
+        var (contract, _) = await BuildBidContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var vtxos = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct))
+            .DistinctBy(v => v.OutPoint).ToList();
+        return vtxos.Aggregate(0UL, (sum, v) => sum + v.Amount) >= (ulong)parameters.BidSats;
+    }
+
+    /// <summary>A spent escrow VTXO is the evidence; while the bid rests its VTXO is unspent.</summary>
+    public async Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default)
+    {
+        var parameters = await GetBidEscrowParamsAsync(bidId, ct);
+        if (parameters is null) return false;
+        var (contract, _) = await BuildBidContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var spent = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
+            .Where(v => v.ArkTxid is not null)
+            .ToList();
+        if (spent.Count == 0) return false;
+
+        // A spend is either the fulfil or the reclaim, and they are NOT interchangeable: the reclaim pays
+        // the bidder back, so treating it as a settle would mark a hero sold that never moved. The fulfil
+        // is the one that pays the OWNER, so that output is what distinguishes them.
+        var ownerScript = ArkAddress.Parse(parameters.OwnerAddress).ScriptPubKey.ToHex();
+        foreach (var vtxo in spent)
+        {
+            var siblings = await vtxoStorage.GetVtxos(
+                scripts: [ownerScript], includeSpent: true, cancellationToken: ct);
+            if (siblings.Any(s => s.OutPoint.Hash.ToString() == vtxo.ArkTxid)) return true;
+        }
+        return false;
+    }
+
     public async Task<OfferInfo> CreateOfferAsync(
         string offerId, string sellerPlayerId, string itemId, long askSats,
         long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)

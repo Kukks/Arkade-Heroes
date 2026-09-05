@@ -474,6 +474,78 @@ public class InMemoryChainService : IChainService
             "sim-treasury", e.FeeSats, e.FeeSats + 660, e.OraclePkHex, mergeId, e.RefundAfterUnixSeconds));
     }
 
+    // ── Hero-bid escrows (simulated) — the offer covenant with the roles swapped ──
+
+    private sealed record BidEscrow(
+        string BidderId, string OwnerId, string HeroAssetId,
+        long BidSats, long FeeSats, long RefundAfterUnixSeconds)
+    {
+        public bool Funded;
+        public bool Settled;
+    }
+
+    private readonly ConcurrentDictionary<string, BidEscrow> _bidEscrows = new();
+
+    public async Task<string> CreateBidEscrowAsync(
+        string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId,
+        long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        await GetPlayerAddressAsync(bidderPlayerId, ct);
+        await GetPlayerAddressAsync(ownerPlayerId, ct);
+        _bidEscrows[bidId] = new BidEscrow(
+            bidderPlayerId, ownerPlayerId, heroAssetId, bidSats, feeSats, refundAfterUnixSeconds);
+        return $"sim-bid-escrow-{bidId}";
+    }
+
+    public Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default)
+        => Task.FromResult(_bidEscrows.TryGetValue(bidId, out var e) && e.Funded);
+
+    /// <summary>Simulated bidder deposit: the sats leave their balance and are held by the covenant, NOT
+    /// by the treasury — the whole point.</summary>
+    public void FundBidEscrowFromPlayer(string playerId, string bidId)
+    {
+        if (!_bidEscrows.TryGetValue(bidId, out var escrow))
+            throw new InvalidOperationException($"Unknown bid escrow {bidId}.");
+        if (escrow.BidderId != playerId) throw new InvalidOperationException("Not the bidder.");
+        var paid = false;
+        _playerBalances.AddOrUpdate(playerId, _ => throw new InvalidOperationException("No wallet."),
+            (_, bal) => { if (bal < escrow.BidSats) return bal; paid = true; return bal - escrow.BidSats; });
+        if (!paid) throw new InvalidOperationException($"Insufficient balance for the {escrow.BidSats}-sat bid.");
+        escrow.Funded = true;
+    }
+
+    public Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default)
+        => Task.FromResult(_bidEscrows.TryGetValue(bidId, out var e) && e.Settled);
+
+    /// <summary>Simulated OWNER-side settle — counterpart of <see cref="FulfillOfferFromBuyer"/>, and a dev
+    /// helper rather than an interface member for the same reason.</summary>
+    public string SettleBidFromOwner(string bidId)
+    {
+        if (!_bidEscrows.TryGetValue(bidId, out var escrow))
+            throw new InvalidOperationException($"Unknown bid escrow {bidId}.");
+        if (!escrow.Funded) throw new InvalidOperationException($"Bid escrow {bidId} is not funded.");
+        if (escrow.Settled) throw new InvalidOperationException("Bid escrow already settled.");
+        // The covenant will not co-sign a partial settle, so the simulation refuses one too: the owner
+        // cannot take the sats while still holding the hero.
+        if (_assetHolders.GetValueOrDefault(escrow.HeroAssetId) != escrow.OwnerId)
+            throw new InvalidOperationException("The owner no longer holds the hero this bid was accepted on.");
+
+        escrow.Settled = true;
+        _assetHolders[escrow.HeroAssetId] = escrow.BidderId;
+        _playerBalances.AddOrUpdate(escrow.OwnerId, escrow.BidSats - escrow.FeeSats,
+            (_, b) => b + escrow.BidSats - escrow.FeeSats);
+        Interlocked.Add(ref _treasuryBalance, escrow.FeeSats);
+        return NewId("sim-bid-settle");
+    }
+
+    public Task<Covenants.BidEscrowParams?> GetBidEscrowParamsAsync(string bidId, CancellationToken ct = default)
+    {
+        if (!_bidEscrows.TryGetValue(bidId, out var e)) return Task.FromResult<Covenants.BidEscrowParams?>(null);
+        return Task.FromResult<Covenants.BidEscrowParams?>(new Covenants.BidEscrowParams(
+            $"sim-player-{e.BidderId}", $"sim-player-{e.OwnerId}", e.HeroAssetId, e.BidSats,
+            bidId, e.RefundAfterUnixSeconds, e.FeeSats, "sim-treasury"));
+    }
+
     // ── Death-match escrows (simulated) — ONE JOINT escrow, burn the loser's hero ──
 
     private sealed record DeathMatchJointEscrow(
