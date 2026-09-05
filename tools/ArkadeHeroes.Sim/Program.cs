@@ -38,6 +38,12 @@ internal static class SimMain
             return 0;
         }
 
+        if (args.Contains("--trials"))
+        {
+            Console.WriteLine(TrialsYield.Render(Arg(args, "--samples", 2000), seed));
+            return 0;
+        }
+
         if (args.Contains("--flags"))
         {
             Console.WriteLine(DormantFlags.Render(Arg(args, "--samples", 4000), seed));
