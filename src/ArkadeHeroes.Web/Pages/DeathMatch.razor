@@ -53,7 +53,7 @@ else
                 <option value="">— pick a hero —</option>
                 @foreach (var h in _mine)
                 {
-                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    <option value="@h.Id">@HeroLabels.Option(h, _mine)</option>
                 }
             </select>
         </label>
@@ -104,11 +104,11 @@ else
         {
             <div class="card err" style="margin-top:1rem; display:block">
                 <div class="status-line"><span class="dot bad"></span>
-                    <span><b>PERMADEATH.</b> If <b>@MyHero?.Name</b> loses, it burns forever and you forfeit its staked gear.
+                    <span><b>PERMADEATH.</b> If <b>@MyHeroLabel</b> loses, it burns forever and you forfeit its staked gear.
                     You are the <b>@(Opp?.Favor ?? "even")</b> here.</span>
                 </div>
                 <div style="margin-top:.8rem; display:flex; gap:.6rem">
-                    <button class="btn danger" @onclick="DoOpen" disabled="@_busy">Stake @MyHero?.Name &amp; commit</button>
+                    <button class="btn danger" @onclick="DoOpen" disabled="@_busy">Stake @MyHeroLabel &amp; commit</button>
                     <button class="btn ghost" @onclick="() => _pendingConfirm = false" disabled="@_busy">Cancel</button>
                 </div>
             </div>
@@ -280,6 +280,9 @@ else
     private string? _resolvedId;   // the just-settled death-match, for the shareable replay link
 
     private HeroDto? MyHero => _mine.FirstOrDefault(h => h.Id == _myHeroId);
+
+    /// <summary>Disambiguated, because this names the hero about to be staked to permadeath.</summary>
+    private string? MyHeroLabel => MyHero is { } h ? HeroLabels.Name(h, _mine) : null;
     private OpponentSuggestionDto? Opp => _opponents.FirstOrDefault(o => o.Hero.Id == _oppId);
 
     private HashSet<string> MineIds => _mine.Select(h => h.Id).ToHashSet();

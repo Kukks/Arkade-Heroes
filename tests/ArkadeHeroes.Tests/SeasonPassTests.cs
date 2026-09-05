@@ -81,6 +81,16 @@ public class SeasonPassTests
         Assert.Equal(0, maxed.PointsToNextTier);
     }
 
+    /// <summary>A fusion burns both inputs before its receipt is written, so by the time the pass is scored
+    /// the player owns neither HeroA nor HeroB — only the fused hero the receipt names as its result. Scoring
+    /// off the inputs alone made the game's most expensive irreversible action worth nothing.</summary>
+    [Fact]
+    public void AFusionScores_ThoughBothItsInputsAreAlreadyBurned()
+    {
+        var fusion = Receipt("merge", winner: Mine, heroA: "burned-base");
+        Assert.True(SeasonPass.Progress([fusion], MyHeroes).Points > 0);
+    }
+
     [Fact]
     public void SomeoneElsesDeedsDoNotScore()
     {

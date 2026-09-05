@@ -52,7 +52,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
                     }
                 </select>
             </label>
@@ -62,7 +62,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
                     }
                 </select>
             </label>
@@ -110,7 +110,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
                     }
                 </select>
             </label>
