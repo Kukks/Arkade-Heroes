@@ -1232,10 +1232,17 @@ public class NArkChainService(
 
     /// <summary>
     /// Funded means SATS here, not an asset — the offer mirrored. EXACTLY the bid, in exactly one VTXO, the
-    /// same rule <see cref="IsBtcStake"/> enforces for a wager stake. The fulfil leaf pins three output
-    /// amounts but binds no total input value, so anything at this address beyond the bid is value the
-    /// fulfiller could sweep alongside it. Failing closed on a surplus keeps the flow from completing a sale
-    /// that would quietly cost the bidder the excess.
+    /// same rule <see cref="IsBtcStake"/> enforces for a wager stake.
+    ///
+    /// <para>DEFENCE IN DEPTH ONLY, and it must not be mistaken for the real one. The fulfil leaf pins three
+    /// output amounts and binds no total INPUT value, so an owner who builds the spend themselves can sweep
+    /// anything at this address beyond the bid — they never consult this predicate. All this buys is that
+    /// the SERVER's own flow will not walk into it. Closing it needs an input-value constraint in the
+    /// covenant, which the VM cannot currently express. See BID-SURPLUS in the PR.</para>
+    ///
+    /// <para>Requiring exactly one VTXO also lets anyone stall a bid by parking a second one at this public
+    /// address. The bidder's reclaim leaf is gated only by its timelock and pays exactly the bid, so their
+    /// money still comes back; the nuisance VTXO is stranded for everyone.</para>
     /// </summary>
     public async Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default)
     {
@@ -1251,9 +1258,11 @@ public class NArkChainService(
 
     /// <summary>
     /// A spend alone does not say WHICH leaf ran, and the two are not interchangeable: a reclaim pays the
-    /// bidder back, so counting one as a settle would mark a hero sold that never moved. The HERO is the
-    /// discriminator — fulfil is the only leaf that moves it, and it pins the destination — so the question
-    /// is asked of the asset, not of an output that a co-spent input could also have produced.
+    /// bidder back, so counting one as a settle would mark a hero sold that never moved. This reads as "the
+    /// bidder received the hero in the transaction that closed the escrow" — the closest thing the indexer
+    /// can answer, since it does not expose which leaf a spend selected. A reclaim that ALSO hands the hero
+    /// over in the same transaction would still read as settled; that costs only the owner, who would be
+    /// giving the hero away and taking nothing.
     /// </summary>
     public async Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default)
     {
@@ -1264,12 +1273,18 @@ public class NArkChainService(
         var bidderScript = ArkAddress.Parse(parameters.BidderAddress).ScriptPubKey.ToHex();
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script, bidderScript });
 
-        var spent = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
-            .Any(v => v.ArkTxid is not null);
-        if (!spent) return false;
+        var spendTxIds = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
+            .Select(v => v.ArkTxid)
+            .Where(id => id is not null)
+            .ToHashSet();
+        if (spendTxIds.Count == 0) return false;
 
+        // The hero must have arrived in the SAME transaction that spent the escrow. Without that
+        // correlation an ordinary transfer answers the question: an owner who hands the hero over
+        // out-of-band and then reclaims after expiry would read as a completed sale they were never paid for.
         var atBidder = await vtxoStorage.GetVtxos(scripts: [bidderScript], cancellationToken: ct);
-        return atBidder.Any(v => v.Assets is { Count: > 0 } assets
+        return atBidder.Any(v => spendTxIds.Contains(v.OutPoint.Hash.ToString())
+                                 && v.Assets is { Count: > 0 } assets
                                  && assets.Any(a => a.AssetId == parameters.HeroAssetId));
     }
 

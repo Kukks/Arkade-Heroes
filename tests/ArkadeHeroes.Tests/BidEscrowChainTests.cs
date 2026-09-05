@@ -114,6 +114,27 @@ public class BidEscrowChainTests
     }
 
     [Fact]
+    public async Task ConcurrentSettles_PayTheOwnerOnce()
+    {
+        var (chain, bidder, owner, hero) = await ArenaAsync();
+        await AcceptedAsync(chain, hero);
+        chain.FundBidEscrowFromPlayer(bidder, "bid-1");
+        var before = await chain.GetAddressBalanceSatsAsync(owner);
+
+        var wins = 0;
+        var start = new Barrier(8);
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            try { chain.SettleBidFromOwner("bid-1"); Interlocked.Increment(ref wins); }
+            catch (InvalidOperationException) { }
+        })));
+
+        Assert.Equal(1, wins);
+        Assert.Equal(before + Bid - Fee, await chain.GetAddressBalanceSatsAsync(owner));
+    }
+
+    [Fact]
     public async Task TheParamsRebuildTheCovenantTheBidderReclaimsWith()
     {
         var (chain, _, _, hero) = await ArenaAsync();

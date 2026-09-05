@@ -538,18 +538,23 @@ public class InMemoryChainService : IChainService
     {
         if (!_bidEscrows.TryGetValue(bidId, out var escrow))
             throw new InvalidOperationException($"Unknown bid escrow {bidId}.");
-        if (!escrow.Funded) throw new InvalidOperationException($"Bid escrow {bidId} is not funded.");
-        if (escrow.Settled) throw new InvalidOperationException("Bid escrow already settled.");
-        // The covenant will not co-sign a partial settle, so the simulation refuses one too: the owner
-        // cannot take the sats while still holding the hero.
-        if (_assetHolders.GetValueOrDefault(escrow.HeroAssetId) != escrow.OwnerId)
-            throw new InvalidOperationException("The owner no longer holds the hero this bid was accepted on.");
+        // Under the SAME lock funding uses: two concurrent settles could otherwise both clear the Settled
+        // check before either set it, and credit the owner twice.
+        lock (escrow)
+        {
+            if (!escrow.Funded) throw new InvalidOperationException($"Bid escrow {bidId} is not funded.");
+            if (escrow.Settled) throw new InvalidOperationException("Bid escrow already settled.");
+            // The covenant will not co-sign a partial settle, so the simulation refuses one too: the owner
+            // cannot take the sats while still holding the hero.
+            if (_assetHolders.GetValueOrDefault(escrow.HeroAssetId) != escrow.OwnerId)
+                throw new InvalidOperationException("The owner no longer holds the hero this bid was accepted on.");
 
-        escrow.Settled = true;
-        _assetHolders[escrow.HeroAssetId] = escrow.BidderId;
-        _playerBalances.AddOrUpdate(escrow.OwnerId, escrow.BidSats - escrow.FeeSats,
-            (_, b) => b + escrow.BidSats - escrow.FeeSats);
-        Interlocked.Add(ref _treasuryBalance, escrow.FeeSats);
+            escrow.Settled = true;
+            _assetHolders[escrow.HeroAssetId] = escrow.BidderId;
+            _playerBalances.AddOrUpdate(escrow.OwnerId, escrow.BidSats - escrow.FeeSats,
+                (_, b) => b + escrow.BidSats - escrow.FeeSats);
+            Interlocked.Add(ref _treasuryBalance, escrow.FeeSats);
+        }
         return NewId("sim-bid-settle");
     }
 
