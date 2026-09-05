@@ -158,10 +158,12 @@ public class MatchSessionDurabilityTests
     }
 
     [Fact]
-    public async Task AnExpiredSquadWhoseStakeWasReclaimed_StopsComingBack()
+    public async Task AnExpiredSquadIsKept_EvenOnceItsStakeReadsGone()
     {
-        // Kept while either side has sats behind the timelock; once both escrows are empty it names
-        // nothing — and resolving, the only other thing that deletes a row, can never happen now.
+        // Deliberate, and the opposite of what it looks like. GetWagerEscrowFundingAsync polls the indexer
+        // ONCE and reads once (NArkChainService:615) — a negative answer can simply be stale. Deleting on
+        // it would destroy the only record naming a live escrow, so the row stays and the cost is a row
+        // rather than a stake. Retaining is the failure we can afford.
         var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-match-{Guid.NewGuid():N}.db");
         try
         {
@@ -172,21 +174,24 @@ public class MatchSessionDurabilityTests
                 b.UseSetting("Game:WagerEscrowRefundAfter", TimeSpan.Zero.ToString());
             }))
             {
-                var (alice, _) = await first.RegisterAsync("S-Drain-A");
-                var (bob, _) = await first.RegisterAsync("S-Drain-B");
+                var (alice, _) = await first.RegisterAsync("S-Keep-A");
+                var (bob, _) = await first.RegisterAsync("S-Keep-B");
                 var open = await alice.Squad.OpenAsync(
                     new OpenSquadMatchRequest(await Lineup(alice), await Lineup(bob), 1_500));
                 squadId = open.MatchId;
 
                 await alice.Dev.StakeEscrowAsync(new { MatchId = squadId });
-                await alice.Players.ReclaimableAsync();   // reconciles: still funded, so still listed
                 await alice.Dev.RefundEscrowAsync(new { MatchId = squadId });
-                await alice.Players.ReclaimableAsync();   // reconciles again: drained, so the row goes
+                await alice.Players.ReclaimableAsync();   // reconciles: both sides now read unfunded
+                Assert.Equal("expired", first.Services.GetRequiredService<GameStore>().SquadMatches[squadId].Status);
             }
 
             using var restarted = HostOn(dbPath);
             _ = restarted.CreateClient();
-            Assert.DoesNotContain(squadId, restarted.Services.GetRequiredService<GameStore>().SquadMatches.Keys);
+            var store = restarted.Services.GetRequiredService<GameStore>();
+            Assert.True(store.SquadMatches.ContainsKey(squadId),
+                "an unfunded read may be stale, so the row that names the escrow must survive it");
+            Assert.Equal("expired", store.SquadMatches[squadId].Status);
         }
         finally { Cleanup(dbPath); }
     }
