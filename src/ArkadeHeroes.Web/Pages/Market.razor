@@ -37,6 +37,13 @@
     </div>
     <div class="grid cols"><HeroCard Hero="_bought" Reveal="true" /></div>
 }
+@if (_boughtItem is not null)
+{
+    <div class="card">
+        <div class="status-line"><span class="dot good"></span> Bought <strong>@_boughtItem</strong> — you paid the seller direct, and the unit is in your wallet.</div>
+        <p class="muted" style="margin:.7rem 0 0">Equip it from <a href="gear">Gear</a>.</p>
+    </div>
+}
 
 @if (_loading)
 {
@@ -52,8 +59,8 @@ else if (_error)
 else if (_active.Count == 0 && _sold.Count == 0)
 {
     <div class="card muted">
-        No resting offers right now. List a hero from your wallet to open the market —
-        head to <a href="sell">Sell</a>.
+        No resting offers right now. Open the market by listing a hero from <a href="sell">Sell</a>,
+        or a spare piece of gear from <a href="gear">Gear</a>.
     </div>
 }
 else
@@ -98,6 +105,7 @@ else
     private string? _buyStatus;
     private string? _buyError;
     private HeroDto? _bought;
+    private string? _boughtItem;
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,9 +144,10 @@ else
         }
     }
 
-    // Buyable = a signed-in viewer looking at someone else's resting hero offer.
+    // Buyable = a signed-in viewer looking at someone else's resting offer, of either kind: an item and a
+    // hero rest under the SAME offer covenant, so the fulfilment is identical and only the aftermath differs.
     bool CanBuy(OfferDto o) =>
-        State.IsSignedIn && _buyingId is null && o.Kind == "hero"
+        State.IsSignedIn && _buyingId is null
         && o.Status == "active" && o.SellerId != State.Player?.PlayerId;
 
     async Task DoBuy(OfferDto o)
@@ -146,11 +155,19 @@ else
         _buyingId = o.OfferId;
         _buyError = null;
         _bought = null;
+        _boughtItem = null;
         _buyStatus = "Preparing the purchase…";
         try
         {
-            _bought = await Session.BuyHeroAsync(o.OfferId,
-                s => { _buyStatus = s; StateHasChanged(); });
+            if (o.Kind == "hero")
+                _bought = await Session.BuyHeroAsync(o.OfferId,
+                    s => { _buyStatus = s; StateHasChanged(); });
+            else
+            {
+                await Session.BuyItemOfferAsync(o.OfferId,
+                    s => { _buyStatus = s; StateHasChanged(); });
+                _boughtItem = o.ItemName;
+            }
             await LoadAsync();  // the offer has closed; refresh active + sold
         }
         catch (Exception ex)

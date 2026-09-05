@@ -367,6 +367,51 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         return resting;
     }
 
+    /// <summary>List a spare ITEM unit for sale — the hero listing above, one asset apart. The unit is
+    /// escrowed into the offer covenant, so it stops being equippable stock the moment it rests.</summary>
+    public async Task<OfferDto> ListItemAsync(string itemId, long askSats, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Drafting the sale covenant…");
+        var offer = await api.Offers.CreateItemAsync(new CreateOfferRequest(itemId, askSats));
+
+        onProgress?.Invoke("Escrowing your item into the offer…");
+        await DepositAndSettleAsync(w.Id, offer.OfferAddress, offer.ItemAssetId, 0);
+
+        onProgress?.Invoke("Waiting for the offer to rest on the market…");
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(90);
+        var resting = await api.Offers.GetAsync(offer.OfferId);
+        while (resting.Status != "active" && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(2500);
+            resting = await api.Offers.GetAsync(offer.OfferId);
+        }
+        return resting;
+    }
+
+    /// <summary>Buy a resting ITEM offer: the same trustless fulfilment <see cref="BuyHeroAsync"/> uses,
+    /// minus the claim. An item is fungible and simply held, so there is no game-side ownership row to hand
+    /// over — <c>/api/items/mine</c> reads the holding off-chain. Returns the asset id now held.</summary>
+    public async Task<string> BuyItemOfferAsync(string offerId, Action<string>? onProgress = null)
+    {
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Rebuilding the offer covenant…");
+        var offer = await api.Offers.ParamsAsync(offerId);
+        var info = await api.Chain.InfoAsync();
+        if (string.IsNullOrEmpty(info.EmulatorUri))
+            throw new GameWalletException("This arena isn't in covenant mode (no emulator advertised).");
+
+        var address = state.Player?.ArkadeAddress ?? await wallet.GetReceiveAddressAsync(w.Id);
+
+        onProgress?.Invoke("Paying the seller & taking the item…");
+        await OfferFulfillFlow.FulfillAsync(services, w.Id, address, new Uri(info.EmulatorUri), offer);
+        return offer.ItemAssetId;
+    }
+
     /// <summary>
     /// The BIDDER's half of an accepted bid: pay the bid invoice from this wallet, then try to close it.
     ///
