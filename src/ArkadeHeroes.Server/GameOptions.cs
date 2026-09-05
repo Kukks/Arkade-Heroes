@@ -34,6 +34,12 @@ public class GameOptions
     /// <summary>How long after a covenant match opens its escrow refund leaves unlock (player liveness).</summary>
     public TimeSpan WagerEscrowRefundAfter { get; set; } = TimeSpan.FromHours(24);
 
+    /// <summary>How long a FULL bracket waits on an outstanding buy-in before the seat counts as abandoned
+    /// and the pot may be refunded. Deliberately NOT <see cref="WagerEscrowRefundAfter"/>, though it starts
+    /// at the same value: that one is baked into covenant script addresses as a reclaim timelock, so sharing
+    /// it would mean retuning this server policy silently retimed every covenant minted afterwards.</summary>
+    public TimeSpan TournamentUnpaidBuyInGrace { get; set; } = TimeSpan.FromHours(24);
+
     /// <summary>Absorb death-match odds — server game config PUBLISHED on /api/chain/info so the client's
     /// VerifyAbsorb recomputes the same outcome. P(absorb happens) ≈ AbsorbChance/256; each further trait
     /// ≈ AbsorbContinueChance/256 (front-loaded → mostly one trait, rarely a full concentrate).</summary>
