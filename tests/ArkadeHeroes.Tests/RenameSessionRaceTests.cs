@@ -5,6 +5,7 @@ using ArkadeHeroes.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ArkadeHeroes.Tests;
@@ -21,20 +22,30 @@ namespace ArkadeHeroes.Tests;
 public class RenameSessionRaceTests
 {
     /// <summary>
-    /// Holds <c>SaveRenameAsync</c> until a delete has been seen, which is precisely the interleaving that
-    /// resurrects a spent session — deterministic, rather than hoping a hammer hits the window.
+    /// Drives the exact interleaving instead of hoping a hammer hits it: the SECOND <c>SaveRenameAsync</c>
+    /// — the retarget's, the setup's being the first — announces that it has been entered, then waits for a
+    /// delete. So the test can hold the retarget precisely inside its save while it releases the confirm.
     ///
     /// <para>The wait is BOUNDED on purpose. With the per-hero lock in place the confirm cannot run while
-    /// the request holds it, so the delete never arrives and an unbounded wait would deadlock the fixed
-    /// server rather than pass on it.</para>
+    /// the request holds it, so the delete never arrives; an unbounded wait would deadlock the FIXED server
+    /// rather than pass on it.</para>
     /// </summary>
-    private sealed class DeleteThenSavePersistence(IGameStatePersistence inner) : IGameStatePersistence
+    private sealed class RaceProbePersistence(IGameStatePersistence inner) : IGameStatePersistence
     {
         private readonly TaskCompletionSource _deleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _saves;
+
+        /// <summary>Completes once the retarget is parked inside its save.</summary>
+        public Task RetargetIsParked => _entered.Task;
 
         public async Task SaveRenameAsync(RenameSession session, CancellationToken ct = default)
         {
-            await Task.WhenAny(_deleted.Task, Task.Delay(TimeSpan.FromSeconds(2), ct));
+            if (Interlocked.Increment(ref _saves) >= 2)
+            {
+                _entered.TrySetResult();
+                await Task.WhenAny(_deleted.Task, Task.Delay(TimeSpan.FromSeconds(2), ct));
+            }
             await inner.SaveRenameAsync(session, ct);
         }
 
@@ -62,29 +73,36 @@ public class RenameSessionRaceTests
     }
 
     [Fact]
-    public async Task ARetargetRacingAConfirm_CannotResurrectTheSpentSession()
+    public async Task ARetargetParkedMidSave_CannotResurrectTheSessionAConfirmSpent()
     {
         // Asserted across a RESTART, not on the live dictionary. The retarget writes store.Renames BEFORE
-        // its blocked save, so the confirm's TryRemove clears the in-memory copy either way — it is the
-        // DURABLE row that gets resurrected, and only a rehydrate can see it. Measuring the live
-        // dictionary passes with and without the fix, which is worth stating: it was my first attempt.
+        // its save, so the confirm's TryRemove clears the in-memory copy either way — it is the DURABLE row
+        // that gets resurrected, and only a rehydrate can see it. Asserting on the live dictionary passes
+        // with and without the fix; that was my first attempt at this test.
         var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-rename-race-{Guid.NewGuid():N}.db");
         try
         {
-            string heroId;
-            using (var first = HostOn(dbPath))
+            string heroId, paidInvoiceId;
+            RaceProbePersistence? probe = null;
+
+            using (var first = HostOn(dbPath, p => probe = p))
             {
                 var (alice, aliceDto) = await first.RegisterAsync("Race-Rename");
                 heroId = (await alice.ClaimStartersAsync())[0].Id;
 
                 // One PAID session — what the retarget branch reuses and what a confirm spends.
                 var quote = await alice.Heroes.RequestRenameAsync(heroId, new RenameHeroRequest("First Choice"));
-                await alice.PayInvoiceAsync(quote.Fee!.InvoiceId);
+                paidInvoiceId = quote.Fee!.InvoiceId;
+                await alice.PayInvoiceAsync(paidInvoiceId);
 
                 var svc = first.Services.GetRequiredService<GameService>();
                 var player = first.Services.GetRequiredService<GameStore>().Players[aliceDto.PlayerId];
 
                 var retarget = Task.Run(() => svc.RequestRenameAsync(player, heroId, "Second Choice", CancellationToken.None));
+                // Release the confirm only once the retarget is parked mid-save. Without this the winner is
+                // whichever task the scheduler picks — the reason the first version of this test passed
+                // locally and failed on CI.
+                await probe!.RetargetIsParked.WaitAsync(TimeSpan.FromSeconds(10));
                 var confirm = Task.Run(async () =>
                 {
                     try { await svc.ConfirmRenameAsync(player, heroId, CancellationToken.None); }
@@ -93,9 +111,14 @@ public class RenameSessionRaceTests
                 await Task.WhenAll(retarget, confirm);
             }
 
-            using var restarted = HostOn(dbPath);
+            using var restarted = HostOn(dbPath, _ => { });
             _ = restarted.CreateClient();
-            Assert.Empty(restarted.Services.GetRequiredService<GameStore>().Renames);
+
+            // A surviving session is only wrong if it still holds the SPENT invoice. A fresh request that
+            // opens its own unpaid one is an ordinary second rename, which the player still has to pay for.
+            var surviving = restarted.Services.GetRequiredService<GameStore>().Renames;
+            if (surviving.TryGetValue(heroId, out var stale))
+                Assert.NotEqual(paidInvoiceId, stale.FeeInvoiceId);
         }
         finally
         {
@@ -104,13 +127,17 @@ public class RenameSessionRaceTests
         }
     }
 
-    private static WebApplicationFactory<Program> HostOn(string dbPath) =>
+    private static WebApplicationFactory<Program> HostOn(string dbPath, Action<RaceProbePersistence> capture) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
             b.UseSetting("Game:StateDbPath", dbPath);
             b.UseSetting("Game:HeroRenameFeeSats", "500");
             b.ConfigureTestServices(s => s.AddSingleton<IGameStatePersistence>(sp =>
-                new DeleteThenSavePersistence(new SqliteGameStatePersistence(
-                    sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<GameStateDbContext>>()))));
+            {
+                var probe = new RaceProbePersistence(new SqliteGameStatePersistence(
+                    sp.GetRequiredService<IDbContextFactory<GameStateDbContext>>()));
+                capture(probe);
+                return probe;
+            }));
         });
 }
