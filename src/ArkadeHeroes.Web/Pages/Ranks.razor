@@ -193,17 +193,20 @@ else
             <p class="muted" style="margin:-.3rem 0 .8rem">ranked by wins, then level — a win tally only ever climbs</p>
             <table class="board">
                 <thead>
-                    <tr><th>#</th><th>Hero</th><th class="num">Wins</th><th class="num">Lvl</th><th class="num">Matches</th></tr>
+                    <tr><th>#</th><th>Hero</th><th class="num">Wins</th><th class="num">Lvl</th><th class="num">Matches</th><th></th></tr>
                 </thead>
                 <tbody>
                     @foreach (var e in _top)
                     {
+                        @* Both names on this row used to lead nowhere — which is the gap PlayerProfileDto
+                           was written for and never wired to. *@
                         <tr>
                             <td class="rank">@e.Rank</td>
-                            <td>@e.Name</td>
+                            <td><a href="heroes/@e.HeroId">@e.Name</a></td>
                             <td class="num">@e.Wins</td>
                             <td class="num">@e.Level</td>
                             <td class="num">@e.Matches</td>
+                            <td><a class="btn ghost sm" href="players/@e.OwnerId">Owner ↗</a></td>
                         </tr>
                     }
                 </tbody>

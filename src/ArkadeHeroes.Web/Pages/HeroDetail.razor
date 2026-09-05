@@ -448,6 +448,18 @@ else
             <h3 style="margin-top:1.2rem">Lineage</h3>
             <div class="kv">
                 <div><span>generation</span><b>@h.Generation</b></div>
+                @* Whose hero this is was readable nowhere: OwnerId reached the page only to gate "is mine". *@
+                <div>
+                    <span>owner</span>
+                    @if (IsMine(h))
+                    {
+                        <b>you</b>
+                    }
+                    else
+                    {
+                        <a href="players/@h.OwnerId">their trophy case ↗</a>
+                    }
+                </div>
                 @* A parent that has since been destroyed is still linked — its headstone is a real page —
                    but it is NAMED and marked, because "this hero's mother was burned into a fusion" is
                    lineage, not an error. The name comes off the headstone or not at all. *@

@@ -1,0 +1,148 @@
+@page "/players/{PlayerId}"
+@inject ArkadeHeroesClient Api
+
+<PageTitle>@(_profile?.Name ?? "Player") · Arkade Heroes</PageTitle>
+
+@if (_loading)
+{
+    <div class="status-line"><span class="dot wait"></span> opening the trophy case…</div>
+}
+else if (!_loaded)
+{
+    @* A failed read must not render as "this player has nothing" — the whole point of the page is what
+       they have. *@
+    <div class="card">
+        <div class="status-line"><span class="dot bad"></span> Couldn't load this player.</div>
+        <p class="muted" style="margin:.7rem 0 0">
+            The arena may be briefly unreachable, or no player has that id. @_error
+        </p>
+        <a class="btn ghost sm" style="margin-top:.7rem" href="leaderboard">Back to the ranks</a>
+    </div>
+}
+else if (_profile is { } p)
+{
+    <div class="page-head">
+        <h2 style="margin:0">@p.Name</h2>
+        <span class="hud">public trophy case — anyone can read this</span>
+        <span class="spacer"></span>
+        @if (p.SeasonPass.Title is { } title)
+        {
+            <span class="chip">@title</span>
+        }
+    </div>
+
+    <div class="card" style="margin-bottom:1.6rem">
+        <div class="page-head" style="margin:0 0 .3rem">
+            <h3 style="margin:0">Season pass</h3>
+            <span class="hud">scored from signed receipts — recomputable by anyone</span>
+            <span class="spacer"></span>
+            <span class="chip mono">tier @p.SeasonPass.Tier / @p.SeasonPass.MaxTier</span>
+        </div>
+        <div class="hpbar xpbar" title="@p.SeasonPass.Points points this season">
+            <i class="xp" style="width:@(TierPct(p.SeasonPass))%"></i>
+        </div>
+        <p class="muted" style="margin:.5rem 0 0">
+            @p.SeasonPass.Points points this season.
+            @if (p.SeasonPass.NextTitle is { } next)
+            {
+                <text>@p.SeasonPass.PointsToNextTier more for <b>@next</b>.</text>
+            }
+            else
+            {
+                <text>The pass is finished — nothing further to earn this season.</text>
+            }
+        </p>
+    </div>
+
+    <div class="card" style="margin-bottom:1.6rem">
+        <h3 style="margin:0 0 .6rem">Collection</h3>
+        <div class="match-row"><span>heroes owned</span><span class="spacer"></span><span class="chip mono">@p.Achievements.HeroesOwned</span></div>
+        <div class="match-row"><span>bred, not bought</span><span class="spacer"></span><span class="chip mono">@p.Achievements.HeroesBred</span></div>
+        <div class="match-row"><span>legendaries</span><span class="spacer"></span><span class="chip mono">@p.Achievements.Legendaries</span></div>
+        <div class="match-row"><span>fancy heroes</span><span class="spacer"></span><span class="chip mono">@p.Achievements.Fancies</span></div>
+        <div class="match-row"><span>tournaments won</span><span class="spacer"></span><span class="chip mono">@p.Achievements.TournamentsWon</span></div>
+
+        @if (p.Achievements.Badges.Count > 0)
+        {
+            <div style="border-top:1px solid rgba(255,255,255,.08);margin:.7rem 0 .5rem"></div>
+            <p class="muted" style="margin:0 0 .4rem">badges</p>
+            @foreach (var b in p.Achievements.Badges)
+            {
+                <span class="chip" style="margin:0 .3rem .3rem 0">@b</span>
+            }
+        }
+
+        @if (p.Achievements.FancyEditions.Count > 0)
+        {
+            <div style="border-top:1px solid rgba(255,255,255,.08);margin:.7rem 0 .5rem"></div>
+            @* Edition 1 is the discoverer, and a low number stays scarce however many turn up later —
+               so the number is the brag, not the set name. *@
+            <p class="muted" style="margin:0 0 .3rem">fancy editions — the Nth ever found</p>
+            @foreach (var f in p.Achievements.FancyEditions)
+            {
+                <div class="match-row">
+                    <span>🏅 <b>@f.Title</b> — <a href="heroes/@f.HeroId">@f.HeroName</a></span>
+                    <span class="spacer"></span>
+                    <span class="chip mono">#@f.Edition</span>
+                </div>
+            }
+        }
+
+        @if (p.Achievements.TraitAlbum.Count > 0)
+        {
+            <div style="border-top:1px solid rgba(255,255,255,.08);margin:.7rem 0 .5rem"></div>
+            <p class="muted" style="margin:0 0 .4rem">trait album — distinct variants seen across their heroes</p>
+            @foreach (var kv in p.Achievements.TraitAlbum.OrderByDescending(k => k.Value))
+            {
+                <span class="chip mono" style="margin:0 .3rem .3rem 0">@kv.Key @kv.Value</span>
+            }
+        }
+    </div>
+
+    <div class="page-head">
+        <h3 style="margin:0">Notable heroes</h3>
+        <span class="hud">their best, by rarity</span>
+    </div>
+    @if (p.Notable.Count == 0)
+    {
+        <div class="card muted">No heroes to show.</div>
+    }
+    else
+    {
+        <div class="grid cols">
+            @foreach (var h in p.Notable)
+            {
+                <HeroCard Hero="h" />
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public string PlayerId { get; set; } = "";
+
+    private PlayerProfileDto? _profile;
+    private bool _loading = true;
+    private bool _loaded;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _loaded = false;
+        try
+        {
+            _profile = await Api.Players.ProfileAsync(PlayerId);
+            _loaded = true;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; }
+    }
+
+    /// <summary>How full the current tier's bar is. A finished pass reads full rather than empty.</summary>
+    private static int TierPct(SeasonPassProgress s)
+    {
+        var total = s.PointsIntoTier + s.PointsToNextTier;
+        return total <= 0 ? 100 : (int)Math.Clamp(Math.Round(s.PointsIntoTier * 100.0 / total), 0, 100);
+    }
+}
