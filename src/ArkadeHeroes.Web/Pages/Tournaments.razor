@@ -50,7 +50,7 @@ else
             <label>Hero
                 <select @bind="_heroId">
                     <option value="">— pick —</option>
-                    @foreach (var h in _mine) { <option value="@h.Id">@h.Name — lvl @h.Level</option> }
+                    @foreach (var h in _mine) { <option value="@h.Id">@HeroLabels.Option(h, _mine)</option> }
                 </select>
             </label>
             <label>Buy-in <span class="mini">sats</span>

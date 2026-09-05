@@ -463,9 +463,11 @@ else
                 {
                     <div><span>origin</span><b>gen-0 starter</b></div>
                 }
-                @if (h.BreedCooldownUntil is { } cd)
+                @* Only while it BINDS: an un-lapsed check left a months-old stamp on the card forever,
+                   reading as a block on a hero that has been ready to breed since. *@
+                @if (h.BreedCooldownUntil is { } cd && cd > DateTimeOffset.UtcNow)
                 {
-                    <div><span>breed cooldown</span><b>@cd.UtcDateTime.ToString("u")</b></div>
+                    <div><span>breed cooldown</span><b>until @cd.ToLocalTime().ToString("g")</b></div>
                 }
             </div>
         </div>

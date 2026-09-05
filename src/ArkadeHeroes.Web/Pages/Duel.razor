@@ -61,7 +61,7 @@ else
                 <option value="">— pick a hero —</option>
                 @foreach (var h in _mine)
                 {
-                    <option value="@h.Id">@h.Name — lvl @h.Level · @(h.Rarity?.Tier ?? "Common")</option>
+                    <option value="@h.Id">@HeroLabels.Option(h, _mine)</option>
                 }
             </select>
         </label>

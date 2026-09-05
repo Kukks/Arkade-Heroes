@@ -45,6 +45,29 @@ public class DailyQuestsTests
             new HashSet<string> { "hero-a" }));
     }
 
+    /// <summary>A merge BURNS both inputs before the receipt is written (GameService removes them from the
+    /// roster, then issues the receipt naming them as HeroA/HeroB). The fused hero — the only id still in the
+    /// player's hands — is the ResultHeroId, so participation has to be readable there or the quest, and the
+    /// season-pass points behind it, can never be earned by anyone.</summary>
+    [Fact]
+    public void IsComplete_Merge_TrueForTheFusedHero_TheOnlyInputThatSurvives()
+    {
+        var merge = DailyQuests.Catalog.First(q => q.Id == "merge");
+        var afterTheBurn = new HashSet<string> { "hero-fused" };
+
+        Assert.True(DailyQuests.IsComplete(
+            merge, new[] { R("merge", "hero-fused", "hero-base", "hero-sacrifice") }, afterTheBurn));
+    }
+
+    [Fact]
+    public void IsComplete_Merge_FalseForABystander()
+    {
+        var merge = DailyQuests.Catalog.First(q => q.Id == "merge");
+        Assert.False(DailyQuests.IsComplete(
+            merge, new[] { R("merge", "hero-fused", "hero-base", "hero-sacrifice") },
+            new HashSet<string> { "someone-elses-hero" }));
+    }
+
     [Fact]
     public void IsComplete_DeathMatch_AcceptsAbsorbReceipt()
     {

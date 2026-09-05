@@ -56,8 +56,12 @@ public static class DailyQuests
             || (quest.ReceiptType == "deathmatch" && r.Type == "absorb");
         if (!typeMatches) return false;
 
+        // The result hero counts as participation too. A merge burns both inputs BEFORE its receipt is
+        // written, so HeroA and HeroB are already off the roster by the time anyone reads it — leaving the
+        // fused hero as the only provable link between the player and the deed.
         return quest.WinnersOnly
             ? r.ResultHeroId is { } w && playerHeroIds.Contains(w)
-            : playerHeroIds.Contains(r.HeroAId) || playerHeroIds.Contains(r.HeroBId);
+            : playerHeroIds.Contains(r.HeroAId) || playerHeroIds.Contains(r.HeroBId)
+                || (r.ResultHeroId is { } made && playerHeroIds.Contains(made));
     }
 }
