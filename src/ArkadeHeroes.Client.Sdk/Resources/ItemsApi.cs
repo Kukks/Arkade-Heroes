@@ -6,7 +6,6 @@ namespace ArkadeHeroes.Client.Sdk;
 public sealed class ItemsApi(ArkadeHeroesClient client)
 {
     public Task<List<ItemDto>> ShopAsync() => client.GetAsync<List<ItemDto>>("/api/items");
-    /// <summary>Catalog ids the signed-in player already owns (holds ≥1 unit of) — for shop "owned" markers.</summary>
     /// <summary>Item id → units held. The count matters: gear is allocated per hero, so owning one unit
     /// does not mean a second hero can be armed with it.</summary>
     public Task<Dictionary<string, long>> MineAsync() =>

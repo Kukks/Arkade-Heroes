@@ -647,6 +647,13 @@ public class GameService(
         if (NameTaken(normalized, heroId))
             throw new GameRuleException($"The name '{normalized}' is already taken by another hero.");
 
+        // Serialised against CONFIRM for this hero. Without it the two interleave: a retarget reads the
+        // paid session, confirm applies the name and deletes it, and the retarget's write then RESURRECTS
+        // a session whose invoice is paid AND already spent — one fee, two applied renames. Taken before
+        // the per-NAME lock that confirm also holds, so the order is always hero → name and the two can
+        // never deadlock against each other.
+        using var session_gate = await store.LockAsync(RenameSessionLock(heroId), ct);
+
         // A previous attempt can lose the apply-time uniqueness race AFTER its fee has cleared
         // (ConfirmRenameAsync re-checks, throws, and leaves the session standing). That fee bought a
         // rename that never happened, so reuse the paid invoice rather than billing again: one paid
@@ -657,7 +664,9 @@ public class GameService(
             && prior.FeeInvoiceId is { } priorInvoice
             && await chain.IsInvoicePaidAsync(priorInvoice, ct))
         {
-            store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            var retarget = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            store.Renames[heroId] = retarget;
+            await persistence.SaveRenameAsync(retarget, ct);
             // Deliberately logged, and deliberately marked as re-using an already-paid fee: this is the
             // branch where a player retargets a name they have ALREADY paid for, so a log that showed only
             // the first request would make the second name look like it arrived from nowhere.
@@ -669,7 +678,11 @@ public class GameService(
         var fee = _options.HeroRenameFeeSats > 0
             ? await chain.CreateFeeInvoiceAsync($"rename:{heroId}", _options.HeroRenameFeeSats, ct)
             : null;
-        store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        var session = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        store.Renames[heroId] = session;
+        // Durable BEFORE the invoice reaches the player: once they can pay it, the record of what that
+        // payment bought has to survive a restart, or the next request bills them for it a second time.
+        await persistence.SaveRenameAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.HeroRenameRequested, player.Id, [heroId],
             new { requestedName = normalized, feeSats = fee is null ? 0 : _options.HeroRenameFeeSats, feeInvoiceId = fee?.InvoiceId, reusedPaidFee = false });
         return fee;
@@ -679,6 +692,10 @@ public class GameService(
     public async Task<Hero> ConfirmRenameAsync(Player player, string heroId, CancellationToken ct)
     {
         var hero = GetOwnedHero(player, heroId);
+        // Held across the whole lifecycle — read, apply, SaveHeroAsync, DeleteRenameAsync — so a
+        // concurrent REQUEST cannot write a session back after this one has spent it. Acquired before the
+        // per-name lock below, matching the order RequestRenameAsync uses.
+        using var session_gate = await store.LockAsync(RenameSessionLock(heroId), ct);
         if (!store.Renames.TryGetValue(heroId, out var pending))
             throw new GameRuleException("No pending rename — request one first.");
         if (pending.FeeInvoiceId is not null && !await chain.IsInvoicePaidAsync(pending.FeeInvoiceId, ct))
@@ -704,6 +721,10 @@ public class GameService(
         // RENAME is an identity event: the name was bought (a real-sats fee) and is globally unique —
         // losing it to a crash would both refund nothing and free the name for someone else to claim.
         await persistence.SaveHeroAsync(hero, ct);
+        // AFTER the name is durably applied, never before: a crash between the two rehydrates a pending
+        // rename for a hero already carrying that name, and confirming it again is a harmless no-op. The
+        // other order would lose the paid session with the name unapplied.
+        await persistence.DeleteRenameAsync(heroId, ct);
         // No dedup key: a hero can legitimately be renamed again and again, and each is its own fact. A
         // RETRY cannot double-log anyway — the session is removed above, so a second confirm is refused
         // before it reaches here. The old name is recorded because the durable hero row keeps only the new
@@ -712,6 +733,11 @@ public class GameService(
             new { previousName, newName = hero.Name, feeSats = pending.FeeInvoiceId is null ? 0 : _options.HeroRenameFeeSats, feeInvoiceId = pending.FeeInvoiceId });
         return hero;
     }
+
+    /// <summary>The per-hero rename-session lock. Distinct from the per-NAME lock: that one guards global
+    /// name uniqueness between different heroes, this one guards one hero's session against its own
+    /// concurrent request and confirm. Always taken FIRST, so hero → name is the only acquisition order.</summary>
+    private static string RenameSessionLock(string heroId) => $"rename-session:{heroId}";
 
     /// <summary>True if any OTHER hero already holds this name (case-insensitive) — the global registry.</summary>
     private bool NameTaken(string name, string exceptHeroId) =>
