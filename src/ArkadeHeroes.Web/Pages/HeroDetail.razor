@@ -740,6 +740,11 @@ else
         _error = false;
         _grave = null;
         _graves.Clear();
+        // Blazor REUSES this component across a hero change (every lineage link is one), so a form left open
+        // would aim at the NEW hero — one click from giving away the wrong one, since DoGift reads Id.
+        CancelGift();
+        CancelRename();
+
         // A DESTROYED hero has no row for /heroes/{id} to return, so the whole all-or-nothing load below
         // would fail and the page would say "couldn't load this hero" about a hero that was permanently
         // burned in front of its owner. Ask for the headstone FIRST: if there is one, this is a grave, and

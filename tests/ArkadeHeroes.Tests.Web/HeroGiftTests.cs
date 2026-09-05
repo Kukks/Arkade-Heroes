@@ -96,6 +96,30 @@ public class HeroGiftTests
     }
 
     [Fact]
+    public void ChangingHero_ClosesAnOpenGiftForm()
+    {
+        const string other = "hero-other";
+        using var ctx = HeroPage();
+        ctx.Api.Get("/api/players/player-2", Fixtures.Player(id: "player-2", name: "Brenna"));
+        ctx.Api.GetFails($"/api/heroes/{other}/tombstone", System.Net.HttpStatusCode.NotFound);
+        ctx.Api.Get($"/api/heroes/{other}", Fixtures.Hero(other, "Emberwake"));
+        ctx.Api.Get($"/api/receipts/hero/{other}", Array.Empty<ProgressionReceiptDto>());
+        ctx.Api.Get($"/api/heroes/{other}/timeline", new HeroTimelineDto(other, [], Complete: true, null));
+
+        var cut = ctx.Render<HeroDetail>(p => p.Add(x => x.Id, HeroId));
+        cut.WaitForAssertion(() => Assert.Contains("Ashfang", cut.Markup));
+        Click(cut, "Gift");
+        cut.Find("input[placeholder='recipient player id']").Input("player-2");
+        Click(cut, "Check");
+        cut.WaitForAssertion(() => Assert.Contains("Send to Brenna", cut.Markup));
+
+        cut.Render(p => p.Add(x => x.Id, other));
+
+        cut.WaitForAssertion(() => Assert.Contains("Emberwake", cut.Markup));
+        Assert.DoesNotContain("Send to Brenna", cut.Markup);
+    }
+
+    [Fact]
     public void TheGearWarningIsShown_BecauseTheLoadoutDoesNotTravel()
     {
         using var ctx = HeroPage();
