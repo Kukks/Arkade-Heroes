@@ -337,6 +337,9 @@ public class MatchSession
     public string? DefenderPlayerId { get; set; }
 
     public string Status { get; set; } = "open"; // open | accepted | resolved
+    /// <summary>IN-MEMORY ONLY: the durable row was dropped (both escrows empty), so reconcile stops
+    /// re-probing. Not persisted — the row it describes is gone, so a restart never sees this session.</summary>
+    public bool DurableRowDropped { get; set; }
     public BattleResult? Result { get; set; }
     public string? EntropyHex { get; set; }
     /// <summary>The GameConfigVersion of the rules this was RESOLVED under, recorded at resolve time so the
@@ -427,6 +430,8 @@ public class SquadMatchSession
     public long? RefundAfterUnixSeconds { get; set; }
     public string? DefenderPlayerId { get; set; }
     public string Status { get; set; } = "open";
+    /// <summary>The duel's marker, for the same reason — see <see cref="MatchSession.DurableRowDropped"/>.</summary>
+    public bool DurableRowDropped { get; set; }
     public SquadResult? Result { get; set; }
     public IReadOnlyList<Shared.HeroDto>? ChallengerSnapshots { get; set; }
     public IReadOnlyList<Shared.HeroDto>? DefenderSnapshots { get; set; }

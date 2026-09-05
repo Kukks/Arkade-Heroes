@@ -158,6 +158,40 @@ public class MatchSessionDurabilityTests
     }
 
     [Fact]
+    public async Task AnExpiredSquadWhoseStakeWasReclaimed_StopsComingBack()
+    {
+        // Kept while either side has sats behind the timelock; once both escrows are empty it names
+        // nothing — and resolving, the only other thing that deletes a row, can never happen now.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"arkade-match-{Guid.NewGuid():N}.db");
+        try
+        {
+            string squadId;
+            using (var first = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+            {
+                b.UseSetting("Game:StateDbPath", dbPath);
+                b.UseSetting("Game:WagerEscrowRefundAfter", TimeSpan.Zero.ToString());
+            }))
+            {
+                var (alice, _) = await first.RegisterAsync("S-Drain-A");
+                var (bob, _) = await first.RegisterAsync("S-Drain-B");
+                var open = await alice.Squad.OpenAsync(
+                    new OpenSquadMatchRequest(await Lineup(alice), await Lineup(bob), 1_500));
+                squadId = open.MatchId;
+
+                await alice.Dev.StakeEscrowAsync(new { MatchId = squadId });
+                await alice.Players.ReclaimableAsync();   // reconciles: still funded, so still listed
+                await alice.Dev.RefundEscrowAsync(new { MatchId = squadId });
+                await alice.Players.ReclaimableAsync();   // reconciles again: drained, so the row goes
+            }
+
+            using var restarted = HostOn(dbPath);
+            _ = restarted.CreateClient();
+            Assert.DoesNotContain(squadId, restarted.Services.GetRequiredService<GameStore>().SquadMatches.Keys);
+        }
+        finally { Cleanup(dbPath); }
+    }
+
+    [Fact]
     public async Task AResolvedFriendlyDuel_IsNotRehydrated()
     {
         // A resolved match has settled escrows, so a returning row would offer a reclaim against nothing.

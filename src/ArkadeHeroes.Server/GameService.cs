@@ -2955,8 +2955,22 @@ public class GameService(
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var m in store.Matches.Values)
         {
-            if (m.Mode != "covenant" || m.Status is not ("open" or "accepted")) continue;
+            if (m.Mode != "covenant") continue;
             if (m.RefundAfterUnixSeconds is not { } refundAfter || now < refundAfter) continue;
+            // An EXPIRED row is kept while either side can still reclaim; once both escrows are empty it
+            // names nothing, and only this pass can notice — an expired match can never resolve.
+            if (m.Status == "expired")
+            {
+                if (m.DurableRowDropped) continue;
+                if (await chain.GetWagerEscrowFundingAsync(m.Id, ct)
+                    is { ChallengerFunded: false, DefenderFunded: false })
+                {
+                    await persistence.DeleteMatchSessionAsync(m.Id, ct);
+                    m.DurableRowDropped = true;
+                }
+                continue;
+            }
+            if (m.Status is not ("open" or "accepted")) continue;
             var funding = await chain.GetWagerEscrowFundingAsync(m.Id, ct);
             if (funding is null) continue;
             var abandoned = m.Status == "open"
@@ -2965,7 +2979,13 @@ public class GameService(
             if (!abandoned) continue;
             var wasStatus = m.Status;
             m.Status = "expired";
-            await persistence.SaveMatchAsync(m, ct);
+            // The probe above already says who holds sats, so the row's fate is settled here, not next pass.
+            if (funding is { ChallengerFunded: false, DefenderFunded: false })
+            {
+                await persistence.DeleteMatchSessionAsync(m.Id, ct);
+                m.DurableRowDropped = true;
+            }
+            else await persistence.SaveMatchAsync(m, ct);
             // Actor NULL: nobody DID this — the refund window simply passed and the chain says the stakes
             // are not both there. It runs lazily on every match listing, so the dedup key is what keeps one
             // expiry to one entry however many anonymous page loads observe it.
@@ -2985,8 +3005,20 @@ public class GameService(
         // stayed open forever — and its row, droppable only on "resolved", would outlive it.
         foreach (var s in store.SquadMatches.Values)
         {
-            if (s.Mode != "covenant" || s.Status is not ("open" or "accepted")) continue;
+            if (s.Mode != "covenant") continue;
             if (s.RefundAfterUnixSeconds is not { } refundAfter || now < refundAfter) continue;
+            if (s.Status == "expired")
+            {
+                if (s.DurableRowDropped) continue;
+                if (await chain.GetWagerEscrowFundingAsync(s.Id, ct)
+                    is { ChallengerFunded: false, DefenderFunded: false })
+                {
+                    await persistence.DeleteMatchSessionAsync(s.Id, ct);
+                    s.DurableRowDropped = true;
+                }
+                continue;
+            }
+            if (s.Status is not ("open" or "accepted")) continue;
             var funding = await chain.GetWagerEscrowFundingAsync(s.Id, ct);
             if (funding is null) continue;
             var abandoned = s.Status == "open"
@@ -2995,7 +3027,12 @@ public class GameService(
             if (!abandoned) continue;
             var wasStatus = s.Status;
             s.Status = "expired";
-            await persistence.SaveSquadMatchAsync(s, ct);
+            if (funding is { ChallengerFunded: false, DefenderFunded: false })
+            {
+                await persistence.DeleteMatchSessionAsync(s.Id, ct);
+                s.DurableRowDropped = true;
+            }
+            else await persistence.SaveSquadMatchAsync(s, ct);
             await AuditAsync(Persistence.AuditEventType.SquadExpired, null,
                 [s.Id, .. s.ChallengerLineup, .. s.DefenderLineup],
                 new
