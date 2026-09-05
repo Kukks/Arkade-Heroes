@@ -59,6 +59,14 @@ public interface IGameStatePersistence
     /// proposal must not come back consented, and a stud fee already paid must not come back unpaid.</summary>
     Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default);
 
+    /// <summary>A rename billed but not yet applied. Saved BEFORE the invoice reaches the player, so the
+    /// window in which they have paid and the server could forget never opens.</summary>
+    Task SaveRenameAsync(RenameSession session, CancellationToken ct = default);
+
+    /// <summary>Drops a pending rename once it lands, so the paid fee stops being reusable the moment the
+    /// name is applied — the same "one paid fee buys one APPLIED rename" rule the in-memory session had.</summary>
+    Task DeleteRenameAsync(string heroId, CancellationToken ct = default);
+
     /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
     /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
     /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
@@ -97,6 +105,8 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task DeleteHeroAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveOfferAsync(OfferListing offer, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveRenameAsync(RenameSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteRenameAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
@@ -302,6 +312,17 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 StudFeePaid = row.StudFeePaid,
             };
         }
+
+        // Renames come back because the fee is paid BEFORE the name is applied. Losing this row cost the
+        // player twice: their pending rename was gone, and the reuse branch in RequestRenameAsync — which
+        // reads this very dictionary — then found no prior invoice and billed them a second time for a
+        // rename they had already bought. Rows are deleted the moment a rename lands, so anything still
+        // here is by definition unapplied.
+        foreach (var row in await db.Renames.AsNoTracking().ToListAsync(ct))
+            store.Renames[row.HeroId] = new RenameSession
+            {
+                HeroId = row.HeroId, NewName = row.NewName, FeeInvoiceId = row.FeeInvoiceId,
+            };
 
         // Tombstones come back UNFILTERED, exactly as sales do and for the same reason: a headstone is a
         // historical fact, not a live position. It holds nothing and gates nothing, and it is the ONLY
@@ -786,6 +807,35 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.ChildHeroId = proposal.ChildHeroId;
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    public async Task SaveRenameAsync(RenameSession session, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var row = await db.Renames.FindAsync([session.HeroId], ct);
+        if (row is null)
+            db.Renames.Add(new PersistedRenameSession
+            {
+                HeroId = session.HeroId, NewName = session.NewName, FeeInvoiceId = session.FeeInvoiceId,
+            });
+        else
+        {
+            // The NAME may be retargeted; the invoice must not be, or a retarget would abandon the fee the
+            // player already paid and the reuse branch would never find it again.
+            row.NewName = session.NewName;
+            row.FeeInvoiceId ??= session.FeeInvoiceId;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteRenameAsync(string heroId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.Renames.FindAsync([heroId], ct) is { } row)
+        {
+            db.Renames.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
     }
 
     public async Task SaveTreasuryFlowAsync(string id, string direction, string tag, long sats, CancellationToken ct = default)

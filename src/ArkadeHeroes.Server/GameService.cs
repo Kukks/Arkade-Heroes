@@ -652,7 +652,9 @@ public class GameService(
             && prior.FeeInvoiceId is { } priorInvoice
             && await chain.IsInvoicePaidAsync(priorInvoice, ct))
         {
-            store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            var retarget = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = priorInvoice };
+            store.Renames[heroId] = retarget;
+            await persistence.SaveRenameAsync(retarget, ct);
             // Deliberately logged, and deliberately marked as re-using an already-paid fee: this is the
             // branch where a player retargets a name they have ALREADY paid for, so a log that showed only
             // the first request would make the second name look like it arrived from nowhere.
@@ -664,7 +666,11 @@ public class GameService(
         var fee = _options.HeroRenameFeeSats > 0
             ? await chain.CreateFeeInvoiceAsync($"rename:{heroId}", _options.HeroRenameFeeSats, ct)
             : null;
-        store.Renames[heroId] = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        var session = new RenameSession { HeroId = heroId, NewName = normalized, FeeInvoiceId = fee?.InvoiceId };
+        store.Renames[heroId] = session;
+        // Durable BEFORE the invoice reaches the player: once they can pay it, the record of what that
+        // payment bought has to survive a restart, or the next request bills them for it a second time.
+        await persistence.SaveRenameAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.HeroRenameRequested, player.Id, [heroId],
             new { requestedName = normalized, feeSats = fee is null ? 0 : _options.HeroRenameFeeSats, feeInvoiceId = fee?.InvoiceId, reusedPaidFee = false });
         return fee;
@@ -699,6 +705,10 @@ public class GameService(
         // RENAME is an identity event: the name was bought (a real-sats fee) and is globally unique —
         // losing it to a crash would both refund nothing and free the name for someone else to claim.
         await persistence.SaveHeroAsync(hero, ct);
+        // AFTER the name is durably applied, never before: a crash between the two rehydrates a pending
+        // rename for a hero already carrying that name, and confirming it again is a harmless no-op. The
+        // other order would lose the paid session with the name unapplied.
+        await persistence.DeleteRenameAsync(heroId, ct);
         // No dedup key: a hero can legitimately be renamed again and again, and each is its own fact. A
         // RETRY cannot double-log anyway — the session is removed above, so a second confirm is refused
         // before it reaches here. The old name is recorded because the durable hero row keeps only the new

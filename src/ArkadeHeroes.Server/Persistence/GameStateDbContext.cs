@@ -187,6 +187,23 @@ public class PersistedHero
 }
 
 /// <summary>
+/// A rename the player has been BILLED for but has not yet confirmed. Durable for exactly the reason
+/// <c>Player.StarterFeeInvoiceId</c> is: the fee is paid with real sats BEFORE the name is applied, so a
+/// restart inside that window must not forget it — otherwise the next request bills a second time for a
+/// rename already bought, and the first payment buys nothing at all.
+///
+/// <para>Keyed by the HERO: <c>store.Renames</c> is keyed the same way, because a hero has at most one
+/// pending rename and retargeting it to a different name reuses the one paid fee.</para>
+/// </summary>
+public class PersistedRenameSession
+{
+    public required string HeroId { get; set; }
+    public required string NewName { get; set; }
+    /// <summary>Null when no fee is charged — then there is nothing a restart could lose.</summary>
+    public string? FeeInvoiceId { get; set; }
+}
+
+/// <summary>
 /// A durable marketplace offer. The offer COVENANT's params were always durable (the chain service stores them
 /// under <c>offer:{id}</c>), so a restart never destroyed the escrowed asset — but the game-side row linking
 /// seller to offer id lived only in memory, and without it nothing could NAME the offer to reclaim it: the
@@ -378,6 +395,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedHero> Heroes => Set<PersistedHero>();
     public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
+    public DbSet<PersistedRenameSession> Renames => Set<PersistedRenameSession>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
     public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
@@ -396,6 +414,8 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedHero>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedOffer>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedStudProposal>().HasKey(x => x.Id);
+        // Keyed by the HERO: one pending rename per hero, so re-requesting overwrites rather than piling up.
+        modelBuilder.Entity<PersistedRenameSession>().HasKey(x => x.HeroId);
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);
