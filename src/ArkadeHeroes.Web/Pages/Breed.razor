@@ -153,7 +153,7 @@ else
             {
                 <div class="status-line" style="margin-top:.6rem">
                     <span class="dot wait"></span>
-                    @HeroName(p.StudHeroId) with @p.ProposerHeroId — @p.StudFeeSats sats to you
+                    @HeroName(p.StudHeroId) with @HeroName(p.ProposerHeroId) — @p.StudFeeSats sats to you
                     <button class="btn primary" style="margin-left:.6rem" disabled="@_studBusy"
                             @onclick="() => AcceptStud(p.ProposalId)">Accept</button>
                     <button class="btn" style="margin-left:.4rem" disabled="@_studBusy"
@@ -171,7 +171,7 @@ else
             {
                 <div class="status-line" style="margin-top:.6rem">
                     <span class="dot @(p.Status == "accepted" ? "good" : "wait")"></span>
-                    @HeroName(p.ProposerHeroId) with @p.StudHeroId — @p.StudFeeSats sats — @p.Status
+                    @HeroName(p.ProposerHeroId) with @HeroName(p.StudHeroId) — @p.StudFeeSats sats — @p.Status
                     @if (p.Status == "accepted")
                     {
                         <button class="btn primary" style="margin-left:.6rem" disabled="@_studBusy"
@@ -244,7 +244,11 @@ else
     /// <summary>Proposals I made that are still live — "accepted" ones are mine to pay and reveal.</summary>
     private List<StudProposalDto> _outgoing = new();
 
-    private string HeroName(string heroId) => _mine.FirstOrDefault(h => h.Id == heroId)?.Name ?? heroId;
+    /// <summary>Names of heroes belonging to OTHER players, fetched for the stud rows.</summary>
+    private readonly Dictionary<string, string> _theirs = new();
+
+    private string HeroName(string heroId) =>
+        _mine.FirstOrDefault(h => h.Id == heroId)?.Name ?? _theirs.GetValueOrDefault(heroId) ?? heroId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -296,6 +300,15 @@ else
         var all = await Api.Stud.ListAsync();
         _incoming = all.Where(p => p.StudOwnerPlayerId == _playerId && p.Status == "proposed").ToList();
         _outgoing = all.Where(p => p.ProposerPlayerId == _playerId && p.Status is "proposed" or "accepted").ToList();
+
+        // The COUNTERPARTY's hero is the one this player is being asked to consent to, and it is by
+        // definition not in _mine — so every one of these rows named it with a raw id.
+        foreach (var id in _incoming.Select(p => p.ProposerHeroId).Concat(_outgoing.Select(p => p.StudHeroId)))
+        {
+            if (_theirs.ContainsKey(id)) continue;
+            try { _theirs[id] = (await Api.Heroes.GetAsync(id)).Name; }
+            catch { /* best-effort: the row still renders, just with the id it always showed */ }
+        }
     }
 
     async Task ProposeStud()
