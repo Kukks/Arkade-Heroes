@@ -4,6 +4,7 @@
 @inject ArkadeHeroesClient Api
 @inject WalletState State
 @inject GameSession Session
+@inject NavigationManager Nav
 @implements IDisposable
 
 <PageTitle>@(_hero?.Name ?? _grave?.Name ?? "Hero")@(_grave is null ? "" : " (destroyed)") · Arkade Heroes</PageTitle>
@@ -133,6 +134,41 @@ else
                         @if (_renameError is not null)
                         {
                             <div class="status-line" style="margin-top:.5rem"><span class="dot bad"></span> @_renameError</div>
+                        }
+                    }
+
+                    @* Irreversible, and addressed by an opaque id — so the recipient is RESOLVED TO A NAME
+                       before anything moves. A mistyped id must not be able to send a hero to a stranger. *@
+                    @if (!_gifting)
+                    {
+                        <button class="btn ghost" style="margin-left:.4rem" @onclick="StartGift" disabled="@_busy">🎁 Gift</button>
+                    }
+                    else
+                    {
+                        <div class="sell-picks" style="margin-top:.6rem">
+                            <input class="ask-input" placeholder="recipient player id" @bind="_giftTo" @bind:event="oninput" />
+                            @if (_giftTo != _resolvedId)
+                            {
+                                <button class="btn" @onclick="ResolveGift" disabled="@(_busy || string.IsNullOrWhiteSpace(_giftTo))">Check</button>
+                            }
+                            else
+                            {
+                                <button class="btn primary" @onclick="DoGift" disabled="@_busy">
+                                    @(_busy ? "…" : $"Send to {_resolvedName}")
+                                </button>
+                            }
+                            <button class="btn ghost" @onclick="CancelGift" disabled="@_busy">Cancel</button>
+                        </div>
+                        <p class="muted" style="margin:.4rem 0 0;font-size:.78rem">
+                            Equipped gear stays with you — item assets don't travel with the hero.
+                        </p>
+                        @if (_giftStatus is not null)
+                        {
+                            <div class="status-line" style="margin-top:.5rem"><span class="dot wait"></span> @_giftStatus</div>
+                        }
+                        @if (_giftError is not null)
+                        {
+                            <div class="status-line" style="margin-top:.5rem"><span class="dot bad"></span> @_giftError</div>
                         }
                     }
                 </div>
@@ -675,6 +711,12 @@ else
     private long _renameFeeSats;
     private string? _renameStatus;
     private string? _renameError;
+    private bool _gifting;
+    private string _giftTo = "";
+    private string? _resolvedId;
+    private string _resolvedName = "";
+    private string? _giftStatus;
+    private string? _giftError;
     private bool _innateAbilities;
     private IReadOnlyList<(TraitCategory Category, RarityTier Tier)> _passives = [];
     private bool _gearCounters;
@@ -928,6 +970,37 @@ else
     }
 
     private void StartRename() { _renaming = true; _renameError = null; }
+
+    private void StartGift() { _gifting = true; _giftError = null; _resolvedId = null; }
+
+    private void CancelGift() { _gifting = false; _giftError = null; _resolvedId = null; _giftTo = ""; }
+
+    /// <summary>Turns an opaque id into a NAME the sender can recognise before they part with a hero.</summary>
+    private async Task ResolveGift()
+    {
+        _busy = true; _giftError = null;
+        try
+        {
+            var target = await Api.Players.GetAsync(_giftTo.Trim());
+            _resolvedName = target.Name;
+            _resolvedId = _giftTo;
+        }
+        catch (Exception ex) { _giftError = ex.Message; _resolvedId = null; }
+        finally { _busy = false; }
+    }
+
+    private async Task DoGift()
+    {
+        _busy = true; _giftError = null;
+        try
+        {
+            await Session.GiftHeroAsync(Id, _giftTo.Trim(), s => { _giftStatus = s; StateHasChanged(); });
+            // It is no longer this player's hero, so the page they are on is no longer about them.
+            Nav.NavigateTo("heroes?mine=1");
+        }
+        catch (Exception ex) { _giftError = ex.Message; _giftStatus = null; }
+        finally { _busy = false; }
+    }
     private void CancelRename() { _renaming = false; _renameStatus = null; _renameError = null; }
 
     private async Task DoRename()
