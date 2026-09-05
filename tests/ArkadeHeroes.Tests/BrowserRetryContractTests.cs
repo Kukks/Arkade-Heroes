@@ -16,14 +16,27 @@ namespace ArkadeHeroes.Tests;
 /// <c>src/ArkadeHeroes.Web/Wallet/GameSession.cs</c> too.
 ///
 /// COVERED: "breed escrow", "merge escrow", "not been paid", "must stake", "hasn't been paid", "unpaid",
-/// and "not fully funded" — the last became cheap to trigger once a staked match went covenant-only.
-/// NOT COVERED (no cheap in-memory trigger): "chain does not show" (hero transfer confirm / offer claim
-/// before the chain shows the asset). That predicate remains unguarded — a named gap, not a silent one.
+/// "not fully funded", and "does not show" — the last was long recorded here as having no cheap in-memory
+/// trigger, which was wrong: confirming a transfer nobody sent reaches it in three calls. It became worth
+/// closing when the browser's gift flow started using that predicate to decide whether an IRREVERSIBLE send
+/// can still be recovered, so a reword would strand a hero rather than merely fail an action.
 /// </summary>
 public class BrowserRetryContractTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
     public BrowserRetryContractTests(WebApplicationFactory<Program> factory) => _factory = factory;
+
+    [Fact]
+    public async Task ConfirmingATransferNobodySent_SaysDoesNotShow()
+    {
+        var (alice, _) = await _factory.RegisterAsync("Retry-Transfer-A");
+        var (_, bob) = await _factory.RegisterAsync("Retry-Transfer-B");
+        var heroes = await alice.ClaimStartersAsync();
+
+        var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Heroes.TransferAsync(heroes[0].Id, new TransferRequest(bob.PlayerId)));
+        Assert.Contains("does not show", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public async Task CovenantBreedReveal_SaysBreedEscrow()
