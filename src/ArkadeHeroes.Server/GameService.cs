@@ -176,6 +176,28 @@ public class GameService(
         return (player, arkadeAddress.Trim(), balance);
     }
 
+    /// <summary>
+    /// How a match settles, decided by the SERVER rather than the caller. A staked match is always the
+    /// covenant: the treasury must never hold sats that belong to a player and are owed to whoever wins.
+    ///
+    /// <para>The old "invoice" mode did exactly that — both stakes were paid into treasury addresses and
+    /// the pot left again through <c>PayoutAsync</c>, so between those two moments the operator simply held
+    /// the money and nothing but server code stopped it being kept. It is REFUSED rather than silently
+    /// upgraded, because a caller that asked for custody deserves to be told it is gone rather than quietly
+    /// handed something else.</para>
+    ///
+    /// <para>An UNWAGERED match holds nothing, so there is no custody to avoid and no escrow to build.</para>
+    /// </summary>
+    private static string NonCustodialSettlement(string requested, long wagerSats)
+    {
+        if (wagerSats <= 0) return "invoice";
+        if (requested == "invoice")
+            throw new GameRuleException(
+                "A wagered match settles from a covenant escrow — the treasury never holds your stake. "
+                + "Open it with mode 'covenant'.");
+        return "covenant";
+    }
+
     public Player Authenticate(string? token)
     {
         if (token is not null && store.PlayersByToken.TryGetValue(token, out var player))
@@ -2758,8 +2780,7 @@ public class GameService(
             throw new GameRuleException("Wagered matches need an opponent — you own both heroes.");
         if (mode is not ("invoice" or "covenant"))
             throw new GameRuleException("Match mode must be 'invoice' or 'covenant'.");
-        if (mode == "covenant" && wagerSats <= 0)
-            throw new GameRuleException("Covenant matches are for wagers — set WagerSats.");
+        mode = NonCustodialSettlement(mode, wagerSats);
 
         var seed = CommitReveal.NewSeed();
         var commitmentHex = CommitReveal.Commit(seed);
@@ -3408,7 +3429,7 @@ public class GameService(
             throw new GameRuleException("The two lineups must not share a hero.");
         if (req.WagerSats < 0) throw new GameRuleException("Wager cannot be negative.");
         if (req.Mode is not ("invoice" or "covenant")) throw new GameRuleException("Match mode must be 'invoice' or 'covenant'.");
-        if (req.Mode == "covenant" && req.WagerSats <= 0) throw new GameRuleException("Covenant matches are for wagers — set WagerSats.");
+        var mode = NonCustodialSettlement(req.Mode, req.WagerSats);
 
         var defenderOwner = defenderLineup[0].OwnerId;
         if (req.WagerSats > 0 && (defenderOwner == player.Id || defenderLineup.Any(h => h.OwnerId != defenderOwner)))
@@ -3423,7 +3444,7 @@ public class GameService(
         long? refundAfterUnix = null;
         if (req.WagerSats > 0)
         {
-            if (req.Mode == "covenant")
+            if (mode == "covenant")
             {
                 var escrow = await chain.CreateWagerEscrowAsync(matchId, player.Id, defenderOwner, req.WagerSats,
                     Convert.FromHexString(commitmentHex), receipts.PublicKeyHex,
@@ -3450,7 +3471,7 @@ public class GameService(
             ServerSeed = seed,
             CommitmentHex = commitmentHex,
             WagerSats = req.WagerSats,
-            Mode = req.Mode,
+            Mode = mode,
             EscrowChallengerAddress = escrowChallenger,
             EscrowDefenderAddress = escrowDefender,
             ChallengerInvoiceId = invoice?.InvoiceId,
@@ -3464,7 +3485,7 @@ public class GameService(
             new
             {
                 challengerLineup = req.ChallengerLineup, defenderLineup = req.DefenderLineup,
-                defenderPlayerId = session.DefenderPlayerId, wagerSats = req.WagerSats, mode = req.Mode,
+                defenderPlayerId = session.DefenderPlayerId, wagerSats = req.WagerSats, mode,
                 stakeInvoiceId = invoice?.InvoiceId,
                 matchFeeSats = req.WagerSats > 0 ? Leveling.MatchFee(challengerLineup.Max(h => h.Level), _config) : 0,
                 matchFeeInvoiceId = feeInvoice?.InvoiceId,

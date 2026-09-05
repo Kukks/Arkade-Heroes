@@ -220,12 +220,7 @@ public class EconomyHealthTests
         var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
         var bobHero = (await bob.ClaimStartersAsync())[0].Id;
 
-        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero, bobHero, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Matches.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        var (open, _) = await alice.StakedMatchAsync(bob, aliceHero, bobHero, 1000);
         await alice.Matches.FightAsync(open.MatchId, new FightRequest("duel-nonce"));
 
         var health = await alice.Economy.HealthAsync();
@@ -241,25 +236,20 @@ public class EconomyHealthTests
         var mine = await SquadLineup(alice);
         var theirs = await SquadLineup(bob);
 
-        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Squad.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        var (open, _) = await alice.StakedSquadAsync(bob, mine, theirs, 1000);
         await alice.Squad.ResolveAsync(open.MatchId, new FightRequest("squad-nonce"));
 
         var health = await alice.Economy.HealthAsync();
         Assert.True(health.InflowByTag.GetValueOrDefault("squad-fee") > 0, "both squad match fees are tallied at settle");
     }
 
-    // A staked match in INVOICE mode is a pass-through: both stakes are paid into the treasury and the
-    // pot is paid back out of it. Booking only the outflow made a profitable arena read as a pure loss
-    // on /api/economy/health, which is what the public Ranks page and the operator console render.
-    // Covenant mode books NEITHER leg, correctly — those stakes never touch the treasury.
+    // A staked match NEVER passes through the treasury. Both stakes sit in per-party covenant escrows and
+    // the pot settles straight from them, so the wager legs must book nothing at all — the fee is the only
+    // thing the arena earns from a duel. These used to assert the opposite, because the removed "invoice"
+    // mode really did pay both stakes into treasury addresses and the pot back out of one.
 
     [Fact]
-    public async Task Health_BooksTheStakesThatFundedTheWagerPot_NotJustThePot()
+    public async Task Health_BooksNoWagerLegs_BecauseTheTreasuryNeverHoldsAStake()
     {
         using var factory = new WebApplicationFactory<Program>();
         var (alice, _) = await factory.RegisterAsync("Econ-WS-A");
@@ -267,21 +257,19 @@ public class EconomyHealthTests
         var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
         var bobHero = (await bob.ClaimStartersAsync())[0].Id;
 
-        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero, bobHero, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Matches.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
-        await alice.Matches.FightAsync(open.MatchId, new FightRequest("duel-nonce"));
+        var (open, _) = await alice.StakedMatchAsync(bob, aliceHero, bobHero, 1000);
+        var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("duel-nonce"));
+        Assert.Equal(2_000, fight.WinnerPayoutSats);   // the pot really was paid — from the escrow
 
         var health = await alice.Economy.HealthAsync();
-        Assert.Equal(2_000, health.InflowByTag.GetValueOrDefault("wager"));
-        Assert.Equal(health.OutflowByTag.GetValueOrDefault("wager"), health.InflowByTag.GetValueOrDefault("wager"));
+        Assert.Equal(0, health.InflowByTag.GetValueOrDefault("wager"));
+        Assert.Equal(0, health.OutflowByTag.GetValueOrDefault("wager"));
+        // …while the FEE, which is genuinely the treasury's, is booked.
+        Assert.True(health.InflowByTag.GetValueOrDefault("match") > 0);
     }
 
     [Fact]
-    public async Task Health_BooksTheStakesThatFundedTheSquadPot_NotJustThePot()
+    public async Task Health_BooksNoSquadWagerLegs_BecauseTheTreasuryNeverHoldsAStake()
     {
         using var factory = new WebApplicationFactory<Program>();
         var (alice, _) = await factory.RegisterAsync("Econ-SS-A");
@@ -289,49 +277,13 @@ public class EconomyHealthTests
         var mine = await SquadLineup(alice);
         var theirs = await SquadLineup(bob);
 
-        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Squad.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        var (open, _) = await alice.StakedSquadAsync(bob, mine, theirs, 1000);
         await alice.Squad.ResolveAsync(open.MatchId, new FightRequest("squad-nonce"));
 
         var health = await alice.Economy.HealthAsync();
-        Assert.Equal(2_000, health.InflowByTag.GetValueOrDefault("squad"));
-        Assert.Equal(health.OutflowByTag.GetValueOrDefault("squad"), health.InflowByTag.GetValueOrDefault("squad"));
-    }
-
-    [Fact]
-    public async Task Health_TalliesBreedFeeInflow_InvoiceMode()
-    {
-        using var factory = new WebApplicationFactory<Program>();
-        var (alice, _) = await factory.RegisterAsync("Econ-Breed-Inv");
-        var heroes = await alice.ClaimStartersAsync();
-
-        // Invoice mode (no mode arg): pay the fee invoice, then reveal.
-        var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = commit.Invoice!.InvoiceId });
-        await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("breed-inv-nonce"));
-
-        var health = await alice.Economy.HealthAsync();
-        Assert.Equal(commit.Invoice!.AmountSats, health.InflowByTag.GetValueOrDefault("breed"));
-    }
-
-    [Fact]
-    public async Task Health_TalliesBreedFeeInflow_CovenantMode()
-    {
-        using var factory = new WebApplicationFactory<Program>();
-        var (alice, _) = await factory.RegisterAsync("Econ-Breed-Cov");
-        var heroes = await alice.ClaimStartersAsync();
-
-        // Covenant mode: the fee rides in the breed escrow and is captured structurally at execution.
-        var commit = await alice.Breeding.CommitAsync(new BreedCommitRequest(heroes[0].Id, heroes[1].Id, "covenant"));
-        await alice.Dev.FundBreedEscrowAsync(new { BreedingId = commit.BreedingId });
-        await alice.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest("breed-cov-nonce"));
-
-        var health = await alice.Economy.HealthAsync();
-        Assert.Equal(commit.EscrowFeeSats, health.InflowByTag.GetValueOrDefault("breed"));
+        Assert.Equal(0, health.InflowByTag.GetValueOrDefault("squad"));
+        Assert.Equal(0, health.OutflowByTag.GetValueOrDefault("squad"));
+        Assert.True(health.InflowByTag.GetValueOrDefault("squad-fee") > 0);
     }
 
     [Fact]

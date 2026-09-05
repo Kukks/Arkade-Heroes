@@ -26,11 +26,11 @@ public class SquadMatchLoopTests
         var theirs = await Lineup(bob);
 
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() =>      // wrong size
-            alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine.Take(2).ToList(), theirs, 1000, "invoice")));
+            alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine.Take(2).ToList(), theirs, 1000)));
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() =>      // non-distinct
-            alice.Squad.OpenAsync(new OpenSquadMatchRequest(new List<string> { mine[0], mine[0], mine[1] }, theirs, 1000, "invoice")));
+            alice.Squad.OpenAsync(new OpenSquadMatchRequest(new List<string> { mine[0], mine[0], mine[1] }, theirs, 1000)));
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() =>      // challenger doesn't own a hero
-            alice.Squad.OpenAsync(new OpenSquadMatchRequest(theirs, mine, 1000, "invoice")));
+            alice.Squad.OpenAsync(new OpenSquadMatchRequest(theirs, mine, 1000)));
     }
 
     [Fact]
@@ -42,12 +42,9 @@ public class SquadMatchLoopTests
         var mine = await Lineup(alice);
         var theirs = await Lineup(bob);
 
-        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Squad.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        var (open, accept) = await alice.StakedSquadAsync(bob, mine, theirs, 1000);
+        Assert.Null(open.StakeInvoice);                   // covenant-only: each side stakes its own escrow
+        Assert.NotEqual(open.EscrowAddress, accept.EscrowAddress);
 
         var resolve = await alice.Squad.ResolveAsync(open.MatchId, new FightRequest("squad-nonce"));
 
@@ -81,7 +78,7 @@ public class SquadMatchLoopTests
         // the ten oldest are exactly the rows that have to fall off.
         var opened = new List<string>();
         for (var i = 0; i < 60; i++)
-            opened.Add((await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 0, "invoice"))).MatchId);
+            opened.Add((await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 0))).MatchId);
 
         var listed = await alice.Squad.ListAsync();
 

@@ -296,11 +296,11 @@ public class PayoutFailureRecordTests
             store.Heroes[ah.Id].Xp = 500;
             store.Heroes[bh.Id].Xp = 500;
 
-            var open = await alice.Matches.OpenAsync(new OpenMatchRequest(ah.Id, bh.Id, 1000, "invoice"));
-            chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.StakeInvoice!.InvoiceId);
+            var open = await alice.Matches.OpenAsync(new OpenMatchRequest(ah.Id, bh.Id, 1000));
+            chain.Inner.StakeEscrowFromPlayer(aliceDto.PlayerId, open.MatchId);
             chain.Inner.PayInvoiceFromPlayer(aliceDto.PlayerId, open.MatchFeeInvoice!.InvoiceId);
             var acc = await bob.Matches.AcceptAsync(open.MatchId);
-            chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, acc.StakeInvoice!.InvoiceId);
+            chain.Inner.StakeEscrowFromPlayer(bobDto.PlayerId, open.MatchId);
             chain.Inner.PayInvoiceFromPlayer(bobDto.PlayerId, acc.MatchFeeInvoice!.InvoiceId);
             await alice.Matches.FightAsync(open.MatchId, new FightRequest("owed-season-fight"));
 

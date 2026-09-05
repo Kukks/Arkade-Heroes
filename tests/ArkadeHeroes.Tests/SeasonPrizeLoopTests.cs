@@ -17,12 +17,7 @@ public class SeasonPrizeLoopTests
     static async Task<FightResponse> StakedFight(
         ArkadeHeroesClient a, ArkadeHeroesClient b, string aHero, string bHero, string nonce)
     {
-        var open = await a.Matches.OpenAsync(new OpenMatchRequest(aHero, bHero, 1000, "invoice"));
-        await a.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await a.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var acc = await b.Matches.AcceptAsync(open.MatchId);
-        await b.Dev.PayInvoiceAsync(new { InvoiceId = acc.StakeInvoice!.InvoiceId });
-        await b.Dev.PayInvoiceAsync(new { InvoiceId = acc.MatchFeeInvoice!.InvoiceId });
+        var (open, _) = await a.StakedMatchAsync(b, aHero, bHero, 1000);
         return await a.Matches.FightAsync(open.MatchId, new FightRequest(nonce));
     }
 

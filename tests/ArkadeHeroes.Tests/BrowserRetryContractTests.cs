@@ -15,10 +15,10 @@ namespace ArkadeHeroes.Tests;
 /// appear. If one fails, don't just fix the string here — update the matching predicate in
 /// <c>src/ArkadeHeroes.Web/Wallet/GameSession.cs</c> too.
 ///
-/// COVERED: "breed escrow", "merge escrow", "not been paid", "must stake", "hasn't been paid", "unpaid".
-/// NOT COVERED (no cheap in-memory trigger): "not fully funded" (covenant-mode escrow underfund) and
-/// "chain does not show" (hero transfer confirm / offer claim before the chain shows the asset). Those two
-/// predicates remain unguarded — a deliberate, named gap rather than a silent one.
+/// COVERED: "breed escrow", "merge escrow", "not been paid", "must stake", "hasn't been paid", "unpaid",
+/// and "not fully funded" — the last became cheap to trigger once a staked match went covenant-only.
+/// NOT COVERED (no cheap in-memory trigger): "chain does not show" (hero transfer confirm / offer claim
+/// before the chain shows the asset). That predicate remains unguarded — a named gap, not a silent one.
 /// </summary>
 public class BrowserRetryContractTests : IClassFixture<WebApplicationFactory<Program>>
 {
@@ -98,19 +98,27 @@ public class BrowserRetryContractTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
-    public async Task StakedMatchFight_SaysUnpaid()
+    public async Task StakedMatchFight_SaysNotFullyFunded_ThenUnpaid()
     {
         var (alice, _) = await _factory.RegisterAsync("Retry-Match-A");
         var (bob, _) = await _factory.RegisterAsync("Retry-Match-B");
         var aliceHero = (await alice.ClaimStartersAsync())[0].Id;
         var bobHero = (await bob.ClaimStartersAsync())[0].Id;
 
-        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero, bobHero, 1000, "invoice"));
-        await bob.Matches.AcceptAsync(open.MatchId);
+        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero, bobHero, 1000));
+        var accept = await bob.Matches.AcceptAsync(open.MatchId);
 
-        // Nothing paid → the browser's "stakes still settling" retry predicate.
-        var ex = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+        // Neither escrow staked → the stake half of the browser's "stakes still settling" predicate.
+        var unfunded = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
             () => alice.Matches.FightAsync(open.MatchId, new FightRequest("n")));
-        Assert.Contains("unpaid", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not fully funded", unfunded.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Both staked, neither fee invoice paid → the fee half of the same predicate.
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        await bob.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+        Assert.NotNull(accept.MatchFeeInvoice);
+        var unpaid = await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => alice.Matches.FightAsync(open.MatchId, new FightRequest("n")));
+        Assert.Contains("unpaid", unpaid.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

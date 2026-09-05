@@ -22,13 +22,8 @@ public class SeasonLeaderboardTests : IClassFixture<WebApplicationFactory<Progra
         var aliceHero = (await alice.ClaimStartersAsync())[0];
         var bobHero = (await bob.ClaimStartersAsync())[0];
 
-        // A staked (wager > 0) invoice-mode match: both stake + pay the per-character fee (InMemory dev pay).
-        var open = await alice.Matches.OpenAsync(new OpenMatchRequest(aliceHero.Id, bobHero.Id, 1000, "invoice"));
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.StakeInvoice!.InvoiceId });
-        await alice.Dev.PayInvoiceAsync(new { InvoiceId = open.MatchFeeInvoice!.InvoiceId });
-        var accept = await bob.Matches.AcceptAsync(open.MatchId);
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.StakeInvoice!.InvoiceId });
-        await bob.Dev.PayInvoiceAsync(new { InvoiceId = accept.MatchFeeInvoice!.InvoiceId });
+        // A staked (wager > 0) match: both stake into their own escrow + pay the per-character fee.
+        var (open, _) = await alice.StakedMatchAsync(bob, aliceHero.Id, bobHero.Id, 1000);
         var fight = await alice.Matches.FightAsync(open.MatchId, new FightRequest("season-nonce"));
 
         // The public season board shows the current season number and both fighters' staked match.

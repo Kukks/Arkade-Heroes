@@ -181,14 +181,17 @@ public static class TreasurySolvency
                     if (mine is null || theirs is null) throw new ArkadeHeroesApiException("a side has no hero to field");
 
                     var open = await challenger.Api.Matches.OpenAsync(
-                        new OpenMatchRequest(mine.Id, theirs.Id, wager, "invoice"));
-                    if (open.StakeInvoice is { } s) await Pay(challenger, s.InvoiceId);
+                        new OpenMatchRequest(mine.Id, theirs.Id, wager));
+                    await challenger.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
                     if (open.MatchFeeInvoice is { } f) await Pay(challenger, f.InvoiceId);
                     var accept = await defender.Api.Matches.AcceptAsync(open.MatchId);
-                    if (accept.StakeInvoice is { } ds) await Pay(defender, ds.InvoiceId);
+                    await defender.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
                     if (accept.MatchFeeInvoice is { } df) await Pay(defender, df.InvoiceId);
 
-                    Owe($"duel:{open.MatchId}", wager * 2);
+                    // A staked pot is NOT a treasury obligation: both stakes sit in per-party covenant
+                    // escrows and settle straight to the winner, so the treasury never owes it and must not
+                    // be modelled as if it did. What remains in _obligations is therefore exactly the
+                    // custodial surface — brackets, stud fees and bids — which is the point of this mode.
                     _parkedDuels.Add((open.MatchId, challenger, defender, wager));
                 });
                 await SampleAsync(round, "duel staked");
@@ -231,7 +234,6 @@ public static class TreasurySolvency
                 {
                     await challenger.Api.Matches.FightAsync(matchId, new FightRequest(Nonce()));
                     _tally.Record("duel-settle", Outcome.Ok);
-                    Settle($"duel:{matchId}");
                 }
                 catch (ArkadeHeroesApiException ex)
                 {
@@ -297,16 +299,14 @@ public static class TreasurySolvency
             var wager = 2_000L;
 
             var open = await challenger.Api.Squad.OpenAsync(new OpenSquadMatchRequest(
-                [.. mine.Select(h => h.Id)], [.. theirs.Select(h => h.Id)], wager, "invoice"));
-            if (open.StakeInvoice is { } s) await Pay(challenger, s.InvoiceId);
+                [.. mine.Select(h => h.Id)], [.. theirs.Select(h => h.Id)], wager));
+            await challenger.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (open.MatchFeeInvoice is { } f) await Pay(challenger, f.InvoiceId);
             var accept = await defender.Api.Squad.AcceptAsync(open.MatchId);
-            if (accept.StakeInvoice is { } ds) await Pay(defender, ds.InvoiceId);
+            await defender.Api.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
             if (accept.MatchFeeInvoice is { } df) await Pay(defender, df.InvoiceId);
-            Owe($"squad:{open.MatchId}", wager * 2);
 
             await challenger.Api.Squad.ResolveAsync(open.MatchId, new FightRequest(Nonce()));
-            Settle($"squad:{open.MatchId}");
         }
 
         private async Task StudAsync(Actor proposer, Actor owner)

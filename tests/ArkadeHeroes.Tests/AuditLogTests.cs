@@ -106,14 +106,8 @@ public class AuditLogTests
         var trials = await alice.Trials.OpenAsync(aliceHeroes[0].Id);
         await alice.Trials.RunAsync(trials.TrialsId, "audit-trials-nonce");
 
-        // ── a wagered duel, invoice mode: open → accept → both stakes + both fees → fight ──
-        var match = await alice.Matches.OpenAsync(
-            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, 500, "invoice"));
-        var accepted = await bob.Matches.AcceptAsync(match.MatchId);
-        await alice.PayInvoiceAsync(match.StakeInvoice!.InvoiceId);
-        await alice.PayInvoiceAsync(match.MatchFeeInvoice!.InvoiceId);
-        await bob.PayInvoiceAsync(accepted.StakeInvoice!.InvoiceId);
-        await bob.PayInvoiceAsync(accepted.MatchFeeInvoice!.InvoiceId);
+        // ── a wagered duel: open → accept → both escrow stakes + both fees → fight ──
+        var (match, _) = await alice.StakedMatchAsync(bob, aliceHeroes[0].Id, bobHeroes[0].Id, 500);
         await alice.Matches.FightAsync(match.MatchId, new FightRequest("audit-fight-nonce"));
 
         // ── the daily faucet (a treasury OUTFLOW with a once-per-day latch) ──

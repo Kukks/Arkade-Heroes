@@ -173,49 +173,7 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         var bobMine = await bob.Heroes.MineAsync();
         Assert.Contains(bobMine, h => h.Id == child.Id);
 
-        // ── Wagered match: stakes paid by each player's own wallet ─────
-        const long wager = 2_000;
-        var open = await alice.Matches.OpenAsync(
-            new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, wager));
-        Assert.NotNull(open.StakeInvoice);
-        await aliceWallet.SendAsync(open.StakeInvoice!.PayToAddress, open.StakeInvoice.AmountSats);
-        // Each fighter also pays their per-character match fee from their own wallet.
-        await aliceWallet.SendAsync(open.MatchFeeInvoice!.PayToAddress, open.MatchFeeInvoice.AmountSats);
-
-        var accept = await bob.Matches.AcceptAsync(open.MatchId);
-        await bobWallet.SendAsync(accept.StakeInvoice.PayToAddress, accept.StakeInvoice.AmountSats);
-        await bobWallet.SendAsync(accept.MatchFeeInvoice!.PayToAddress, accept.MatchFeeInvoice.AmountSats);
-
-        FightResponse? duel = null;
-        await PollUntilAsync(async () =>
-        {
-            try
-            {
-                duel = await alice.Matches.FightAsync(open.MatchId, new FightRequest("e2e-duel-nonce"));
-                return true;
-            }
-            catch (ArkadeHeroesApiException)
-            {
-                return false;
-            }
-        }, TimeSpan.FromSeconds(45), "both stakes to be observed and the duel to resolve");
-
-        Assert.Equal(wager * 2, duel!.WinnerPayoutSats);
-        var (duelCfg, duelCfgError) = await alice.Config.ResolveAsync(duel.ConfigVersion);
-        Assert.Null(duelCfgError);
-        var (duelOk, duelDetail) = FairnessAudit.VerifyMatch(
-            open.MatchId, "e2e-duel-nonce", open.CommitmentHex, duel, duelCfg);
-        Assert.True(duelOk, duelDetail);
-
-        // Portable progression: the duel comes with a signed receipt that
-        // verifies against the game key advertised in chain info.
-        Assert.NotNull(duel.Receipt);
-        var (receiptOk, receiptDetail) = ReceiptVerifier.Verify(duel.Receipt!);
-        Assert.True(receiptOk, receiptDetail);
-        var infoNow = await anonymous.Chain.InfoAsync();
-        Assert.Equal(infoNow.GameSignerKey, duel.Receipt!.GameSignerKeyHex);
-
-        // ── Covenant-mode wagered match: emulator-enforced escrow ──────
+        // ── Wagered match: emulator-enforced escrow, staked from each player's own wallet ──
         const long covenantWager = 3_000;
         var covenantOpen = await alice.Matches.OpenAsync(
             new OpenMatchRequest(aliceHeroes[0].Id, bobHeroes[0].Id, covenantWager, "covenant"));
@@ -258,6 +216,15 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
         var (covOk, covDetail) = FairnessAudit.VerifyMatch(
             covenantOpen.MatchId, "e2e-covenant-duel", covenantOpen.CommitmentHex, covenantDuel, covCfg);
         Assert.True(covOk, covDetail);
+
+        // Portable progression: the duel comes with a signed receipt that verifies against the game key
+        // advertised in chain info. This used to ride on a second, treasury-settled duel above; a staked
+        // match is covenant-only now, so it rides on this one.
+        Assert.NotNull(covenantDuel.Receipt);
+        var (receiptOk, receiptDetail) = ReceiptVerifier.Verify(covenantDuel.Receipt!);
+        Assert.True(receiptOk, receiptDetail);
+        var infoNow = await anonymous.Chain.InfoAsync();
+        Assert.Equal(infoNow.GameSignerKey, covenantDuel.Receipt!.GameSignerKeyHex);
 
         // The pot arrived at the WINNER'S own wallet, swept from the escrow by
         // the emulator-co-signed covenant transaction.
