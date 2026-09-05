@@ -305,22 +305,28 @@ public class PageStateContractTests
     [Fact]
     public void EveryPlayerFacingRoute_IsLinkedFromSomewhere()
     {
-        // Operator/dev surfaces and terminal targets are reachable by design without a link.
+        // Operator/dev surfaces are reachable by design without a link.
         var exempt = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "", "admin", "studio", "not-found", "heroes/{Id}", "watch/{MatchId}" };
+            { "", "admin", "studio", "not-found" };
 
         var linkable = string.Concat(
             Pages().Select(p => p.Text)
                 .Concat(Components().Select(c => c.Text))
                 .Append(File.ReadAllText(WebDir("Layout", "MainLayout.razor"))));
 
+        // A PARAMETERISED route can never match a literal href — "heroes/{Id}" is linked as
+        // href="heroes/@h.Id" — so those match on the fixed part before the placeholder. They used to be
+        // exempted instead, which meant nothing checked whether they were reachable at all.
         var unlinked = Routes()
             .Where(r => !exempt.Contains(r))
-            .Where(r => !linkable.Contains($"href=\"{r}\"", StringComparison.Ordinal)
-                     && !linkable.Contains($"href=\"{r}?", StringComparison.Ordinal)
-                     && !linkable.Contains($"href=\"/{r}\"", StringComparison.Ordinal)
-                     && !linkable.Contains($"\"{r}\", NavLinkMatch", StringComparison.Ordinal)
-                     && !linkable.Contains($"\", \"{r}\", \"", StringComparison.Ordinal))
+            .Where(r => r.IndexOf('{') is var brace && brace >= 0
+                ? !linkable.Contains($"href=\"{r[..brace]}", StringComparison.Ordinal)
+                    && !linkable.Contains($"href=\"/{r[..brace]}", StringComparison.Ordinal)
+                : !linkable.Contains($"href=\"{r}\"", StringComparison.Ordinal)
+                    && !linkable.Contains($"href=\"{r}?", StringComparison.Ordinal)
+                    && !linkable.Contains($"href=\"/{r}\"", StringComparison.Ordinal)
+                    && !linkable.Contains($"\"{r}\", NavLinkMatch", StringComparison.Ordinal)
+                    && !linkable.Contains($"\", \"{r}\", \"", StringComparison.Ordinal))
             .ToList();
 
         Assert.True(unlinked.Count == 0,
