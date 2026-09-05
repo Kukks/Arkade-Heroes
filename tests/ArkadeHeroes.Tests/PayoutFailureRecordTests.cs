@@ -58,7 +58,7 @@ public class PayoutFailureRecordTests
     {
         // Housekeeping must never fail a test whose assertions have already passed — same reasoning as
         // AuditLogTests: SQLite pools connections, so the file may still be handled on Windows.
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqliteTestDb.ReleasePool(dbPath);
         try { if (File.Exists(dbPath)) File.Delete(dbPath); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

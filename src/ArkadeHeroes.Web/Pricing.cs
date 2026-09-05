@@ -9,9 +9,10 @@ namespace ArkadeHeroes.Web;
 /// <para>Every fee here is already decided by <c>ArkadeHeroes.Core</c> — <c>Leveling.MatchFee</c>,
 /// <c>Gauntlet.Fee</c>, <c>BreedingPolicy.FeeSats</c>. This is a restatement of those formulas over the DTO
 /// the browser actually holds, because Core's versions take a <c>GameConfig</c> and no DTO→config
-/// conversion exists. Restating them is a drift risk, so <c>PricingTests</c> re-derives every one of these
-/// from Core on each build and fails the suite if the two ever disagree — the same discipline
-/// <see cref="LandingGenomes"/> uses for the landing art.</para>
+/// conversion exists. Restating them is a drift risk, so <c>ArkadeHeroes.Tests.Web.PricingTests</c> calls
+/// THESE methods and checks each against Core on every build. Its namesake in <c>ArkadeHeroes.Tests</c>
+/// cannot: that project has no reference to this WASM app, so it re-states the formulas a third time and
+/// checks that copy instead — which leaves a drift between this file and the restatement invisible.</para>
 ///
 /// <para>Everything returns <c>long?</c> and every entry point is null-tolerant: an unread config yields
 /// <c>null</c>, which pages must render as "no price stated" rather than as a confident zero. A quoted

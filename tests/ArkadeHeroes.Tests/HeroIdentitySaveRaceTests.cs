@@ -34,7 +34,7 @@ public class HeroIdentitySaveRaceTests
 
     private static void CleanupDb(string dbPath)
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqliteTestDb.ReleasePool(dbPath);
         try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
     }
 

@@ -17,8 +17,10 @@ namespace ArkadeHeroes.Tests;
 /// <c>src/ArkadeHeroes.Web/Pricing.cs</c>, do not relax the assertion.</para>
 ///
 /// <para>ArkadeHeroes.Web is outside this project's reference closure (it is a WASM app), so the formulas
-/// are restated here once more and checked against Core. That is deliberate: a third copy that disagrees
-/// with Core fails loudly, whereas the browser's copy silently disagreeing with Core is the bug.</para>
+/// are restated here once more and checked against Core. Note what that does NOT cover: this pins
+/// Core against the copy below, so <c>Pricing.cs</c> drifting from BOTH is invisible here. The real
+/// methods are called by <c>ArkadeHeroes.Tests.Web.PricingTests</c>, which can reference the app; put a
+/// new fee's authoritative check there, and treat this file as the Core-side half.</para>
 /// </summary>
 public class PricingTests
 {

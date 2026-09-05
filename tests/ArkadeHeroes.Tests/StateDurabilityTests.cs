@@ -57,7 +57,7 @@ public class StateDurabilityTests
         {
             // SQLite pools connections, so the file stays handled until the pool is cleared. A leftover temp
             // file is harmless either way — never fail a durability test on its own housekeeping.
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -93,7 +93,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -132,7 +132,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -167,7 +167,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -202,7 +202,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -230,7 +230,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -276,7 +276,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -308,7 +308,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -370,7 +370,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -408,7 +408,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -454,7 +454,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -517,7 +517,7 @@ public class StateDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
