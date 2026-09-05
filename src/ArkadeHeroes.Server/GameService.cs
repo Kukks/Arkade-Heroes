@@ -2123,6 +2123,9 @@ public class GameService(
             FeeInvoiceId = invoice.InvoiceId, FeeSats = fee,
         };
         store.Gauntlets[id] = session;
+        // Durable BEFORE the invoice reaches the player: once they can pay it, the record of what that
+        // payment bought has to survive a restart, or the fee buys nothing and a retry bills again.
+        await persistence.SaveGauntletAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.GauntletOpened, player.Id, [session.Id, heroId],
             new { heroId, heroLevel = hero.Level, feeSats = fee, feeInvoiceId = invoice.InvoiceId, commitmentHex = session.CommitmentHex },
             $"gauntlet-opened:{session.Id}");
@@ -2169,6 +2172,9 @@ public class GameService(
         }
 
         session.Completed = true;
+        // Dropped AFTER the run resolved, never before: a crash between the two rehydrates a gauntlet the
+        // player can simply run again, where the other order would lose a fee they had already paid.
+        await persistence.DeleteGauntletAsync(session.Id, ct);
         ApplyXp(hero, xpAward);
         hero.GauntletCooldownUntil = DateTimeOffset.UtcNow + _options.GauntletCooldown;
         store.MarkHeroDirty(hero.Id);   // the cooldown too — its own mutation, not coupled to ApplyXp's mark
