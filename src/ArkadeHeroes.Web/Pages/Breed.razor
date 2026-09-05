@@ -52,7 +52,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
+                        <option value="@h.Id">@OptionFor(h)</option>
                     }
                 </select>
             </label>
@@ -62,7 +62,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
+                        <option value="@h.Id">@OptionFor(h)</option>
                     }
                 </select>
             </label>
@@ -77,8 +77,17 @@ else
                 parents. The fee doubles with each prior breed, so a well-used pair costs more than a fresh one.
             </p>
         }
+        @* The cooldown was enforced and on the wire, but this page read only sterility — so the wall a
+           well-used pair hits every time was discoverable only by pressing Breed and taking the refusal. *@
+        @if (RestingParent is { } resting && Resting(resting) is { } until)
+        {
+            <p class="muted" style="margin:.8rem 0 0;font-size:.85rem">
+                <b>@HeroLabels.Name(resting, _fertile)</b> is recovering from its last breeding until
+                <b>@until.ToLocalTime().ToString("t")</b>. Cooldown doubles with every breed.
+            </p>
+        }
         <button class="btn primary" style="margin-top:1.1rem" @onclick="DoBreed"
-                disabled="@(_breeding || string.IsNullOrEmpty(_parentAId) || string.IsNullOrEmpty(_parentBId) || _parentAId == _parentBId)">
+                disabled="@(_breeding || string.IsNullOrEmpty(_parentAId) || string.IsNullOrEmpty(_parentBId) || _parentAId == _parentBId || RestingParent is not null)">
             @(_breeding ? "Breeding…" : "Breed")
         </button>
         @if (_status is not null)
@@ -110,7 +119,7 @@ else
                     <option value="">— pick —</option>
                     @foreach (var h in _fertile)
                     {
-                        <option value="@h.Id">@HeroLabels.Option(h, _fertile)</option>
+                        <option value="@h.Id">@OptionFor(h)</option>
                     }
                 </select>
             </label>
@@ -208,6 +217,19 @@ else
         : null;
 
     private HeroDto? Parent(string id) => _fertile.FirstOrDefault(h => h.Id == id);
+
+    /// <summary>When this hero is still on breeding cooldown, else null. Lapsed cooldowns read as ready, so a
+    /// stale roster fetch cannot lock the page shut.</summary>
+    private static DateTimeOffset? Resting(HeroDto h) =>
+        h.BreedCooldownUntil is { } until && until > DateTimeOffset.UtcNow ? until : null;
+
+    /// <summary>The picked parent that cannot breed yet. Cooldown doubles with every breed and is
+    /// gene-scaled, so on a well-used pair this is the wall a player hits far more often than the fee.</summary>
+    private HeroDto? RestingParent =>
+        new[] { Parent(_parentAId), Parent(_parentBId) }.FirstOrDefault(h => h is not null && Resting(h) is not null);
+
+    private string OptionFor(HeroDto h) =>
+        HeroLabels.Option(h, _fertile) + (Resting(h) is null ? "" : " · resting");
 
     // ── Stud service: breeding with another player's hero, behind their consent ──
     private string _studMineId = "";
