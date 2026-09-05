@@ -222,6 +222,10 @@ public class EscrowSessionDurabilityTests
             => _dead ? Task.CompletedTask : inner.SaveMergeAsync(session, ct);
         public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default)
             => _dead ? Task.CompletedTask : inner.DeleteEscrowSessionAsync(sessionId, ct);
+        public Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default)
+            => _dead ? Task.CompletedTask : inner.SaveDeathMatchAsync(session, ct);
+        public Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default)
+            => _dead ? Task.CompletedTask : inner.DeleteDeathMatchAsync(deathMatchId, ct);
         public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
             => _dead ? Task.CompletedTask : inner.SaveHeroSaleAsync(sale, ct);
         public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default)

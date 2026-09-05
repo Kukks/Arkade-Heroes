@@ -2532,6 +2532,7 @@ public class GameService(
             SpeciesId = speciesId,
         };
         store.DeathMatches[session.Id] = session;
+        await persistence.SaveDeathMatchAsync(session, ct);
         // Favorability from realized POWER + the element matchup (F18) — gear is staked here, so a level read
         // would lie, and a power-only read would ignore the ring, the biggest lever between these two heroes.
         var favor = new Shared.FavorabilityDto(defender.Level - challenger.Level,
@@ -2578,6 +2579,7 @@ public class GameService(
         var feeInvoice = await chain.CreateFeeInvoiceAsync(
             $"dm-fee:defender:{deathMatchId}", Leveling.DeathMatchFee(defender.Level, session.Absorb, _config), ct);
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
+        await persistence.SaveDeathMatchAsync(session, ct);
         var escrowParams = await chain.GetDeathMatchEscrowParamsAsync(deathMatchId, ct);
         // The defender's CONSENT to risk their hero permanently. Recorded for the same reason the stud
         // accept is: it is what a "I never agreed to that" dispute is settled against.
@@ -2701,6 +2703,7 @@ public class GameService(
 
                 session.Completed = true;
                 session.WinnerHeroId = result.WinnerId;
+                await persistence.DeleteDeathMatchAsync(session.Id, ct);
                 // The absorbed hero is a NEW asset owned by the WINNER (the settler may be the loser).
                 var winnerPlayer = store.Players[winner.OwnerId];
                 var absorbed = await BuildAndStoreHero(winnerPlayer, mint, outcome.Result, absorbGen,
@@ -2762,6 +2765,7 @@ public class GameService(
 
         session.Completed = true;
         session.WinnerHeroId = result.WinnerId;
+        await persistence.DeleteDeathMatchAsync(session.Id, ct);
         // The headstone first, while the loser is still readable (see the merge burn) — nothing is
         // replacedBy here: a classic death-match loser simply ends.
         await RecordTombstoneAsync(loser, "deathmatch-loser", session.Id, null, ct);
