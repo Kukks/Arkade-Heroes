@@ -27,9 +27,11 @@ public class TreasuryProvisioningTests : IDisposable
 
     public void Dispose()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (var p in _dbPaths)
+        {
+            SqliteTestDb.ReleasePool(p);
             try { if (File.Exists(p)) File.Delete(p); } catch (IOException) { /* windows lock */ }
+        }
     }
 
     /// <summary>

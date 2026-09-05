@@ -355,7 +355,7 @@ public class HeroTimelineTests : IClassFixture<WebApplicationFactory<Program>>
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -398,7 +398,7 @@ public class HeroTimelineTests : IClassFixture<WebApplicationFactory<Program>>
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }

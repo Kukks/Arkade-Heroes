@@ -592,7 +592,7 @@ public class StudServiceDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }
@@ -634,7 +634,7 @@ public class StudServiceDurabilityTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqliteTestDb.ReleasePool(dbPath);
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch (IOException) { }
         }
     }

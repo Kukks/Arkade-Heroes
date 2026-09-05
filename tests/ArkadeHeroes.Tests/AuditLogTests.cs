@@ -46,7 +46,7 @@ public class AuditLogTests
         // file is harmless either way — never fail on housekeeping. Both throws are caught: a still-held
         // file gives IOException, a read-only one UnauthorizedAccessException, and a test whose assertions
         // have already passed must not go red over which of the two Windows chose.
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqliteTestDb.ReleasePool(dbPath);
         try { if (File.Exists(dbPath)) File.Delete(dbPath); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
