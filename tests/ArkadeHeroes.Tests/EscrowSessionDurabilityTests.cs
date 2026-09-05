@@ -113,8 +113,10 @@ public class EscrowSessionDurabilityTests
     /// <summary>Covenant mode survives a re-reveal because the first one SPENDS the escrow. An invoice has
     /// no such spend and reads paid forever, so a rehydrated session sailed back through the gate and minted
     /// a second child — and real sats bought it, so one fee must buy exactly one.</summary>
-    [Fact]
-    public async Task ACrashBetweenAnInvoiceBreedsMintAndItsCompletion_NeverMintsASecondChild()
+    [Theory]
+    [InlineData("crash-nonce")]
+    [InlineData("a-different-nonce")]   // the retry's nonce is IGNORED, never allowed to remake the child
+    public async Task ACrashBetweenAnInvoiceBreedsMintAndItsCompletion_NeverMintsASecondChild(string retryNonce)
     {
         // ONE chain across both hosts: it is the outside world, so the fee paid before the bounce still
         // reads paid after it — which is exactly why the invoice gate cannot refuse the second reveal.
@@ -158,10 +160,21 @@ public class EscrowSessionDurabilityTests
                 "the session must come back unfinished, or there is no second reveal to survive");
 
             var second = await svc.RevealBreedingAsync(
-                store.Players[playerId], breedingId, "crash-nonce", CancellationToken.None);
+                store.Players[playerId], breedingId, retryNonce, CancellationToken.None);
 
             Assert.Equal(childId, second.Child.Id);
             Assert.Single(store.Heroes.Values, h => h.OwnerId == playerId && h.ParentAId is not null);
+
+            // The reconciled hero must BE this session's child, not merely some hero: right owner, both
+            // recorded parents, and the commit-reveal proof that lets a client verify it.
+            Assert.Equal(playerId, second.Child.OwnerId);
+            Assert.Equal(store.Breedings[breedingId].ParentAId, second.Child.ParentAId);
+            Assert.Equal(store.Breedings[breedingId].ParentBId, second.Child.ParentBId);
+            Assert.False(string.IsNullOrEmpty(second.Child.PlayerNonce));
+            Assert.False(string.IsNullOrEmpty(second.Child.EntropyHex));
+            // The proof handed back is the one that MADE this child, whatever nonce the retry arrived with.
+            Assert.Equal(second.Child.EntropyHex, second.EntropyHex);
+            Assert.Equal(second.Child.PlayerNonce, second.Receipt.Nonce);
         }
         finally { Cleanup(dbPath); }
     }

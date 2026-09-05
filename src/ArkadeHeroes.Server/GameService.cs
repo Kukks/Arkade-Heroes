@@ -1615,11 +1615,26 @@ public class GameService(
         if (BreedingService.Validate(parentA, parentB, now) is { } error)
             throw new GameRuleException(error);
 
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+
+        // Invoice mode has no spent escrow to refuse a second reveal with, and a paid invoice reads paid
+        // forever — so the CHILD is the latch: a hero already carrying this session's seed was minted by an
+        // earlier reveal a crash cut off before it dropped the row.
+        //
+        // Found BEFORE the outcome is derived, because its recorded nonce is the CANONICAL one. Deriving
+        // from the retry's nonce instead would hand back the original child under a receipt for one nonce
+        // while applying parent cooldowns selected by another — cooldowns the retrying caller would then be
+        // choosing. A retry's nonce is ignored here, never rejected: refusing would throw before the row is
+        // dropped and the zombie session would rehydrate on every restart, forever.
+        var alreadyMinted = session.Mode == "covenant"
+            ? null
+            : store.Heroes.Values.FirstOrDefault(h => h.ServerSeedHex == serverSeedHex);
+        if (alreadyMinted?.PlayerNonce is { } mintedNonce) nonce = mintedNonce;
+
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.ParentAId, session.ParentBId, nonce);
         var policy = new BreedingPolicy(_options.BreedingCooldownBaseUnit);
         var outcome = BreedingService.Breed(parentA, parentB, entropy, policy, _config);
 
-        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
         Hero child;
@@ -1641,14 +1656,11 @@ public class GameService(
             // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
             await store.RecordInflowAsync(session.Id, "breed", session.FeeSats, ct);
         }
-        // No spent escrow to refuse a second reveal with, and a paid invoice reads paid forever — so the
-        // CHILD is the latch: a hero already carrying this session's seed was minted by an earlier reveal a
-        // crash cut off before it dropped the row. Hand it back with the proof that made it, never a second.
-        else if (store.Heroes.Values.FirstOrDefault(h => h.ServerSeedHex == serverSeedHex) is { } alreadyMinted)
+        // Hand the earlier reveal's child back, never a second. Its nonce is already in force above, so the
+        // receipt, the entropy and the cooldowns below all agree with the hero actually delivered.
+        else if (alreadyMinted is not null)
         {
             child = alreadyMinted;
-            nonce = alreadyMinted.PlayerNonce ?? nonce;
-            entropyHex = alreadyMinted.EntropyHex ?? entropyHex;
         }
         else
         {
