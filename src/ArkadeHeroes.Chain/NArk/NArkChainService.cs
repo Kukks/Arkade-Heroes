@@ -1273,17 +1273,22 @@ public class NArkChainService(
         var bidderScript = ArkAddress.Parse(parameters.BidderAddress).ScriptPubKey.ToHex();
         await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script, bidderScript });
 
+        // Only a spend of a VTXO that could BE the bid counts. Anyone may park sats at this public address,
+        // and spending one of those in a transaction that also moves the hero would otherwise answer the
+        // question while the bid itself still rests. A same-value nuisance VTXO defeats this too; the
+        // stronger form is to persist the funding outpoint, which belongs with the flow's own state.
         var spendTxIds = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
-            .Select(v => v.ArkTxid)
-            .Where(id => id is not null)
+            .Where(v => IsBtcStake(v, parameters.BidSats) && v.ArkTxid is not null)
+            .Select(v => v.ArkTxid!)
             .ToHashSet();
         if (spendTxIds.Count == 0) return false;
 
-        // The hero must have arrived in the SAME transaction that spent the escrow. Without that
-        // correlation an ordinary transfer answers the question: an owner who hands the hero over
-        // out-of-band and then reclaims after expiry would read as a completed sale they were never paid for.
+        // The hero must have arrived in the SAME transaction. Without that correlation an ordinary transfer
+        // answers the question: an owner who hands the hero over out-of-band and then reclaims after expiry
+        // would read as a completed sale they were never paid for. TransactionId, not OutPoint.Hash — the
+        // identity WasOfferSoldAsync already compares an ArkTxid against.
         var atBidder = await vtxoStorage.GetVtxos(scripts: [bidderScript], cancellationToken: ct);
-        return atBidder.Any(v => spendTxIds.Contains(v.OutPoint.Hash.ToString())
+        return atBidder.Any(v => spendTxIds.Contains(v.TransactionId)
                                  && v.Assets is { Count: > 0 } assets
                                  && assets.Any(a => a.AssetId == parameters.HeroAssetId));
     }

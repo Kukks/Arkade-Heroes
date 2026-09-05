@@ -238,8 +238,10 @@ public interface IChainService
     /// <summary>True once the bid sits at the escrow address — the owner's cue that delivering is safe.</summary>
     Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default);
 
-    /// <summary>True once the fulfil leaf has spent the escrow. OBSERVED, never performed — the hero moves
-    /// from the owner's wallet, so only their client can sign it (as with a sold offer).</summary>
+    /// <summary>True once the BIDDER RECEIVED THE HERO in the transaction that closed the escrow — not
+    /// literally "the fulfil leaf ran", which the indexer cannot answer since it does not expose the leaf a
+    /// spend selected. OBSERVED, never performed: the hero moves from the owner's wallet, so only their
+    /// client can sign it (as with a sold offer).</summary>
     Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default);
 
     /// <summary>The public bid-escrow parameters for trustless client rebuild + reclaim. Null when unknown.</summary>
