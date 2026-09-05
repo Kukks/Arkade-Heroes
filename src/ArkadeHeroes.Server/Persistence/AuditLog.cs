@@ -110,6 +110,7 @@ public static class AuditEventType
     public const string SquadOpened = "squad.opened";
     public const string SquadAccepted = "squad.accepted";
     public const string SquadResolved = "squad.resolved";
+    public const string SquadExpired = "squad.expired";
 
     // ── Tournaments ──
     public const string TournamentOpened = "tournament.opened";

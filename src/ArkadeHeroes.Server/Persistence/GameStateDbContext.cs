@@ -187,6 +187,41 @@ public class PersistedHero
 }
 
 /// <summary>
+/// An unresolved duel or squad match. Its stake sits in PER-PARTY covenant escrows that
+/// <c>ListReclaimableAsync</c> can only name while this row exists — the unnameable-escrow defect again,
+/// on the two flows that hold a wager.
+///
+/// <para>One shape for both, as breed and fusion share <see cref="PersistedEscrowSession"/>: a duel is a
+/// squad of one, so the lineups are JSON either way and <c>Kind</c> decides which dictionary it returns to.</para>
+///
+/// <para>Only a RESOLVED row is deleted. An EXPIRED one is kept on purpose — the stake is still in escrow
+/// behind its timelock, and <c>ListReclaimableAsync</c> filters on exactly that status.</para>
+/// </summary>
+public class PersistedMatchSession
+{
+    public required string Id { get; set; }
+    /// <summary>"duel" or "squad".</summary>
+    public required string Kind { get; set; }
+    public required string ChallengerPlayerId { get; set; }
+    public string? DefenderPlayerId { get; set; }
+    public required string ChallengerLineupJson { get; set; }
+    public required string DefenderLineupJson { get; set; }
+    public required byte[] ServerSeed { get; set; }
+    public required string CommitmentHex { get; set; }
+    public required long WagerSats { get; set; }
+    public required string Mode { get; set; }
+    public string? EscrowChallengerAddress { get; set; }
+    public string? EscrowDefenderAddress { get; set; }
+    public long? RefundAfterUnixSeconds { get; set; }
+    public string? ChallengerInvoiceId { get; set; }
+    public string? DefenderInvoiceId { get; set; }
+    public string? ChallengerFeeInvoiceId { get; set; }
+    public string? DefenderFeeInvoiceId { get; set; }
+    public required string Status { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
 /// An unsettled death-match: the same unnameable-escrow defect as <see cref="PersistedEscrowSession"/>, at
 /// the highest stakes the game has — the joint escrow holds BOTH heroes and the gear staked with them, and
 /// one of those heroes is going to be burned. No <c>Completed</c> column: a settled row is DELETED, so
@@ -478,6 +513,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedGauntletSession> Gauntlets => Set<PersistedGauntletSession>();
     public DbSet<PersistedEscrowSession> EscrowSessions => Set<PersistedEscrowSession>();
     public DbSet<PersistedDeathMatchSession> DeathMatches => Set<PersistedDeathMatchSession>();
+    public DbSet<PersistedMatchSession> MatchSessions => Set<PersistedMatchSession>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
     public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
@@ -501,6 +537,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedGauntletSession>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedEscrowSession>().HasKey(x => x.Id);
         modelBuilder.Entity<PersistedDeathMatchSession>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedMatchSession>().HasKey(x => x.Id);
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);

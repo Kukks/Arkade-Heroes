@@ -2876,6 +2876,7 @@ public class GameService(
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
+        await persistence.SaveMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.MatchOpened, player.Id,
             [session.Id, challengerHeroId, defenderHeroId, defender.OwnerId],
             new
@@ -2924,6 +2925,7 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await persistence.SaveMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.MatchAccepted, player.Id,
             [session.Id, session.ChallengerHeroId, session.DefenderHeroId, session.ChallengerPlayerId],
             new
@@ -2963,6 +2965,7 @@ public class GameService(
             if (!abandoned) continue;
             var wasStatus = m.Status;
             m.Status = "expired";
+            await persistence.SaveMatchAsync(m, ct);
             // Actor NULL: nobody DID this — the refund window simply passed and the chain says the stakes
             // are not both there. It runs lazily on every match listing, so the dedup key is what keeps one
             // expiry to one entry however many anonymous page loads observe it.
@@ -2976,6 +2979,33 @@ public class GameService(
                     refundAfterUnixSeconds = m.RefundAfterUnixSeconds,
                 },
                 $"match-expired:{m.Id}");
+        }
+
+        // Squads stake through the SAME per-party escrows and were never walked here, so an abandoned one
+        // stayed open forever — and its row, droppable only on "resolved", would outlive it.
+        foreach (var s in store.SquadMatches.Values)
+        {
+            if (s.Mode != "covenant" || s.Status is not ("open" or "accepted")) continue;
+            if (s.RefundAfterUnixSeconds is not { } refundAfter || now < refundAfter) continue;
+            var funding = await chain.GetWagerEscrowFundingAsync(s.Id, ct);
+            if (funding is null) continue;
+            var abandoned = s.Status == "open"
+                ? !funding.ChallengerFunded
+                : !(funding.ChallengerFunded && funding.DefenderFunded);
+            if (!abandoned) continue;
+            var wasStatus = s.Status;
+            s.Status = "expired";
+            await persistence.SaveSquadMatchAsync(s, ct);
+            await AuditAsync(Persistence.AuditEventType.SquadExpired, null,
+                [s.Id, .. s.ChallengerLineup, .. s.DefenderLineup],
+                new
+                {
+                    fromStatus = wasStatus, wagerSats = s.WagerSats, mode = s.Mode,
+                    challengerPlayerId = s.ChallengerPlayerId, defenderPlayerId = s.DefenderPlayerId,
+                    challengerFunded = funding.ChallengerFunded, defenderFunded = funding.DefenderFunded,
+                    refundAfterUnixSeconds = s.RefundAfterUnixSeconds,
+                },
+                $"squad-expired:{s.Id}");
         }
     }
 
@@ -3403,6 +3433,8 @@ public class GameService(
         var defenderDelta = -challengerDelta;
 
         session.Status = "resolved";
+        // Dropped once resolved: the escrows are settled, so there is nothing left for /reclaim to name.
+        await persistence.DeleteMatchSessionAsync(session.Id, ct);
         session.Result = result;
         session.ChallengerSnapshot = challengerSnapshot;   // persist the fight-time snapshots for spectator replay
         session.DefenderSnapshot = defenderSnapshot;
@@ -3519,6 +3551,7 @@ public class GameService(
             DefenderPlayerId = req.WagerSats > 0 ? defenderOwner : null,
         };
         store.SquadMatches[session.Id] = session;
+        await persistence.SaveSquadMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.SquadOpened, player.Id,
             [session.Id, .. req.ChallengerLineup, .. req.DefenderLineup, defenderOwner],
             new
@@ -3558,6 +3591,7 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await persistence.SaveSquadMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.SquadAccepted, player.Id,
             [session.Id, .. session.ChallengerLineup, .. session.DefenderLineup, session.ChallengerPlayerId],
             new
@@ -3680,6 +3714,7 @@ public class GameService(
         }
 
         session.Status = "resolved";
+        await persistence.DeleteMatchSessionAsync(session.Id, ct);
         session.Result = result;
         session.ChallengerSnapshots = challengerSnapshots;
         session.DefenderSnapshots = defenderSnapshots;
@@ -4217,6 +4252,22 @@ public class GameService(
             if (await chain.GetWagerEscrowParamsAsync(match.Id, ct) is { } p)
                 items.Add(new Shared.ReclaimableDto("wager", match.Id,
                     $"An unfinished duel — your {match.WagerSats}-sat stake is escrowed.",
+                    p.RefundAfterUnixSeconds));
+        }
+
+        // Never listed here, so a squad stake was undiscoverable even with the server up. Same per-side
+        // probe as the duel above.
+        foreach (var squad in store.SquadMatches.Values
+                     .Where(s => s.Mode == "covenant" && s.Status != "resolved"
+                                 && (s.ChallengerPlayerId == player.Id || s.DefenderPlayerId == player.Id)).ToList())
+        {
+            var funding = await chain.GetWagerEscrowFundingAsync(squad.Id, ct);
+            if (funding is null) continue;
+            var mine = squad.ChallengerPlayerId == player.Id ? funding.ChallengerFunded : funding.DefenderFunded;
+            if (!mine) continue;
+            if (await chain.GetWagerEscrowParamsAsync(squad.Id, ct) is { } p)
+                items.Add(new Shared.ReclaimableDto("wager", squad.Id,
+                    $"An unfinished squad match — your {squad.WagerSats}-sat stake is escrowed.",
                     p.RefundAfterUnixSeconds));
         }
 

@@ -92,6 +92,17 @@ public interface IGameStatePersistence
     /// <summary>Drops a death-match once it settles; the joint escrow is spent and the loser is burned.</summary>
     Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default);
 
+    /// <summary>An unresolved duel or squad match, whose stake sits in per-party covenant escrows /reclaim
+    /// can only name while this row exists. Written at open, at accept, and when the refund window expires.</summary>
+    Task SaveMatchAsync(MatchSession session, CancellationToken ct = default);
+
+    /// <summary>The squad half — same row, same reason.</summary>
+    Task SaveSquadMatchAsync(SquadMatchSession session, CancellationToken ct = default);
+
+    /// <summary>Drops a match once it RESOLVES. An expired one stays: its stake is still escrowed behind a
+    /// timelock, which is exactly what /reclaim lists.</summary>
+    Task DeleteMatchSessionAsync(string matchId, CancellationToken ct = default);
+
     /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
     /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
     /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
@@ -139,6 +150,9 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveDeathMatchAsync(DeathMatchSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveMatchAsync(MatchSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveSquadMatchAsync(SquadMatchSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteMatchSessionAsync(string matchId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
@@ -387,6 +401,54 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                     BaseId = row.FirstHeroId, SacrificeId = row.SecondHeroId,
                     ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex, Mode = row.Mode,
                     EscrowAddress = row.EscrowAddress, FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
+                };
+        }
+
+        // Duels and squads come back so /reclaim can still name the per-party escrows holding their stakes.
+        // Resolved rows are deleted; an EXPIRED one is kept, because its stake is still behind a timelock.
+        foreach (var row in await db.MatchSessions.AsNoTracking().ToListAsync(ct))
+        {
+            var challengers = System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.ChallengerLineupJson) ?? [];
+            var defenders = System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.DefenderLineupJson) ?? [];
+            if (row.Kind == "duel")
+            {
+                // A duel is a lineup of one; an empty hero id would surface far away as an unknown hero.
+                if (challengers is not [{ Length: > 0 } challengerHeroId]
+                    || defenders is not [{ Length: > 0 } defenderHeroId])
+                    throw new InvalidOperationException(
+                        $"Match row '{row.Id}' is a duel but does not name exactly one hero a side.");
+                store.Matches[row.Id] = new MatchSession
+                {
+                    Id = row.Id,
+                    ChallengerPlayerId = row.ChallengerPlayerId, DefenderPlayerId = row.DefenderPlayerId,
+                    ChallengerHeroId = challengerHeroId,
+                    DefenderHeroId = defenderHeroId,
+                    ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
+                    WagerSats = row.WagerSats, Mode = row.Mode,
+                    EscrowChallengerAddress = row.EscrowChallengerAddress,
+                    EscrowDefenderAddress = row.EscrowDefenderAddress,
+                    RefundAfterUnixSeconds = row.RefundAfterUnixSeconds,
+                    ChallengerInvoiceId = row.ChallengerInvoiceId, DefenderInvoiceId = row.DefenderInvoiceId,
+                    ChallengerFeeInvoiceId = row.ChallengerFeeInvoiceId,
+                    DefenderFeeInvoiceId = row.DefenderFeeInvoiceId,
+                    Status = row.Status, CreatedAt = row.CreatedAt,
+                };
+            }
+            else
+                store.SquadMatches[row.Id] = new SquadMatchSession
+                {
+                    Id = row.Id,
+                    ChallengerPlayerId = row.ChallengerPlayerId, DefenderPlayerId = row.DefenderPlayerId,
+                    ChallengerLineup = challengers, DefenderLineup = defenders,
+                    ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
+                    WagerSats = row.WagerSats, Mode = row.Mode,
+                    EscrowChallengerAddress = row.EscrowChallengerAddress,
+                    EscrowDefenderAddress = row.EscrowDefenderAddress,
+                    RefundAfterUnixSeconds = row.RefundAfterUnixSeconds,
+                    ChallengerInvoiceId = row.ChallengerInvoiceId, DefenderInvoiceId = row.DefenderInvoiceId,
+                    ChallengerFeeInvoiceId = row.ChallengerFeeInvoiceId,
+                    DefenderFeeInvoiceId = row.DefenderFeeInvoiceId,
+                    Status = row.Status, CreatedAt = row.CreatedAt,
                 };
         }
 
@@ -1020,6 +1082,71 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         if (await db.DeathMatches.FindAsync([deathMatchId], ct) is { } row)
         {
             db.DeathMatches.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    public Task SaveMatchAsync(MatchSession m, CancellationToken ct = default) =>
+        UpsertMatchAsync(m.Id, "duel", m.ChallengerPlayerId, m.DefenderPlayerId,
+            [m.ChallengerHeroId], [m.DefenderHeroId], m.ServerSeed, m.CommitmentHex, m.WagerSats, m.Mode,
+            m.EscrowChallengerAddress, m.EscrowDefenderAddress, m.RefundAfterUnixSeconds,
+            m.ChallengerInvoiceId, m.DefenderInvoiceId, m.ChallengerFeeInvoiceId, m.DefenderFeeInvoiceId,
+            m.Status, m.CreatedAt, ct);
+
+    public Task SaveSquadMatchAsync(SquadMatchSession m, CancellationToken ct = default) =>
+        UpsertMatchAsync(m.Id, "squad", m.ChallengerPlayerId, m.DefenderPlayerId,
+            m.ChallengerLineup, m.DefenderLineup, m.ServerSeed, m.CommitmentHex, m.WagerSats, m.Mode,
+            m.EscrowChallengerAddress, m.EscrowDefenderAddress, m.RefundAfterUnixSeconds,
+            m.ChallengerInvoiceId, m.DefenderInvoiceId, m.ChallengerFeeInvoiceId, m.DefenderFeeInvoiceId,
+            m.Status, m.CreatedAt, ct);
+
+    /// <summary>Everything an accept or an expiry can move updates; the opening facts (parties, lineups,
+    /// seed, wager) cannot change, so they are written once.</summary>
+    private async Task UpsertMatchAsync(
+        string id, string kind, string challengerPlayerId, string? defenderPlayerId,
+        IReadOnlyList<string> challengerLineup, IReadOnlyList<string> defenderLineup,
+        byte[] serverSeed, string commitmentHex, long wagerSats, string mode,
+        string? escrowChallenger, string? escrowDefender, long? refundAfter,
+        string? challengerInvoiceId, string? defenderInvoiceId,
+        string? challengerFeeInvoiceId, string? defenderFeeInvoiceId,
+        string status, DateTimeOffset createdAt, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.MatchSessions.FindAsync([id], ct) is { } row)
+        {
+            row.DefenderPlayerId = defenderPlayerId;
+            row.EscrowChallengerAddress = escrowChallenger;
+            row.EscrowDefenderAddress = escrowDefender;
+            row.RefundAfterUnixSeconds = refundAfter;
+            row.DefenderInvoiceId = defenderInvoiceId;
+            row.ChallengerFeeInvoiceId = challengerFeeInvoiceId;
+            row.DefenderFeeInvoiceId = defenderFeeInvoiceId;
+            row.Status = status;
+        }
+        else
+            db.MatchSessions.Add(new PersistedMatchSession
+            {
+                Id = id, Kind = kind,
+                ChallengerPlayerId = challengerPlayerId, DefenderPlayerId = defenderPlayerId,
+                ChallengerLineupJson = System.Text.Json.JsonSerializer.Serialize(challengerLineup),
+                DefenderLineupJson = System.Text.Json.JsonSerializer.Serialize(defenderLineup),
+                ServerSeed = serverSeed, CommitmentHex = commitmentHex,
+                WagerSats = wagerSats, Mode = mode,
+                EscrowChallengerAddress = escrowChallenger, EscrowDefenderAddress = escrowDefender,
+                RefundAfterUnixSeconds = refundAfter,
+                ChallengerInvoiceId = challengerInvoiceId, DefenderInvoiceId = defenderInvoiceId,
+                ChallengerFeeInvoiceId = challengerFeeInvoiceId, DefenderFeeInvoiceId = defenderFeeInvoiceId,
+                Status = status, CreatedAt = createdAt,
+            });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteMatchSessionAsync(string matchId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.MatchSessions.FindAsync([matchId], ct) is { } row)
+        {
+            db.MatchSessions.Remove(row);
             await db.SaveChangesAsync(ct);
         }
     }
