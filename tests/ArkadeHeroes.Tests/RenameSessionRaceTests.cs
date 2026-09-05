@@ -57,6 +57,9 @@ public class RenameSessionRaceTests
 
         public Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default) => inner.SaveGauntletAsync(session, ct);
         public Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default) => inner.DeleteGauntletAsync(gauntletId, ct);
+        public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) => inner.SaveBreedingAsync(session, ct);
+        public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) => inner.SaveMergeAsync(session, ct);
+        public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => inner.DeleteEscrowSessionAsync(sessionId, ct);
         public Task LoadIntoAsync(GameStore store, CancellationToken ct = default) => inner.LoadIntoAsync(store, ct);
         public Task SaveItemPurchaseAsync(ItemPurchase purchase, CancellationToken ct = default) => inner.SaveItemPurchaseAsync(purchase, ct);
         public Task SaveTournamentAsync(TournamentSession session, CancellationToken ct = default) => inner.SaveTournamentAsync(session, ct);

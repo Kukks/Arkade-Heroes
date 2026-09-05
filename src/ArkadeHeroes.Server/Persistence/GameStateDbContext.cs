@@ -187,6 +187,35 @@ public class PersistedHero
 }
 
 /// <summary>
+/// An unfinished breeding or fusion. Durable for a reason the gauntlet's row is not: in COVENANT mode the
+/// escrow holds both parent HEROES as well as the fee, and <c>ListReclaimableAsync</c> finds them by walking
+/// the in-memory session dictionary. Losing that row did not merely cost a fee — it made the escrow
+/// undiscoverable, so the player could not name the thing holding two of their heroes in order to reclaim
+/// it. Recoverable in principle and unfindable in practice is indistinguishable from lost.
+///
+/// <para>In invoice mode there is no escrow and the row simply keeps the paid fee from evaporating.</para>
+///
+/// <para>One shape for both because they are the same fact — an escrow the player still has a claim on —
+/// differing only in which two heroes went in and what comes out.</para>
+/// </summary>
+public class PersistedEscrowSession
+{
+    public required string Id { get; set; }
+    /// <summary>"breed" or "merge" — which flow this belongs to, and which dictionary it rehydrates into.</summary>
+    public required string Kind { get; set; }
+    public required string PlayerId { get; set; }
+    public required string FirstHeroId { get; set; }
+    public required string SecondHeroId { get; set; }
+    public required byte[] ServerSeed { get; set; }
+    public required string CommitmentHex { get; set; }
+    public required string Mode { get; set; }
+    public string? FeeInvoiceId { get; set; }
+    public string? EscrowAddress { get; set; }
+    public required long FeeSats { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
 /// A gauntlet run the player has PAID for but not yet taken. Durable for the same reason the rename and
 /// the starter claim are: the fee clears before the run happens, so a restart inside that window loses a
 /// run the player has already bought — and unlike those two there is no reuse branch to soften it, because
@@ -419,6 +448,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
     public DbSet<PersistedRenameSession> Renames => Set<PersistedRenameSession>();
     public DbSet<PersistedGauntletSession> Gauntlets => Set<PersistedGauntletSession>();
+    public DbSet<PersistedEscrowSession> EscrowSessions => Set<PersistedEscrowSession>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
     public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
@@ -440,6 +470,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         // Keyed by the HERO: one pending rename per hero, so re-requesting overwrites rather than piling up.
         modelBuilder.Entity<PersistedRenameSession>().HasKey(x => x.HeroId);
         modelBuilder.Entity<PersistedGauntletSession>().HasKey(x => x.Id);
+        modelBuilder.Entity<PersistedEscrowSession>().HasKey(x => x.Id);
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);

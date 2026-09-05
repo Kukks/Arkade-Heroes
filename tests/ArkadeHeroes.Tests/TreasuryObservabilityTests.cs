@@ -286,6 +286,9 @@ public class TreasuryObservabilityTests
         public Task DeleteRenameAsync(string heroId, CancellationToken ct = default) => _inner.DeleteRenameAsync(heroId, ct);
         public Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default) => _inner.SaveGauntletAsync(session, ct);
         public Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default) => _inner.DeleteGauntletAsync(gauntletId, ct);
+        public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) => _inner.SaveBreedingAsync(session, ct);
+        public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) => _inner.SaveMergeAsync(session, ct);
+        public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => _inner.DeleteEscrowSessionAsync(sessionId, ct);
         public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => _inner.SaveHeroSaleAsync(sale, ct);
         public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => _inner.SaveHeroTombstoneAsync(stone, ct);
         public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => _inner.SaveHeroBidAsync(bid, ct);
