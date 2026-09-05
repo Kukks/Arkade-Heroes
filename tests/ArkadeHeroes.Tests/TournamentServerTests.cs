@@ -465,6 +465,12 @@ public class TournamentServerTests
             => processDied() ? Task.CompletedTask : inner.SaveDeathMatchAsync(session, ct);
         public Task DeleteDeathMatchAsync(string deathMatchId, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.DeleteDeathMatchAsync(deathMatchId, ct);
+        public Task SaveMatchAsync(MatchSession session, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveMatchAsync(session, ct);
+        public Task SaveSquadMatchAsync(SquadMatchSession session, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveSquadMatchAsync(session, ct);
+        public Task DeleteMatchSessionAsync(string matchId, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.DeleteMatchSessionAsync(matchId, ct);
         public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveHeroSaleAsync(sale, ct);
         public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default)

@@ -2876,6 +2876,7 @@ public class GameService(
             DefenderPlayerId = defender.OwnerId,
         };
         store.Matches[session.Id] = session;
+        await persistence.SaveMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.MatchOpened, player.Id,
             [session.Id, challengerHeroId, defenderHeroId, defender.OwnerId],
             new
@@ -2924,6 +2925,7 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await persistence.SaveMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.MatchAccepted, player.Id,
             [session.Id, session.ChallengerHeroId, session.DefenderHeroId, session.ChallengerPlayerId],
             new
@@ -2963,6 +2965,7 @@ public class GameService(
             if (!abandoned) continue;
             var wasStatus = m.Status;
             m.Status = "expired";
+            await persistence.SaveMatchAsync(m, ct);
             // Actor NULL: nobody DID this — the refund window simply passed and the chain says the stakes
             // are not both there. It runs lazily on every match listing, so the dedup key is what keeps one
             // expiry to one entry however many anonymous page loads observe it.
@@ -3403,6 +3406,8 @@ public class GameService(
         var defenderDelta = -challengerDelta;
 
         session.Status = "resolved";
+        // Dropped once resolved: the escrows are settled, so there is nothing left for /reclaim to name.
+        await persistence.DeleteMatchSessionAsync(session.Id, ct);
         session.Result = result;
         session.ChallengerSnapshot = challengerSnapshot;   // persist the fight-time snapshots for spectator replay
         session.DefenderSnapshot = defenderSnapshot;
@@ -3519,6 +3524,7 @@ public class GameService(
             DefenderPlayerId = req.WagerSats > 0 ? defenderOwner : null,
         };
         store.SquadMatches[session.Id] = session;
+        await persistence.SaveSquadMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.SquadOpened, player.Id,
             [session.Id, .. req.ChallengerLineup, .. req.DefenderLineup, defenderOwner],
             new
@@ -3558,6 +3564,7 @@ public class GameService(
         session.DefenderFeeInvoiceId = feeInvoice.InvoiceId;
         session.DefenderPlayerId = player.Id;
         session.Status = "accepted";
+        await persistence.SaveSquadMatchAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.SquadAccepted, player.Id,
             [session.Id, .. session.ChallengerLineup, .. session.DefenderLineup, session.ChallengerPlayerId],
             new
@@ -3680,6 +3687,7 @@ public class GameService(
         }
 
         session.Status = "resolved";
+        await persistence.DeleteMatchSessionAsync(session.Id, ct);
         session.Result = result;
         session.ChallengerSnapshots = challengerSnapshots;
         session.DefenderSnapshots = defenderSnapshots;
