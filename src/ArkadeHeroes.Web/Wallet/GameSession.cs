@@ -570,11 +570,67 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     }
 
     /// <summary>
-    /// Buy a resting hero offer, entirely from the browser wallet: rebuild the offer covenant
-    /// locally and fulfil it — the buyer pays the ask straight to the seller and the covenant
-    /// hands over the hero (the emulator co-signs only if the seller is paid exactly the ask).
-    /// Then claim game-side ownership. Non-custodial: the server never touches the buyer's key.
-    /// Returns the bought hero.
+    /// Gift a hero: send the asset to the recipient's registered address, then ask the server to confirm.
+    /// The server never moves the asset — it verifies the chain shows the recipient holding it — so the send
+    /// must land first. Equipped gear does NOT travel; the server strips the loadout.
+    /// </summary>
+    public async Task<HeroDto> GiftHeroAsync(
+        string heroId, string toPlayerId, Action<string>? onProgress = null)
+    {
+        // CONFIRM FIRST, before a send or even a wallet. The send is irreversible and the confirm can time
+        // out after it, so a retry must FINISH the handover rather than restart it — re-sending is
+        // impossible once the asset has left.
+        onProgress?.Invoke("Checking whether the hero is already there…");
+        if (await TryConfirmHandoverAsync(heroId, toPlayerId) is { } alreadyArrived) return alreadyArrived;
+
+        var w = await wallet.GetActiveWalletAsync()
+            ?? throw new GameWalletException("Create a wallet first.");
+
+        onProgress?.Invoke("Looking up the recipient…");
+        var recipient = await api.Players.GetAsync(toPlayerId);
+        if (string.IsNullOrWhiteSpace(recipient.ArkadeAddress))
+            throw new GameWalletException($"{recipient.Name} has no registered address to receive a hero.");
+
+        var hero = await api.Heroes.GetAsync(heroId);
+        var assetId = hero.AssetId
+            ?? throw new GameWalletException("This hero has no on-chain asset yet — it cannot be sent.");
+
+        onProgress?.Invoke($"Sending {hero.Name} to {recipient.Name}…");
+        await wallet.SendAssetAsync(w.Id, recipient.ArkadeAddress, assetId);
+
+        // Retry while the send settles and the server observes it, exactly as a hero purchase does: the
+        // confirm is gated on the chain showing the NEW owner, which lags the send.
+        onProgress?.Invoke("Confirming the handover…");
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            if (await TryConfirmHandoverAsync(heroId, toPlayerId) is { } handed) return handed;
+            onProgress?.Invoke($"Waiting for the hero to arrive ({attempt + 1}/20)…");
+            await Task.Delay(3000);
+        }
+        throw new GameWalletException(
+            "Sent on-chain, but the handover has not been confirmed yet. Gift the same hero to the same "
+            + "player again to finish it — the hero is already sent, so nothing will be sent twice.");
+    }
+
+    /// <summary>The confirm, or null while the chain has not shown the recipient holding it. Any OTHER
+    /// failure throws — only "not arrived" is worth waiting through.</summary>
+    private async Task<HeroDto?> TryConfirmHandoverAsync(string heroId, string toPlayerId)
+    {
+        try
+        {
+            return (await api.Heroes.TransferAsync(heroId, new TransferRequest(toPlayerId))).Hero;
+        }
+        catch (ArkadeHeroesApiException ex) when (ex.Message.Contains("does not show", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Buy a resting hero offer, entirely from the browser wallet: rebuild the offer covenant locally and
+    /// fulfil it — the buyer pays the ask straight to the seller and the covenant hands over the hero (the
+    /// emulator co-signs only if the seller is paid exactly the ask). Then claim game-side ownership.
+    /// Non-custodial: the server never touches the buyer's key. Returns the bought hero.
     /// </summary>
     public async Task<HeroDto> BuyHeroAsync(string offerId, Action<string>? onProgress = null)
     {
