@@ -232,7 +232,7 @@ public static class MarketLiquidity
 
         private async Task ListItemAsync(Trader t, int round)
         {
-            var owned = await t.Api.Items.MineAsync();
+            var owned = (await t.Api.Items.MineAsync()).Keys.ToList();
             if (owned.Count == 0) { _listSkipped++; throw new Refusal("hold no gear unit that is free to list"); }
             var itemId = owned[_rng.Next(owned.Count)];
             var reference = _shopPrice.GetValueOrDefault(itemId, 0);

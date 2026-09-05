@@ -899,7 +899,7 @@ else
         if (_ownedItemIds is not null || _ownedReadFailed || _ownedReading) return;
         if (_hero is not { } h || !IsMine(h)) return;
         _ownedReading = true;
-        try { _ownedItemIds = [.. await Api.Items.MineAsync()]; }
+        try { _ownedItemIds = [.. (await Api.Items.MineAsync()).Keys]; }
         catch { _ownedReadFailed = true; }
         finally { _ownedReading = false; }
     }

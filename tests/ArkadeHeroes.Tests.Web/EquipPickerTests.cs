@@ -72,7 +72,7 @@ public class EquipPickerTests
         using var ctx = HeroPage(api =>
         {
             api.Get("/api/items", new[] { Owned, NeverBought });
-            api.Get("/api/items/mine", new[] { Owned.Id });
+            api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1 });
         });
 
         var cut = Render(ctx);
@@ -88,7 +88,7 @@ public class EquipPickerTests
         using var ctx = HeroPage(api =>
         {
             api.Get("/api/items", new[] { Owned, NeverBought });
-            api.Get("/api/items/mine", new[] { Owned.Id });
+            api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1 });
         });
 
         var cut = Render(ctx);
@@ -106,7 +106,7 @@ public class EquipPickerTests
         using var ctx = HeroPage(api =>
         {
             api.Get("/api/items", new[] { Owned, NeverBought });
-            api.Get("/api/items/mine", Array.Empty<string>());
+            api.Get("/api/items/mine", new Dictionary<string, long>());
         });
 
         var cut = Render(ctx);
@@ -158,7 +158,7 @@ public class EquipPickerTests
         ctx.Api.Get($"/api/heroes/{HeroId}/timeline", new HeroTimelineDto(HeroId, [], Complete: true, null));
         ctx.Api.Get("/api/bids", Array.Empty<BidDto>());
         ctx.Api.Get("/api/items", new[] { Owned, NeverBought });
-        ctx.Api.Get("/api/items/mine", new[] { Owned.Id });
+        ctx.Api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1 });
 
         var cut = ctx.Render<HeroDetail>(p => p.Add(x => x.Id, HeroId));
         cut.WaitForAssertion(() => Assert.Contains("Equipment", cut.Markup));
@@ -189,7 +189,7 @@ public class EquipPickerTests
         using var ctx = HeroPage(api =>
         {
             api.Get("/api/items", new[] { Owned, NeverBought });
-            api.Get("/api/items/mine", new[] { Owned.Id });
+            api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1 });
         }, theirs);
 
         var cut = Render(ctx);
@@ -234,7 +234,7 @@ public class EquipPickerTests
             api.Get("/api/items", new[] { Owned, counterCharm });
             // The worn charm is deliberately ABSENT from the owned list: its unit is allocated to this very
             // hero, which is exactly the state in which a catalogue-narrowing fix loses it.
-            api.Get("/api/items/mine", new[] { Owned.Id });
+            api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1 });
         }, wearing, gearCounters: true);
 
         var cut = ctx.Render<HeroDetail>(p => p.Add(x => x.Id, HeroId));

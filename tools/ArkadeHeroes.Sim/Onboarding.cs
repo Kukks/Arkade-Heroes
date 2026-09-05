@@ -241,7 +241,7 @@ public static class Onboarding
             {
                 p.Balance = (await p.Api.Players.MeAsync()).BalanceSats;
                 p.Roster = await p.Api.Heroes.MineAsync();
-                p.Gear = await p.Api.Items.MineAsync();
+                p.Gear = [.. (await p.Api.Items.MineAsync()).Keys];
                 foreach (var h in p.Roster) _names.Add(h.Name);
             }
             catch (Exception ex)

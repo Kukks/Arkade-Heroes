@@ -89,22 +89,23 @@ else
                         <div class="gear-price"><b>@it.PriceSats.ToString("N0")</b> <span>sats</span></div>
                         @if (State.IsSignedIn)
                         {
-                            @if (_owned.Contains(it.Id))
+                            var held = Units(it.Id);
+                            @* Gear is allocated PER HERO, so owning one unit does not arm a second hero.
+                               Replacing Buy with an "owned" chip made the second unit unbuyable, while the
+                               equip refusal told the player to go and buy one. *@
+                            @if (held > 0)
                             {
-                                <span class="chip ok mono">owned ✓</span>
+                                <span class="chip ok mono">owned ×@held</span>
                             }
-                            else
-                            {
-                                <button class="btn primary" @onclick="() => DoBuy(it)"
-                                        disabled="@(_buyingId is not null || !CanAfford(it))">
-                                    @(_buyingId == it.Id ? "Buying…" : "Buy")
-                                </button>
-                            }
+                            <button class="btn primary" @onclick="() => DoBuy(it)"
+                                    disabled="@(_buyingId is not null || !CanAfford(it))">
+                                @(_buyingId == it.Id ? "Buying…" : held > 0 ? "Buy another" : "Buy")
+                            </button>
                         }
                     </div>
                     @* A dead button with no explanation is its own defect, so the shortfall is named and the
                        way out is a link rather than a guess. Same treatment /gauntlet and /heroes already use. *@
-                    @if (State.IsSignedIn && !_owned.Contains(it.Id) && !CanAfford(it))
+                    @if (State.IsSignedIn && !CanAfford(it))
                     {
                         <div class="status-line" style="margin-top:.5rem;font-size:.78rem">
                             <span class="dot bad"></span>
@@ -134,11 +135,15 @@ else
     private string? _buyStatus;
     private string? _buyError;
     private string? _justBought;
-    private readonly HashSet<string> _owned = new();
+    /// <summary>Item id → units held. A COUNT, not a set: a second unit is a legitimate purchase, because
+    /// gear is allocated per hero and one unit arms exactly one of them.</summary>
+    private readonly Dictionary<string, long> _owned = new();
     private bool _ownedHydrated;
 
-    /// <summary>Why we don't know what the player already owns. Surfaced, because the consequence of not
-    /// knowing is buying a second copy of something you have.</summary>
+    private long Units(string itemId) => _owned.GetValueOrDefault(itemId);
+
+    /// <summary>Why we don't know how many units the player holds. Surfaced, because the consequence of
+    /// not knowing is buying gear you already have spare.</summary>
     private string? _ownedError;
 
     protected override async Task OnInitializedAsync()
@@ -158,16 +163,15 @@ else
         if (_ownedHydrated || !State.IsSignedIn) return;
         try
         {
-            foreach (var id in await Api.Items.MineAsync()) _owned.Add(id);
+            foreach (var (id, units) in await Api.Items.MineAsync()) _owned[id] = units;
             _ownedHydrated = true;
             _ownedError = null;
         }
         catch (Exception ex)
         {
-            // RECORDED, not swallowed. A silent failure here leaves _owned empty, so every item the
-            // player ALREADY OWNS renders "Buy" instead of "owned ✓" — and the purchase goes through.
-            // Real sats spent on a duplicate because a read failed and said nothing. The retry this used
-            // to claim is a wallet event that an already-signed-in player never sees again.
+            // RECORDED, not swallowed. A silent failure leaves _owned empty, so every item reads as
+            // unowned and a player can spend real sats on a unit they already had spare. The retry this
+            // used to claim is a wallet event an already-signed-in player never sees again.
             _ownedError = ex.Message;
         }
     }
@@ -182,7 +186,7 @@ else
         {
             await Session.BuyItemAsync(it.Id,
                 s => { _buyStatus = s; StateHasChanged(); });
-            _owned.Add(it.Id);
+            _owned[it.Id] = Units(it.Id) + 1;
             _justBought = it.Name;
         }
         catch (Exception ex)
