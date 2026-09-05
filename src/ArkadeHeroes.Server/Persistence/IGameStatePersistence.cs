@@ -276,12 +276,13 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 row.AskSats, row.ListingFeeSats, row.SoldAtUnixSeconds));
 
         // Stud proposals come back so a consent already given — and, far more importantly, a stud fee
-        // already PAID against it — survives the restart. Completed and declined rows are TERMINAL and are
-        // never rehydrated, exactly as a resolved bracket or a closed offer isn't: their rows stay as audit
+        // already PAID against it — survives the restart. Completed, declined and refunded rows are TERMINAL
+        // and are never rehydrated, as a resolved bracket or a closed offer isn't: their rows stay as audit
         // markers, but putting a completed one back would hand a stale client a second chance to reveal it,
         // and a reveal is a mint. StudFeePaid rehydrates EXACTLY as stored — it is the once-only payout
         // latch, and reviving a paid proposal with it cleared would pay the stud's owner twice.
-        foreach (var row in await db.StudProposals.AsNoTracking().Where(s => !s.Completed && !s.Declined).ToListAsync(ct))
+        foreach (var row in await db.StudProposals.AsNoTracking()
+                     .Where(s => !s.Completed && !s.Declined && !s.Refunded).ToListAsync(ct))
         {
             store.StudProposals[row.Id] = new StudProposal
             {
@@ -763,6 +764,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 Accepted = proposal.Accepted,
                 Declined = proposal.Declined,
                 Completed = proposal.Completed,
+                Refunded = proposal.Refunded,
                 StudFeePaid = proposal.StudFeePaid,
                 ChildHeroId = proposal.ChildHeroId,
             });
@@ -779,6 +781,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             row.Accepted = proposal.Accepted;
             row.Declined = proposal.Declined;
             row.Completed = proposal.Completed;
+            row.Refunded = proposal.Refunded;
             row.StudFeePaid = proposal.StudFeePaid;
             row.ChildHeroId = proposal.ChildHeroId;
         }

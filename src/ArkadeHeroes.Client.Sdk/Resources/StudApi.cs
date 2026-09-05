@@ -17,5 +17,7 @@ public sealed class StudApi(ArkadeHeroesClient client)
     /// the accept response goes to the stud's owner.</summary>
     public Task<StudAcceptResponse> InvoicesAsync(string proposalId) => client.GetAsync<StudAcceptResponse>($"/api/stud/{proposalId}/invoices");
     public Task<StudProposalDto> DeclineAsync(string proposalId) => client.PostAsync<StudProposalDto>($"/api/stud/{proposalId}/decline");
+    /// <summary>Unwinds a proposal whose breed can never happen, sending cleared fees home. Either party.</summary>
+    public Task<StudRefundResponse> RefundAsync(string proposalId) => client.PostAsync<StudRefundResponse>($"/api/stud/{proposalId}/refund");
     public Task<StudRevealResponse> RevealAsync(string proposalId, StudRevealRequest req) => client.PostAsync<StudRevealResponse>($"/api/stud/{proposalId}/reveal", req);
 }

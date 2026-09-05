@@ -1089,15 +1089,21 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
     /// </summary>
     public async Task ReclaimAsync(ReclaimableDto item, Action<string>? onProgress = null)
     {
-        // A BID is the one row on this page that isn't a covenant escrow: an accepted bid's sats rest in
-        // the treasury under an invoice, so unwinding it is a server call, not a script-pinned spend. It is
-        // handled BEFORE the wallet and emulator are demanded below, because it needs neither — and
+        // A BID and a stranded STUD PROPOSAL are the rows here that aren't covenant escrows: their sats rest
+        // in the treasury under an invoice, so unwinding one is a server call, not a script-pinned spend.
+        // They are handled BEFORE the wallet and emulator are demanded below, because they need neither — and
         // refusing to recover a player's sats because the arena isn't advertising an emulator would be a
         // refusal with no reason behind it.
         if (item.Kind == "bid")
         {
             onProgress?.Invoke("Unwinding the bid and returning the sats…");
             await api.Bids.RefundAsync(item.Id);
+            return;
+        }
+        if (item.Kind == "stud")
+        {
+            onProgress?.Invoke("Unwinding the stud proposal and returning the fees…");
+            await api.Stud.RefundAsync(item.Id);
             return;
         }
 

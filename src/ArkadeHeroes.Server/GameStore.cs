@@ -137,6 +137,8 @@ public class StudProposal
     public bool Accepted { get; set; }
     public bool Declined { get; set; }
     public bool Completed { get; set; }
+    /// <summary>Unwound because its breed can never happen — terminal, and set durably BEFORE any sat moves.</summary>
+    public bool Refunded { get; set; }
     /// <summary>Latched (durably, BEFORE the sat moves) the moment the stud fee is paid out — so a reveal
     /// retried after a crash finishes the breed without paying the stud's owner a second time.</summary>
     public bool StudFeePaid { get; set; }
