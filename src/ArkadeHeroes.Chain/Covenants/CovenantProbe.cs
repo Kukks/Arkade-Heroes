@@ -170,29 +170,19 @@ public static class CovenantSpender
 
         var builder = new TransactionHelpers.ArkTransactionBuilder(
             transport, safetyService, walletProvider, intentStorage);
+        // The ark tx's locktime and per-input sequences are the SDK's job now:
+        // ConstructArkTransaction takes the max locktime across the coins and gives each one
+        // 0xFFFFFFFE or 0xFFFFFFFF by whether it is actually timelocked. We used to re-apply
+        // that here and force 0xFFFFFFFE on EVERY input, which is wrong for a spend that mixes
+        // a timelocked leaf with plain funding coins.
         var (arkTx, checkpoints) = await builder.ConstructArkTransaction(coins, outputs, serverInfo, ct);
 
-        // Timelocked leaves: arkd requires the CHECKPOINT and the ARK tx to
-        // carry the SAME locktime (each side's canonical form is derived from
-        // the other — mismatches surface as CHECKPOINT_MISMATCH/ARK_TX_MISMATCH).
-        // The checkpoint got it from coin.LockTime; apply it to the ark tx too.
-        var lockTime = inputs.Max(i => i.LockTime?.Value ?? 0);
-        if (lockTime > 0)
-        {
-            var gtx = arkTx.GetGlobalTransaction();
-            gtx.LockTime = new LockTime(lockTime);
-            foreach (var txin in gtx.Inputs)
-                txin.Sequence = new Sequence(0xFFFFFFFE);
-            var relocked = PSBT.FromTransaction(gtx, serverInfo.Network, PSBTVersion.PSBTv0);
-            relocked.UpdateFrom(arkTx);
-            arkTx = relocked;
-        }
-
-        // Mixed covenant + actor-funding spends: NBitcoin orders the ark tx's
-        // inputs by outpoint (BIP69), not by our coin order, so NArk's asset-vin
-        // remap fires and rebuilds the extension output from the ASSET packet
-        // alone — silently dropping the EmulatorPacket. Its input order is only
-        // known AFTER construction, so we correct the extension here (rebuild it
+        // Mixed covenant + actor-funding spends: NBitcoin may reorder the ark tx's
+        // inputs (the SDK's own note says "e.g. by amount", even with ShuffleInputs
+        // false), so NArk's asset-vin remap fires and rebuilds the extension output
+        // from the ASSET packet alone — silently dropping the EmulatorPacket. Still live
+        // upstream: docs/upstream/narK-extension-remap-drops-packets.md. The input order
+        // is only known AFTER construction, so we correct the extension here (rebuild it
         // with the EmulatorPacket's vins pointing at each covenant input's ACTUAL
         // position) and then re-sign the funding inputs over the fixed outputs.
         if (fundingCoins is { Count: > 0 })

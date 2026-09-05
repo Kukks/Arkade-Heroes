@@ -38,6 +38,18 @@ internal static class SimMain
             return 0;
         }
 
+        if (args.Contains("--flags"))
+        {
+            Console.WriteLine(DormantFlags.Render(Arg(args, "--samples", 4000), seed));
+            return 0;
+        }
+
+        if (args.Contains("--combat"))
+        {
+            Console.WriteLine(CombatBalance.Render(Arg(args, "--samples", 4000), seed));
+            return 0;
+        }
+
         if (args.Contains("--afford"))
         {
             Console.WriteLine(Affordability.Render(Arg(args, "--samples", 2000), seed, Arg(args, "--budget", 100_000)));
