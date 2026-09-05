@@ -138,6 +138,26 @@ public class MatchSessionDurabilityTests
     }
 
     [Fact]
+    public async Task AStakedSquadsEscrow_IsListedAsReclaimable()
+    {
+        // Persisting a squad session buys nothing unless something READS it: ListReclaimableAsync walked
+        // only store.Matches. This is the half that makes the durability worth having.
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("S-Reclaim-A");
+        var (bob, _) = await factory.RegisterAsync("S-Reclaim-B");
+        var mine = await Lineup(alice);
+        var theirs = await Lineup(bob);
+
+        var open = await alice.Squad.OpenAsync(new OpenSquadMatchRequest(mine, theirs, 1_500));
+        await alice.Dev.StakeEscrowAsync(new { MatchId = open.MatchId });
+
+        var reclaimable = await alice.Players.ReclaimableAsync();
+        Assert.Contains(reclaimable, r => r.Kind == "wager" && r.Id == open.MatchId);
+
+        Assert.DoesNotContain(await bob.Players.ReclaimableAsync(), r => r.Id == open.MatchId);
+    }
+
+    [Fact]
     public async Task AResolvedFriendlyDuel_IsNotRehydrated()
     {
         // A resolved match has settled escrows, so a returning row would offer a reclaim against nothing.

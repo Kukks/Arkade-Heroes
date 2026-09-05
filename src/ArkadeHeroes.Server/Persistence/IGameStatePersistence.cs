@@ -411,12 +411,18 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             var challengers = System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.ChallengerLineupJson) ?? [];
             var defenders = System.Text.Json.JsonSerializer.Deserialize<List<string>>(row.DefenderLineupJson) ?? [];
             if (row.Kind == "duel")
+            {
+                // A duel is a lineup of one; an empty hero id would surface far away as an unknown hero.
+                if (challengers is not [{ Length: > 0 } challengerHeroId]
+                    || defenders is not [{ Length: > 0 } defenderHeroId])
+                    throw new InvalidOperationException(
+                        $"Match row '{row.Id}' is a duel but does not name exactly one hero a side.");
                 store.Matches[row.Id] = new MatchSession
                 {
                     Id = row.Id,
                     ChallengerPlayerId = row.ChallengerPlayerId, DefenderPlayerId = row.DefenderPlayerId,
-                    ChallengerHeroId = challengers.FirstOrDefault() ?? "",
-                    DefenderHeroId = defenders.FirstOrDefault() ?? "",
+                    ChallengerHeroId = challengerHeroId,
+                    DefenderHeroId = defenderHeroId,
                     ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
                     WagerSats = row.WagerSats, Mode = row.Mode,
                     EscrowChallengerAddress = row.EscrowChallengerAddress,
@@ -427,6 +433,7 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                     DefenderFeeInvoiceId = row.DefenderFeeInvoiceId,
                     Status = row.Status, CreatedAt = row.CreatedAt,
                 };
+            }
             else
                 store.SquadMatches[row.Id] = new SquadMatchSession
                 {

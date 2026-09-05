@@ -2980,6 +2980,33 @@ public class GameService(
                 },
                 $"match-expired:{m.Id}");
         }
+
+        // Squads stake through the SAME per-party escrows and were never walked here, so an abandoned one
+        // stayed open forever — and its row, droppable only on "resolved", would outlive it.
+        foreach (var s in store.SquadMatches.Values)
+        {
+            if (s.Mode != "covenant" || s.Status is not ("open" or "accepted")) continue;
+            if (s.RefundAfterUnixSeconds is not { } refundAfter || now < refundAfter) continue;
+            var funding = await chain.GetWagerEscrowFundingAsync(s.Id, ct);
+            if (funding is null) continue;
+            var abandoned = s.Status == "open"
+                ? !funding.ChallengerFunded
+                : !(funding.ChallengerFunded && funding.DefenderFunded);
+            if (!abandoned) continue;
+            var wasStatus = s.Status;
+            s.Status = "expired";
+            await persistence.SaveSquadMatchAsync(s, ct);
+            await AuditAsync(Persistence.AuditEventType.SquadExpired, null,
+                [s.Id, .. s.ChallengerLineup, .. s.DefenderLineup],
+                new
+                {
+                    fromStatus = wasStatus, wagerSats = s.WagerSats, mode = s.Mode,
+                    challengerPlayerId = s.ChallengerPlayerId, defenderPlayerId = s.DefenderPlayerId,
+                    challengerFunded = funding.ChallengerFunded, defenderFunded = funding.DefenderFunded,
+                    refundAfterUnixSeconds = s.RefundAfterUnixSeconds,
+                },
+                $"squad-expired:{s.Id}");
+        }
     }
 
     /// <summary>
@@ -4225,6 +4252,22 @@ public class GameService(
             if (await chain.GetWagerEscrowParamsAsync(match.Id, ct) is { } p)
                 items.Add(new Shared.ReclaimableDto("wager", match.Id,
                     $"An unfinished duel — your {match.WagerSats}-sat stake is escrowed.",
+                    p.RefundAfterUnixSeconds));
+        }
+
+        // Never listed here, so a squad stake was undiscoverable even with the server up. Same per-side
+        // probe as the duel above.
+        foreach (var squad in store.SquadMatches.Values
+                     .Where(s => s.Mode == "covenant" && s.Status != "resolved"
+                                 && (s.ChallengerPlayerId == player.Id || s.DefenderPlayerId == player.Id)).ToList())
+        {
+            var funding = await chain.GetWagerEscrowFundingAsync(squad.Id, ct);
+            if (funding is null) continue;
+            var mine = squad.ChallengerPlayerId == player.Id ? funding.ChallengerFunded : funding.DefenderFunded;
+            if (!mine) continue;
+            if (await chain.GetWagerEscrowParamsAsync(squad.Id, ct) is { } p)
+                items.Add(new Shared.ReclaimableDto("wager", squad.Id,
+                    $"An unfinished squad match — your {squad.WagerSats}-sat stake is escrowed.",
                     p.RefundAfterUnixSeconds));
         }
 
