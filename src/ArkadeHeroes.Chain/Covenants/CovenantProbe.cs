@@ -180,9 +180,9 @@ public static class CovenantSpender
         // Mixed covenant + actor-funding spends: NBitcoin may reorder the ark tx's
         // inputs (the SDK's own note says "e.g. by amount", even with ShuffleInputs
         // false), so NArk's asset-vin remap fires and rebuilds the extension output
-        // from the ASSET packet
-        // alone — silently dropping the EmulatorPacket. Its input order is only
-        // known AFTER construction, so we correct the extension here (rebuild it
+        // from the ASSET packet alone — silently dropping the EmulatorPacket. Still live
+        // upstream: docs/upstream/narK-extension-remap-drops-packets.md. The input order
+        // is only known AFTER construction, so we correct the extension here (rebuild it
         // with the EmulatorPacket's vins pointing at each covenant input's ACTUAL
         // position) and then re-sign the funding inputs over the fixed outputs.
         if (fundingCoins is { Count: > 0 })
