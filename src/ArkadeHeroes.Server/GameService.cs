@@ -1279,7 +1279,15 @@ public class GameService(
     /// <see cref="GameOptions.TournamentUnpaidBuyInGrace"/>, which resolve will never accept. The WINDOW is
     /// what stops this becoming the exit a full bracket must not have — inside it an unpaid buy-in is a
     /// player who has not paid YET, and refunding then is a free look at the locked draw followed by an
-    /// exit.</summary>
+    /// exit.
+    ///
+    /// <para>RESIDUAL, and it is not closable here: an invoice is a derived treasury address, so it stays
+    /// payable forever — <see cref="IChainService"/> has no cancel. A buy-in that lands after the refund
+    /// loop's own paid-check strands. The loop re-reads each invoice rather than trusting this one
+    /// (<c>IsInvoicePaidAsync</c> below), so a payment racing the gate is still refunded; only one arriving
+    /// after its entrant was skipped is lost. Every terminal state in the game inherits this, including the
+    /// pre-existing called-off refund — the fix is durable late-payment reconciliation, not a change
+    /// here.</para></summary>
     private async Task<bool> AbandonedOnAnUnpaidBuyInAsync(TournamentSession session, CancellationToken ct)
     {
         if (session.FilledAt is not { } filledAt
