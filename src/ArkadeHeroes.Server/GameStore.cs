@@ -142,6 +142,10 @@ public class StudProposal
     /// <summary>Latched (durably, BEFORE the sat moves) the moment the stud fee is paid out — so a reveal
     /// retried after a crash finishes the breed without paying the stud's owner a second time.</summary>
     public bool StudFeePaid { get; set; }
+
+    /// <summary>Still awaiting an answer or a reveal — i.e. one of its two parties still has a button to
+    /// press. Mirrors <see cref="HeroBid.IsLive"/>.</summary>
+    public bool IsLive => !Completed && !Declined && !Refunded;
     public string? ChildHeroId { get; set; }
 }
 
@@ -258,6 +262,10 @@ public class DeathMatchSession
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool Accepted { get; set; }
     public bool Completed { get; set; }
+
+    /// <summary>Not settled yet — so one of its two players still has a hero staked in the joint escrow.</summary>
+    public bool IsLive => !Completed;
+
     public string? WinnerHeroId { get; set; }
     /// <summary>Opt-in absorb mode: on a seed-driven roll the winner re-mints absorbing the loser's traits (6-leaf escrow); a failed roll is the classic keep.</summary>
     public bool Absorb { get; init; }

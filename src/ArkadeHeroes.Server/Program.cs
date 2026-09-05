@@ -451,12 +451,19 @@ api.MapPost("/stud/{id}/refund", async (string id, HttpContext http, GameService
 // Stud discovery: the proposals a browser needs to SEE an incoming request for its own hero — the rest of
 // the stud API is by-id. Public like /deathmatch; the client filters to its own heroes. No fee invoice or
 // seed is exposed here, only the offer and its state.
-api.MapGet("/stud", (GameStore store) =>
-    Results.Ok(store.StudProposals.Values
-        .OrderByDescending(s => s.CreatedAt)
-        .Take(50)
-        .Select(ToStudDto)
-        .ToList()));
+// The newest 50 ARENA-WIDE, plus the caller's own live rows however old they are. Without the second
+// half, an accepted-and-paid proposal simply vanished from its owner's inbox once 50 newer ones existed
+// — taking with it the only button in the browser that can reveal it.
+api.MapGet("/stud", (HttpContext http, GameStore store, GameService game) =>
+{
+    var me = game.WhoIs(BearerToken(http))?.Id;
+    IEnumerable<StudProposal> rows = store.StudProposals.Values
+        .OrderByDescending(s => s.CreatedAt).Take(50);
+    if (me is not null)
+        rows = rows.Concat(store.StudProposals.Values
+            .Where(s => s.IsLive && (s.ProposerPlayerId == me || s.StudOwnerPlayerId == me)));
+    return Results.Ok(rows.DistinctBy(s => s.Id).Select(ToStudDto).ToList());
+});
 
 // ── Bids: buy a hero that is NOT for sale (propose → the owner consents → deliver → settle) ──
 //
@@ -677,15 +684,22 @@ api.MapGet("/deathmatch/{id}/replay", (string id, GameStore store) =>
 // Death-match discovery: the sessions a browser needs to SEE an incoming challenge — no list
 // endpoint existed (the console passes the death-match id out-of-band). Public like /matches; the
 // client filters to its own heroes. Status is derived from the session's accepted/completed flags.
-api.MapGet("/deathmatch", (GameStore store) =>
-    Results.Ok(store.DeathMatches.Values
-        .OrderByDescending(d => d.CreatedAt)
-        .Take(50)
-        .Select(d => new DeathMatchDto(
+// Same rule as /stud, and it matters more here: an unsettled match has BOTH heroes locked in the joint
+// escrow, so ageing one out of this feed removes the Settle button from a hero already staked.
+api.MapGet("/deathmatch", (HttpContext http, GameStore store, GameService game) =>
+{
+    var me = game.WhoIs(BearerToken(http))?.Id;
+    IEnumerable<DeathMatchSession> rows = store.DeathMatches.Values
+        .OrderByDescending(d => d.CreatedAt).Take(50);
+    if (me is not null)
+        rows = rows.Concat(store.DeathMatches.Values
+            .Where(d => d.IsLive && (d.ChallengerPlayerId == me || d.DefenderPlayerId == me)));
+    return Results.Ok(rows.DistinctBy(d => d.Id).Select(d => new DeathMatchDto(
             d.Id, d.ChallengerHeroId, d.DefenderHeroId,
             d.Completed ? "resolved" : d.Accepted ? "accepted" : "open",
             d.Absorb, d.WinnerHeroId))
-        .ToList()));
+        .ToList());
+});
 
 // ── Matches (open → fight) ─────────────────────────────────────────────────
 
