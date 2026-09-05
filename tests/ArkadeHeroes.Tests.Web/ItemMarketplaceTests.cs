@@ -86,6 +86,23 @@ public class ItemMarketplaceTests
     }
 
     [Fact]
+    public void AFailedListing_RereadsWhatYouActuallyStillHold()
+    {
+        // The deposit lands before the offer is polled, so a throw does not mean the unit is still yours.
+        // Leaving the count alone would show an escrowed unit as equippable — the stale-count lie #244 fixed.
+        using var ctx = Shop(unitsHeld: 2);
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal)).Click();
+        ctx.Api.Requested.Clear();
+        cut.FindAll("button").First(b => b.TextContent.Contains("List it", StringComparison.Ordinal)).Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(ctx.Api.Requested, r => r.EndsWith("/api/items/mine", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void TheAskStartsAtTheCatalogPrice()
     {
         // The one number a seller and a buyer both already know; a blank field invites a mis-typed ask.

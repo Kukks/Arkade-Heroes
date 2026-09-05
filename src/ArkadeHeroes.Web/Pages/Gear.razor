@@ -206,6 +206,11 @@ else
         catch (Exception ex)
         {
             _sellError = ex.Message;
+            // The deposit lands BEFORE the offer is polled, so a throw here does not mean the unit is still
+            // yours — it may be escrowed while this page still offers to equip or re-list it. Re-read rather
+            // than guess: right whether the send failed (count unchanged) or only the poll did (already down).
+            _ownedHydrated = false;
+            await HydrateOwnedAsync();
         }
         finally
         {
