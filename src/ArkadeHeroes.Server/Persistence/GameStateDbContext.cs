@@ -132,6 +132,7 @@ public class PersistedStudProposal
     public required bool Accepted { get; set; }
     public required bool Declined { get; set; }
     public required bool Completed { get; set; }
+    public bool Refunded { get; set; }
     public required bool StudFeePaid { get; set; }
     public string? ChildHeroId { get; set; }
 }

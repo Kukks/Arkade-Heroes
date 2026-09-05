@@ -1849,6 +1849,9 @@ public class GameService(
         // One acceptance buys one breed: the latch is what stops a paid consent being replayed for a
         // second free child.
         if (proposal.Completed) throw new GameRuleException("Stud proposal already bred.");
+        // Above the parent lookups so it answers first: these fees have already gone home.
+        if (proposal.Refunded)
+            throw new GameRuleException("This stud proposal was refunded — its fees have already gone home.");
         if (string.IsNullOrWhiteSpace(nonce)) throw new GameRuleException("A nonce is required.");
 
         if (!await chain.IsInvoicePaidAsync(proposal.BreedFeeInvoiceId!, ct))
@@ -1949,6 +1952,122 @@ public class GameService(
             $"stud-revealed:{proposal.Id}");
 
         return (child, serverSeedHex, entropyHex, proposal.StudFeePaid ? proposal.StudFeeSats : 0, receipt);
+    }
+
+    /// <summary>Unwinds an accepted proposal whose breed can never happen and sends the proposer's CLEARED
+    /// fees home — the exit this flow had none of, since the reveal books both fees into the treasury BEFORE
+    /// checks that a stud sold on or burned can never satisfy again. PROOF only, in the stranded bracket's
+    /// sense, so it does not depend on who asks; offered to the two parties because everything else about a
+    /// proposal is theirs alone. A breeding COOLDOWN is deliberately NOT proof: it expires, and a door opened
+    /// on it would let a proposer walk out of a live proposal. No window is needed to tell them apart.</summary>
+    public async Task<(StudProposal Proposal, long RefundedSats)> RefundStudAsync(
+        Player player, string proposalId, CancellationToken ct)
+    {
+        if (!store.StudProposals.TryGetValue(proposalId, out var proposal))
+            throw new GameRuleException($"Unknown stud proposal '{proposalId}'.");
+        if (proposal.ProposerPlayerId != player.Id && proposal.StudOwnerPlayerId != player.Id)
+            throw new GameRuleException("Only this proposal's parties can unwind it.");
+        // The SAME key accept and reveal take, so a refund can never interleave with the breed it unwinds.
+        using var gate = await store.LockAsync($"stud:{proposalId}", ct);
+
+        if (!proposal.Accepted)
+            throw new GameRuleException("This proposal was never accepted, so nothing was ever billed — decline it instead.");
+        if (proposal.Completed) throw new GameRuleException("Stud proposal already bred.");
+        if (proposal.Refunded) throw new GameRuleException("This stud proposal is already refunded.");
+
+        if (!StudBreedIsDead(proposal))
+            throw new GameRuleException("This proposal can still be revealed — refunds are only for a breed that can never happen.");
+
+        // Durable before a sat moves back (the bracket refund's ordering), so a crash cannot pay twice.
+        proposal.Refunded = true;
+        await persistence.SaveStudProposalAsync(proposal, ct);
+
+        var refunded = await ReturnClearedStudFeeAsync(
+            proposal, proposal.BreedFeeInvoiceId!, "breed", proposal.BreedFeeSats, ct);
+        // Past the latch these sats are with the stud's owner. Read, never cleared: a faulted payout may
+        // still have settled.
+        if (proposal.StudFeeInvoiceId is { } studInvoiceId && !proposal.StudFeePaid)
+            refunded += await ReturnClearedStudFeeAsync(proposal, studInvoiceId, "stud", proposal.StudFeeSats, ct);
+
+        await AuditAsync(Persistence.AuditEventType.StudRefunded, player.Id,
+            [proposal.Id, proposal.ProposerHeroId, proposal.StudHeroId, proposal.ProposerPlayerId],
+            new
+            {
+                proposerPlayerId = proposal.ProposerPlayerId, studOwnerPlayerId = proposal.StudOwnerPlayerId,
+                proposerHeroId = proposal.ProposerHeroId, studHeroId = proposal.StudHeroId,
+                breedFeeSats = proposal.BreedFeeSats, breedFeeInvoiceId = proposal.BreedFeeInvoiceId,
+                studFeeSats = proposal.StudFeeSats, studFeeInvoiceId = proposal.StudFeeInvoiceId,
+                studFeeAlreadyForwarded = proposal.StudFeePaid, refundedSats = refunded,
+                studStillInTheGame = store.Heroes.ContainsKey(proposal.StudHeroId),
+                unwoundByPlayerId = player.Id,
+            },
+            $"stud-refunded:{proposal.Id}");
+        return (proposal, refunded);
+    }
+
+    /// <summary>THE proof the door opens on, shared with the reclaim list so no row offers a doomed refund.</summary>
+    private bool StudBreedIsDead(StudProposal p) =>
+        !store.Heroes.TryGetValue(p.StudHeroId, out var stud)
+        || stud.OwnerId != p.StudOwnerPlayerId
+        || !store.Heroes.ContainsKey(p.ProposerHeroId);
+
+    /// <summary>One leg of a stud refund, and what actually moved. Each step is caught on its own, as the
+    /// stranded bracket's loop is: this is ALREADY durably refunded, so a throw would strand the other leg.</summary>
+    private async Task<long> ReturnClearedStudFeeAsync(
+        StudProposal proposal, string invoiceId, string tag, long sats, CancellationToken ct)
+    {
+        var payoutTag = $"stud-refund:{proposal.Id}:{tag}";
+        bool paid;
+        try { paid = await chain.IsInvoicePaidAsync(invoiceId, ct); }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex,
+                "Stud refund SKIPPED for player {PlayerId}: could not read whether the {Tag} fee invoice "
+                + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {PayoutTag}. Recorded as "
+                + "{Outcome} — check the invoice by hand before paying anything.",
+                proposal.ProposerPlayerId, tag, invoiceId, sats, payoutTag,
+                Persistence.PayoutFailureOutcome.Unknown);
+            await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
+                Persistence.PayoutFailureOutcome.Unknown, invoiceId, ex);
+            return 0;
+        }
+        // An invoice that never cleared put nothing in; "refunding" it would pay sats never received.
+        if (!paid || sats <= 0) return 0;
+
+        // Nothing booked this as income if the reveal was never reached, so the outflow below would read as
+        // a pure loss. Deduped on the invoice id.
+        try { await store.RecordInflowAsync(invoiceId, tag, sats, ct); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex,
+                "The stud {Tag} fee of {Sats} sats ({InvoiceId}) could not be booked as inflow before being "
+                + "refunded. The refund itself is unaffected; treasury income now under-reports by this "
+                + "amount.", tag, sats, invoiceId);
+        }
+
+        try { await chain.PayoutAsync(proposal.ProposerPlayerId, sats, payoutTag, ct); }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex,
+                "Stud refund payout FAILED and will never be retried: player {PlayerId} paid the {Tag} fee "
+                + "and is owed {Sats} sats back for {PayoutTag}. Recorded as {Outcome} — settle it by hand.",
+                proposal.ProposerPlayerId, tag, sats, payoutTag, Persistence.PayoutFailureOutcome.Owed);
+            await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
+                Persistence.PayoutFailureOutcome.Owed, invoiceId, ex);
+            return 0;
+        }
+
+        try { await store.RecordOutflowAsync("stud-refund", sats, ct); }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex,
+                "A stud refund of {Sats} sats for {PayoutTag} WAS PAID but could not be booked as outflow. "
+                + "The player has their sats; do NOT re-pay. Treasury outflow now under-reports by this "
+                + "amount.", sats, payoutTag);
+            await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
+                Persistence.PayoutFailureOutcome.PaidNotBooked, invoiceId, ex);
+        }
+        return sats;
     }
 
     // ── PvE gauntlet (F1): open (commit + fee invoice) → client pays → run ──
@@ -4036,6 +4155,20 @@ public class GameService(
                     ? $"An accepted bid on {name} — your {bid.BidSats} sats are held against a hero that hasn't arrived. Unwinds on the arena's own clock, not the chain's."
                     : $"An accepted bid on {name} — unwind it to free the hero if the bidder has gone quiet. Runs on the arena's own clock, not the chain's.",
                 bid.ReclaimAfterUnixSeconds));
+        }
+
+        // A stranded STUD PROPOSAL is the other non-covenant row, for the bid's reason. Listed only once the
+        // breed is provably dead: a button the server would refuse is worse than none. PROPOSER only.
+        foreach (var proposal in store.StudProposals.Values
+                     .Where(p => p.ProposerPlayerId == player.Id
+                                 && p.Accepted && !p.Completed && !p.Declined && !p.Refunded).ToList())
+        {
+            if (!StudBreedIsDead(proposal)) continue;
+            var name = store.Heroes.TryGetValue(proposal.StudHeroId, out var stud) ? stud.Name : "a stud";
+            items.Add(new Shared.ReclaimableDto("stud", proposal.Id,
+                $"A stud proposal on {name} that can never be bred now — your fees are held against it. "
+                + "Unwinds on the arena's own clock, not the chain's.",
+                0));
         }
 
         // Soonest-unlockable first, tie-broken on the unique id so the order is total (see #113).

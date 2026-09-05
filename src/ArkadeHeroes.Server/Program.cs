@@ -440,6 +440,14 @@ api.MapPost("/stud/{id}/reveal", async (string id, StudRevealRequest request, Ht
     return Results.Ok(new StudRevealResponse(child.ToDto(), serverSeedHex, entropyHex, studFeePaid, receipt));
 });
 
+// The way out of an accepted proposal that can never be revealed. Either party; cleared fees only.
+api.MapPost("/stud/{id}/refund", async (string id, HttpContext http, GameService game, CancellationToken ct) =>
+{
+    var player = game.Authenticate(BearerToken(http));
+    var (proposal, refunded) = await game.RefundStudAsync(player, id, ct);
+    return Results.Ok(new StudRefundResponse(ToStudDto(proposal), refunded));
+});
+
 // Stud discovery: the proposals a browser needs to SEE an incoming request for its own hero — the rest of
 // the stud API is by-id. Public like /deathmatch; the client filters to its own heroes. No fee invoice or
 // seed is exposed here, only the offer and its state.
@@ -1443,10 +1451,10 @@ static TournamentDto ToTournamentDto(TournamentSession t) => new(
     t.Result?.ChampionId, t.Prizes.Count > 0 ? t.Prizes[0] : 0, t.EntrantsCommitmentHex);
 
 // Status is DERIVED from the proposal's flags rather than stored, so it can't drift from them: completed
-// wins over declined wins over accepted, matching the order the flow can only move through.
+// wins over refunded wins over declined wins over accepted — the order the flow can only move through.
 static StudProposalDto ToStudDto(StudProposal s) => new(
     s.Id, s.ProposerPlayerId, s.StudOwnerPlayerId, s.ProposerHeroId, s.StudHeroId, s.StudFeeSats,
-    s.Completed ? "completed" : s.Declined ? "declined" : s.Accepted ? "accepted" : "proposed",
+    s.Completed ? "completed" : s.Refunded ? "refunded" : s.Declined ? "declined" : s.Accepted ? "accepted" : "proposed",
     s.ChildHeroId);
 
 // Status comes off HeroBid.Status, which derives it from the flags rather than storing it, so the wire

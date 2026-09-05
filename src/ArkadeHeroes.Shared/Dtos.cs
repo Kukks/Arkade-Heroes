@@ -230,10 +230,12 @@ public record StudRevealResponse(
     ProgressionReceiptDto? Receipt = null);
 
 /// <summary>One stud proposal on the discovery list. Status = proposed (awaiting consent) | accepted (the
-/// proposer may pay + reveal) | declined | completed.</summary>
+/// proposer may pay + reveal) | declined | completed | refunded.</summary>
 public record StudProposalDto(
     string ProposalId, string ProposerPlayerId, string StudOwnerPlayerId,
     string ProposerHeroId, string StudHeroId, long StudFeeSats, string Status, string? ChildHeroId);
+
+public record StudRefundResponse(StudProposalDto Proposal, long RefundedSats);
 
 // ── Merge / fusion (two-phase commit–reveal, escrow-funded) ────────────────
 
@@ -689,10 +691,10 @@ public record CreateOfferResponse(
 /// </summary>
 public record ReclaimableDto(
     /// <summary>"offer" | "breed" | "merge" | "wager" | "deathmatch" — which covenant, and so which reclaim
-    /// flow recovers it — or "bid", the one kind that is NOT a covenant: an accepted bid's sats rest in the
-    /// treasury under an invoice, and <c>POST /api/bids/{id}/refund</c> recovers them rather than a reclaim
-    /// leaf. It is listed here anyway because it answers the same question the page exists for, and a player
-    /// should not have to know which mechanism is holding their sats in order to find them.</summary>
+    /// flow recovers it — or "bid" and "stud", the kinds that are NOT covenants: those sats rest in the
+    /// treasury under an invoice, and <c>POST /api/{bids|stud}/{id}/refund</c> recovers them rather than a
+    /// reclaim leaf. They are listed here anyway because they answer the same question the page exists for,
+    /// and a player should not have to know which mechanism is holding their sats in order to find them.</summary>
     string Kind,
     string Id,
     /// <summary>A player-facing line naming what is escrowed and why it has no way forward.</summary>

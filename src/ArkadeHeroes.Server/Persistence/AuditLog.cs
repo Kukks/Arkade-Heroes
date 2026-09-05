@@ -89,6 +89,7 @@ public static class AuditEventType
     public const string StudAccepted = "stud.accepted";
     public const string StudDeclined = "stud.declined";
     public const string StudRevealed = "stud.revealed";
+    public const string StudRefunded = "stud.refunded";
 
     // ── Fusion / merge ──
     public const string MergeCommitted = "merge.committed";
