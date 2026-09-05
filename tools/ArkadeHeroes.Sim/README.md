@@ -27,7 +27,11 @@ dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --combat --samples 600
 dotnet run --project tools/ArkadeHeroes.Sim -c Release -- --flags --samples 40000
 ```
 
-Everything is seeded, so a finding is reproducible by quoting its seed.
+The analysis modes (`--rarity`, `--xp`, `--combat`, `--flags`, `--afford`, `--trials`) are pure and reproduce
+exactly at a given seed. The **playthrough mode does not**: it boots the real server, whose commit–reveal
+entropy is drawn independently of `--seed`, so same-seed runs differ by as much as different-seed ones.
+Measured over three runs of `--seed 7`: treasuries of 147,240 / 159,390 / 180,470 and 46 / 45 / 50 living
+heroes. Quote a playthrough number only with several seeds behind it, and treat the spread as the error bar.
 
 Personas (Grinder, Breeder, Duelist, Trader, Whale, Casual) exist so the population is not a uniform
 blob: a Trader listing heroes gives a Duelist something to buy, and a system no persona reaches shows up

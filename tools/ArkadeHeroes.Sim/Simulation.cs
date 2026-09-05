@@ -28,11 +28,13 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
 {
     private readonly Random _rng = new(seed);
     private readonly Tally _tally = new();
+    private readonly Engagement _engagement = new();
     private readonly List<Player> _players = [];
     private WebApplicationFactory<Program> _factory = null!;
     private ArkadeHeroesClient _observer = null!;
 
     public Tally Tally => _tally;
+    public Engagement Engagement => _engagement;
     public IReadOnlyList<Player> Players => _players;
 
     /// The world as it stood at the last round, captured before the host is torn down.
@@ -51,10 +53,12 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         _observer = new ArkadeHeroesClient(_factory.CreateClient());
 
         await SignUpAsync();
+        await SnapshotAsync(0);
         for (var round = 1; round <= rounds; round++)
         {
             foreach (var p in _players.OrderBy(_ => _rng.Next()))
                 await TakeTurnAsync(p, round);
+            await SnapshotAsync(round);
             if (verbose) Console.WriteLine($"  round {round}/{rounds} done");
         }
 
@@ -84,6 +88,7 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
                 player = new Player { Id = dto.PlayerId, Name = name, Persona = persona, Api = api };
                 player.StartingSats = dto.BalanceSats;
                 _players.Add(player);
+                _engagement.Persona(name, persona);
                 _tally.Record("register", Outcome.Ok);
             }
             catch (Exception ex)
@@ -148,10 +153,10 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
                 "gauntlet" => await GauntletAsync(p),
                 "trials" => await TrialsAsync(p),
                 "duel" => await DuelAsync(p, round),
-                "deathmatch" => await DeathMatchAsync(p),
+                "deathmatch" => await DeathMatchAsync(p, round),
                 "squad" => await SquadAsync(p),
-                "tournament" => await TournamentAsync(p),
-                "breed" => await BreedAsync(p),
+                "tournament" => await TournamentAsync(p, round),
+                "breed" => await BreedAsync(p, round),
                 "stud" => await StudAsync(p),
                 "merge" => await MergeAsync(p),
                 "buyitem" => await BuyItemAsync(p),
@@ -163,15 +168,39 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
                 _ => throw new InvalidOperationException($"unknown action {action}"),
             };
             _tally.Record(action, did.Ok ? Outcome.Ok : Outcome.Refused, did.Reason);
+            _engagement.Action(p.Name, round, action, did.Ok);
         }
         catch (ArkadeHeroesApiException ex)
         {
             _tally.Record(action, Outcome.Refused, ex.Message);
-            if (ex.Message.Contains("balance", StringComparison.OrdinalIgnoreCase)) p.WentBroke = true;
+            _engagement.Action(p.Name, round, action, ok: false);
+            if (ex.Message.Contains("balance", StringComparison.OrdinalIgnoreCase))
+            {
+                p.WentBroke = true;
+                _engagement.Broke(p.Name, round);
+            }
         }
         catch (Exception ex)
         {
             _tally.Record(action, Outcome.Broken, $"{ex.GetType().Name}: {ex.Message}");
+            _engagement.Action(p.Name, round, action, ok: false);
+        }
+    }
+
+    /// The round-boundary read. Uses no RNG, so an instrumented run replays a bare one exactly.
+    private async Task SnapshotAsync(int round)
+    {
+        var board = await _observer.Leaderboard.TopAsync();
+        _engagement.Board(round, board.Select(e => (e.HeroId, e.Rank, e.Name)));
+
+        foreach (var p in _players)
+        {
+            var me = await p.Api.Players.MeAsync();
+            var mine = await p.Api.Heroes.MineAsync();
+            _engagement.Take(p.Name, new Snapshot(
+                round, me.BalanceSats, mine.Count, mine.Sum(h => h.Xp),
+                mine.Count == 0 ? 0 : mine.Max(h => h.Level),
+                p.Wins, p.Losses, p.HeroesLost));
         }
     }
 
@@ -242,7 +271,7 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         return Did.Yes;
     }
 
-    private async Task<Did> DeathMatchAsync(Player p)
+    private async Task<Did> DeathMatchAsync(Player p, int round)
     {
         var mine = await PickHeroAsync(p);
         if (mine is null) return Did.No("no hero to stake");
@@ -261,7 +290,9 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         var settled = await p.Api.DeathMatch.SettleAsync(open.DeathMatchId, new DeathMatchSettleRequest(Nonce()));
         var loserOwner = settled.LoserHeroId == mine.Id ? p : defender;
         loserOwner.HeroesLost++;
-        _tally.Note($"{p.Name} death-matched {defender.Name}: {loserOwner.Name} lost a hero permanently");
+        var death = $"{p.Name} death-matched {defender.Name}: {loserOwner.Name} lost a hero permanently";
+        _tally.Note(death);
+        _engagement.Event(round, "permadeath", death);
         return Did.Yes;
     }
 
@@ -292,7 +323,7 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         return Did.Yes;
     }
 
-    private async Task<Did> TournamentAsync(Player p)
+    private async Task<Did> TournamentAsync(Player p, int round)
     {
         var hero = await PickHeroAsync(p);
         if (hero is null) return Did.No("no hero to enter");
@@ -313,11 +344,13 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         if (now.Joined < now.Size) return Did.Yes;
         var opener = _players.First(x => x.Id == now.OpenerPlayerId);
         var resolved = await opener.Api.Tournament.ResolveAsync(now.Id, new FightRequest(Nonce()));
-        _tally.Note($"tournament {now.Id[..8]} resolved: prizes {string.Join("/", resolved.Prizes)} sats");
+        var line = $"tournament {now.Id[..8]} resolved: prizes {string.Join("/", resolved.Prizes)} sats";
+        _tally.Note(line);
+        _engagement.Event(round, "tournament", line);
         return Did.Yes;
     }
 
-    private async Task<Did> BreedAsync(Player p)
+    private async Task<Did> BreedAsync(Player p, int round)
     {
         var mine = (await p.Api.Heroes.MineAsync())
             .Where(h => !h.IsSterile && (h.BreedCooldownUntil is null || h.BreedCooldownUntil <= DateTimeOffset.UtcNow))
@@ -330,7 +363,11 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         if (commit.Invoice is { } inv) await Pay(p, inv.InvoiceId);
         var reveal = await p.Api.Breeding.RevealAsync(commit.BreedingId, new BreedRevealRequest(Nonce()));
         if (reveal.Hero.Rarity?.Tier is "Legendary" or "Epic")
-            _tally.Note($"{p.Name} bred a {reveal.Hero.Rarity!.Tier}: {reveal.Hero.Name}");
+        {
+            var born = $"{p.Name} bred a {reveal.Hero.Rarity!.Tier}: {reveal.Hero.Name}";
+            _tally.Note(born);
+            _engagement.Event(round, "rare-birth", born);
+        }
         return Did.Yes;
     }
 

@@ -47,18 +47,19 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 - **Assets**: heroes and item units sit in player wallets from mint onward; the server's treasury signs only its own outputs (mints, payouts).
 - **Payments**: fees and stakes are paid *by the client's wallet* to per-session treasury invoice addresses; the server verifies receipt on-chain — it cannot spend player funds because it never can.
 - **Progression**: derived from commit–reveal-verifiable events whose proofs the player holds (receipts now, XP-asset deliveries next) — portable across servers, recomputable by anyone.
-- **Fairness**: every rule lives in `contracts/*.ark`; enforcement migrates from server-refusal to emulator co-signing per the roadmap below, and the deterministic derivations (genome mixing, battle replay) are the same bytes in both regimes.
+- **Fairness**: every rule is a covenant leaf; enforcement migrates from server-refusal to emulator co-signing per the roadmap below, and the deterministic derivations (genome mixing, battle replay) are the same bytes in both regimes.
 - **Deprecated**: the custodial player-wallet mode (server-held HD wallets) is scheduled for removal once the self-custody client lands; it must not grow new features.
 
-**The covenants in `contracts/*.ark` are the authoritative rules of the game.** Every mechanic is specified as an Arkade Script covenant over a concrete transaction shape; the running server is an *executor* of those shapes, not the definition of them. Migrating a mechanic to covenant enforcement swaps who refuses an invalid transaction (the emulator's tweaked-key signature instead of server policy) — the transactions, asset structures, and derivations do not change.
+**The covenant leaves are the authoritative rules of the game**, and the running server is an *executor* of the shapes they pin, not the definition of them. Migrating a mechanic to covenant enforcement swaps who refuses an invalid transaction (the emulator's tweaked-key signature instead of server policy) — the transactions, asset structures, and derivations do not change. Note that "the covenant leaves" is **not** the same set as `contracts/*.ark`: three live escrow families (merge, the death-match joint escrow, the marketplace fee leg) were authored straight to bytecode with no `.ark` source, and where a source exists the runtime has drifted from it. `contracts/README.md` enumerates both gaps; read the C# in `Chain/Covenants/` for what is actually enforced.
 
-| Mechanic | Covenant (contracts/) | Transaction shape (live today) | Enforcement today | Covenant gap |
+| Mechanic | Covenant (contracts/) | Transaction shape (live today) | Enforcement today | Remaining gap |
 |---|---|---|---|---|
-| Hero identity | `arkade_heroes.ark` | asset amount 1, species-controlled, genome+provenance in genesis metadata | on-chain (structure) + server issuance | compile + tapleaf binding |
-| Breeding | `arkade_heroes.breed` | parents retained (Δ0) + control retained (Δ0) + child fresh-minted (Δ1) with derived genome | server executes; commit–reveal audited client-side | emulator co-signing + oracle sig |
-| Transfer | `arkade_heroes.transfer` | Δ0 asset move to recipient's VTXO | on-chain (asset move) via server wallets | owner-key spend path |
-| Wagered match | `wager_escrow.ark` | two stake VTXOs → atomic sweep to winner; time-locked forfeit/refund | treasury escrow + on-chain payout | escrow taptree + emulator packet |
-| Item sales | `item_offer.ark` | pay-seller-in-same-tx for one asset unit | server delivers after fee payment | offer VTXO (banco pattern) |
+| Hero identity | `arkade_heroes.ark` | asset amount 1, species-controlled, genome+provenance in genesis metadata | on-chain (structure) + server issuance | the `.ark` source is not the runtime artifact — see `contracts/README.md` |
+| Breeding | `arkade_heroes.breed` | parents retained (Δ0) + control retained (Δ0) + child fresh-minted (Δ1) with derived genome | **covenant** when `mode == "covenant"` — the `breed` leaf is `ArkadeCovenants.BreedRetainAuthorized`, emulator co-signed; commit–reveal still audited client-side | `BreedCommitRequest.Mode` still DEFAULTS to `"invoice"` (`Shared/Dtos.cs:192`), so an API caller that doesn't ask gets the legacy treasury-mint path. The web client always asks |
+| Transfer | `arkade_heroes.transfer` | Δ0 asset move to recipient's VTXO | client-signed from the owner's OWN wallet; the server only verifies the chain shows the recipient holding it (`VerifyHeroOwnershipAsync`) | none — an owner spending their own asset needs no covenant |
+| Wagered match | `wager_escrow.ark` | per-party stake VTXOs → oracle-authorized sweep of both to the winner; timelocked per-party refund | **covenant** — `Chain/Covenants/WagerEscrowContracts.cs`, emulator-settled | the live taptree diverges from the source: no `forfeitTo*` leaf, and its `refund` requires no party signature |
+| Marketplace sales (items + heroes) | `item_offer.ark` | resting offer VTXO; any buyer pays the ask from their own wallet in the same tx | **covenant** — `fulfill`/`reclaim` leaves (`OfferContracts`); the treasury's cut is a second payout the same leaf pins, not a step anyone has to be trusted to take | live `fulfill` drops the source's `itemGroup.delta == 0` and residual re-lock. Hero *bids* (buyer-initiated, unlisted heroes) still route through a treasury invoice |
+| Item shop (catalog) | — none written | fee invoice → treasury issues and sends one fungible unit | server delivers after fee payment | no covenant at all; the resting-offer shape above is the obvious one to reuse |
 
 **Invariants that keep every mode covenant-compatible** (enforced by tests):
 1. All randomness is commit–reveal (`SHA256(serverSeed)` published before player nonces) and all derivations are pure functions — `GeneMixer.Mix` is byte-compatible with the design-doc `mixGenomes`, `BattleEngine.Fight` replays from the match seed.
@@ -68,6 +69,10 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 
 **Covenant plumbing is the SDK's** (2026-09-05): the `ArkScriptHash` tagged-hash tweak, the Emulator Packet and the emulator REST client now come from **`NArk.Arkade`** (`ArkadeTweak`, `EmulatorPacket`, `EmulatorClient`), and the game's own copies were deleted after being proven byte-identical. What stays in `src/ArkadeHeroes.Chain/Covenants/` is the composition on top: the covenant bytecode builders (`ArkadeCovenants`), the per-contract leaves (`ArkadeArtifactContract`), the spend pipeline (`CovenantSpender`) and the per-mechanic escrow/refund flows. The regtest emulator is probed at startup and its signer key is surfaced through `/api/chain/info`, so clients can compute covenant keys themselves.
 
+**What "covenant-enforced" actually means here.** Arkade Script opcodes are **not enforced by Bitcoin consensus**. Every leaf we build is an ordinary two-key multisig — `<tweak(emulatorKey, script)> OP_CHECKSIGVERIFY <operatorKey> OP_CHECKSIG` (`Chain/Covenants/ArkadeArtifactContract.cs`) — and the script itself rides an OP_RETURN Emulator Packet, where the **emulator** executes it and signs only if the predicate holds. The SDK is explicit about this: `ArkadeProgramCompiler` refuses an Arkade opcode in the tapscript segment as "not enforceable on-chain" (they are `OP_SUCCESS` there). So migrating a mechanic to a covenant does not make cheating impossible at the consensus layer. It moves the trusted party from *the game server* to *the emulator and the operator jointly*, and it turns the rule from private server policy into a deterministic script that any player can rebuild byte-for-byte from published parameters and read for themselves. That is a real security gain — a party with no stake in the outcome refuses the cheat, and the check is public — and it is not the same claim as consensus enforcement.
+
+**No covenant in the game has a unilateral exit leaf.** `ArkadeArtifactContract.GetScriptBuilders()` emits only collaborative leaves, every one ending `<operatorKey> OP_CHECKSIG` — compare the SDK's own `ArkPaymentContract`, which pairs a collaborative path with a CSV-delayed unilateral one. The timelocked refunds below are trustless of the *oracle, the counterparty and the game server*, but not of the operator: an operator that stops co-signing strands every escrowed stake, item and hero. This is a **liveness** assumption, not a theft hole — the operator alone cannot move anything either, because each leaf also needs the emulator's signature over a passing script — but it is the largest unstated assumption in the model, and closing it means adding an exit leaf to each contract.
+
 ### v1 execution mode — real assets, server-executed shapes
 
 - **Hero = Arkade asset, amount 1**, minted via NArk `AssetManager.IssueAsync` with `Metadata = { genome, generation, parentA, parentB, serverSeed, nonce }` and `ControlAssetId` = the **species control asset** the game server mints once at first boot (the ArkadeKitties species-gate concept).
@@ -75,8 +80,8 @@ Deterministic auto-battler (`BattleEngine.Fight(a, b, matchSeed)`): initiative b
 - **Ownership**: the player's Arkade address holds the VTXO carrying the hero asset. Mint delivers the asset to the player; trades are plain asset spends.
 - **Payments**: breeding fees / item purchases are Arkade transactions (sats) from player wallet to the game treasury address.
 - **Transfers**: heroes move between players as plain asset spends (`POST /api/heroes/{id}/transfer`, client `transfer`).
-- **Wagered matches**: open → accept → duel. Both sides escrow their stake with the treasury (real Arkade transactions); the winner's owner is paid the pot on resolution. This is the server-escrow stepping stone to the coinflip-style covenant escrow (`atomicSweep`) in v2.
-- **Server wallet**: NArk `InMemoryWalletProvider` (EF Core later), funded on regtest via `arkd note`.
+- **Wagered matches**: open → accept → duel. This describes the legacy `"invoice"` mode only: both sides escrow their stake with the treasury (real Arkade transactions) and the winner's owner is paid the pot on resolution. `"covenant"` mode is live and is what the web client opens its wagered duels and squad matches in — each side stakes into its OWN escrow contract and the emulator settles the oracle-authorized branch (`Chain/Covenants/WagerEscrowContracts.cs`); see the trust model below.
+- **Server wallet**: NArk over EF Core (`Chain/NArk/`: `GameArkDbContext`, `AddArkEfCoreStorage`, wallet secrets at rest behind `EncryptingWalletStorage`), funded on regtest via `arkd note`.
 - The game DB caches hero state for matchmaking/progression; the chain is authoritative for existence + ownership.
 
 ### Covenant activation roadmap (contracts are written; this is the wiring order)
@@ -106,7 +111,7 @@ ArkadeHeroes.Client (console)      ArkadeHeroes.Web (Blazor WASM + in-browser wa
         │                                   └── NArkChainService → arkd :7070 (regtest denigiri)
 ```
 
-Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile ark` (add `emulator` when covenant work starts).
+Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile ark --profile emulator`. The emulator is no longer optional — every covenant path (breed, merge, wager, death-match, offers) needs it to co-sign, and CI brings up both profiles.
 
 ## 4. Trust model summary
 
@@ -114,8 +119,10 @@ Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile 
 |---|---|---|
 | Hero existence/ownership | on-chain (Arkade asset, player wallet) | same |
 | Genome derivation | server, commit–reveal auditable + client-recomputed | covenant + oracle/VRF |
-| Match outcome | server, commit–reveal auditable + client-replayable | covenant escrow, emulator-enforced |
+| Match outcome | server-computed, commit–reveal auditable + client-replayable. **Staked matches settle through the covenant escrow — emulator-enforced, not a treasury payout** (see Fees/wagers); the server's role is to relay the oracle signature for the branch the replay already proves | oracle replaced by in-script derivation + VRF entropy |
 | Progression (XP/levels) | **signed receipts, player-held, replayable by anyone** (`ReceiptVerifier`; server DB is a cache) | + XP as on-chain asset deliveries |
 | Fees/wagers | client-paid invoices, on-chain verified; **wagered matches offer covenant mode: per-match escrow (seed commitment baked in), player-staked, emulator-settled — live in the game flow**; settle branches are **oracle-authorized** (per-branch CHECKSIGFROMSTACK message signed by the game key) | + oracle messages derived from receipts |
 | Wager liveness (abandoned match) | **per-party escrows with timelocked refund leaves — after expiry the staker reclaims with no oracle, no counterparty, no server** (CLTV tapleaf; submit-once after chain time passes expiry — see contracts/README timelock invariants). **Player-facing: client `refund <matchId>` rebuilds the contracts locally from server-published params and spends from the player's own wallet** | watchtower-friendly pre-built claims |
 | Custody | player self-custody of heroes + funds (embedded wallet) | same, plus unilateral exit |
+| Covenant liveness | **no covenant leaf has a unilateral exit** — every leaf ends `<operatorKey> OP_CHECKSIG`, so an operator that refuses to co-sign strands anything sitting in an escrow (stake, item, hero). Neither operator nor emulator can move it alone, so this is liveness, not theft | a CSV exit leaf on each contract, as `ArkPaymentContract` has |
+| Rule enforcement | **the emulator, not Bitcoin consensus** — Arkade Script rides an OP_RETURN packet and the emulator signs only a passing script; the tapleaf itself is a plain 2-key multisig | unchanged until the opcodes are consensus-enforced; the gain is that the rule is public and byte-pinned |
