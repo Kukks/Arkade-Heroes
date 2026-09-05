@@ -95,6 +95,7 @@ internal static class SimMain
 
         Console.WriteLine(sim.Tally.Render());
         Console.WriteLine(RenderWorld(sim, sim.Economy, sim.Heroes, sim.Board));
+        Console.WriteLine(sim.Engagement.Render(rounds));
         Console.WriteLine($"(elapsed {(DateTimeOffset.UtcNow - startedAt).TotalSeconds:F1}s)");
         return 0;
     }
