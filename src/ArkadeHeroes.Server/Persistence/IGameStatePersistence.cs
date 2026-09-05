@@ -73,6 +73,17 @@ public interface IGameStatePersistence
     /// <summary>Drops a gauntlet once it has been run, so one fee buys exactly one run.</summary>
     Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default);
 
+    /// <summary>An unfinished breeding. In covenant mode its escrow holds both parents, and /reclaim can
+    /// only name it while this row exists.</summary>
+    Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default);
+
+    /// <summary>An unfinished fusion — same reason, holding base and sacrifice.</summary>
+    Task SaveMergeAsync(MergeSession session, CancellationToken ct = default);
+
+    /// <summary>Drops a breeding or fusion once it resolves; the escrow is spent and there is nothing left
+    /// to reclaim.</summary>
+    Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default);
+
     /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
     /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
     /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
@@ -115,6 +126,9 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task DeleteRenameAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
@@ -342,6 +356,29 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
                 ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
                 FeeInvoiceId = row.FeeInvoiceId, FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
             };
+
+        // Breedings and fusions come back so /reclaim can still NAME the escrow holding two of the
+        // player's heroes. Rows are deleted when the flow resolves, so anything here is unfinished.
+        foreach (var row in await db.EscrowSessions.AsNoTracking().ToListAsync(ct))
+        {
+            if (row.Kind == "breed")
+                store.Breedings[row.Id] = new BreedingSession
+                {
+                    Id = row.Id, PlayerId = row.PlayerId,
+                    ParentAId = row.FirstHeroId, ParentBId = row.SecondHeroId,
+                    ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex, Mode = row.Mode,
+                    FeeInvoiceId = row.FeeInvoiceId, EscrowAddress = row.EscrowAddress,
+                    FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
+                };
+            else
+                store.Merges[row.Id] = new MergeSession
+                {
+                    Id = row.Id, PlayerId = row.PlayerId,
+                    BaseId = row.FirstHeroId, SacrificeId = row.SecondHeroId,
+                    ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex, Mode = row.Mode,
+                    EscrowAddress = row.EscrowAddress, FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
+                };
+        }
 
         // Tombstones come back UNFILTERED, exactly as sales do and for the same reason: a headstone is a
         // historical fact, not a live position. It holds nothing and gates nothing, and it is the ONLY
@@ -876,6 +913,47 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         if (await db.Gauntlets.FindAsync([gauntletId], ct) is { } row)
         {
             db.Gauntlets.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default) =>
+        UpsertEscrowAsync(session.Id, "breed", session.PlayerId, session.ParentAId, session.ParentBId,
+            session.ServerSeed, session.CommitmentHex, session.Mode, session.FeeInvoiceId,
+            session.EscrowAddress, session.FeeSats, session.CreatedAt, ct);
+
+    public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default) =>
+        UpsertEscrowAsync(session.Id, "merge", session.PlayerId, session.BaseId, session.SacrificeId,
+            session.ServerSeed, session.CommitmentHex, session.Mode, feeInvoiceId: null,
+            session.EscrowAddress, session.FeeSats, session.CreatedAt, ct);
+
+    /// <summary>The ESCROW ADDRESS is the one field that moves after the row is written — it is assigned
+    /// once the contract is built — so it is the only thing an existing row updates.</summary>
+    private async Task UpsertEscrowAsync(
+        string id, string kind, string playerId, string firstHeroId, string secondHeroId,
+        byte[] serverSeed, string commitmentHex, string mode, string? feeInvoiceId,
+        string? escrowAddress, long feeSats, DateTimeOffset createdAt, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.EscrowSessions.FindAsync([id], ct) is { } row) row.EscrowAddress = escrowAddress;
+        else
+            db.EscrowSessions.Add(new PersistedEscrowSession
+            {
+                Id = id, Kind = kind, PlayerId = playerId,
+                FirstHeroId = firstHeroId, SecondHeroId = secondHeroId,
+                ServerSeed = serverSeed, CommitmentHex = commitmentHex, Mode = mode,
+                FeeInvoiceId = feeInvoiceId, EscrowAddress = escrowAddress,
+                FeeSats = feeSats, CreatedAt = createdAt,
+            });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.EscrowSessions.FindAsync([sessionId], ct) is { } row)
+        {
+            db.EscrowSessions.Remove(row);
             await db.SaveChangesAsync(ct);
         }
     }

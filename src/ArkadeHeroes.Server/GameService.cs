@@ -1561,6 +1561,9 @@ public class GameService(
                 Mode = "covenant", EscrowAddress = escrow.EscrowAddress, FeeSats = breedFee,
             };
             store.Breedings[covenantSession.Id] = covenantSession;
+            // Durable before the player deposits anything: /reclaim can only NAME this escrow — which will
+            // hold both parents and the fee — while a session row exists to name it by.
+            await persistence.SaveBreedingAsync(covenantSession, ct);
             await AuditAsync(Persistence.AuditEventType.BreedCommitted, player.Id,
                 [covenantSession.Id, parentAId, parentBId],
                 new
@@ -1586,6 +1589,8 @@ public class GameService(
             FeeSats = breedFee,
         };
         store.Breedings[session.Id] = session;
+        // Durable BEFORE the invoice reaches the player, as every other billed session is.
+        await persistence.SaveBreedingAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.BreedCommitted, player.Id,
             [session.Id, parentAId, parentBId],
             new
@@ -1632,11 +1637,26 @@ public class GameService(
         if (BreedingService.Validate(parentA, parentB, now) is { } error)
             throw new GameRuleException(error);
 
+        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
+
+        // Invoice mode has no spent escrow to refuse a second reveal with, and a paid invoice reads paid
+        // forever — so the CHILD is the latch: a hero already carrying this session's seed was minted by an
+        // earlier reveal a crash cut off before it dropped the row.
+        //
+        // Found BEFORE the outcome is derived, because its recorded nonce is the CANONICAL one. Deriving
+        // from the retry's nonce instead would hand back the original child under a receipt for one nonce
+        // while applying parent cooldowns selected by another — cooldowns the retrying caller would then be
+        // choosing. A retry's nonce is ignored here, never rejected: refusing would throw before the row is
+        // dropped and the zombie session would rehydrate on every restart, forever.
+        var alreadyMinted = session.Mode == "covenant"
+            ? null
+            : store.Heroes.Values.FirstOrDefault(h => h.ServerSeedHex == serverSeedHex);
+        if (alreadyMinted?.PlayerNonce is { } mintedNonce) nonce = mintedNonce;
+
         var entropy = CommitReveal.DeriveEntropy(session.ServerSeed, session.ParentAId, session.ParentBId, nonce);
         var policy = new BreedingPolicy(_options.BreedingCooldownBaseUnit);
         var outcome = BreedingService.Breed(parentA, parentB, entropy, policy, _config);
 
-        var serverSeedHex = Convert.ToHexString(session.ServerSeed).ToLowerInvariant();
         var entropyHex = Convert.ToHexString(entropy).ToLowerInvariant();
 
         Hero child;
@@ -1658,6 +1678,12 @@ public class GameService(
             // Covenant mode: the spend delivered FeeSats to the treasury fee output — tally it (dedup by session id).
             await store.RecordInflowAsync(session.Id, "breed", session.FeeSats, ct);
         }
+        // Hand the earlier reveal's child back, never a second. Its nonce is already in force above, so the
+        // receipt, the entropy and the cooldowns below all agree with the hero actually delivered.
+        else if (alreadyMinted is not null)
+        {
+            child = alreadyMinted;
+        }
         else
         {
             child = await MintHeroAsync(player, outcome.ChildGenome, outcome.ChildGeneration,
@@ -1667,6 +1693,9 @@ public class GameService(
         // faults, the session stays open and the parents untouched, so the already-paid fee can be
         // retried instead of stranded behind a Completed flag and a burned cooldown.
         session.Completed = true;
+        // Dropped only once the chain half has landed, matching that ordering: a crash between the two
+        // rehydrates a session whose escrow is already spent, which /reclaim simply finds nothing for.
+        await persistence.DeleteEscrowSessionAsync(session.Id, ct);
         parentA.BreedCount++;
         parentA.BreedCooldownUntil = now + outcome.ParentACooldown;
         parentB.BreedCount++;
@@ -2337,6 +2366,9 @@ public class GameService(
             Mode = mode, EscrowAddress = escrow, FeeSats = _options.MergeFeeSats,
         };
         store.Merges[session.Id] = session;
+        // Same reason as the breed above: the escrow holds base and sacrifice, and /reclaim finds it
+        // through this row.
+        await persistence.SaveMergeAsync(session, ct);
         await AuditAsync(Persistence.AuditEventType.MergeCommitted, player.Id, [session.Id, baseId, sacrificeId],
             new
             {
@@ -2394,6 +2426,9 @@ public class GameService(
         // execute faults, the session stays open and the inputs untouched, so the deposited base +
         // sacrifice + fee can be retried instead of stranded in escrow behind a Completed flag.
         session.Completed = true;
+        // Dropped only once the chain half has landed, matching that ordering: a crash between the two
+        // rehydrates a session whose escrow is already spent, which /reclaim simply finds nothing for.
+        await persistence.DeleteEscrowSessionAsync(session.Id, ct);
         // The fused hero inherits the base's level (you keep your progression); its genesis
         // level is attested by the merge receipt below so ReplayLevel stays consistent.
         fused.Level = baseHero.Level;

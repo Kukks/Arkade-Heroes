@@ -150,6 +150,12 @@ public class DailyDurabilityGuardTests
             => processDied() ? Task.CompletedTask : inner.SaveGauntletAsync(session, ct);
         public Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.DeleteGauntletAsync(gauntletId, ct);
+        public Task SaveBreedingAsync(BreedingSession session, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveBreedingAsync(session, ct);
+        public Task SaveMergeAsync(MergeSession session, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.SaveMergeAsync(session, ct);
+        public Task DeleteEscrowSessionAsync(string sessionId, CancellationToken ct = default)
+            => processDied() ? Task.CompletedTask : inner.DeleteEscrowSessionAsync(sessionId, ct);
         public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default)
             => processDied() ? Task.CompletedTask : inner.SaveHeroSaleAsync(sale, ct);
         public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default)
