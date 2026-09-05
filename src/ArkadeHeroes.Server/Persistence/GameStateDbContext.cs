@@ -187,6 +187,28 @@ public class PersistedHero
 }
 
 /// <summary>
+/// A gauntlet run the player has PAID for but not yet taken. Durable for the same reason the rename and
+/// the starter claim are: the fee clears before the run happens, so a restart inside that window loses a
+/// run the player has already bought — and unlike those two there is no reuse branch to soften it, because
+/// opening a second gauntlet bills a second fee outright.
+///
+/// <para>Completed rows are dropped rather than flagged: a run happens exactly once, so anything still
+/// here is by definition unspent, and rehydrating a finished one would hand a stale client a second run
+/// off one fee.</para>
+/// </summary>
+public class PersistedGauntletSession
+{
+    public required string Id { get; set; }
+    public required string PlayerId { get; set; }
+    public required string HeroId { get; set; }
+    public required byte[] ServerSeed { get; set; }
+    public required string CommitmentHex { get; set; }
+    public required string FeeInvoiceId { get; set; }
+    public required long FeeSats { get; set; }
+    public required DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
 /// A rename the player has been BILLED for but has not yet confirmed. Durable for exactly the reason
 /// <c>Player.StarterFeeInvoiceId</c> is: the fee is paid with real sats BEFORE the name is applied, so a
 /// restart inside that window must not forget it — otherwise the next request bills a second time for a
@@ -396,6 +418,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
     public DbSet<PersistedOffer> Offers => Set<PersistedOffer>();
     public DbSet<PersistedStudProposal> StudProposals => Set<PersistedStudProposal>();
     public DbSet<PersistedRenameSession> Renames => Set<PersistedRenameSession>();
+    public DbSet<PersistedGauntletSession> Gauntlets => Set<PersistedGauntletSession>();
     public DbSet<PersistedHeroSale> HeroSales => Set<PersistedHeroSale>();
     public DbSet<PersistedHeroTombstone> HeroTombstones => Set<PersistedHeroTombstone>();
     public DbSet<PersistedHeroBid> HeroBids => Set<PersistedHeroBid>();
@@ -416,6 +439,7 @@ public class GameStateDbContext(DbContextOptions<GameStateDbContext> options) : 
         modelBuilder.Entity<PersistedStudProposal>().HasKey(x => x.Id);
         // Keyed by the HERO: one pending rename per hero, so re-requesting overwrites rather than piling up.
         modelBuilder.Entity<PersistedRenameSession>().HasKey(x => x.HeroId);
+        modelBuilder.Entity<PersistedGauntletSession>().HasKey(x => x.Id);
         // Keyed by the OFFER, not a surrogate: one offer settles at most one sale, so the key IS the
         // "already recorded" set and the second prover of the same sale writes nothing.
         modelBuilder.Entity<PersistedHeroSale>().HasKey(x => x.OfferId);

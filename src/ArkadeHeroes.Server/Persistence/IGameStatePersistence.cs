@@ -67,6 +67,12 @@ public interface IGameStatePersistence
     /// name is applied — the same "one paid fee buys one APPLIED rename" rule the in-memory session had.</summary>
     Task DeleteRenameAsync(string heroId, CancellationToken ct = default);
 
+    /// <summary>A gauntlet billed but not yet run. Saved BEFORE the invoice reaches the player.</summary>
+    Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default);
+
+    /// <summary>Drops a gauntlet once it has been run, so one fee buys exactly one run.</summary>
+    Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default);
+
     /// <summary>Durably record one completed hero sale — what a hero fetched, and between whom. Keyed by the
     /// offer that settled it, so the two paths that can prove the same sale write the same row and the second
     /// only ever fills in a buyer the first did not know. Books no sats and gates nothing: a lost row costs a
@@ -107,6 +113,8 @@ public sealed class NullGameStatePersistence : IGameStatePersistence
     public Task SaveStudProposalAsync(StudProposal proposal, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveRenameAsync(RenameSession session, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteRenameAsync(string heroId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default) => Task.CompletedTask;
+    public Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroSaleAsync(HeroSale sale, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroTombstoneAsync(HeroTombstone stone, CancellationToken ct = default) => Task.CompletedTask;
     public Task SaveHeroBidAsync(HeroBid bid, CancellationToken ct = default) => Task.CompletedTask;
@@ -322,6 +330,17 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
             store.Renames[row.HeroId] = new RenameSession
             {
                 HeroId = row.HeroId, NewName = row.NewName, FeeInvoiceId = row.FeeInvoiceId,
+            };
+
+        // Gauntlets come back because the fee clears BEFORE the run. Losing one cost the player the fee
+        // outright: there is no reuse branch here, so opening another simply bills again. Rows are deleted
+        // when a run completes, so anything still here is unspent by construction.
+        foreach (var row in await db.Gauntlets.AsNoTracking().ToListAsync(ct))
+            store.Gauntlets[row.Id] = new GauntletSession
+            {
+                Id = row.Id, PlayerId = row.PlayerId, HeroId = row.HeroId,
+                ServerSeed = row.ServerSeed, CommitmentHex = row.CommitmentHex,
+                FeeInvoiceId = row.FeeInvoiceId, FeeSats = row.FeeSats, CreatedAt = row.CreatedAt,
             };
 
         // Tombstones come back UNFILTERED, exactly as sales do and for the same reason: a headstone is a
@@ -834,6 +853,29 @@ public sealed class SqliteGameStatePersistence(IDbContextFactory<GameStateDbCont
         if (await db.Renames.FindAsync([heroId], ct) is { } row)
         {
             db.Renames.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    public async Task SaveGauntletAsync(GauntletSession session, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.Gauntlets.FindAsync([session.Id], ct) is not null) return;   // immutable once opened
+        db.Gauntlets.Add(new PersistedGauntletSession
+        {
+            Id = session.Id, PlayerId = session.PlayerId, HeroId = session.HeroId,
+            ServerSeed = session.ServerSeed, CommitmentHex = session.CommitmentHex,
+            FeeInvoiceId = session.FeeInvoiceId, FeeSats = session.FeeSats, CreatedAt = session.CreatedAt,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteGauntletAsync(string gauntletId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        if (await db.Gauntlets.FindAsync([gauntletId], ct) is { } row)
+        {
+            db.Gauntlets.Remove(row);
             await db.SaveChangesAsync(ct);
         }
     }
