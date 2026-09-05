@@ -189,7 +189,7 @@ public class FixtureGenomeTests
         ctx.Api.Get($"/api/heroes/{HeroId}/timeline", new HeroTimelineDto(HeroId, [], Complete: true, null));
         ctx.Api.Get("/api/bids", Array.Empty<BidDto>());
         ctx.Api.Get("/api/items", Array.Empty<ItemDto>());
-        ctx.Api.Get("/api/items/mine", Array.Empty<string>());
+        ctx.Api.Get("/api/items/mine", new Dictionary<string, long>());
         return ctx;
     }
 }

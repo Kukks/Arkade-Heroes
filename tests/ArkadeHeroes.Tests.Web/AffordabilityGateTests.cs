@@ -43,7 +43,7 @@ public class AffordabilityGateTests
         var ctx = new PageTestContext();
         ctx.SignIn(balanceSats: balanceSats);
         ctx.Api.Get("/api/items", new[] { Sabre });
-        ctx.Api.Get("/api/items/mine", Array.Empty<string>());
+        ctx.Api.Get("/api/items/mine", new Dictionary<string, long>());
         return ctx;
     }
 

@@ -939,7 +939,7 @@ api.MapGet("/items", () => Results.Ok(ItemCatalog.All.Select(i => i.ToDto()).ToL
 api.MapGet("/items/mine", async (HttpContext http, GameService game, CancellationToken ct) =>
 {
     var player = game.Authenticate(BearerToken(http));
-    return Results.Ok(await game.OwnedItemIdsAsync(player, ct));
+    return Results.Ok(await game.OwnedItemUnitsAsync(player, ct));
 });
 
 api.MapPost("/items/{itemId}/buy", async (string itemId, HttpContext http, GameService game, CancellationToken ct) =>

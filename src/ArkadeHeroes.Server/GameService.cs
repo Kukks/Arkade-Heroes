@@ -3624,12 +3624,16 @@ public class GameService(
     /// as owned. Ownership is on-chain (the same balance the equip check reads), so it survives
     /// across sessions with no server-side inventory bookkeeping.
     /// </summary>
-    public async Task<List<string>> OwnedItemIdsAsync(Player player, CancellationToken ct)
+    /// <summary>How many units of each catalogue item the player holds. The COUNT is what a client needs:
+    /// gear is allocated per hero, so "owned" alone cannot answer whether a second hero can be armed.</summary>
+    public async Task<Dictionary<string, long>> OwnedItemUnitsAsync(Player player, CancellationToken ct)
     {
-        var owned = new List<string>();
+        var owned = new Dictionary<string, long>();
         foreach (var item in Core.Equipment.ItemCatalog.All)
-            if (await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct) > 0)
-                owned.Add(item.Id);
+        {
+            var units = await chain.GetItemAssetBalanceAsync(player.Id, item.Id, ct);
+            if (units > 0) owned[item.Id] = (long)units;
+        }
         return owned;
     }
 
@@ -3654,7 +3658,8 @@ public class GameService(
         var alreadyOnTargetSlot = hero.Equipment.Slots.TryGetValue(item.Slot, out var current) && current == item.Id;
         if (!alreadyOnTargetSlot && (ulong)unitsAllocated >= unitsHeld)
             throw new GameRuleException(
-                $"You hold {unitsHeld} unit(s) of {item.Name} and {unitsAllocated} are already equipped — buy another with 'buy {item.Id}'.");
+                $"You hold {unitsHeld} unit(s) of {item.Name} and {unitsAllocated} are already equipped on your "
+                + "other heroes — buy another to arm this one.");
 
         var displaced = current;   // whatever this slot held before, if anything
         hero.Equipment.Equip(item);
