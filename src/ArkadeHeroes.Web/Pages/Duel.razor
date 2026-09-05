@@ -83,10 +83,17 @@ else
                     @foreach (var o in _opponents)
                     {
                         var freeShot = o.Favor == "underdog" && o.XpIfYouLose == 0;
+                        @* Two heroes holding no XP can move none between them, while the wager and fee are
+                           charged all the same — and in a young arena that is most pairings. *@
+                        var noXpAtStake = o.XpIfYouWin == 0 && o.XpIfYouLose == 0;
                         <button class="oppcard @(o.Hero.Id == _oppId ? "sel" : "")" @onclick="() => _oppId = o.Hero.Id">
                             <div class="oppcard-head">
                                 <b>@o.Hero.Name</b>
                                 <span class="chip @(freeShot ? "ok" : "")">@(freeShot ? "free shot" : o.Favor)</span>
+                                @if (noXpAtStake)
+                                {
+                                    <span class="chip" title="Neither hero holds XP, so none can change hands — the wager and fee still apply.">no xp at stake</span>
+                                }
                             </div>
                             <div class="mono oppcard-stats">
                                 @* Parens are load-bearing: a bare L@o.Hero.Level trips Razor's email-address

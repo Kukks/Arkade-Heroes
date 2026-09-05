@@ -271,6 +271,27 @@ public class OpponentGuidanceTests
         Assert.Equal("underdog", Chip(card));
     }
 
+    /// <summary>Roughly 80% of staked duels in a young arena, measured across three playthrough seeds.</summary>
+    [Fact]
+    public void Duel_AFightThatCanMoveNoXpSaysSo()
+    {
+        using var ctx = DuelArena(Suggest(PeerSquad[0], 300, 2, "even", xpIfWin: 0, xpIfLose: 0));
+
+        var card = PickedOpponentCard(ctx.Render<Duel>(), "Direbloom");
+
+        Assert.Contains("no xp at stake", card.TextContent);
+    }
+
+    [Fact]
+    public void Duel_AFightWithXpToWinIsNotBadgedThatWay()
+    {
+        using var ctx = DuelArena(Suggest(PeerSquad[0], 300, 2, "even", xpIfWin: 40, xpIfLose: 0));
+
+        var card = PickedOpponentCard(ctx.Render<Duel>(), "Direbloom");
+
+        Assert.DoesNotContain("no xp at stake", card.TextContent);
+    }
+
     [Fact]
     public void DeathMatch_AnOpponentCardCarriesPowerAndFavourBeforeAHeroIsStakedToTheDeath()
     {
