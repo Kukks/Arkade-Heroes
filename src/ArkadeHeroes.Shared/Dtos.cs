@@ -93,7 +93,12 @@ public record HeroDto(
     ProvenanceDto? Provenance,
     RarityDto? Rarity = null,
     bool IsSterile = false,
-    string? FancyTitle = null);
+    string? FancyTitle = null,
+    /// <summary>When this hero may next enter the gauntlet. The server has always enforced this and
+    /// persisted it, but never sent it — so a client could only discover a resting hero by pressing Run
+    /// and taking the refusal. <see cref="BreedCooldownUntil"/> has always been here; this is its
+    /// missing twin. Trailing and defaulted, so an older client still deserializes.</summary>
+    DateTimeOffset? GauntletCooldownUntil = null);
 
 public record StarterResponse(IReadOnlyList<HeroDto> Heroes);
 
