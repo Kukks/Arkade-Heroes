@@ -87,9 +87,10 @@ public class GameOptions
     /// It is enforced by the offer's own COVENANT, not billed at listing: a buyer pays the ask, and the
     /// fulfil leaf splits it — seller gets ask − fee, treasury gets fee. So the SELLER absorbs it, listing
     /// costs nothing up front, an offer that never sells is never charged, and neither the seller nor the
-    /// server can skip the cut. Raising this reduces what a seller nets at a given ask; it does not deter
-    /// listing, because listing is free. An ask at or below this value is refused outright (the seller's
-    /// payout would be non-positive and the covenant could not be built).
+    /// server can skip the cut. An ask at or below this value is refused outright (the seller's payout would
+    /// be non-positive and the covenant could not be built) — so raising it DOES deter listing despite
+    /// costing nothing up front: it is a hard floor under every ask, and being flat it is regressive, 200%
+    /// of a 500-sat item against 10% of a 10,000-sat one. `--market` measures what it blocks.
     /// Booked as inflowByTag {"listing": n} for item AND hero sales alike, once the chain confirms the sale:
     /// only a fulfil pays the treasury in the transaction that spends the offer, so a seller reclaim is
     /// never mistaken for one. A sale the chain cannot confirm stays uncounted — the tally may lag the
