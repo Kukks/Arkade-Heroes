@@ -287,6 +287,17 @@ public class PageClaimTests
     }
 
     [Fact]
+    public void TheDeathMatchPage_QuotesItsFeeBeforeTheIrreversibleCommit()
+    {
+        var page = Visible(Page("DeathMatch.razor"));
+
+        // The only irreversible action, and the last quoting nothing. From the helper, at the confirm.
+        Assert.Contains("Pricing.DeathMatchFee", page);
+        Assert.Contains("PERMADEATH", page);
+        Assert.Contains("entry fee", page);
+    }
+
+    [Fact]
     public void TheSquadPage_IsBuiltForExactlyTheLineupSize()
     {
         // Visible, not raw: a claim that only appears in a comment is not a claim the page makes.

@@ -105,7 +105,8 @@ else
             <div class="card err" style="margin-top:1rem; display:block">
                 <div class="status-line"><span class="dot bad"></span>
                     <span><b>PERMADEATH.</b> If <b>@MyHeroLabel</b> loses, it burns forever and you forfeit its staked gear.
-                    You are the <b>@(Opp?.Favor ?? "even")</b> here.</span>
+                    You are the <b>@(Opp?.Favor ?? "even")</b> here.@if (Pricing.Sats(Fee) is { } f)
+                    {<text> The entry fee is <b>@f sats</b>@(_absorb ? " (absorb mode costs more)" : ""), win or lose.</text>}</span>
                 </div>
                 <div style="margin-top:.8rem; display:flex; gap:.6rem">
                     <button class="btn danger" @onclick="DoOpen" disabled="@_busy">Stake @MyHeroLabel &amp; commit</button>
@@ -143,7 +144,8 @@ else
                 @foreach (var d in ToAccept)
                 {
                     <div class="match-row">
-                        <span>Their <b>@Name(d.ChallengerHeroId)</b> vs your <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")</span>
+                        <span>Their <b>@Name(d.ChallengerHeroId)</b> vs your <b>@Name(d.DefenderHeroId)</b>@(d.Absorb ? " · absorb" : "")@if (Pricing.Sats(AcceptFee(d)) is { } af)
+                        {<text> · <b>@af sats</b> to accept, win or lose</text>}</span>
                         <span class="spacer"></span>
                         <button class="btn danger sm" @onclick="() => DoAccept(d.DeathMatchId)" disabled="@_busy">Accept to the death</button>
                     </div>
@@ -269,6 +271,19 @@ else
     private string _myHeroId = "";
     private string _oppId = "";
     private bool _absorb;
+    private GameConfigDto? _config;
+
+    /// <summary>What ACCEPTING costs. Priced from the defender's own hero, not the challenger's — the
+    /// server charges Leveling.DeathMatchFee(defender.Level, ...), so the two sides can differ.</summary>
+    private long? AcceptFee(DeathMatchDto d) =>
+        _mine.FirstOrDefault(h => h.Id == d.DefenderHeroId) is { } mine
+            ? Pricing.DeathMatchFee(_config, mine.Level, d.Absorb)
+            : null;
+
+    private long? Fee =>
+        _mine.FirstOrDefault(h => h.Id == _myHeroId) is { } h
+            ? Pricing.DeathMatchFee(_config, h.Level, _absorb)
+            : null;
     private bool _pendingConfirm;
     private bool _loading = true;
     private bool _loadingOpps;
@@ -354,6 +369,9 @@ else
             await RetryLoadAsync();
         }
         finally { _loading = false; }
+
+        try { _config ??= (await Api.Chain.InfoAsync()).Config; }
+        catch { /* price unknown */ }
     }
 
     async Task LoadDeathMatchesAsync()

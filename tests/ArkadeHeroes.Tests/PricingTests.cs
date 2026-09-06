@@ -133,22 +133,28 @@ public class PricingTests
     }
 
     /// <summary>
-    /// The death-match fee is the one real-sats action the browser still CANNOT quote: its multipliers
-    /// (<c>DeathMatchFeeMultiplier</c> / <c>AbsorbFeeMultiplier</c>) are not on <see cref="GameConfigDto"/>.
-    /// Pinned as a known gap rather than a silent one — if someone publishes them, this fails and the
-    /// death-match page should start quoting a price like every other spend does.
+    /// Was pinned here as a known gap — the one real-sats action the browser could not quote — with the note
+    /// that publishing the multipliers should make the page quote a price. This asserts that resolution.
     /// </summary>
     [Fact]
-    public void TheDeathMatchFee_IsStillUnquotableByTheBrowser()
+    public void TheDeathMatchFee_IsQuotableByTheBrowser()
     {
-        var published = typeof(GameConfigDto).GetProperties().Select(p => p.Name).ToHashSet();
-
-        Assert.DoesNotContain("DeathMatchFeeMultiplier", published);
-        Assert.DoesNotContain("AbsorbFeeMultiplier", published);
-
-        // And it is a real, non-trivial charge — which is why the gap is worth recording.
+        var dto = Dto(GameConfig.Default);
         var config = GameConfig.Default;
+
+        Assert.Equal(config.DeathMatchFeeMultiplier, dto.DeathMatchFeeMultiplier);
+        Assert.Equal(config.AbsorbFeeMultiplier, dto.AbsorbFeeMultiplier);
+
+        foreach (var absorb in new[] { false, true })
+        {
+            var fromDto = (absorb ? dto.AbsorbFeeMultiplier : dto.DeathMatchFeeMultiplier)
+                          * (dto.MatchFeeBaseSats + dto.MatchFeePerLevel * 5);
+            Assert.Equal(Leveling.DeathMatchFee(5, absorb, config), fromDto);
+        }
+
         Assert.True(Leveling.DeathMatchFee(5, absorb: false, config) > Leveling.MatchFee(5, config),
-            "A death-match costs more than a wager match, so /deathmatch quoting nothing understates it.");
+            "A death-match costs more than a wager match.");
+        Assert.True(Leveling.DeathMatchFee(5, absorb: true, config) > Leveling.DeathMatchFee(5, false, config),
+            "Absorb mode costs more still, which the page says.");
     }
 }

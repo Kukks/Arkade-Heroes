@@ -761,7 +761,11 @@ public record GameConfigDto(
     bool DailyRewardEnabled = false,
     /// <summary>What a starter claim costs in total — the breed fee at zero prior breeds, once per hero
     /// minted. Published so the UI can price the claim before the player commits to it.</summary>
-    long StarterClaimFeeSats = 0)
+    long StarterClaimFeeSats = 0,
+    /// <summary>Multipliers on the level-scaled match fee that price a death-match: classic, then absorb.
+    /// Defaulted to the shipped values, so an older server that omits them still prices correctly.</summary>
+    int DeathMatchFeeMultiplier = 2,
+    int AbsorbFeeMultiplier = 3)
 {
     public static GameConfigDto From(ArkadeHeroes.Core.GameConfig c) => new(
         c.Absorb.AbsorbChance,
@@ -780,7 +784,9 @@ public record GameConfigDto(
         ArkadeHeroes.Core.GameConfigVersion.Compute(c),
         c.Combat.GearCounters,
         c.DailyRewardEnabled,
-        ArkadeHeroes.Core.Genetics.StarterPolicy.ClaimFeeSats(c));
+        ArkadeHeroes.Core.Genetics.StarterPolicy.ClaimFeeSats(c),
+        c.DeathMatchFeeMultiplier,
+        c.AbsorbFeeMultiplier);
 }
 
 /// <summary>
