@@ -8,15 +8,19 @@ namespace ArkadeHeroes.Tests;
 public class DuelCopyStillTrueTests
 {
     [Fact]
-    public void AHeavyLossStillCostsALevel_AndTheQuotedCaseIsTheRealOne()
+    public void ALossCostsALevelOnlyWhenItExceedsProgressIntoThatLevel()
     {
         var config = GameConfig.Default;
-
-        // The page's own example: a level-3 hero at the bottom of its level, beaten by a level 1.
         var transfer = Leveling.PayableTransfer(winnerLevel: 1, loserLevel: 3, loserXp: 0, config);
-        var (level, _, _) = Leveling.Apply(3, 0, -transfer, config);
 
-        Assert.Equal(2, level);
+        // The page says a hero EARLY into level 3 drops to 2, which is the honest shape: the same loss is
+        // absorbed once enough progress is banked. Pinning only the first half would let the copy drift
+        // into claiming every loss delevels, which is what I first wrote.
+        var (early, _, _) = Leveling.Apply(3, 0, -transfer, config);
+        var (banked, _, _) = Leveling.Apply(3, transfer * 2, -transfer, config);
+
+        Assert.Equal(2, early);
+        Assert.Equal(3, banked);
     }
 
     [Fact]
