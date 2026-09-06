@@ -1001,6 +1001,15 @@ public record AuditEventDto(
 public record AuditPageDto(
     IReadOnlyList<AuditEventDto> Events, long NextAfter, long WriteFailures);
 
+/// <summary>One payout that did not complete cleanly. The three <paramref name="Outcome"/> values are NOT
+/// interchangeable — <c>PayoutFailureOutcome</c> defines them and says which must never be re-paid.</summary>
+public record PayoutFailureDto(
+    long Id, long AtUnixSeconds, string PlayerId, long AmountSats, string PayoutTag,
+    string Outcome, string? InvoiceId, string? Failure);
+
+public record PayoutFailurePageDto(
+    IReadOnlyList<PayoutFailureDto> Failures, long NextAfter, long WriteFailures);
+
 /// <summary>
 /// The authored CONTENT of one pack, served by <c>GET /api/content/{version}</c> so a client holding an
 /// outcome stamped with an unfamiliar content version can rebuild the gear and dungeons it was actually

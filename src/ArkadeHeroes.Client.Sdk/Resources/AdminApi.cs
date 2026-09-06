@@ -61,4 +61,16 @@ public sealed class AdminApi(ArkadeHeroesClient client)
             HttpMethod.Get,
             $"/api/admin/audit/subjects/{Uri.EscapeDataString(subjectId)}?after={after}&take={take}",
             adminToken);
+
+    /// <summary>Payouts that did not complete cleanly. A pure READ by design: there is no retry call, because
+    /// a <c>paid-not-booked</c> row is one the player was ALREADY paid and re-sending pays twice.</summary>
+    public Task<PayoutFailurePageDto> PayoutFailuresAsync(
+        string adminToken, long after = 0, int take = 100, string? outcome = null, string? player = null)
+    {
+        var query = $"?after={after}&take={take}";
+        if (outcome is not null) query += $"&outcome={Uri.EscapeDataString(outcome)}";
+        if (player is not null) query += $"&player={Uri.EscapeDataString(player)}";
+        return client.SendWithAdminTokenAsync<PayoutFailurePageDto>(
+            HttpMethod.Get, $"/api/admin/payout-failures{query}", adminToken);
+    }
 }

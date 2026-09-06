@@ -411,6 +411,41 @@ public class PayoutFailureRecordTests
         finally { Cleanup(dbPath); }
     }
 
+    /// <summary>The same read through the SDK. Separate from the raw-JSON test above because that one never
+    /// reads the id or the cursor, so swapping the two adjacent longs passes it and fails this.</summary>
+    [Fact]
+    public async Task TheSdkReadsTheDebt_WithEveryFieldPopulated()
+    {
+        var dbPath = NewDbPath();
+        var chain = new FailableChain(new InMemoryChainService());
+        try
+        {
+            using var factory = HostOn(dbPath, chain);
+            chain.Inner.FundTreasury(200_000);
+            var (entrants, tid) = await PaidBracketAsync(factory, chain, "Sdk-Owed");
+            chain.FailNextTournamentPrize = true;
+            await entrants[0].Client.Tournament.ResolveAsync(tid, new FightRequest("sdk-owed-nonce"));
+
+            var page = await entrants[0].Client.Admin.PayoutFailuresAsync(AdminToken);
+
+            var row = Assert.Single(page.Failures);
+            Assert.Equal(PayoutFailureOutcome.Owed, row.Outcome);
+            Assert.Equal($"tournament:{tid}:rank1", row.PayoutTag);
+            Assert.True(row.AmountSats > 0);
+            Assert.False(string.IsNullOrWhiteSpace(row.PlayerId));
+            Assert.True(row.AtUnixSeconds > 0);
+            Assert.Equal(row.Id, page.NextAfter);
+
+            Assert.Empty((await entrants[0].Client.Admin.PayoutFailuresAsync(
+                AdminToken, outcome: PayoutFailureOutcome.PaidNotBooked)).Failures);
+            Assert.Empty((await entrants[0].Client.Admin.PayoutFailuresAsync(
+                AdminToken, player: "nobody-by-that-name")).Failures);
+            Assert.Empty((await entrants[0].Client.Admin.PayoutFailuresAsync(
+                AdminToken, after: row.Id)).Failures);
+        }
+        finally { Cleanup(dbPath); }
+    }
+
     /// <summary>The opt-in seam. With no <c>Game:StateDbPath</c> there is no database to record into, and
     /// the flow must behave exactly as it did before this table existed — a dropped prize is logged and the
     /// rest of the podium still pays. The record must never become a NEW way for a payout path to fail.</summary>
