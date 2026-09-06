@@ -287,6 +287,15 @@ public class PageClaimTests
     }
 
     [Fact]
+    public void TheDuelPage_SaysALossCanCostALevel()
+    {
+        // PayableTransfer takes from the BANKED total, not progress-within-level, so one upset loss really
+        // does delevel — measured, a level-3 hero beaten by a level-1 drops to 2. The page explained the XP
+        // transfer in detail and never mentioned levels, which is the consequence a player actually sees.
+        Assert.Contains("costs a level", Visible(Page("Duel.razor")));
+    }
+
+    [Fact]
     public void TheGauntletPage_SaysTheLadderClimbsWithTheHero()
     {
         var page = Visible(Page("Gauntlet.razor"));
