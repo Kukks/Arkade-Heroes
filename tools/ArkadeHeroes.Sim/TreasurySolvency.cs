@@ -76,6 +76,7 @@ public static class TreasurySolvency
                 await ClaimEveryDailyAsync(round);
                 await ParkStakedDuelsAsync(round);
                 await BurstOutflowAsync(round);
+                await ConcurrentHoldsAsync(round);
                 await SettleBacklogAsync(round);
                 _roundEnds.Add((round, await _observer.Economy.HealthAsync()));
                 await SampleAsync(round, "round end");
@@ -219,6 +220,48 @@ public static class TreasurySolvency
 
             await Attempt("bid", round, () => BidAsync(c, a, round));
             await SampleAsync(round, "bid");
+        }
+
+        /// Holds several brackets open AT ONCE: every other custodial path is open-then-close, so their peak
+        /// is the largest SINGLE hold, while the faucet and season pot draw on the same balance all of these
+        /// sit in — what must stay covered is everything held simultaneously.
+        private async Task ConcurrentHoldsAsync(int round)
+        {
+            var order = Shuffled();
+            var open = new List<(string Id, Actor Opener)>();
+            for (var i = 3; i + 1 < order.Count && open.Count < 3; i += 2)
+            {
+                var opener = order[i];
+                var joiner = order[i + 1];
+                await Attempt("bracket-hold", round, async () =>
+                {
+                    var openerHero = await FirstHeroAsync(opener);
+                    var joinerHero = await FirstHeroAsync(joiner);
+                    if (openerHero is null || joinerHero is null)
+                        throw new ArkadeHeroesApiException("a side has no hero to enter");
+                    var buyIn = 4_000L;
+
+                    var created = await opener.Api.Tournament.OpenAsync(
+                        new OpenTournamentRequest(openerHero.Id, buyIn, 2));
+                    await Pay(opener, created.BuyIn.InvoiceId);
+                    var joined = await joiner.Api.Tournament.JoinAsync(
+                        created.Tournament.Id, new JoinTournamentRequest(joinerHero.Id));
+                    await Pay(joiner, joined.BuyIn.InvoiceId);
+                    Owe($"bracket:{created.Tournament.Id}", buyIn * 2);
+                    open.Add((created.Tournament.Id, opener));
+                });
+            }
+
+            if (open.Count == 0) return;
+            await SampleAsync(round, $"{open.Count} brackets held");
+
+            // An unsettled hold stays owed on purpose: a bracket that failed to resolve IS still holding it.
+            foreach (var (id, opener) in open)
+                await Attempt("bracket-hold-settle", round, async () =>
+                {
+                    await opener.Api.Tournament.ResolveAsync(id, new FightRequest(Nonce()));
+                    Settle($"bracket:{id}");
+                });
         }
 
         /// Fights what earlier rounds parked, so an obligation actually spans a round boundary rather than
