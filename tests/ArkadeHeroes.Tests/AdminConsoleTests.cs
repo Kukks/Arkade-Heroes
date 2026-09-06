@@ -63,6 +63,7 @@ public class AdminConsoleTests
                      // amount and counterparty in the game — so it has to be absent here too.
                      (HttpMethod.Get, "/api/admin/audit"),
                      (HttpMethod.Get, "/api/admin/audit/subjects/hero-1"),
+                     (HttpMethod.Get, "/api/admin/payout-failures"),
                  })
         {
             // No token supplied, and — the part that matters — no token that COULD be supplied.
@@ -96,6 +97,7 @@ public class AdminConsoleTests
     [InlineData("POST", "/api/admin/tournaments/tourney-1/refund")]
     [InlineData("GET", "/api/admin/audit")]
     [InlineData("GET", "/api/admin/audit/subjects/hero-1")]
+    [InlineData("GET", "/api/admin/payout-failures")]
     public async Task EveryAdminRoute_Refuses_AMissingOrWrongToken(string verb, string path)
     {
         using var factory = Enabled();

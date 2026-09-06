@@ -1215,17 +1215,12 @@ if (AdminGate.IsEnabled(adminToken))
     {
         var from = after ?? 0;
         var rows = await payouts.ReadAsync(from, take ?? 100, outcome, player, ct);
-        return Results.Ok(new
-        {
-            failures = rows.Select(r => new
-            {
-                id = r.Id, atUnixSeconds = r.AtUtc.ToUnixTimeSeconds(), playerId = r.PlayerId,
-                amountSats = r.AmountSats, payoutTag = r.PayoutTag, outcome = r.Outcome,
-                invoiceId = r.InvoiceId, failure = r.Failure,
-            }).ToList(),
-            after = rows.Count > 0 ? rows[^1].Id : from,
-            writeFailures = payouts.WriteFailures,
-        });
+        return Results.Ok(new PayoutFailurePageDto(
+            rows.Select(r => new PayoutFailureDto(
+                r.Id, r.AtUtc.ToUnixTimeSeconds(), r.PlayerId, r.AmountSats, r.PayoutTag,
+                r.Outcome, r.InvoiceId, r.Failure)).ToList(),
+            rows.Count > 0 ? rows[^1].Id : from,
+            payouts.WriteFailures));
     });
 
     // ACTION — the strand refund (#103): a bracket that can never resolve pays every CLEARED buy-in back

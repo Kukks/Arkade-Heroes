@@ -60,28 +60,6 @@ public class PersistedPayoutFailure
     public string? Failure { get; set; }
 }
 
-/// <summary>
-/// What a <see cref="PersistedPayoutFailure"/> row means. Constants rather than an enum so the stored string
-/// is stable forever — a renumbered enum would silently re-label a debt, and re-labelling
-/// <see cref="PaidNotBooked"/> as <see cref="Owed"/> is precisely how somebody gets paid twice.
-/// </summary>
-public static class PayoutFailureOutcome
-{
-    /// <summary>The payout call itself failed: the sats did NOT move and the player IS owed them. This is
-    /// the row an operator settles by hand.</summary>
-    public const string Owed = "owed";
-
-    /// <summary>The payout SUCCEEDED and only the treasury book-keeping afterwards failed. The player
-    /// already has the sats — DO NOT RE-PAY. Recorded because the treasury's outflow total now under-reports
-    /// by this amount, which is a reconciliation job, not a payment one.</summary>
-    public const string PaidNotBooked = "paid-not-booked";
-
-    /// <summary>Whether anything is owed could not be established — the refund path could not read whether
-    /// the buy-in ever cleared. Check <see cref="PersistedPayoutFailure.InvoiceId"/> by hand BEFORE paying
-    /// anything: this is neither a confirmed debt nor a confirmed non-debt.</summary>
-    public const string Unknown = "unknown";
-}
-
 /// <summary>What a caller hands the log. See <see cref="PersistedPayoutFailure"/> for what each field is
 /// for.</summary>
 /// <param name="PlayerId">The player the sats were meant for.</param>

@@ -1002,6 +1002,38 @@ public record AuditPageDto(
     IReadOnlyList<AuditEventDto> Events, long NextAfter, long WriteFailures);
 
 /// <summary>
+/// What a payout-failure row means. In Shared because it crosses the wire: a client that cannot name these
+/// cannot filter on them. Constants rather than an enum so the stored string is stable forever — a
+/// renumbered enum would silently re-label a debt, and re-labelling <see cref="PaidNotBooked"/> as
+/// <see cref="Owed"/> is precisely how somebody gets paid twice.
+/// </summary>
+public static class PayoutFailureOutcome
+{
+    /// <summary>The payout call itself failed: the sats did NOT move and the player IS owed them. This is
+    /// the row an operator settles by hand.</summary>
+    public const string Owed = "owed";
+
+    /// <summary>The payout SUCCEEDED and only the treasury book-keeping afterwards failed. The player
+    /// already has the sats — DO NOT RE-PAY. Recorded because the treasury's outflow total now under-reports
+    /// by this amount, which is a reconciliation job, not a payment one.</summary>
+    public const string PaidNotBooked = "paid-not-booked";
+
+    /// <summary>Whether anything is owed could not be established — the refund path could not read whether
+    /// the buy-in ever cleared. Check the invoice by hand BEFORE paying anything: this is neither a
+    /// confirmed debt nor a confirmed non-debt.</summary>
+    public const string Unknown = "unknown";
+}
+
+/// <summary>One payout that did not complete cleanly. The three <paramref name="Outcome"/> values are NOT
+/// interchangeable — see <see cref="PayoutFailureOutcome"/>.</summary>
+public record PayoutFailureDto(
+    long Id, long AtUnixSeconds, string PlayerId, long AmountSats, string PayoutTag,
+    string Outcome, string? InvoiceId, string? Failure);
+
+public record PayoutFailurePageDto(
+    IReadOnlyList<PayoutFailureDto> Failures, long NextAfter, long WriteFailures);
+
+/// <summary>
 /// The authored CONTENT of one pack, served by <c>GET /api/content/{version}</c> so a client holding an
 /// outcome stamped with an unfamiliar content version can rebuild the gear and dungeons it was actually
 /// resolved under instead of assuming its own compiled-in pack.

@@ -47,7 +47,7 @@ public class GameService(
     /// out of here would abort the loop, so recording one player's loss would cause the next player's.
     ///
     /// <paramref name="outcome"/> is the whole point: it says whether the sats moved. Passing
-    /// <see cref="Persistence.PayoutFailureOutcome.Owed"/> where the payout actually SUCCEEDED would tell an
+    /// <see cref="Shared.PayoutFailureOutcome.Owed"/> where the payout actually SUCCEEDED would tell an
     /// operator to send a prize that has already been sent.
     /// </summary>
     private Task RecordPayoutFailureAsync(
@@ -1141,9 +1141,9 @@ public class GameService(
                     logger?.LogError(ex,
                         "Tournament prize payout FAILED and will never be retried: player {PlayerId} is owed "
                         + "{Sats} sats for {Tag}. Recorded as {Outcome} — settle it by hand.",
-                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.Owed);
+                        winnerPlayerId, prizes[i], tag, Shared.PayoutFailureOutcome.Owed);
                     await RecordPayoutFailureAsync(
-                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.Owed, null, ex);
+                        winnerPlayerId, prizes[i], tag, Shared.PayoutFailureOutcome.Owed, null, ex);
                     continue;
                 }
                 try { await store.RecordOutflowAsync("tournament", prizes[i], ct); }
@@ -1154,7 +1154,7 @@ public class GameService(
                         + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
                         + "under-reports by this amount.", prizes[i], tag);
                     await RecordPayoutFailureAsync(
-                        winnerPlayerId, prizes[i], tag, Persistence.PayoutFailureOutcome.PaidNotBooked, null, ex);
+                        winnerPlayerId, prizes[i], tag, Shared.PayoutFailureOutcome.PaidNotBooked, null, ex);
                 }
             }
             // Logged AFTER the podium loop so the entry reflects what was actually attempted, and keyed on
@@ -1258,9 +1258,9 @@ public class GameService(
                         + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {Tag}. Recorded as "
                         + "{Outcome} — check the invoice by hand before paying anything.",
                         e.PlayerId, e.BuyInInvoiceId, session.BuyInSats, tag,
-                        Persistence.PayoutFailureOutcome.Unknown);
+                        Shared.PayoutFailureOutcome.Unknown);
                     await RecordPayoutFailureAsync(
-                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Unknown,
+                        e.PlayerId, session.BuyInSats, tag, Shared.PayoutFailureOutcome.Unknown,
                         e.BuyInInvoiceId, ex);
                     continue;
                 }
@@ -1291,9 +1291,9 @@ public class GameService(
                     logger?.LogError(ex,
                         "Tournament refund payout FAILED and will never be retried: player {PlayerId} paid a "
                         + "buy-in and is owed {Sats} sats back for {Tag}. Recorded as {Outcome} — settle it "
-                        + "by hand.", e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Owed);
+                        + "by hand.", e.PlayerId, session.BuyInSats, tag, Shared.PayoutFailureOutcome.Owed);
                     await RecordPayoutFailureAsync(
-                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.Owed,
+                        e.PlayerId, session.BuyInSats, tag, Shared.PayoutFailureOutcome.Owed,
                         e.BuyInInvoiceId, ex);
                     continue;
                 }
@@ -1307,7 +1307,7 @@ public class GameService(
                         + "outflow. The player has their sats; do NOT re-pay. Treasury outflow now "
                         + "under-reports by this amount.", session.BuyInSats, tag);
                     await RecordPayoutFailureAsync(
-                        e.PlayerId, session.BuyInSats, tag, Persistence.PayoutFailureOutcome.PaidNotBooked,
+                        e.PlayerId, session.BuyInSats, tag, Shared.PayoutFailureOutcome.PaidNotBooked,
                         e.BuyInInvoiceId, ex);
                 }
             }
@@ -2108,9 +2108,9 @@ public class GameService(
                 + "{InvoiceId} cleared, so {Sats} sats may or may not be owed for {PayoutTag}. Recorded as "
                 + "{Outcome} — check the invoice by hand before paying anything.",
                 proposal.ProposerPlayerId, tag, invoiceId, sats, payoutTag,
-                Persistence.PayoutFailureOutcome.Unknown);
+                Shared.PayoutFailureOutcome.Unknown);
             await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
-                Persistence.PayoutFailureOutcome.Unknown, invoiceId, ex);
+                Shared.PayoutFailureOutcome.Unknown, invoiceId, ex);
             return 0;
         }
         // An invoice that never cleared put nothing in; "refunding" it would pay sats never received.
@@ -2133,9 +2133,9 @@ public class GameService(
             logger?.LogError(ex,
                 "Stud refund payout FAILED and will never be retried: player {PlayerId} paid the {Tag} fee "
                 + "and is owed {Sats} sats back for {PayoutTag}. Recorded as {Outcome} — settle it by hand.",
-                proposal.ProposerPlayerId, tag, sats, payoutTag, Persistence.PayoutFailureOutcome.Owed);
+                proposal.ProposerPlayerId, tag, sats, payoutTag, Shared.PayoutFailureOutcome.Owed);
             await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
-                Persistence.PayoutFailureOutcome.Owed, invoiceId, ex);
+                Shared.PayoutFailureOutcome.Owed, invoiceId, ex);
             return 0;
         }
 
@@ -2147,7 +2147,7 @@ public class GameService(
                 + "The player has their sats; do NOT re-pay. Treasury outflow now under-reports by this "
                 + "amount.", sats, payoutTag);
             await RecordPayoutFailureAsync(proposal.ProposerPlayerId, sats, payoutTag,
-                Persistence.PayoutFailureOutcome.PaidNotBooked, invoiceId, ex);
+                Shared.PayoutFailureOutcome.PaidNotBooked, invoiceId, ex);
         }
         return sats;
     }
@@ -3134,9 +3134,9 @@ public class GameService(
                         logger?.LogError(ex,
                             "Season prize payout FAILED and will never be retried: player {PlayerId} is owed "
                             + "{Sats} sats for {Tag}. Recorded as {Outcome} — settle it by hand.",
-                            standings[i].OwnerId, shares[i], tag, Persistence.PayoutFailureOutcome.Owed);
+                            standings[i].OwnerId, shares[i], tag, Shared.PayoutFailureOutcome.Owed);
                         await RecordPayoutFailureAsync(
-                            standings[i].OwnerId, shares[i], tag, Persistence.PayoutFailureOutcome.Owed, null, ex);
+                            standings[i].OwnerId, shares[i], tag, Shared.PayoutFailureOutcome.Owed, null, ex);
                         continue;
                     }
                     try { await store.RecordOutflowAsync("season", shares[i], ct); }
@@ -3148,7 +3148,7 @@ public class GameService(
                             + "under-reports by this amount.", shares[i], tag);
                         await RecordPayoutFailureAsync(
                             standings[i].OwnerId, shares[i], tag,
-                            Persistence.PayoutFailureOutcome.PaidNotBooked, null, ex);
+                            Shared.PayoutFailureOutcome.PaidNotBooked, null, ex);
                     }
                 }
                 // Actor NULL: nobody asked for this — it happens as a side effect of somebody reading the
