@@ -82,8 +82,11 @@
             // the live number, which is the page that can read it.
             new("Tournaments", "tournaments", "🏆", "A bracket with a buy-in. The champion and runner-up "
                 + "split the pot 70/30, and the house takes a small rake.", Sats),
+            // Same shape as the Fuse card below: "permanent" is the loudest chip and wins the label, but
+            // BOTH sides also pay Leveling.DeathMatchFee — 2x a match fee, 3x in absorb mode.
             new("Death-match", "deathmatch", "💀", "Winner takes everything and the loser's hero is "
-                + "destroyed forever. The winner can absorb a trait it was beaten by.", Gone),
+                + "destroyed forever. The winner can absorb a trait it was beaten by. Both sides also pay "
+                + "a fee, scaled to the hero's level and steeper in absorb mode.", Gone),
         ]),
         new("Make something new", "spend heroes to get better ones",
         [
