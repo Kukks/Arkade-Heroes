@@ -289,19 +289,23 @@ public class PageClaimTests
     [Fact]
     public void TheSquadPage_IsBuiltForExactlyTheLineupSize()
     {
-        var page = Page("Squad.razor");
+        // Visible, not raw: a claim that only appears in a comment is not a claim the page makes.
+        var page = Visible(Page("Squad.razor"));
 
-        // Unlike the gauntlet's wave count, this one cannot just be rendered: the page holds ONE FIELD PER
-        // SLOT (_slot0.._slot2) and three markup pickers, so moving LineupSize is a structural edit here,
-        // not a substitution. This fails first and says so.
+        // The picker IS a loop, so its bound looks substitutable — but Slot(i) is a ternary chain ending in
+        // _slot2, so a loop to 4 over three backing fields would render a fourth picker aliased to the third.
         Assert.True(SquadBattle.LineupSize == 3,
             $"SquadBattle.LineupSize moved to {SquadBattle.LineupSize}. Squad.razor is built for exactly 3 " +
             "— per-slot fields, per-slot pickers, copy, and its validation — and needs a real edit, not a number.");
 
         Assert.Contains($"A squad needs {SquadBattle.LineupSize} heroes", page);
         Assert.Contains($"Count() == {SquadBattle.LineupSize}", page);
+
+        // EXACTLY that many. Asserting only that _slot0.._slot2 exist would pass a page that had quietly
+        // grown a fourth — the direction this guard exists to catch.
         for (var slot = 0; slot < SquadBattle.LineupSize; slot++)
             Assert.Contains($"_slot{slot}", page);
+        Assert.DoesNotContain($"_slot{SquadBattle.LineupSize}", page);
     }
 
     [Fact]
