@@ -53,12 +53,21 @@ public class GauntletCopyStillTrueTests
     }
 
     [Fact]
-    public void GearIsTheLeverTheCopyClaims()
+    public void GearIsTheLeverAtEveryLevel_AndCompoundsWithIt()
     {
-        var bare = AverageWaves(10, geared: false, seed: 7);
-        var kitted = AverageWaves(10, geared: true, seed: 7);
+        var (bare1, kitted1) = (AverageWaves(1, false, 7), AverageWaves(1, true, 7));
+        var (bare10, kitted10) = (AverageWaves(10, false, 7), AverageWaves(10, true, 7));
 
-        Assert.True(kitted > bare * 2.0,
-            $"Gauntlet.razor calls gear the lever; at level 10 it moved {bare:F2} waves to {kitted:F2}.");
+        // "Gear is the lever" is claimed generally, not at one level — and the shop gates gear by level, so
+        // a level-1 hero wears strictly less of it. Both ends, not just the flattering one.
+        Assert.True(kitted1 >= bare1 * 1.5,
+            $"Gauntlet.razor calls gear the lever; at level 1 it moved {bare1:F2} waves to {kitted1:F2}.");
+        Assert.True(kitted10 >= bare10 * 2.0,
+            $"Gauntlet.razor calls gear the lever; at level 10 it moved {bare10:F2} waves to {kitted10:F2}.");
+
+        // And "it compounds with level" — the page's actual wording, which neither figure alone tests.
+        Assert.True(kitted10 / bare10 > kitted1 / bare1,
+            $"Gauntlet.razor says gear compounds with level; the multiple went {kitted1 / bare1:F2}x at " +
+            $"level 1 to {kitted10 / bare10:F2}x at level 10.");
     }
 }
