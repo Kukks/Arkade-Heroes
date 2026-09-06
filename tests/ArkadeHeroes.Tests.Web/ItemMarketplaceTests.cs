@@ -77,6 +77,25 @@ public class ItemMarketplaceTests
     }
 
     [Fact]
+    public void AnUnreadableFee_DoesNotOfferAListingItCannotPrice()
+    {
+        // Failing open here would silently restore the refusable default: fee unknown reads as 0, the gate
+        // degrades to ask > 0, and the catalogue price is offered again.
+        var ctx = new PageTestContext();
+        ctx.SignIn(balanceSats: 100_000);
+        ctx.Api.Get("/api/items", new[] { Blade() });
+        ctx.Api.Get("/api/items/mine", new Dictionary<string, long> { ["rusty-blade"] = 2 });
+        ctx.Api.GetFails("/api/chain/info", System.Net.HttpStatusCode.ServiceUnavailable);
+        using var _ = ctx;
+
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+
+        var sell = cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal));
+        Assert.True(sell.HasAttribute("disabled"));
+    }
+
+    [Fact]
     public void OwningNone_OffersNothingToSell()
     {
         using var ctx = Shop(unitsHeld: 0);
