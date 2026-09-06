@@ -66,7 +66,13 @@ else
                gauntlet" — but only once the fee has been paid and the run is over. *@
             <div class="status-line" style="margin-top:.9rem">
                 <span class="dot bad"></span>
-                <span><b>@hero.Name</b> has reached level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap, so this run banks <b>no XP</b>. The gear drop still applies.</span>
+                @* The drop needs a FULL clear (dungeons.json dropRequiresFullClear) and a bought recruit
+                   full-clears 0.0% of the time at every level, so "still applies" was the wrong word. *@
+                <span>
+                    <b>@hero.Name</b> has reached level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap,
+                    so this run banks <b>no XP</b> — only the gear drop is left, and that needs a
+                    <b>full clear</b>, which gear and breeding drive rather than levels.
+                </span>
             </div>
         }
         @* The most-hit refusal of a new player's first session, and until now the only way to learn it
