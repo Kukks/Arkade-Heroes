@@ -43,6 +43,12 @@ internal static class Pricing
         return c.BreedingFeeSats * (1L << Math.Min(breeds, c.BreedFeeDoublingCap));
     }
 
+    /// <summary>What a death-match costs on top of the hero itself. Mirrors <c>Leveling.DeathMatchFee</c>.</summary>
+    public static long? DeathMatchFee(GameConfigDto? config, int heroLevel, bool absorb) =>
+        config is not { } c || MatchFee(c, heroLevel) is not { } fee
+            ? null
+            : (absorb ? c.AbsorbFeeMultiplier : c.DeathMatchFeeMultiplier) * fee;
+
     /// <summary>The flat fusion fee. Flat today, but read from config rather than compiled in so an
     /// operator retuning it retunes what the page says too.</summary>
     public static long? MergeFee(GameConfigDto? config) => config?.MergeFeeSats;
