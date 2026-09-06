@@ -198,8 +198,8 @@ public sealed class Engagement
                           $"first refused-for-balance: round {(_brokeAt.TryGetValue(n, out var br) ? br.ToString() : "-")}");
         }
 
-        // A roster wipe locks out every hero-gated action at once, and the starter grant is once per
-        // account — so unlike running low on sats, only the market can undo it.
+        // A roster wipe locks out every hero-gated action at once. Recruiting is the way back — billed per
+        // claim, not once per account — so a player still at zero could not afford it or never tried.
         sb.AppendLine("  ROSTER WIPES (0 heroes — no gauntlet, trials, duel, breed, squad or tournament)");
         var wiped = names.Where(n => _snaps[n].Any(s => s.Heroes == 0)).ToList();
         var stillWiped = wiped.Where(n => _snaps[n][^1].Heroes == 0).ToList();

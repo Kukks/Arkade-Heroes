@@ -112,6 +112,13 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
 
     private async Task TakeTurnAsync(Player p, int round)
     {
+        // Recruiting is billed per claim, not once per account — and Grinder and Duelist do not list it.
+        if ((await p.Api.Heroes.MineAsync()).Count == 0)
+        {
+            await Attempt(p, "recruit", round);
+            return;
+        }
+
         var actions = Weights(p.Persona);
         var take = 1 + _rng.Next(3);
         for (var i = 0; i < take; i++)
