@@ -240,12 +240,12 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var bill = await api.Stud.InvoicesAsync(proposalId);
         if (bill.BreedFeeInvoice.AmountSats > 0)
         {
-            onProgress?.Invoke("Paying the breeding fee…");
+            onProgress?.Invoke($"Paying the {bill.BreedFeeInvoice.AmountSats:N0} sat breeding fee…");
             await DepositAndSettleAsync(w.Id, bill.BreedFeeInvoice.PayToAddress, null, bill.BreedFeeInvoice.AmountSats);
         }
         if (bill.StudFeeInvoice is { AmountSats: > 0 } studFee)
         {
-            onProgress?.Invoke("Paying the stud fee…");
+            onProgress?.Invoke($"Paying the {studFee.AmountSats:N0} sat stud fee…");
             await DepositAndSettleAsync(w.Id, studFee.PayToAddress, null, studFee.AmountSats);
         }
 

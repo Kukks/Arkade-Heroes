@@ -1464,7 +1464,9 @@ static TournamentDto ToTournamentDto(TournamentSession t) => new(
 static StudProposalDto ToStudDto(StudProposal s) => new(
     s.Id, s.ProposerPlayerId, s.StudOwnerPlayerId, s.ProposerHeroId, s.StudHeroId, s.StudFeeSats,
     s.Completed ? "completed" : s.Refunded ? "refunded" : s.Declined ? "declined" : s.Accepted ? "accepted" : "proposed",
-    s.ChildHeroId);
+    s.ChildHeroId,
+    // Gated on Accepted, the same flag that prices it: before consent the field is still a default 0.
+    s.Accepted ? s.BreedFeeSats : null);
 
 // Status comes off HeroBid.Status, which derives it from the flags rather than storing it, so the wire
 // state can never drift from the state machine that gates the money.

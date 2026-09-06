@@ -234,9 +234,12 @@ public record StudRevealResponse(
 
 /// <summary>One stud proposal on the discovery list. Status = proposed (awaiting consent) | accepted (the
 /// proposer may pay + reveal) | declined | completed | refunded.</summary>
+/// <param name="BreedFeeSats">The escalating treasury fee the proposer owes ON TOP of the stud fee, priced
+/// at acceptance. Null until then, and null rather than 0 — a quoted zero reads as free.</param>
 public record StudProposalDto(
     string ProposalId, string ProposerPlayerId, string StudOwnerPlayerId,
-    string ProposerHeroId, string StudHeroId, long StudFeeSats, string Status, string? ChildHeroId);
+    string ProposerHeroId, string StudHeroId, long StudFeeSats, string Status, string? ChildHeroId,
+    long? BreedFeeSats = null);
 
 public record StudRefundResponse(StudProposalDto Proposal, long RefundedSats);
 
