@@ -335,6 +335,78 @@ else
             </table>
         }
     </div>
+
+    @* Money the game tried to send a player and could not. Read-only ON PURPOSE — see the endpoint's own
+       comment: a paid-not-booked row is one the player was ALREADY paid, so a "retry" button here would
+       send a prize twice. Which is also why owed is the only outcome styled as an alarm. *@
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Failed payouts</h3>
+        <span class="hud">sats that did not arrive · settle by hand, never from here</span>
+        @if (OwedSats > 0)
+        {
+            <span class="spacer"></span>
+            <span class="chip bad mono">@OwedSats.ToString("N0") sat owed</span>
+        }
+    </div>
+    <div class="card">
+        <div class="status-line" style="gap:.4rem;flex-wrap:wrap;margin-bottom:.8rem">
+            @foreach (var (label, value) in Outcomes)
+            {
+                <button class="btn @(_payoutOutcome == value ? "primary" : "ghost") sm"
+                        @onclick="() => LoadPayouts(value)" disabled="@_payoutBusy">@label</button>
+            }
+            <input class="ask-input" style="width:12rem" placeholder="player id" @bind="_payoutPlayer" />
+            <button class="btn primary" @onclick="() => LoadPayouts(_payoutOutcome)" disabled="@_payoutBusy">
+                @(_payoutBusy ? "Reading…" : "Read failures")
+            </button>
+            @if (_payouts is { Failures.Count: > 0 } && !_payoutsExhausted)
+            {
+                <button class="btn ghost" @onclick="MorePayouts" disabled="@_payoutBusy">Older →</button>
+            }
+        </div>
+
+        @if (_payouts is { WriteFailures: > 0 })
+        {
+            <div class="status-line" style="margin-bottom:.8rem">
+                <span class="dot bad"></span>
+                <span><b>@_payouts.WriteFailures</b> failure record(s) could not be written. Debts exist that
+                this table never captured.</span>
+            </div>
+        }
+        @if (_payoutError is not null)
+        {
+            <div class="status-line"><span class="dot bad"></span> @_payoutError</div>
+        }
+        else if (_payouts is null)
+        {
+            <p class="muted" style="margin:0">Read the record of payouts that did not complete.</p>
+        }
+        else if (_payouts.Failures.Count == 0)
+        {
+            <p class="muted" style="margin:0">Nothing failed to pay under that filter.</p>
+        }
+        else
+        {
+            <table class="mono" style="width:100%;font-size:.78rem;border-collapse:collapse">
+                <tbody>
+                @foreach (var f in _payouts.Failures)
+                {
+                    <tr style="border-top:1px solid var(--line)">
+                        <td style="padding:.35rem .5rem;white-space:nowrap">@When(f.AtUnixSeconds)</td>
+                        <td style="padding:.35rem .5rem">@f.PlayerId</td>
+                        <td style="padding:.35rem .5rem;white-space:nowrap;text-align:right">@f.AmountSats.ToString("N0")</td>
+                        <td style="padding:.35rem .5rem">
+                            <span class="chip @(f.Outcome == PayoutFailureOutcome.Owed ? "bad" : "")">@f.Outcome</span>
+                        </td>
+                        <td style="padding:.35rem .5rem" class="muted">@Advice(f.Outcome)</td>
+                        <td style="padding:.35rem .5rem;word-break:break-all">@f.PayoutTag</td>
+                        <td style="padding:.35rem .5rem;word-break:break-all" class="muted">@f.Failure</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
 }
 
 @code {
@@ -361,6 +433,67 @@ else
     // An empty page returns the cursor it was asked for, so without this "Older" would keep offering to
     // fetch the same nothing forever.
     private bool _auditExhausted;
+
+    private PayoutFailurePageDto? _payouts;
+    private string? _payoutError;
+    private bool _payoutBusy;
+    private long _payoutAfter;
+    private bool _payoutsExhausted;
+    private string _payoutPlayer = "";
+    private string? _payoutOutcome;
+    private string? _activePayoutPlayer;
+
+    private static readonly (string Label, string? Value)[] Outcomes =
+    [
+        ("all", null),
+        ("owed", PayoutFailureOutcome.Owed),
+        ("already paid", PayoutFailureOutcome.PaidNotBooked),
+        ("unverified", PayoutFailureOutcome.Unknown),
+    ];
+
+    /// <summary>What the operator should DO, in words. The outcome string alone reads as a status; the whole
+    /// hazard is that <c>paid-not-booked</c> looks like a debt and is the one that must not be paid.</summary>
+    private static string Advice(string outcome) => outcome switch
+    {
+        PayoutFailureOutcome.Owed => "settle by hand",
+        PayoutFailureOutcome.PaidNotBooked => "already paid — do NOT re-pay",
+        PayoutFailureOutcome.Unknown => "check the invoice before paying",
+        _ => "",
+    };
+
+    /// <summary>Only what is on screen, and only ever from rows the server labelled owed — a total that
+    /// swept in paid-not-booked would name money nobody is owed.</summary>
+    private long OwedSats => _payouts?.Failures
+        .Where(f => f.Outcome == PayoutFailureOutcome.Owed).Sum(f => f.AmountSats) ?? 0;
+
+    private Task LoadPayouts(string? outcome)
+    {
+        _payoutAfter = 0;
+        _payoutsExhausted = false;
+        _payoutOutcome = outcome;
+        _activePayoutPlayer = Blank(_payoutPlayer);
+        return ReadPayouts(replace: true);
+    }
+
+    private Task MorePayouts() => ReadPayouts(replace: false);
+
+    private async Task ReadPayouts(bool replace)
+    {
+        _payoutBusy = true;
+        _payoutError = null;
+        try
+        {
+            var page = await Api.Admin.PayoutFailuresAsync(
+                _token.Trim(), _payoutAfter, 100, _payoutOutcome, _activePayoutPlayer);
+            _payoutAfter = page.NextAfter;
+            if (!replace && page.Failures.Count == 0) _payoutsExhausted = true;
+            _payouts = replace || _payouts is null
+                ? page
+                : page with { Failures = [.. _payouts.Failures, .. page.Failures] };
+        }
+        catch (Exception ex) { _payoutError = ex.Message; }
+        finally { _payoutBusy = false; }
+    }
 
     private static string When(long unixSeconds) =>
         DateTimeOffset.FromUnixTimeSeconds(unixSeconds).ToLocalTime().ToString("dd MMM HH:mm:ss");
