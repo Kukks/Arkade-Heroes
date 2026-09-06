@@ -1189,6 +1189,110 @@ public class NArkChainService(
         return (contract, serverInfo);
     }
 
+    // ── Hero-bid escrows: the offer covenant with the roles swapped ────
+
+    private async Task<(Covenants.ArkadeArtifactContract Contract, global::NArk.Core.ArkServerInfo ServerInfo)>
+        BuildBidContractAsync(Covenants.BidEscrowParams parameters, CancellationToken ct)
+    {
+        var serverInfo = await transport.GetServerInfoAsync(ct);
+        var emulatorKey = await RequireEmulatorSignerAsync(ct);
+        return (Covenants.BidEscrowContracts.Build(parameters, serverInfo.SignerKey, emulatorKey), serverInfo);
+    }
+
+    public async Task<string> CreateBidEscrowAsync(
+        string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId,
+        long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default)
+    {
+        if (bidSats <= 0) throw new InvalidOperationException("The bid must be positive.");
+        if (feeSats < 0 || feeSats >= bidSats)
+            throw new InvalidOperationException(
+                $"The marketplace fee ({feeSats}) must be non-negative and below the bid ({bidSats}).");
+
+        var bidderAddress = await GetPlayerAddressAsync(bidderPlayerId, ct);
+        var ownerAddress = await GetPlayerAddressAsync(ownerPlayerId, ct);
+        if (feeSats > 0) await EnsureTreasuryAsync(ct);
+
+        var parameters = new Covenants.BidEscrowParams(
+            bidderAddress, ownerAddress, heroAssetId, bidSats, bidId, refundAfterUnixSeconds,
+            feeSats, feeSats > 0 ? _treasuryAddress : null);
+        await SetKvAsync($"bid:{bidId}", System.Text.Json.JsonSerializer.Serialize(parameters), ct);
+
+        var (contract, serverInfo) = await BuildBidContractAsync(parameters, ct);
+        var address = contract.GetArkAddress().ToString(serverInfo.Network == Network.Main);
+        logger.LogInformation("Bid {BidId}: {Address} (hero {Hero}, bid {Bid}, reclaim after {Refund})",
+            bidId, address, heroAssetId, bidSats, refundAfterUnixSeconds);
+        return address;
+    }
+
+    public async Task<Covenants.BidEscrowParams?> GetBidEscrowParamsAsync(string bidId, CancellationToken ct = default)
+    {
+        var json = await GetKvAsync($"bid:{bidId}", ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<Covenants.BidEscrowParams>(json);
+    }
+
+    /// <summary>
+    /// Funded means SATS here, not an asset — the offer mirrored. EXACTLY the bid, in exactly one VTXO, the
+    /// same rule <see cref="IsBtcStake"/> enforces for a wager stake.
+    ///
+    /// <para>DEFENCE IN DEPTH ONLY, and it must not be mistaken for the real one. The fulfil leaf pins three
+    /// output amounts and binds no total INPUT value, so an owner who builds the spend themselves can sweep
+    /// anything at this address beyond the bid — they never consult this predicate. All this buys is that
+    /// the SERVER's own flow will not walk into it. Closing it needs an input-value constraint in the
+    /// covenant, which the VM cannot currently express. See BID-SURPLUS in the PR.</para>
+    ///
+    /// <para>Requiring exactly one VTXO also lets anyone stall a bid by parking a second one at this public
+    /// address. The bidder's reclaim leaf is gated only by its timelock and pays exactly the bid, so their
+    /// money still comes back; the nuisance VTXO is stranded for everyone.</para>
+    /// </summary>
+    public async Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default)
+    {
+        var parameters = await GetBidEscrowParamsAsync(bidId, ct);
+        if (parameters is null) return false;
+        var (contract, _) = await BuildBidContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script });
+        var vtxos = (await vtxoStorage.GetVtxos(scripts: [script], cancellationToken: ct))
+            .DistinctBy(v => v.OutPoint).ToList();
+        return vtxos.Count == 1 && IsBtcStake(vtxos[0], parameters.BidSats);
+    }
+
+    /// <summary>
+    /// A spend alone does not say WHICH leaf ran, and the two are not interchangeable: a reclaim pays the
+    /// bidder back, so counting one as a settle would mark a hero sold that never moved. This reads as "the
+    /// bidder received the hero in the transaction that closed the escrow" — the closest thing the indexer
+    /// can answer, since it does not expose which leaf a spend selected. A reclaim that ALSO hands the hero
+    /// over in the same transaction would still read as settled; that costs only the owner, who would be
+    /// giving the hero away and taking nothing.
+    /// </summary>
+    public async Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default)
+    {
+        var parameters = await GetBidEscrowParamsAsync(bidId, ct);
+        if (parameters is null) return false;
+        var (contract, _) = await BuildBidContractAsync(parameters, ct);
+        var script = contract.GetArkAddress().ScriptPubKey.ToHex();
+        var bidderScript = ArkAddress.Parse(parameters.BidderAddress).ScriptPubKey.ToHex();
+        await vtxoSync.PollScriptsForVtxos(new HashSet<string> { script, bidderScript });
+
+        // Only a spend of a VTXO that could BE the bid counts. Anyone may park sats at this public address,
+        // and spending one of those in a transaction that also moves the hero would otherwise answer the
+        // question while the bid itself still rests. A same-value nuisance VTXO defeats this too; the
+        // stronger form is to persist the funding outpoint, which belongs with the flow's own state.
+        var spendTxIds = (await vtxoStorage.GetVtxos(scripts: [script], includeSpent: true, cancellationToken: ct))
+            .Where(v => IsBtcStake(v, parameters.BidSats) && v.ArkTxid is not null)
+            .Select(v => v.ArkTxid!)
+            .ToHashSet();
+        if (spendTxIds.Count == 0) return false;
+
+        // The hero must have arrived in the SAME transaction. Without that correlation an ordinary transfer
+        // answers the question: an owner who hands the hero over out-of-band and then reclaims after expiry
+        // would read as a completed sale they were never paid for. TransactionId, not OutPoint.Hash — the
+        // identity WasOfferSoldAsync already compares an ArkTxid against.
+        var atBidder = await vtxoStorage.GetVtxos(scripts: [bidderScript], cancellationToken: ct);
+        return atBidder.Any(v => spendTxIds.Contains(v.TransactionId)
+                                 && v.Assets is { Count: > 0 } assets
+                                 && assets.Any(a => a.AssetId == parameters.HeroAssetId));
+    }
+
     public async Task<OfferInfo> CreateOfferAsync(
         string offerId, string sellerPlayerId, string itemId, long askSats,
         long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default)

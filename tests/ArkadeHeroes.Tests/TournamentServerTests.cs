@@ -530,6 +530,11 @@ public class TournamentServerTests
         public Task<OfferInfo> CreateHeroOfferAsync(string offerId, string sellerPlayerId, string heroAssetId, long askSats, long refundAfterUnixSeconds, long feeSats = 0, CancellationToken ct = default) => inner.CreateHeroOfferAsync(offerId, sellerPlayerId, heroAssetId, askSats, refundAfterUnixSeconds, feeSats, ct);
         public Task<bool> IsOfferFundedAsync(string offerId, CancellationToken ct = default) => inner.IsOfferFundedAsync(offerId, ct);
         public Task<bool> WasOfferSoldAsync(string offerId, CancellationToken ct = default) => inner.WasOfferSoldAsync(offerId, ct);
+        public Task<string> CreateBidEscrowAsync(string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId, long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default)
+            => inner.CreateBidEscrowAsync(bidId, bidderPlayerId, ownerPlayerId, heroAssetId, bidSats, feeSats, refundAfterUnixSeconds, ct);
+        public Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default) => inner.IsBidEscrowFundedAsync(bidId, ct);
+        public Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default) => inner.WasBidSettledAsync(bidId, ct);
+        public Task<ArkadeHeroes.Chain.Covenants.BidEscrowParams?> GetBidEscrowParamsAsync(string bidId, CancellationToken ct = default) => inner.GetBidEscrowParamsAsync(bidId, ct);
         public Task<Covenants.OfferParams?> GetOfferParamsAsync(string offerId, CancellationToken ct = default) => inner.GetOfferParamsAsync(offerId, ct);
         public Task<string> SettleWagerEscrowAsync(string matchId, bool challengerWon, byte[] serverSeed, byte[] oracleSignature64, CancellationToken ct = default) => inner.SettleWagerEscrowAsync(matchId, challengerWon, serverSeed, oracleSignature64, ct);
         public Task<bool> VerifyHeroOwnershipAsync(string playerId, string assetId, CancellationToken ct = default) => inner.VerifyHeroOwnershipAsync(playerId, assetId, ct);
