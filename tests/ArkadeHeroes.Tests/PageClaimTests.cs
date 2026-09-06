@@ -287,6 +287,24 @@ public class PageClaimTests
     }
 
     [Fact]
+    public void TheSquadPage_IsBuiltForExactlyTheLineupSize()
+    {
+        var page = Page("Squad.razor");
+
+        // Unlike the gauntlet's wave count, this one cannot just be rendered: the page holds ONE FIELD PER
+        // SLOT (_slot0.._slot2) and three markup pickers, so moving LineupSize is a structural edit here,
+        // not a substitution. This fails first and says so.
+        Assert.True(SquadBattle.LineupSize == 3,
+            $"SquadBattle.LineupSize moved to {SquadBattle.LineupSize}. Squad.razor is built for exactly 3 " +
+            "— per-slot fields, per-slot pickers, copy, and its validation — and needs a real edit, not a number.");
+
+        Assert.Contains($"A squad needs {SquadBattle.LineupSize} heroes", page);
+        Assert.Contains($"Count() == {SquadBattle.LineupSize}", page);
+        for (var slot = 0; slot < SquadBattle.LineupSize; slot++)
+            Assert.Contains($"_slot{slot}", page);
+    }
+
+    [Fact]
     public void TheTournamentsPage_PublishesTheRealPodiumSplit()
     {
         // The rake is read live from the server; the split is a Core constant written into the page.
