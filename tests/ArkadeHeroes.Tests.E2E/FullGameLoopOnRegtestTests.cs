@@ -251,8 +251,13 @@ public class FullGameLoopOnRegtestTests : IAsyncLifetime
             }
         }, TimeSpan.FromSeconds(150), "item payment to be observed and the claim to deliver");
 
-        Assert.Equal(1UL, claim!.UnitsHeld);
+        // UnitsHeld is a live VTXO sum taken right after the delivery spend: a claim that SUCCEEDED reads 0
+        // until the delivery indexes, so the count is only assertable below, after the wait.
+        Assert.NotEmpty(claim!.ItemAssetId);
         await aliceWallet.WaitForAssetAsync(claim.ItemAssetId, TimeSpan.FromSeconds(30));
+        await PollUntilAsync(
+            async () => (await alice.Items.MineAsync()).GetValueOrDefault("rusty-blade") == 1,
+            TimeSpan.FromSeconds(30), "the delivered unit to appear in Alice's holdings");
 
         var itemDetails = await transport.GetAssetDetailsAsync(claim.ItemAssetId);
         Assert.Equal(1000UL, itemDetails.Supply);
