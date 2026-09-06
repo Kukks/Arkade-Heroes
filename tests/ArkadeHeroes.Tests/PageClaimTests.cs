@@ -152,7 +152,14 @@ public class PageClaimTests
 
         var dm = Assert.Single(PlayModes(), m => m.Href == "deathmatch");
         Assert.Equal("Gone", dm.Stake);
-        Assert.Contains("Both sides also pay", Page("Play.razor"));
+
+        // All three disclosures, not just the first: the card makes three separate claims and the two
+        // asserted above are about the LAST two, so checking only "both sides pay" would let the wording
+        // they guard disappear while its guards kept passing.
+        var page = Visible(Page("Play.razor"));
+        Assert.Contains("Both sides also pay", page);
+        Assert.Contains("scaled to the hero's level", page);
+        Assert.Contains("steeper in absorb mode", page);
     }
 
     [Fact]
