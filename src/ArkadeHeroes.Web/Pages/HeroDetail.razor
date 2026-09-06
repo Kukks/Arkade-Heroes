@@ -471,7 +471,12 @@ else
                         <option value="">@PickerPlaceholder</option>
                         @foreach (var opt in PickerItems)
                         {
-                            <option value="@opt.Id">@opt.Slot · @opt.Name</option>
+                            @* Shown, not hidden: the player OWNS it and will wear it later. Disabled with the
+                               reason, so the level gate stops being a refusal you discover by picking. *@
+                            var locked = opt.MinLevel > h.Level;
+                            <option value="@opt.Id" disabled="@locked">
+                                @opt.Slot · @opt.Name@(locked ? $" — needs level {opt.MinLevel}" : "")
+                            </option>
                         }
                     </select>
                 }

@@ -65,6 +65,31 @@ public class EquipPickerTests
             .Select(o => o.TextContent)
             .ToList();
 
+    private static ItemDto TooHigh => new(
+        Id: "gilded-aegis", Name: "Gilded Aegis", Slot: "Armor",
+        MaxHp: 40, Attack: 0, Magic: 0, Defense: 9, Speed: 0, CritPercent: 0, PriceSats: 40_000,
+        MinLevel: 5);
+
+    /// <summary>Owning it is not wearing it. The level gate was the remaining way to pick an option and
+    /// get a refusal, and it is the one a day-one player meets on their largest purchase.</summary>
+    [Fact]
+    public void ThePicker_ShowsGearYouCannotWearYet_ButSaysWhyAndWillNotLetYouPickIt()
+    {
+        using var ctx = HeroPage(api =>
+        {
+            api.Get("/api/items", new[] { Owned, TooHigh });
+            api.Get("/api/items/mine", new Dictionary<string, long> { [Owned.Id] = 1, [TooHigh.Id] = 1 });
+        });
+
+        var cut = Render(ctx);
+
+        cut.WaitForAssertion(() => Assert.Contains(Options(cut), o => o.Contains("needs level 5")));
+        var locked = cut.FindAll(".equip-add option").Single(o => o.TextContent.Contains(TooHigh.Name));
+        Assert.True(locked.HasAttribute("disabled"));
+        var wearable = cut.FindAll(".equip-add option").Single(o => o.TextContent.Contains(Owned.Name));
+        Assert.False(wearable.HasAttribute("disabled"));
+    }
+
     /// <summary>The defect itself: an item this player has never bought was on the menu.</summary>
     [Fact]
     public void ThePicker_DoesNotOfferAnItemThePlayerHasNeverBought()
