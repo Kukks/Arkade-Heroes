@@ -61,6 +61,14 @@
             {
                 <span class="status-line"><span class="dot ok"></span> Claimed today — come back tomorrow.</span>
             }
+            else if (!_status.HasHero)
+            {
+                <span class="status-line">
+                    <span class="dot wait"></span>
+                    The daily reward goes to players, not empty wallets — get a hero on the
+                    <a href="heroes?mine=1">Heroes</a> page and it is yours to claim.
+                </span>
+            }
             else
             {
                 <button class="btn primary" @onclick="Claim" disabled="@_claiming">

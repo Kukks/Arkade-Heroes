@@ -3198,7 +3198,9 @@ public class GameService(
             window.DayIndex, window.End.ToUnixTimeSeconds(), claimedToday, player.StreakCount,
             _config.DailyBaseSats, questDtos,
             ClaimableNowSats: claimedToday ? 0 : reward.Total,
-            ProjectedSats: reward.Total);
+            ProjectedSats: reward.Total,
+            // The SAME predicate the claim enforces below, so the button and the refusal cannot disagree.
+            HasHero: store.Heroes.Values.Any(h => h.OwnerId == player.Id));
     }
 
     /// <summary>Claim the daily reward: base + bonus per completed quest, streak-scaled, paid from the

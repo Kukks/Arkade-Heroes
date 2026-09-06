@@ -9,9 +9,12 @@ public readonly record struct DailyQuestDef(string Id, string Title, string Rece
 public record DailyQuestDto(string Id, string Title, long BonusSats, bool Done);
 
 /// <summary>Today's daily-loop state for the signed-in player.</summary>
+/// <param name="HasHero">The claim's own precondition. Defaults TRUE so an older server that omits it
+/// leaves the button as it was — a claim the server would honour must not be blocked by a missing field.</param>
 public record DailyStatusDto(
     int DayIndex, long DayEndsUnix, bool ClaimedToday, int Streak,
-    long BaseSats, IReadOnlyList<DailyQuestDto> Quests, long ClaimableNowSats, long ProjectedSats);
+    long BaseSats, IReadOnlyList<DailyQuestDto> Quests, long ClaimableNowSats, long ProjectedSats,
+    bool HasHero = true);
 
 /// <summary>The result of a claim: what was paid and the breakdown.</summary>
 public record DailyClaimResultDto(
