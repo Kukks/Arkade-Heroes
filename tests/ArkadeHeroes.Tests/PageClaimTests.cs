@@ -138,6 +138,31 @@ public class PageClaimTests
     }
 
     [Fact]
+    public void ThePlayPage_DoesNotHideTheDeathMatchFeeBehindThePermanentChip()
+    {
+        // The same defect the fusion card had, on the costlier action: a death-match charges BOTH sides
+        // Leveling.DeathMatchFee and the card named only the burned hero.
+        var config = GameConfig.Default;
+        Assert.True(Leveling.DeathMatchFee(5, absorb: false, config) > Leveling.MatchFee(5, config),
+            "A death-match costs more than a wager match; if that stops being true, retune the card's "
+            + "\"steeper\" wording rather than leaving copy that overstates the charge.");
+        Assert.True(Leveling.DeathMatchFee(5, absorb: true, config)
+                    > Leveling.DeathMatchFee(5, absorb: false, config),
+            "The card says absorb mode is steeper.");
+
+        var dm = Assert.Single(PlayModes(), m => m.Href == "deathmatch");
+        Assert.Equal("Gone", dm.Stake);
+
+        // All three disclosures, not just the first: the card makes three separate claims and the two
+        // asserted above are about the LAST two, so checking only "both sides pay" would let the wording
+        // they guard disappear while its guards kept passing.
+        var page = Visible(Page("Play.razor"));
+        Assert.Contains("Both sides also pay", page);
+        Assert.Contains("scaled to the hero's level", page);
+        Assert.Contains("steeper in absorb mode", page);
+    }
+
+    [Fact]
     public void TheMergePage_SaysTheFusionFeeLeavesYourWallet()
     {
         // /breed always said "both heroes + the fee". /merge said only "deposits both into a covenant
