@@ -123,10 +123,10 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
 
     private static (string Action, int Weight)[] Weights(Persona persona) => persona switch
     {
-        Persona.Grinder => [("gauntlet", 34), ("trials", 22), ("duel", 20), ("equip", 8), ("buyitem", 8), ("daily", 8)],
+        Persona.Grinder => [("gauntlet", 32), ("trials", 20), ("duel", 18), ("equip", 8), ("buyitem", 8), ("daily", 8), ("rename", 6)],
         Persona.Breeder => [("breed", 28), ("stud", 18), ("sellhero", 14), ("gauntlet", 12), ("recruit", 10), ("merge", 10), ("gift", 8)],
         Persona.Duelist => [("duel", 40), ("deathmatch", 18), ("gauntlet", 16), ("equip", 10), ("buyitem", 8), ("squad", 8)],
-        Persona.Trader => [("buyoffer", 22), ("sellhero", 20), ("buyitem", 16), ("sellitem", 14), ("bid", 12), ("recruit", 8), ("gauntlet", 8)],
+        Persona.Trader => [("buyoffer", 20), ("sellhero", 18), ("buyitem", 16), ("sellitem", 14), ("bid", 12), ("recruit", 8), ("gauntlet", 6), ("reclaim", 6)],
         Persona.Whale => [("tournament", 30), ("squad", 22), ("duel", 18), ("buyitem", 12), ("recruit", 10), ("buyoffer", 8)],
         _ => [("daily", 26), ("gauntlet", 26), ("duel", 18), ("trials", 14), ("buyitem", 8), ("breed", 8)],
     };
@@ -167,6 +167,8 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
                 "daily" => await DailyAsync(p),
                 "gift" => await GiftAsync(p),
                 "sellitem" => await SellItemAsync(p),
+                "rename" => await RenameAsync(p),
+                "reclaim" => await ReclaimAsync(p),
                 _ => throw new InvalidOperationException($"unknown action {action}"),
             };
             _tally.Record(action, did.Ok ? Outcome.Ok : Outcome.Refused, did.Reason);
@@ -468,6 +470,30 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
         await p.Api.Dev.FundOfferAsync(new { OfferId = offer.OfferId });
         return Did.Yes;
     }
+
+    /// Walks every live escrow the player holds and probes the chain for each. A throw here is the finding.
+    private async Task<Did> ReclaimAsync(Player p)
+    {
+        var stuck = await p.Api.Players.ReclaimableAsync();
+        return stuck.Count == 0 ? Did.No("nothing of mine is stuck") : Did.Yes;
+    }
+
+    /// Two-phase and fee-paid. Names are GLOBALLY unique, so a collision is a legitimate refusal.
+    private async Task<Did> RenameAsync(Player p)
+    {
+        var mine = (await p.Api.Heroes.MineAsync()).ToList();
+        if (mine.Count == 0) return Did.No("no hero to rename");
+        var hero = mine[_rng.Next(mine.Count)];
+
+        var quote = await p.Api.Heroes.RequestRenameAsync(
+            hero.Id, new RenameHeroRequest($"{Epithets[_rng.Next(Epithets.Length)]} {_rng.Next(1000):000}"));
+        if (quote.Fee is { } fee) await Pay(p, fee.InvoiceId);
+        await p.Api.Heroes.ConfirmRenameAsync(hero.Id);
+        return Did.Yes;
+    }
+
+    private static readonly string[] Epithets =
+        ["Dawnbringer", "Ashwalker", "Stormcaller", "Gravebound", "Sunspear", "Nightglass", "Ironsong"];
 
     private async Task<Did> BuyOfferAsync(Player p)
     {
