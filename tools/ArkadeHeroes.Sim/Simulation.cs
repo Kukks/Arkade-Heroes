@@ -112,6 +112,22 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
 
     private async Task TakeTurnAsync(Player p, int round)
     {
+        // Recruiting is billed per claim, not once per account — and Grinder and Duelist do not list it.
+        // Guarded because this read is OUTSIDE Attempt: letting it throw would abort the whole run, and
+        // the report is the point. A roster we could not read is treated as non-empty, not as wiped.
+        try
+        {
+            if ((await p.Api.Heroes.MineAsync()).Count == 0)
+            {
+                await Attempt(p, "recruit", round);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _tally.Record("roster-read", Outcome.Broken, $"{ex.GetType().Name}: {ex.Message}");
+        }
+
         var actions = Weights(p.Persona);
         var take = 1 + _rng.Next(3);
         for (var i = 0; i < take; i++)

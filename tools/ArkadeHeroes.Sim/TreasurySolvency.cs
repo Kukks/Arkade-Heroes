@@ -214,10 +214,10 @@ public static class TreasurySolvency
             await Attempt("squad", round, () => SquadAsync(a, b));
             await SampleAsync(round, "squad");
 
-            await Attempt("stud", round, () => StudAsync(b, c));
+            await Attempt("stud", round, () => StudAsync(b, c, round));
             await SampleAsync(round, "stud");
 
-            await Attempt("bid", round, () => BidAsync(c, a));
+            await Attempt("bid", round, () => BidAsync(c, a, round));
             await SampleAsync(round, "bid");
         }
 
@@ -268,6 +268,9 @@ public static class TreasurySolvency
             var joined = await joiner.Api.Tournament.JoinAsync(created.Tournament.Id, new JoinTournamentRequest(joinerHero.Id));
             await Pay(joiner, joined.BuyIn.InvoiceId);
             Owe($"bracket:{created.Tournament.Id}", buyIn * 2);
+            // The only reader of _obligations is a sample, and every OTHER sample sits outside an Owe→Settle
+            // pair — so deleting these four as redundant pins peak obligations back at zero.
+            await SampleAsync(round, "bracket held");
 
             var resolved = await opener.Api.Tournament.ResolveAsync(created.Tournament.Id, new FightRequest(Nonce()));
             Settle($"bracket:{created.Tournament.Id}");
@@ -285,6 +288,7 @@ public static class TreasurySolvency
             var created = await opener.Api.Tournament.OpenAsync(new OpenTournamentRequest(hero.Id, buyIn, 4));
             await Pay(opener, created.BuyIn.InvoiceId);
             Owe($"bracket:{created.Tournament.Id}", buyIn);
+            await SampleAsync(round, "buy-in held");
             var refunded = await opener.Api.Tournament.RefundAsync(created.Tournament.Id);
             Settle($"bracket:{created.Tournament.Id}");
             if (refunded.RefundedSats != buyIn)
@@ -309,7 +313,7 @@ public static class TreasurySolvency
             await challenger.Api.Squad.ResolveAsync(open.MatchId, new FightRequest(Nonce()));
         }
 
-        private async Task StudAsync(Actor proposer, Actor owner)
+        private async Task StudAsync(Actor proposer, Actor owner, int round)
         {
             var mine = await BreedableHeroAsync(proposer);
             var stud = await BreedableHeroAsync(owner);
@@ -319,12 +323,17 @@ public static class TreasurySolvency
             var proposal = await proposer.Api.Stud.ProposeAsync(new StudProposeRequest(mine.Id, stud.Id, fee));
             var accepted = await owner.Api.Stud.AcceptAsync(proposal.ProposalId);
             await Pay(proposer, accepted.BreedFeeInvoice.InvoiceId);
-            if (accepted.StudFeeInvoice is { } sf) { await Pay(proposer, sf.InvoiceId); Owe($"stud:{proposal.ProposalId}", fee); }
+            if (accepted.StudFeeInvoice is { } sf)
+            {
+                await Pay(proposer, sf.InvoiceId);
+                Owe($"stud:{proposal.ProposalId}", fee);
+                await SampleAsync(round, "stud fee held");
+            }
             await proposer.Api.Stud.RevealAsync(proposal.ProposalId, new StudRevealRequest(Nonce()));
             Settle($"stud:{proposal.ProposalId}");
         }
 
-        private async Task BidAsync(Actor bidder, Actor owner)
+        private async Task BidAsync(Actor bidder, Actor owner, int round)
         {
             var roster = (await owner.Api.Heroes.MineAsync()).ToList();
             if (roster.Count < 2) throw new ArkadeHeroesApiException("owner is down to their last hero");
@@ -335,6 +344,7 @@ public static class TreasurySolvency
             var accepted = await owner.Api.Bids.AcceptAsync(bid.BidId);
             await Pay(bidder, accepted.Invoice.InvoiceId);
             Owe($"bid:{bid.BidId}", amount);
+            await SampleAsync(round, "bid held");
             await owner.Api.Dev.TransferAssetAsync(new { AssetId = target.AssetId, ToPlayerId = bidder.Id });
             await bidder.Api.Bids.SettleAsync(bid.BidId);
             Settle($"bid:{bid.BidId}");
