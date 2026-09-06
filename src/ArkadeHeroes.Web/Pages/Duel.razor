@@ -173,7 +173,7 @@ else
                 @foreach (var m in ToAccept)
                 {
                     <div class="match-row">
-                        <span>Their <b>@Name(m.ChallengerHeroId)</b> challenges your <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats</span>
+                        <span>Their <b>@Name(m.ChallengerHeroId)</b> challenges your <b>@Name(m.DefenderHeroId)</b> · <b class="mono">@m.WagerSats.ToString("N0")</b> sats@(AcceptFee(m) is { } af ? $" + {af:N0} sat match fee = {m.WagerSats + af:N0} sats to accept" : "")</span>
                         <span class="spacer"></span>
                         <button class="btn primary sm" @onclick="() => DoAccept(m.MatchId)" disabled="@_busy">Accept</button>
                     </div>
@@ -331,6 +331,12 @@ else
     /// chosen and the config is read — an unknown price is stated as unknown, never as zero.</summary>
     private long? MatchFee => _mine.FirstOrDefault(h => h.Id == _myHeroId) is { } h
         ? Pricing.MatchFee(_config, h.Level)
+        : null;
+
+    /// <summary>What ACCEPTING costs on top of the wager. Priced from the DEFENDER's hero — the server
+    /// charges Leveling.MatchFee(defender.Level), so it is not the number the challenger was quoted.</summary>
+    private long? AcceptFee(MatchDto m) => _mine.FirstOrDefault(h => h.Id == m.DefenderHeroId) is { } mine
+        ? Pricing.MatchFee(_config, mine.Level)
         : null;
 
     private DuelOutcome? _duel;
