@@ -8,6 +8,7 @@ using NArk.Abstractions.Intents;
 using NArk.Abstractions.Safety;
 using NArk.Abstractions.VTXOs;
 using NArk.Abstractions.Wallets;
+using NArk.Blockchain;
 using NArk.Core.Services;
 using NArk.Core.Wallet;
 using NArk.Hosting;
@@ -25,6 +26,10 @@ public class SelfCustodyWalletOptions
 
     /// <summary>SQLite file for the wallet's local storage (VTXOs, contracts, keys).</summary>
     public required string DbPath { get; set; }
+
+    /// <summary>Esplora REST API, and with it the chain time auto-renewal needs. Null — every existing
+    /// caller's default — means no chain source and so no renewal, exactly as before.</summary>
+    public string? EsploraUri { get; set; }
 
     /// <summary>BIP-39 mnemonic; generated fresh when null. NEVER leaves this process.</summary>
     public string? Mnemonic { get; set; }
@@ -137,9 +142,8 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         }
     }
 
-    public static async Task<SelfCustodyWallet> CreateAsync(SelfCustodyWalletOptions options, CancellationToken ct = default)
+    public static IServiceCollection ConfigureServices(IServiceCollection services, SelfCustodyWalletOptions options)
     {
-        var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContextFactory<GameArkDbContext>(builder =>
             builder.UseSqlite($"Data Source={options.DbPath}"));
@@ -155,12 +159,21 @@ public sealed class SelfCustodyWallet : IAsyncDisposable
         }
         services.AddArkCoreServices();
         services.AddArkNetwork(new ArkNetworkConfig(options.ArkUri));
-        services.AddSingleton<IIntentScheduler, SimpleIntentScheduler>();
+        if (options.EsploraUri is { Length: > 0 } esploraUri)
+        {
+            services.AddSingleton<IBitcoinBlockchain>(_ =>
+                new EsploraBlockchain(new Uri(esploraUri.TrimEnd('/') + "/")));
+        }
+        services.AddArkadeRenewalScheduling();
         services.AddSingleton<ISafetyService, AsyncSafetyService>();
         services.AddSingleton<IWalletProvider, DefaultWalletProvider>();
         services.AddSingleton<IAssetManager, AssetManager>();
+        return services;
+    }
 
-        var provider = services.BuildServiceProvider();
+    public static async Task<SelfCustodyWallet> CreateAsync(SelfCustodyWalletOptions options, CancellationToken ct = default)
+    {
+        var provider = ConfigureServices(new ServiceCollection(), options).BuildServiceProvider();
         try
         {
             await using (var db = await provider.GetRequiredService<IDbContextFactory<GameArkDbContext>>()

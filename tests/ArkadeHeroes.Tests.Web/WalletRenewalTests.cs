@@ -1,3 +1,4 @@
+using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Web.Wallet;
 using Microsoft.Extensions.Options;
 using NArk.Abstractions;

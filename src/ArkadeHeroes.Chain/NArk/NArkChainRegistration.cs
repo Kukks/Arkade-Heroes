@@ -33,7 +33,7 @@ public static class NArkChainRegistration
         services.AddArkCoreServices();
         services.AddArkNetwork(new ArkNetworkConfig(options.ArkUri, EsploraUri: options.EsploraUri));
 
-        services.AddSingleton<IIntentScheduler, SimpleIntentScheduler>();
+        services.AddArkadeRenewalScheduling();
         services.AddSingleton<ISafetyService, AsyncSafetyService>();
         services.AddSingleton<IWalletProvider, DefaultWalletProvider>();
         services.AddSingleton<IAssetManager, AssetManager>();
