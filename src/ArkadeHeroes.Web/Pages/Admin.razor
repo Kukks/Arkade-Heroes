@@ -291,7 +291,7 @@ else
             <input class="ask-input" style="width:11rem" placeholder="event type" @bind="_auditType" />
             <input class="ask-input" style="width:11rem" placeholder="actor player id" @bind="_auditActor" />
             <button class="btn primary" @onclick="LoadAudit" disabled="@_auditBusy">@(_auditBusy ? "Reading…" : "Read")</button>
-            @if (_audit is not null && _audit.Events.Count > 0)
+            @if (_audit is { Events.Count: > 0 } && !_auditExhausted)
             {
                 <button class="btn ghost" @onclick="MoreAudit" disabled="@_auditBusy">Older →</button>
             }
@@ -353,13 +353,27 @@ else
     private string? _auditError;
     private bool _auditBusy;
     private long _auditAfter;
+    // The filters the CURRENT results were fetched with. "Older" pages against these rather than the live
+    // inputs, so editing a box does not append a differently-filtered page to what is already on screen.
+    private string? _activeSubject;
+    private string? _activeType;
+    private string? _activeActor;
+    // An empty page returns the cursor it was asked for, so without this "Older" would keep offering to
+    // fetch the same nothing forever.
+    private bool _auditExhausted;
 
     private static string When(long unixSeconds) =>
         DateTimeOffset.FromUnixTimeSeconds(unixSeconds).ToLocalTime().ToString("dd MMM HH:mm:ss");
 
     /// <summary>A fresh read restarts the cursor; "Older" continues it. Blank filters are sent as null so
     /// the server does not narrow on an empty string.</summary>
-    private Task LoadAudit() { _auditAfter = 0; return ReadAudit(replace: true); }
+    private Task LoadAudit()
+    {
+        _auditAfter = 0;
+        _auditExhausted = false;
+        (_activeSubject, _activeType, _activeActor) = (Blank(_auditSubject), Blank(_auditType), Blank(_auditActor));
+        return ReadAudit(replace: true);
+    }
 
     private Task MoreAudit() => ReadAudit(replace: false);
 
@@ -369,11 +383,12 @@ else
         _auditError = null;
         try
         {
-            var page = string.IsNullOrWhiteSpace(_auditSubject)
+            var page = _activeSubject is null
                 ? await Api.Admin.AuditAsync(_token.Trim(), _auditAfter, 100,
-                    type: Blank(_auditType), actor: Blank(_auditActor))
-                : await Api.Admin.AuditForSubjectAsync(_token.Trim(), _auditSubject.Trim(), _auditAfter, 100);
+                    type: _activeType, actor: _activeActor)
+                : await Api.Admin.AuditForSubjectAsync(_token.Trim(), _activeSubject, _auditAfter, 100);
             _auditAfter = page.NextAfter;
+            if (!replace && page.Events.Count == 0) _auditExhausted = true;
             _audit = replace || _audit is null
                 ? page
                 : page with { Events = [.. _audit.Events, .. page.Events] };

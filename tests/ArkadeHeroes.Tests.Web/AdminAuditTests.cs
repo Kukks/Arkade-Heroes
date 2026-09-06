@@ -98,6 +98,37 @@ public class AdminAuditTests
     }
 
     [Fact]
+    public void OlderStopsBeingOffered_OnceThereIsNothingOlder()
+    {
+        var (ctx, cut) = Console();
+        using var _ = ctx;
+        Button(cut, "Read").Click();
+        cut.WaitForAssertion(() => Assert.Contains("hero.minted", cut.Markup));
+
+        ctx.Api.Get("/api/admin/audit", new AuditPageDto([], NextAfter: 1, WriteFailures: 0));
+        Button(cut, "Older").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Contains("Older", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void EditingAFilterDoesNotRepageTheOldResults()
+    {
+        var (ctx, cut) = Console();
+        using var _ = ctx;
+        Button(cut, "Read").Click();
+        cut.WaitForAssertion(() => Assert.Contains("hero.minted", cut.Markup));
+
+        cut.FindAll("input").First(i => i.GetAttribute("placeholder")!.Contains("subject")).Change("hero-9");
+        ctx.Api.Requested.Clear();
+        Button(cut, "Older").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.DoesNotContain(ctx.Api.Requested, r => r.Contains("/audit/subjects/", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void ASubjectFilter_AsksTheSubjectEndpoint()
     {
         // "Everything that ever happened to THIS hero" is its own indexed endpoint, not a client-side filter.
