@@ -216,7 +216,9 @@ public sealed class Engagement
         }
 
         sb.AppendLine();
-        sb.AppendLine("LEADERBOARD CHURN (top 10)");
+        // Switching this to /leaderboard/season would show the same thing: seasons turn on the wall clock
+        // at 14 days and a run takes seconds, so every receipt in a run falls inside one season.
+        sb.AppendLine("LEADERBOARD CHURN (top 10, all-time board — season resets are out of frame)");
         sb.AppendLine($"  {"round",5} {"carried over",13} {"rank-1 hero",26} {"mean |rank move|",17}");
         var seenLeaders = new HashSet<string>();
         for (var r = 1; r <= rounds; r++)
