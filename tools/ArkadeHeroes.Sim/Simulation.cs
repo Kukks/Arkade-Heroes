@@ -442,8 +442,9 @@ public sealed class Simulation(int players, int rounds, int seed, bool verbose)
     {
         var mine = (await p.Api.Heroes.MineAsync()).ToList();
         if (mine.Count < 3) return Did.No("keeping my last two heroes");
-        var other = _players.FirstOrDefault(x => x.Id != p.Id);
-        if (other is null) return Did.No("nobody to give one to");
+        var others = _players.Where(x => x.Id != p.Id).ToList();
+        if (others.Count == 0) return Did.No("nobody to give one to");
+        var other = others[_rng.Next(others.Count)];
         // Skip anything resting on the market: its asset is in the offer covenant, not the sender's wallet.
         var listedIds = (await p.Api.Offers.ListAsync()).Select(o => o.HeroId).ToHashSet();
         var hero = mine.LastOrDefault(h => !listedIds.Contains(h.Id));
