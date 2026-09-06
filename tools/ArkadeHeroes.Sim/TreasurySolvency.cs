@@ -37,6 +37,13 @@ public static class TreasurySolvency
 
     private readonly record struct Refusal(int Round, string Action, string Message, long Balance, string Aftermath);
 
+    private sealed class Held
+    {
+        public required string Id { get; init; }
+        public required Actor Opener { get; init; }
+        public bool Filled { get; set; }
+    }
+
     private sealed class Run(int players, int rounds, int seed)
     {
         /// The shipped GameOptions default. Left at its default deliberately: the question is what the
@@ -228,7 +235,7 @@ public static class TreasurySolvency
         private async Task ConcurrentHoldsAsync(int round)
         {
             var order = Shuffled();
-            var open = new List<(string Id, Actor Opener)>();
+            var open = new List<Held>();
             for (var i = 3; i + 1 < order.Count && open.Count < 3; i += 2)
             {
                 var opener = order[i];
@@ -244,23 +251,32 @@ public static class TreasurySolvency
                     var created = await opener.Api.Tournament.OpenAsync(
                         new OpenTournamentRequest(openerHero.Id, buyIn, 2));
                     await Pay(opener, created.BuyIn.InvoiceId);
+                    // Owed the moment IT clears, and tracked from creation: recording only once BOTH legs
+                    // cleared drops the opener's stake when the joiner's leg fails, and strands the bracket.
+                    var held = new Held { Id = created.Tournament.Id, Opener = opener };
+                    open.Add(held);
+                    Owe($"bracket:{held.Id}", buyIn);
+
                     var joined = await joiner.Api.Tournament.JoinAsync(
-                        created.Tournament.Id, new JoinTournamentRequest(joinerHero.Id));
+                        held.Id, new JoinTournamentRequest(joinerHero.Id));
                     await Pay(joiner, joined.BuyIn.InvoiceId);
-                    Owe($"bracket:{created.Tournament.Id}", buyIn * 2);
-                    open.Add((created.Tournament.Id, opener));
+                    Owe($"bracket:{held.Id}", buyIn * 2);
+                    held.Filled = true;
                 });
             }
 
             if (open.Count == 0) return;
             await SampleAsync(round, $"{open.Count} brackets held");
 
-            // An unsettled hold stays owed on purpose: a bracket that failed to resolve IS still holding it.
-            foreach (var (id, opener) in open)
-                await Attempt("bracket-hold-settle", round, async () =>
+            // A hold that neither resolves nor refunds stays owed, because it IS still holding the money.
+            foreach (var held in open)
+                await Attempt(held.Filled ? "bracket-hold-settle" : "bracket-hold-refund", round, async () =>
                 {
-                    await opener.Api.Tournament.ResolveAsync(id, new FightRequest(Nonce()));
-                    Settle($"bracket:{id}");
+                    if (held.Filled)
+                        await held.Opener.Api.Tournament.ResolveAsync(held.Id, new FightRequest(Nonce()));
+                    else
+                        await held.Opener.Api.Tournament.RefundAsync(held.Id);
+                    Settle($"bracket:{held.Id}");
                 });
         }
 
