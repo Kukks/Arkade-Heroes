@@ -46,6 +46,10 @@ public class AdminAuditTests
     private static IElement Button(IRenderedComponent<Admin> cut, string text) =>
         cut.FindAll("button").First(b => b.TextContent.Contains(text, StringComparison.Ordinal));
 
+    private static void Fill(IRenderedComponent<Admin> cut, string placeholder, string value) =>
+        cut.FindAll("input").First(i => i.GetAttribute("placeholder")!.Contains(placeholder, StringComparison.Ordinal))
+            .Change(value);
+
     [Fact]
     public void ReadingTheLogShowsWhatTheServerDid()
     {
@@ -69,7 +73,7 @@ public class AdminAuditTests
 
         Button(cut, "Read").Click();
 
-        cut.WaitForAssertion(() => Assert.Contains("server", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains(cut.FindAll("td"), td => td.TextContent.Trim() == "server"));
     }
 
     [Fact]
@@ -142,5 +146,21 @@ public class AdminAuditTests
 
         cut.WaitForAssertion(() =>
             Assert.Contains(ctx.Api.Requested, r => r.Contains("/audit/subjects/hero-1", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void ASubjectCombinedWithAnotherFilter_KeepsBoth()
+    {
+        var (ctx, cut) = Console();
+        using var _ = ctx;
+
+        Fill(cut, "subject", "hero-1");
+        Fill(cut, "event type", "hero.minted");
+        ctx.Api.RequestedUrls.Clear();
+        Button(cut, "Read").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(ctx.Api.RequestedUrls, r =>
+            r.Contains("subject=hero-1", StringComparison.Ordinal)
+            && r.Contains("type=hero.minted", StringComparison.Ordinal)));
     }
 }

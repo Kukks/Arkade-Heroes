@@ -383,10 +383,11 @@ else
         _auditError = null;
         try
         {
-            var page = _activeSubject is null
-                ? await Api.Admin.AuditAsync(_token.Trim(), _auditAfter, 100,
-                    type: _activeType, actor: _activeActor)
-                : await Api.Admin.AuditForSubjectAsync(_token.Trim(), _activeSubject, _auditAfter, 100);
+            // The indexed subject route takes no type or actor, so a combined filter takes the general one.
+            var page = _activeSubject is { } only && _activeType is null && _activeActor is null
+                ? await Api.Admin.AuditForSubjectAsync(_token.Trim(), only, _auditAfter, 100)
+                : await Api.Admin.AuditAsync(_token.Trim(), _auditAfter, 100,
+                    subject: _activeSubject, type: _activeType, actor: _activeActor);
             _auditAfter = page.NextAfter;
             if (!replace && page.Events.Count == 0) _auditExhausted = true;
             _audit = replace || _audit is null
