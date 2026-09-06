@@ -400,6 +400,9 @@ else
                         </td>
                         <td style="padding:.35rem .5rem" class="muted">@Advice(f.Outcome)</td>
                         <td style="padding:.35rem .5rem;word-break:break-all">@f.PayoutTag</td>
+                        @* An unknown row's advice is "check the invoice", so withholding it defeats the
+                           advice. Null on treasury-paid prizes, which hang off no invoice. *@
+                        <td style="padding:.35rem .5rem;word-break:break-all">@(f.InvoiceId ?? "—")</td>
                         <td style="padding:.35rem .5rem;word-break:break-all" class="muted">@f.Failure</td>
                     </tr>
                 }

@@ -26,9 +26,10 @@ public class AdminPayoutFailureTests
         Season: new SeasonLeaderboardDto(1, 0, 0, [], null),
         Tournaments: []);
 
-    private static PayoutFailureDto Row(long id, string outcome, long sats = 500, string player = "player-1") =>
+    private static PayoutFailureDto Row(
+        long id, string outcome, long sats = 500, string player = "player-1", string? invoice = null) =>
         new(id, AtUnixSeconds: 1_760_000_000, PlayerId: player, AmountSats: sats,
-            PayoutTag: $"tournament:t-{id}:rank1", Outcome: outcome, InvoiceId: null, Failure: "chain refused");
+            PayoutTag: $"tournament:t-{id}:rank1", Outcome: outcome, InvoiceId: invoice, Failure: "chain refused");
 
     private static (PageTestContext Ctx, IRenderedComponent<Admin> Cut) Console(PayoutFailurePageDto? page = null)
     {
@@ -73,6 +74,19 @@ public class AdminPayoutFailureTests
         Button(cut, "failures").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("do NOT re-pay", cut.Markup));
+    }
+
+    [Fact]
+    public void AnUnverifiedRow_NamesTheInvoiceItTellsYouToCheck()
+    {
+        var (ctx, cut) = Console(new PayoutFailurePageDto(
+            [Row(1, PayoutFailureOutcome.Unknown, invoice: "inv-77")], 1, 0));
+        using var _ = ctx;
+
+        Button(cut, "failures").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("check the invoice", cut.Markup));
+        Assert.Contains("inv-77", cut.Markup);
     }
 
     [Fact]
