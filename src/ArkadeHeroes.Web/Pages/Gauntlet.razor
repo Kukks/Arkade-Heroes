@@ -9,7 +9,7 @@
 
 <div class="page-head">
     <h2>Gauntlet</h2>
-    <span class="hud">solo PvE · 5 escalating ghost waves</span>
+    <span class="hud">solo PvE · @ArkadeHeroes.Core.Progression.Gauntlet.WaveCount escalating ghost waves</span>
 </div>
 
 @if (!State.IsSignedIn)
@@ -42,8 +42,8 @@ else
 {
     <div class="card">
         <p class="muted" style="margin-top:0">
-            Send a hero through five escalating ghost waves. A full clear wins a piece of gear, and every
-            wave banks XP — <b>capped at level 10</b>, so the gauntlet trains up a newcomer but can't be farmed.
+            Send a hero through @ArkadeHeroes.Core.Progression.Gauntlet.WaveCount escalating ghost waves. A full clear wins a piece of gear,
+            and every wave banks XP — <b>capped at level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap</b>, so the gauntlet trains up a newcomer but can't be farmed.
             An entry fee applies, scaled to the hero's level (nothing to lose but the fee — the ghosts don't stake back).
         </p>
         <label>Champion
@@ -125,9 +125,9 @@ else
         var w = _outcome.Run.Waves[_waveIndex];
         <div class="page-head" style="margin-top:1.8rem">
             <h3 style="margin:0">Descending…</h3>
-            <span class="hud">five escalating ghost waves</span>
+            <span class="hud">@ArkadeHeroes.Core.Progression.Gauntlet.WaveCount escalating ghost waves</span>
         </div>
-        <CrawlTrack Rungs="_rungs" Focus="_waveIndex" Revealed="_revealed" Total="5"
+        <CrawlTrack Rungs="_rungs" Focus="_waveIndex" Revealed="_revealed" Total="@ArkadeHeroes.Core.Progression.Gauntlet.WaveCount"
                     Label="five waves down" OnSkip="SkipReplay" />
         <div class="crawl-stage">
             <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
@@ -143,8 +143,8 @@ else
     else if (_outcome is not null)
     {
         <div class="page-head" style="margin-top:1.8rem">
-            <h3 style="margin:0">@(_outcome.Run.WavesCleared == 5 ? "Gauntlet cleared!" : "Run over")</h3>
-            <span class="hud">@_outcome.Run.WavesCleared / 5 waves</span>
+            <h3 style="margin:0">@(_outcome.Run.WavesCleared == ArkadeHeroes.Core.Progression.Gauntlet.WaveCount ? "Gauntlet cleared!" : "Run over")</h3>
+            <span class="hud">@_outcome.Run.WavesCleared / @ArkadeHeroes.Core.Progression.Gauntlet.WaveCount waves</span>
         </div>
 
         <div class="grid cols">
@@ -163,11 +163,11 @@ else
         <div class="card" style="margin-top:1.2rem">
             <div class="status-line">
                 <span class="dot ok"></span>
-                <span><b>@_outcome.Run.WavesCleared / 5</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
+                <span><b>@_outcome.Run.WavesCleared / @ArkadeHeroes.Core.Progression.Gauntlet.WaveCount</b> cleared · <b>+@_outcome.Run.XpAwarded</b> xp · now level <b>@_outcome.Run.NewLevel</b></span>
             </div>
             @if (_outcome.Run.XpAwarded == 0 && _outcome.Run.WavesCleared > 0)
             {
-                <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level 10.</p>
+                <p class="muted" style="margin:.4rem 0 0;font-size:.82rem">This hero has outgrown the gauntlet — no XP is awarded past level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap.</p>
             }
             @if (_outcome.Run.ItemAwarded is not null)
             {
