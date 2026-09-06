@@ -64,15 +64,17 @@ else
             </select>
         </label>
         @* Wave 1's ghost is drawn at the FULL gen-0 stat range (Trials.GhostFor) while a bought hero is
-           capped below it on purpose (StarterPolicy.RecruitStatCap) — the ladder reads genome, not level. *@
+           capped below it (StarterPolicy.RecruitStatCap). Unlike the gauntlet this ladder is ABSOLUTE, so
+           levels do help — measured zero-wave: recruit 97.5% at L1, 42.3% at L20, against bred 48.6% at L1. *@
         @if (SelectedIsRecruit)
         {
             <div class="status-line" style="margin:.9rem 0 0">
                 <span class="dot wait"></span>
                 <span>
                     Bought recruits are the weakest heroes in the game on purpose, and this ladder reads the
-                    hero, not the level — a <a href="breed">bred</a> hero clears its first wave about half
-                    the time, a recruit about one time in forty. Levelling barely moves it.
+                    hero as much as the level — a <a href="breed">bred</a> hero clears its first wave about
+                    half the time, a recruit about one time in forty. Breeding is worth roughly twenty levels
+                    here.
                 </span>
             </div>
         }
