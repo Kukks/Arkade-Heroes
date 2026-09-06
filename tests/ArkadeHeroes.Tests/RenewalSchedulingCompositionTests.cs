@@ -2,6 +2,7 @@ using ArkadeHeroes.Chain.NArk;
 using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.Intents;
+using NArk.Blockchain;
 using NBitcoin;
 
 namespace ArkadeHeroes.Tests;
@@ -23,6 +24,11 @@ public class RenewalSchedulingCompositionTests
     [Fact]
     public async Task TheConsoleWallet_GeneratesIntents_OnceItHasAChainSource()
     {
+        // Pinned BEFORE Scheduler() overrides IBitcoinBlockchain — its UnreachableChain is registered last
+        // and wins, so without this the Esplora argument decides nothing the test could fail on.
+        Assert.IsType<EsploraBlockchain>(
+            ConsoleServices(Esplora).BuildServiceProvider().GetRequiredService<IBitcoinBlockchain>());
+
         var scheduler = Scheduler(ConsoleServices(Esplora));
 
         Assert.IsType<BatchRenewalScheduler>(scheduler);
