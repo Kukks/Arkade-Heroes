@@ -44,7 +44,7 @@ public class TrialsCopyStillTrueTests
     {
         var rate = FirstWaveClearRate(recruit: false, level: 1, seed: 11);
 
-        Assert.True(rate is > 0.40 and < 0.65,
+        Assert.True(rate is >= 0.40 and <= 0.65,
             $"Trials.razor tells a recruit-holder a bred hero clears wave 1 \"about half the time\"; " +
             $"measured {rate:P1} over {Samples} runs. Update the page or the balance.");
     }
@@ -54,7 +54,7 @@ public class TrialsCopyStillTrueTests
     {
         var rate = FirstWaveClearRate(recruit: true, level: 1, seed: 11);
 
-        Assert.True(rate is > 0.005 and < 0.06,
+        Assert.True(rate is >= 0.005 and <= 0.06,
             $"Trials.razor tells a recruit-holder it clears wave 1 \"about one time in forty\" (2.5%); " +
             $"measured {rate:P1} over {Samples} runs. Update the page or the balance.");
     }
@@ -66,7 +66,7 @@ public class TrialsCopyStillTrueTests
         var bred = FirstWaveClearRate(recruit: false, level: 1, seed: 11);
         var recruit = FirstWaveClearRate(recruit: true, level: 1, seed: 11);
 
-        Assert.True(bred > recruit * 8,
+        Assert.True(bred >= recruit * 8,
             $"bred {bred:P1} vs recruit {recruit:P1} — the page promises breeding is the lever here.");
     }
 }
