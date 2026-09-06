@@ -283,6 +283,7 @@ public class PageClaimTests
         Assert.DoesNotContain($"past level {Gauntlet.PveXpLevelCap}", page);
         Assert.DoesNotContain($"WavesCleared == {Gauntlet.WaveCount}", page);
         Assert.DoesNotContain($"{Gauntlet.WaveCount} escalating ghost waves", page);
+        Assert.DoesNotContain("five waves down", page);
     }
 
     [Fact]

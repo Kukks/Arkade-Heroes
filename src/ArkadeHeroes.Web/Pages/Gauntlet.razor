@@ -128,7 +128,7 @@ else
             <span class="hud">@ArkadeHeroes.Core.Progression.Gauntlet.WaveCount escalating ghost waves</span>
         </div>
         <CrawlTrack Rungs="_rungs" Focus="_waveIndex" Revealed="_revealed" Total="@ArkadeHeroes.Core.Progression.Gauntlet.WaveCount"
-                    Label="five waves down" OnSkip="SkipReplay" />
+                    Label="@($"{ArkadeHeroes.Core.Progression.Gauntlet.WaveCount} waves down")" OnSkip="SkipReplay" />
         <div class="crawl-stage">
             <BattleArena A="_outcome.Run.HeroSnapshot" B="w.Ghost" Fight="w.Result" OnFinished="NextWave" />
             @if (_descending)
