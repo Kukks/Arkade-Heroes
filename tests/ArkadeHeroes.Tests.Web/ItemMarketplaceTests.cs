@@ -37,7 +37,7 @@ public class ItemMarketplaceTests
         var ctx = new PageTestContext();
         ctx.SignIn(balanceSats: 100_000);
         ctx.Api.Get("/api/offers", new[] { ItemOffer(sellerId) });
-        ctx.Api.Get("/api/offers/sold?take=4", Array.Empty<OfferDto>());
+        ctx.Api.Get("/api/offers/sold", Array.Empty<OfferDto>());   // FakeApi keys on PATH; a query never matches
         return ctx;
     }
 

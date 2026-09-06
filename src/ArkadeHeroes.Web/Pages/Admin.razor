@@ -276,6 +276,65 @@ else
             </p>
         }
     </div>
+
+    @* The append-only log of everything the server DID. It has been written since the log existed and read
+       by nothing: an operator wanting to know what happened to a hero, a match or a player had to query
+       SQLite by hand. WriteFailures is the log's own health — a non-zero count means history is being lost
+       while every other number on this page still looks fine. *@
+    <div class="page-head" style="margin-top:1.8rem">
+        <h3 style="margin:0">Audit log</h3>
+        <span class="hud">append-only · every state-changing action</span>
+    </div>
+    <div class="card">
+        <div class="status-line" style="gap:.4rem;flex-wrap:wrap;margin-bottom:.8rem">
+            <input class="ask-input" style="width:14rem" placeholder="subject id (hero, match, player…)" @bind="_auditSubject" />
+            <input class="ask-input" style="width:11rem" placeholder="event type" @bind="_auditType" />
+            <input class="ask-input" style="width:11rem" placeholder="actor player id" @bind="_auditActor" />
+            <button class="btn primary" @onclick="LoadAudit" disabled="@_auditBusy">@(_auditBusy ? "Reading…" : "Read")</button>
+            @if (_audit is { Events.Count: > 0 } && !_auditExhausted)
+            {
+                <button class="btn ghost" @onclick="MoreAudit" disabled="@_auditBusy">Older →</button>
+            }
+        </div>
+
+        @if (_audit is { WriteFailures: > 0 })
+        {
+            <div class="status-line" style="margin-bottom:.8rem">
+                <span class="dot bad"></span>
+                <span><b>@_audit.WriteFailures</b> audit write(s) have FAILED. The log is incomplete — actions
+                happened that it cannot account for.</span>
+            </div>
+        }
+        @if (_auditError is not null)
+        {
+            <div class="status-line"><span class="dot bad"></span> @_auditError</div>
+        }
+        else if (_audit is null)
+        {
+            <p class="muted" style="margin:0">Read the log, optionally narrowed to one subject, type or actor.</p>
+        }
+        else if (_audit.Events.Count == 0)
+        {
+            <p class="muted" style="margin:0">Nothing recorded for that filter.</p>
+        }
+        else
+        {
+            <table class="mono" style="width:100%;font-size:.78rem;border-collapse:collapse">
+                <tbody>
+                @foreach (var ev in _audit.Events)
+                {
+                    <tr style="border-top:1px solid var(--line)">
+                        <td style="padding:.35rem .5rem;white-space:nowrap">@ev.Sequence</td>
+                        <td style="padding:.35rem .5rem;white-space:nowrap">@When(ev.AtUnixSeconds)</td>
+                        <td style="padding:.35rem .5rem"><b>@ev.EventType</b></td>
+                        <td style="padding:.35rem .5rem">@(ev.ActorPlayerId ?? "server")</td>
+                        <td style="padding:.35rem .5rem;word-break:break-all">@ev.PayloadJson</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
 }
 
 @code {
@@ -286,6 +345,60 @@ else
     private string? _error;
     private string? _actionResult;
     private bool _busy;
+
+    private AuditPageDto? _audit;
+    private string _auditSubject = "";
+    private string _auditType = "";
+    private string _auditActor = "";
+    private string? _auditError;
+    private bool _auditBusy;
+    private long _auditAfter;
+    // The filters the CURRENT results were fetched with. "Older" pages against these rather than the live
+    // inputs, so editing a box does not append a differently-filtered page to what is already on screen.
+    private string? _activeSubject;
+    private string? _activeType;
+    private string? _activeActor;
+    // An empty page returns the cursor it was asked for, so without this "Older" would keep offering to
+    // fetch the same nothing forever.
+    private bool _auditExhausted;
+
+    private static string When(long unixSeconds) =>
+        DateTimeOffset.FromUnixTimeSeconds(unixSeconds).ToLocalTime().ToString("dd MMM HH:mm:ss");
+
+    /// <summary>A fresh read restarts the cursor; "Older" continues it. Blank filters are sent as null so
+    /// the server does not narrow on an empty string.</summary>
+    private Task LoadAudit()
+    {
+        _auditAfter = 0;
+        _auditExhausted = false;
+        (_activeSubject, _activeType, _activeActor) = (Blank(_auditSubject), Blank(_auditType), Blank(_auditActor));
+        return ReadAudit(replace: true);
+    }
+
+    private Task MoreAudit() => ReadAudit(replace: false);
+
+    private async Task ReadAudit(bool replace)
+    {
+        _auditBusy = true;
+        _auditError = null;
+        try
+        {
+            // The indexed subject route takes no type or actor, so a combined filter takes the general one.
+            var page = _activeSubject is { } only && _activeType is null && _activeActor is null
+                ? await Api.Admin.AuditForSubjectAsync(_token.Trim(), only, _auditAfter, 100)
+                : await Api.Admin.AuditAsync(_token.Trim(), _auditAfter, 100,
+                    subject: _activeSubject, type: _activeType, actor: _activeActor);
+            _auditAfter = page.NextAfter;
+            if (!replace && page.Events.Count == 0) _auditExhausted = true;
+            _audit = replace || _audit is null
+                ? page
+                : page with { Events = [.. _audit.Events, .. page.Events] };
+        }
+        catch (Exception ex) { _auditError = ex.Message; }
+        finally { _auditBusy = false; }
+    }
+
+    private static string? Blank(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     /// <summary>
     /// The bracket whose refund is one click from happening, or null. Refund is the ONE action on this page

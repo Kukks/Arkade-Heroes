@@ -29,6 +29,10 @@ public sealed class FakeApi : HttpMessageHandler
     /// did NOT bill something (e.g. never POSTed a fee invoice just by being opened).</summary>
     public List<string> Requested { get; } = new();
 
+    /// <summary>The same calls WITH their query strings. Separate because <see cref="Requested"/> is
+    /// exact-matched by existing tests — but a filter living only in the query is invisible there.</summary>
+    public List<string> RequestedUrls { get; } = new();
+
     private static string Key(HttpMethod method, string path) => $"{method.Method} {path}";
 
     /// <summary>Serve <paramref name="body"/> as JSON for GET <paramref name="path"/>.</summary>
@@ -91,6 +95,7 @@ public sealed class FakeApi : HttpMessageHandler
         var path = request.RequestUri!.AbsolutePath;
         var key = Key(request.Method, path);
         Requested.Add($"{request.Method.Method} {path}");
+        RequestedUrls.Add($"{request.Method.Method} {request.RequestUri.PathAndQuery}");
 
         // Read the latency at DISPATCH time, so a test can slow a route, fire a request, and then swap the
         // route out — which is how a slow old answer gets to race a fast new one.
