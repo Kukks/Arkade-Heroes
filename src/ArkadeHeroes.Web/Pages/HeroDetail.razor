@@ -259,9 +259,24 @@ else
                         <b class="equip-name">@b.BidSats.ToString("N0") sat</b>
                     </div>
                     <span class="chip mono">@Short(b.BidderPlayerId)</span>
+                    @* Accepting is what prices the fee the SELLER absorbs, so the bid alone was never what
+                       this row was offering — the true figure only appeared on the next button, after the
+                       decision. A bid at or below the fee cannot be accepted at all. *@
+                    @if (b.Status == "proposed" && _listingFeeSats > 0)
+                    {
+                        @if (b.BidSats > _listingFeeSats)
+                        {
+                            <span class="chip">you collect <b>@((b.BidSats - _listingFeeSats).ToString("N0"))</b> sat</span>
+                        }
+                        else
+                        {
+                            <span class="chip bad">under the @_listingFeeSats.ToString("N0") sat marketplace fee</span>
+                        }
+                    }
                     @if (b.Status == "proposed")
                     {
-                        <button class="btn primary" @onclick="() => DoAcceptBid(b.BidId)" disabled="@_bidBusy">Accept</button>
+                        <button class="btn primary" @onclick="() => DoAcceptBid(b.BidId)"
+                                disabled="@(_bidBusy || (_listingFeeSats > 0 && b.BidSats <= _listingFeeSats))">Accept</button>
                         <button class="btn ghost" @onclick="() => DoDeclineBid(b.BidId)" disabled="@_bidBusy">Decline</button>
                     }
                     else if (b.Status == "accepted")
@@ -708,6 +723,9 @@ else
     private bool _renaming;
     private string _newName = "";
     private long _renameFeeSats;
+    /// <summary>The flat marketplace fee an accepted bid takes off the OWNER's proceeds. 0 also means
+    /// "not read yet", and both cases quote nothing — the bid already states what the row is worth then.</summary>
+    private long _listingFeeSats;
     private string? _renameStatus;
     private string? _renameError;
     private bool _gifting;
@@ -775,6 +793,7 @@ else
             var chainInfo = await info;
             _advertisedKey = chainInfo.GameSignerKey;
             _renameFeeSats = chainInfo.Config?.HeroRenameFeeSats ?? 0;
+            _listingFeeSats = chainInfo.Config?.OfferListingFeeSats ?? 0;
             _innateAbilities = chainInfo.Config?.InnateAbilities ?? false;
             _gearCounters = chainInfo.Config?.GearCounters ?? false;
             // Passive badges are optional chrome — a genome-parse hiccup must never fail the whole hero page.
