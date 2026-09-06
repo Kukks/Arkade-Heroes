@@ -173,8 +173,8 @@ else
             @foreach (var p in _outgoing)
             {
                 <div class="status-line" style="margin-top:.6rem">
-                    <span class="dot @(p.Status == "accepted" ? "good" : "wait")"></span>
-                    @HeroName(p.ProposerHeroId) with @HeroName(p.StudHeroId) — @p.StudFeeSats sats to them@(p.BreedFeeSats is { } owed ? $" plus {owed:N0} sats breeding fee" : "") — @p.Status
+                    <span class="dot @StudDot(p.Status)"></span>
+                    @HeroName(p.ProposerHeroId) with @HeroName(p.StudHeroId) — @p.StudFeeSats sats to them@(p.BreedFeeSats is { } owed ? $" plus {owed:N0} sats breeding fee" : "") — @StudOutcome(p.Status)
                     @if (p.Status == "accepted")
                     {
                         <button class="btn primary" style="margin-left:.6rem" disabled="@_studBusy"
@@ -244,8 +244,25 @@ else
     private string? _playerId;
     /// <summary>Proposals against MY heroes, still awaiting my answer — the consent inbox.</summary>
     private List<StudProposalDto> _incoming = new();
-    /// <summary>Proposals I made that are still live — "accepted" ones are mine to pay and reveal.</summary>
+    /// <summary>Proposals I made: the live ones ("accepted" are mine to pay and reveal) and the two
+    /// answers I would otherwise never see.</summary>
     private List<StudProposalDto> _outgoing = new();
+
+    /// <summary>Refunds return only fees that had CLEARED, so this promises the return without promising
+    /// an amount the row does not carry.</summary>
+    private static string StudOutcome(string status) => status switch
+    {
+        "declined" => "declined — nothing was billed",
+        "refunded" => "refunded — any fees you had paid went back to your wallet",
+        _ => status,
+    };
+
+    private static string StudDot(string status) => status switch
+    {
+        "accepted" => "good",
+        "declined" or "refunded" => "bad",
+        _ => "wait",
+    };
 
     /// <summary>Names of heroes belonging to OTHER players, fetched for the stud rows.</summary>
     private readonly Dictionary<string, string> _theirs = new();
@@ -302,7 +319,12 @@ else
         _playerId ??= (await Api.Players.MeAsync()).PlayerId;
         var all = await Api.Stud.ListAsync();
         _incoming = all.Where(p => p.StudOwnerPlayerId == _playerId && p.Status == "proposed").ToList();
-        _outgoing = all.Where(p => p.ProposerPlayerId == _playerId && p.Status is "proposed" or "accepted").ToList();
+        // "declined" and "refunded" are ANSWERS, not noise: dropping them told a proposer nothing, so a
+        // refusal and a proposal they never sent looked identical. The bid inbox already says both out loud.
+        _outgoing = all
+            .Where(p => p.ProposerPlayerId == _playerId
+                        && p.Status is "proposed" or "accepted" or "declined" or "refunded")
+            .ToList();
 
         // The COUNTERPARTY's hero is the one this player is being asked to consent to, and it is by
         // definition not in _mine — so every one of these rows named it with a raw id.
