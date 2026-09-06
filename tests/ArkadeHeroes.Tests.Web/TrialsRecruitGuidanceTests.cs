@@ -4,9 +4,9 @@ using Bunit;
 
 namespace ArkadeHeroes.Tests.Web;
 
-/// <summary>Trials reads the GENOME, not the level, and a bought hero is capped below the ghost it meets
-/// at wave 1 — measured, a recruit clears nothing 97.5% of the time against a bred hero's 48.6%. The whole
-/// starting cohort loses immediately, and the page said only that the score reads the hero's strength.</summary>
+/// <summary>A bought hero is capped below the ghost it meets at wave 1, so the whole starting cohort loses
+/// there — measured zero-wave 97.5% for a recruit against 48.6% for a bred hero, a gap worth about twenty
+/// levels. The page said only that the score reads the hero's strength, which left that unexplained.</summary>
 public class TrialsRecruitGuidanceTests
 {
     private static PageTestContext Roster(params HeroDto[] heroes)
