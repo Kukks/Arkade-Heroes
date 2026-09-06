@@ -96,4 +96,20 @@ public class DeathMatchFeeDisclosureTests
         Assert.Contains("340", cut.Markup);
         Assert.Contains("to accept, win or lose", cut.Markup);
     }
+
+    [Fact]
+    public void TurningOnAbsorbRepricesTheQuoteInPlace()
+    {
+        // Absorb is a checkbox ABOVE the confirm and stays live while it shows, and DoOpen reads _absorb at
+        // call time — so a quote that did not follow the toggle would bill more than the screen last said.
+        using var ctx = Arena();
+        var cut = AtTheConfirm(ctx);
+        cut.WaitForAssertion(() => Assert.Contains("260", cut.Markup));
+
+        cut.Find("input[type=checkbox]").Change(true);
+
+        cut.WaitForAssertion(() => Assert.Contains("390", cut.Markup));
+        Assert.Contains("absorb mode costs more", cut.Markup);
+        Assert.DoesNotContain("260", cut.Markup);
+    }
 }
