@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using ArkadeHeroes.Chain.NArk;
 using ArkadeHeroes.Web;
 using ArkadeHeroes.Web.Wallet;
 using ArkadeHeroes.Client.Sdk;
@@ -73,25 +74,8 @@ builder.Services.AddSingleton<NArk.Core.Transport.IClientTransport>(sp =>
     new ArkadeHeroes.Web.Wallet.P2trScriptFilteringTransport(
         sp.GetRequiredService<NArk.Core.Transport.CachingClientTransport>()));
 
-// The scheduler REQUIRES a renewal threshold — without it, it throws every intent-generation
-// cycle and the wallet's VTXO auto-renewal never runs (VTXOs would eventually expire unspendable).
-// Mirror the NArk sample wallet: re-board VTXOs approaching expiry.
-builder.Services.AddSingleton<SimpleIntentScheduler>();
-builder.Services.Configure<NArk.Core.Models.Options.SimpleIntentSchedulerOptions>(opts =>
-    opts.Threshold = TimeSpan.FromDays(1));
-// …but a fixed threshold only means "approaching expiry" while it is short relative to how long a coin
-// actually lives. Against a server whose coins live under half an hour it is true from birth, so every
-// cycle renewed the whole wallet and the operator charged its intent fee (1% per input here) each time
-// — including the cycle the SDK runs the moment it starts, i.e. on every boot of this app. See
-// BatchRenewalScheduler: it only offers a coin up once the coin is genuinely near the end of its life.
-builder.Services.AddSingleton<IIntentScheduler>(sp => new ArkadeHeroes.Web.Wallet.BatchRenewalScheduler(
-    sp.GetRequiredService<SimpleIntentScheduler>(),
-    sp.GetRequiredService<IBitcoinBlockchain>()));
-// Poll more often than the SDK's five-minute default. A cycle only COSTS anything when the guard above
-// says a coin is due, so the extra cycles are free — and the period is the lag between a coin becoming
-// due and it being renewed, which is the lag a hidden or just-woken tab has to survive.
-builder.Services.Configure<NArk.Core.Models.Options.IntentGenerationServiceOptions>(opts =>
-    opts.PollInterval = ArkadeHeroes.Web.Wallet.BatchRenewalScheduler.PollInterval);
+// VTXO auto-renewal, on the same terms the server and console client get. See ArkadeRenewalRegistration.
+builder.Services.AddArkadeRenewalScheduling();
 builder.Services.AddSingleton<ISafetyService, WasmSafetyService>();
 // Esplora comes from the SAME network config as arkd above — it was a second hardcoded
 // localhost, and leaving it behind would point the wallet's chain reads at the player's own

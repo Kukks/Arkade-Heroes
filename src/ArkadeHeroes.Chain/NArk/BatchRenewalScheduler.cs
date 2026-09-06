@@ -1,8 +1,11 @@
+using Microsoft.Extensions.DependencyInjection;
 using NArk.Abstractions;
 using NArk.Abstractions.Blockchain;
 using NArk.Abstractions.Intents;
+using NArk.Core.Models.Options;
+using NArk.Core.Services;
 
-namespace ArkadeHeroes.Web.Wallet;
+namespace ArkadeHeroes.Chain.NArk;
 
 /// <summary>
 /// Holds back the SDK's automatic coin renewal until a coin is genuinely near the end of its life.
@@ -89,5 +92,27 @@ public sealed class BatchRenewalScheduler(IIntentScheduler inner, IBitcoinBlockc
             window = MinimumRenewalWindow;
 
         return expiry - now.Timestamp <= window;
+    }
+}
+
+/// <summary>
+/// The renewal policy every wallet here composes, as a pair: with no threshold
+/// <see cref="SimpleIntentScheduler"/> throws each cycle and coins expire unrenewed; with a threshold
+/// but no <see cref="BatchRenewalScheduler"/> guard it re-boards everything each cycle at 1% per input.
+/// </summary>
+public static class ArkadeRenewalRegistration
+{
+    public static readonly TimeSpan RenewalThreshold = TimeSpan.FromDays(1);
+
+    public static IServiceCollection AddArkadeRenewalScheduling(this IServiceCollection services)
+    {
+        services.AddSingleton<SimpleIntentScheduler>();
+        services.Configure<SimpleIntentSchedulerOptions>(opts => opts.Threshold = RenewalThreshold);
+        services.AddSingleton<IIntentScheduler>(sp => new BatchRenewalScheduler(
+            sp.GetRequiredService<SimpleIntentScheduler>(),
+            sp.GetRequiredService<IBitcoinBlockchain>()));
+        services.Configure<IntentGenerationServiceOptions>(
+            opts => opts.PollInterval = BatchRenewalScheduler.PollInterval);
+        return services;
     }
 }
