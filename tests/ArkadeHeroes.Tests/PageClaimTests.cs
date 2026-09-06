@@ -275,11 +275,15 @@ public class PageClaimTests
     {
         var page = Page("Gauntlet.razor");
 
-        // Both are authored content (Content/dungeons.json), so a retune moves them without touching
-        // this page — which would leave it confidently telling players the old ladder.
-        Assert.Contains($"capped at level {Gauntlet.PveXpLevelCap}", page);
-        Assert.Contains($"no XP is awarded past level {Gauntlet.PveXpLevelCap}", page);
-        Assert.Contains($"{Gauntlet.WaveCount} escalating ghost waves", page);
+        // Authored content (dungeons.json), now RENDERED rather than hand-written — so pin that they stay
+        // live, and that no literal creeps back. The wave count also sat in the full-clear CHECK.
+        Assert.Contains("Gauntlet.PveXpLevelCap", page);
+        Assert.Contains("Gauntlet.WaveCount", page);
+        Assert.DoesNotContain($"capped at level {Gauntlet.PveXpLevelCap}", page);
+        Assert.DoesNotContain($"past level {Gauntlet.PveXpLevelCap}", page);
+        Assert.DoesNotContain($"WavesCleared == {Gauntlet.WaveCount}", page);
+        Assert.DoesNotContain($"{Gauntlet.WaveCount} escalating ghost waves", page);
+        Assert.DoesNotContain("five waves down", page);
     }
 
     [Fact]
