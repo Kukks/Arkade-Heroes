@@ -37,6 +37,13 @@ public static class TreasurySolvency
 
     private readonly record struct Refusal(int Round, string Action, string Message, long Balance, string Aftermath);
 
+    private sealed class Held
+    {
+        public required string Id { get; init; }
+        public required Actor Opener { get; init; }
+        public bool Filled { get; set; }
+    }
+
     private sealed class Run(int players, int rounds, int seed)
     {
         /// The shipped GameOptions default. Left at its default deliberately: the question is what the
@@ -76,6 +83,7 @@ public static class TreasurySolvency
                 await ClaimEveryDailyAsync(round);
                 await ParkStakedDuelsAsync(round);
                 await BurstOutflowAsync(round);
+                await ConcurrentHoldsAsync(round);
                 await SettleBacklogAsync(round);
                 _roundEnds.Add((round, await _observer.Economy.HealthAsync()));
                 await SampleAsync(round, "round end");
@@ -219,6 +227,57 @@ public static class TreasurySolvency
 
             await Attempt("bid", round, () => BidAsync(c, a, round));
             await SampleAsync(round, "bid");
+        }
+
+        /// Holds several brackets open AT ONCE: every other custodial path is open-then-close, so their peak
+        /// is the largest SINGLE hold, while the faucet and season pot draw on the same balance all of these
+        /// sit in — what must stay covered is everything held simultaneously.
+        private async Task ConcurrentHoldsAsync(int round)
+        {
+            var order = Shuffled();
+            var open = new List<Held>();
+            for (var i = 3; i + 1 < order.Count && open.Count < 3; i += 2)
+            {
+                var opener = order[i];
+                var joiner = order[i + 1];
+                await Attempt("bracket-hold", round, async () =>
+                {
+                    var openerHero = await FirstHeroAsync(opener);
+                    var joinerHero = await FirstHeroAsync(joiner);
+                    if (openerHero is null || joinerHero is null)
+                        throw new ArkadeHeroesApiException("a side has no hero to enter");
+                    var buyIn = 4_000L;
+
+                    var created = await opener.Api.Tournament.OpenAsync(
+                        new OpenTournamentRequest(openerHero.Id, buyIn, 2));
+                    await Pay(opener, created.BuyIn.InvoiceId);
+                    // Owed the moment IT clears, and tracked from creation: recording only once BOTH legs
+                    // cleared drops the opener's stake when the joiner's leg fails, and strands the bracket.
+                    var held = new Held { Id = created.Tournament.Id, Opener = opener };
+                    open.Add(held);
+                    Owe($"bracket:{held.Id}", buyIn);
+
+                    var joined = await joiner.Api.Tournament.JoinAsync(
+                        held.Id, new JoinTournamentRequest(joinerHero.Id));
+                    await Pay(joiner, joined.BuyIn.InvoiceId);
+                    Owe($"bracket:{held.Id}", buyIn * 2);
+                    held.Filled = true;
+                });
+            }
+
+            if (open.Count == 0) return;
+            await SampleAsync(round, $"{open.Count} brackets held");
+
+            // A hold that neither resolves nor refunds stays owed, because it IS still holding the money.
+            foreach (var held in open)
+                await Attempt(held.Filled ? "bracket-hold-settle" : "bracket-hold-refund", round, async () =>
+                {
+                    if (held.Filled)
+                        await held.Opener.Api.Tournament.ResolveAsync(held.Id, new FightRequest(Nonce()));
+                    else
+                        await held.Opener.Api.Tournament.RefundAsync(held.Id);
+                    Settle($"bracket:{held.Id}");
+                });
         }
 
         /// Fights what earlier rounds parked, so an obligation actually spans a round boundary rather than
