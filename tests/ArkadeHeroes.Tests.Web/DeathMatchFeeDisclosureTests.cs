@@ -73,4 +73,27 @@ public class DeathMatchFeeDisclosureTests
         Assert.DoesNotContain("entry fee", cut.Markup);
         Assert.DoesNotContain("0 sats", cut.Markup);
     }
+
+    [Fact]
+    public void AcceptingAlsoNamesItsPrice_FromTheDEFENDERsOwnHero()
+    {
+        // The server charges Leveling.DeathMatchFee(defender.Level, ...), so the two sides differ whenever
+        // the heroes do. Level 7 here against the challenger test's level 3: 100 + 10*7 = 170, doubled.
+        using var ctx = new PageTestContext();
+        ctx.SignIn(balanceSats: 100_000);
+        ctx.Api.Get("/api/heroes/mine", new[] { Fixtures.Hero(Mine, "Ashen Vigil", level: 7) });
+        ctx.Api.Get($"/api/matchmaking/{Mine}", Array.Empty<OpponentSuggestionDto>());
+        ctx.Api.Get("/api/chain/info", Fixtures.ChainInfo());
+        ctx.Api.Get("/api/deathmatch", new[]
+        {
+            new DeathMatchDto("dm-1", ChallengerHeroId: Theirs, DefenderHeroId: Mine,
+                Status: "open", Absorb: false, WinnerHeroId: null),
+        });
+
+        var cut = ctx.Render<DeathMatch>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Accept to the death", cut.Markup));
+        Assert.Contains("340", cut.Markup);
+        Assert.Contains("to accept, win or lose", cut.Markup);
+    }
 }
