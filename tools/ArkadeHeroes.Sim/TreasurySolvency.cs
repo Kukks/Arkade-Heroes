@@ -323,7 +323,12 @@ public static class TreasurySolvency
             var proposal = await proposer.Api.Stud.ProposeAsync(new StudProposeRequest(mine.Id, stud.Id, fee));
             var accepted = await owner.Api.Stud.AcceptAsync(proposal.ProposalId);
             await Pay(proposer, accepted.BreedFeeInvoice.InvoiceId);
-            if (accepted.StudFeeInvoice is { } sf) { await Pay(proposer, sf.InvoiceId); Owe($"stud:{proposal.ProposalId}", fee); await SampleAsync(round, "stud fee held"); }
+            if (accepted.StudFeeInvoice is { } sf)
+            {
+                await Pay(proposer, sf.InvoiceId);
+                Owe($"stud:{proposal.ProposalId}", fee);
+                await SampleAsync(round, "stud fee held");
+            }
             await proposer.Api.Stud.RevealAsync(proposal.ProposalId, new StudRevealRequest(Nonce()));
             Settle($"stud:{proposal.ProposalId}");
         }
