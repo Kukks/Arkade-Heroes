@@ -55,6 +55,9 @@ else
             winner. XP is a conserved transfer: beating a higher hero takes a lot off it, and beating a
             much weaker one takes nothing. Past a wide enough gap losing costs the underdog no XP at
             all — the opponents below say <b>free shot</b> when that is actually true of them.
+            It comes off your hero's <b>banked total</b>, not just its progress into the level, so a loss
+            bigger than that progress <b>costs a level</b> — a level-3 hero early into the level drops to 2
+            when a level-1 one beats it, while the same defeat is absorbed once it has banked enough.
         </p>
         <label>Your champion
             <select @bind="_myHeroId" @bind:after="OnHeroPicked">
