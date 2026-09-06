@@ -595,6 +595,12 @@ public class GameSession(ArkadeHeroesClient api, GameWallet wallet, WalletState 
         var assetId = hero.AssetId
             ?? throw new GameWalletException("This hero has no on-chain asset yet — it cannot be sent.");
 
+        // A listed hero's asset sits in the offer covenant — the send would fail with "asset not held".
+        var listed = (await api.Offers.ListAsync()).Any(o => o.HeroId == heroId && o.Status == "active");
+        if (listed)
+            throw new GameWalletException(
+                $"{hero.Name} is listed for sale — its asset is held by the offer. Cancel the listing first.");
+
         onProgress?.Invoke($"Sending {hero.Name} to {recipient.Name}…");
         await wallet.SendAssetAsync(w.Id, recipient.ArkadeAddress, assetId);
 

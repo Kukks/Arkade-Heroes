@@ -21,11 +21,12 @@ public class ItemMarketplaceTests
         AskSats: 400, OfferAddress: "tark1qofferaddress", ItemAssetId: "asset-1",
         OfferValueSats: 0, RefundAfterUnixSeconds: 0, Status: "active", Kind: "item");
 
-    private static PageTestContext Shop(long unitsHeld)
+    private static PageTestContext Shop(long unitsHeld, long listingFee = 800)
     {
         var ctx = new PageTestContext();
         ctx.SignIn(balanceSats: 100_000);
         ctx.Api.Get("/api/items", new[] { Blade() });
+        ctx.Api.Get("/api/chain/info", Fixtures.ChainInfo() with { Config = Fixtures.Config() with { OfferListingFeeSats = listingFee } });
         ctx.Api.Get("/api/items/mine",
             unitsHeld > 0 ? new Dictionary<string, long> { ["rusty-blade"] = unitsHeld } : new());
         return ctx;
@@ -76,6 +77,25 @@ public class ItemMarketplaceTests
     }
 
     [Fact]
+    public void AnUnreadableFee_DoesNotOfferAListingItCannotPrice()
+    {
+        // Failing open here would silently restore the refusable default: fee unknown reads as 0, the gate
+        // degrades to ask > 0, and the catalogue price is offered again.
+        var ctx = new PageTestContext();
+        ctx.SignIn(balanceSats: 100_000);
+        ctx.Api.Get("/api/items", new[] { Blade() });
+        ctx.Api.Get("/api/items/mine", new Dictionary<string, long> { ["rusty-blade"] = 2 });
+        ctx.Api.GetFails("/api/chain/info", System.Net.HttpStatusCode.ServiceUnavailable);
+        using var _ = ctx;
+
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+
+        var sell = cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal));
+        Assert.True(sell.HasAttribute("disabled"));
+    }
+
+    [Fact]
     public void OwningNone_OffersNothingToSell()
     {
         using var ctx = Shop(unitsHeld: 0);
@@ -103,10 +123,50 @@ public class ItemMarketplaceTests
     }
 
     [Fact]
-    public void TheAskStartsAtTheCatalogPrice()
+    public void TheAskStartsAboveTheListingFee_EvenWhenTheItemIsCheaperThanIt()
     {
-        // The one number a seller and a buyer both already know; a blank field invites a mis-typed ask.
+        // Entry-tier items cost 500 against a default 1,000-sat fee — the price alone was a refusal.
         using var ctx = Shop(unitsHeld: 1);
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal)).Click();
+
+        Assert.Equal("801", cut.Find("input[type=number]").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void AnAskTheServerWouldRefuse_CannotBeSubmitted()
+    {
+        using var ctx = Shop(unitsHeld: 1);
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+        cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal)).Click();
+
+        cut.Find("input[type=number]").Change("800");   // equal to the fee — the server wants MORE
+
+        var list = cut.FindAll("button").First(b => b.TextContent.Contains("List it", StringComparison.Ordinal));
+        Assert.True(list.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void TheSellerIsToldWhatTheyActuallyReceive()
+    {
+        using var ctx = Shop(unitsHeld: 1);
+        var cut = ctx.Render<Gear>();
+        cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
+        cut.FindAll("button").First(b => b.TextContent.Contains("Sell a spare", StringComparison.Ordinal)).Click();
+
+        Assert.Contains("you", cut.Markup, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1 sats", cut.Markup);   // 801 ask - 800 fee
+    }
+
+    /// <summary>Where the price already clears the fee it IS the default — the number a seller and a buyer
+    /// both already know. Only the cheap-item case has to be raised.</summary>
+    [Fact]
+    public void TheAskStartsAtTheCatalogPrice_WhenThatAlreadyClearsTheFee()
+    {
+        using var ctx = Shop(unitsHeld: 1, listingFee: 100);
         var cut = ctx.Render<Gear>();
 
         cut.WaitForAssertion(() => Assert.Contains("Sell a spare", cut.Markup));
