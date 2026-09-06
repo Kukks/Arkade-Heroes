@@ -248,7 +248,7 @@ else
         catch { _error = true; }
         finally { _loading = false; }
         try { _config ??= (await Api.Chain.InfoAsync()).Config; }
-        catch { /* unknown fee: the ask falls back to the catalogue price */ }
+        catch { /* unknown fee: the sell affordance stays disabled rather than quoting one */ }
         await HydrateOwnedAsync();
     }
 
