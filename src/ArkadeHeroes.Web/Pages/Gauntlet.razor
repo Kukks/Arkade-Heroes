@@ -46,6 +46,16 @@ else
             and every wave banks XP — <b>capped at level @ArkadeHeroes.Core.Progression.Gauntlet.PveXpLevelCap</b>, so the gauntlet trains up a newcomer but can't be farmed.
             An entry fee applies, scaled to the hero's level (nothing to lose but the fee — the ghosts don't stake back).
         </p>
+        @* The ghosts are minted at the RUNNER's own level and stat ceiling (Gauntlet.GhostFor takes the
+           hero), so the ladder climbs with you. Measured: average waves cleared is flat from level 1 to 12
+           for an ungeared hero, while the fee rises with level — which reads as the game cheating unless
+           the page says the ladder is a mirror and names the lever that is not. *@
+        <p class="muted" style="margin:.5rem 0 0;font-size:.85rem">
+            The ghosts are built to match your hero, so this ladder climbs with you: levelling raises the
+            fee and the opposition together and leaves your odds about where they were.
+            <b>Gear is the lever</b> — and it compounds with level, so a well-equipped veteran clears far
+            more than either on its own.
+        </p>
         <label>Champion
             <select @bind="_heroId">
                 <option value="">— pick a hero —</option>

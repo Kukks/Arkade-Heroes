@@ -287,6 +287,18 @@ public class PageClaimTests
     }
 
     [Fact]
+    public void TheGauntletPage_SaysTheLadderClimbsWithTheHero()
+    {
+        var page = Visible(Page("Gauntlet.razor"));
+
+        // Gauntlet.GhostFor takes the RUNNER, so levelling raises the fee and the opposition together and
+        // the odds barely move — measured flat from level 1 to 12 ungeared. A page that says the fee scales
+        // with level and stays silent on the ghosts reads as the game cheating.
+        Assert.Contains("climbs with you", page);
+        Assert.Contains("Gear is the lever", page);
+    }
+
+    [Fact]
     public void TheDeathMatchPage_QuotesItsFeeBeforeTheIrreversibleCommit()
     {
         var page = Visible(Page("DeathMatch.razor"));
