@@ -215,7 +215,6 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         var (owner, ownerWallet, ownerHeroes) = await FundedPlayerAsync("FeeBidOwner");
         var (bidder, bidderWallet, _) = await FundedPlayerAsync("FeeBidBuyer", fundTreasury: false);
         var hero = ownerHeroes[0];
-        var ownerBefore = await ownerWallet.GetBalanceSatsAsync();
 
         var placed = await bidder.Bids.PlaceAsync(new PlaceBidRequest(hero.Id, Bid));
         var accepted = await owner.Bids.AcceptAsync(placed.BidId);
@@ -233,6 +232,8 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
 
         await ownerWallet.SendAssetAsync(bidderWallet.Address, hero.AssetId!, 1);
         await bidderWallet.WaitForAssetAsync(hero.AssetId!, TimeSpan.FromSeconds(90));
+        // an asset send spends a carrier, so an earlier baseline over-predicts the payout target
+        var ownerBeforePayout = await ownerWallet.GetBalanceSatsAsync();
 
         HeroDto? settled = null;
         await PollUntilAsync(async () =>
@@ -242,7 +243,7 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         }, TimeSpan.FromSeconds(120), "the hero transfer to be visible so the bid can settle");
 
         Assert.Equal((await bidder.Players.MeAsync()).PlayerId, settled!.OwnerId);
-        await ownerWallet.WaitForBalanceAsync(ownerBefore + accepted.SellerNetSats, TimeSpan.FromSeconds(120));
+        await ownerWallet.WaitForBalanceAsync(ownerBeforePayout + accepted.SellerNetSats, TimeSpan.FromSeconds(150));
     }
 
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
