@@ -90,13 +90,13 @@ public static class TrialsYield
         sb.Append(Doorstep(samples, seed));
 
         sb.AppendLine();
-        sb.AppendLine("  A zero-wave run is a loss to wave 1: a LEVEL-1 ghost with no gear. It is the same ghost");
-        sb.AppendLine("  under every affix, so the weekly rule is not what zeroes the ladder — the grade of the");
-        sb.AppendLine("  ghost's GENOME is. Trials.GhostFor mints from Genome.NewGen0 (the full byte range),");
-        sb.AppendLine("  while Gauntlet.GhostFor mints from Genome.NewRecruit at the RUNNER's own StatGeneCeiling.");
-        sb.AppendLine("  A recruit's stat and growth genes are capped at 63, so its growth term (1 + gene/64) is");
-        sb.AppendLine("  locked to the minimum 1/level against a gen-0 ghost's mean 2.5 — the same multiplicative");
-        sb.AppendLine("  deficit the gauntlet already fixed, still in force here.");
+        sb.AppendLine("  A zero-wave run is a loss to wave 1: a LEVEL-1 ghost with no gear, the same one under");
+        sb.AppendLine("  every affix. Until #294 that ghost was minted from Genome.NewGen0 at the full byte range");
+        sb.AppendLine("  while every hero a player can buy is capped at 63, so its growth term (1 + gene/64) sat");
+        sb.AppendLine("  near 2.5 against a recruit's locked 1 — and 97.8% of recruits cleared nothing. The ghost");
+        sb.AppendLine("  now mints at Trials.CeilingFor(wave): a recruit's own cap at wave 1, the full range from");
+        sb.AppendLine("  wave 4. Both ghost rows above are drawn from that function, so this table cannot drift");
+        sb.AppendLine("  out of step with the ladder again. Depth, not the doorstep, is what breeding buys.");
         sb.AppendLine();
         sb.AppendLine("  Trials is FREE to open and awards no XP, item or sats — only a score, a personal best and");
         sb.AppendLine($"  a title from {TitleFloor} waves up. So a zero-wave run costs no fee and banks nothing: no");
@@ -182,22 +182,24 @@ public static class TrialsYield
     private static string Doorstep(int samples, int seed)
     {
         var rng = new Random(seed);
-        var ghost = MeanStats(samples, false, 1, rng);
+        var ghost = MeanStats(samples, Trials.CeilingFor(1), 1, rng);
+        var deep = MeanStats(samples, Trials.CeilingFor(4), 4, rng);
 
         var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine($"THE DOORSTEP — mean unequipped statline over {samples} genomes");
         sb.AppendLine($"  {"who",-26} {"maxhp",7} {"attack",7} {"defense",8} {"speed",7}");
-        sb.AppendLine($"  {"wave-1 ghost (gen0, L1)",-26} {ghost.Hp,7:F1} {ghost.Atk,7:F1} {ghost.Def,8:F1} {ghost.Spd,7:F1}");
+        sb.AppendLine($"  {$"wave-1 ghost (L1, cap {Trials.CeilingFor(1)})",-26} {ghost.Hp,7:F1} {ghost.Atk,7:F1} {ghost.Def,8:F1} {ghost.Spd,7:F1}");
+        sb.AppendLine($"  {$"wave-4 ghost (L4, cap {Trials.CeilingFor(4)})",-26} {deep.Hp,7:F1} {deep.Atk,7:F1} {deep.Def,8:F1} {deep.Spd,7:F1}");
         foreach (var level in Levels)
         {
-            var r = MeanStats(samples, true, level, rng);
+            var r = MeanStats(samples, StarterPolicy.RecruitStatCap, level, rng);
             sb.AppendLine($"  {$"recruit L{level}",-26} {r.Hp,7:F1} {r.Atk,7:F1} {r.Def,8:F1} {r.Spd,7:F1}");
         }
 
         var crossing = Enumerable.Range(1, Leveling.MaxLevel)
             .Cast<int?>()
-            .FirstOrDefault(l => MeanStats(256, true, l!.Value, rng).Atk >= ghost.Atk);
+            .FirstOrDefault(l => MeanStats(256, StarterPolicy.RecruitStatCap, l!.Value, rng).Atk >= ghost.Atk);
         sb.AppendLine($"  A recruit's mean attack first reaches the wave-1 ghost's at level " +
                       (crossing is { } c ? $"{c}." : $"— never below {Leveling.MaxLevel}."));
         return sb.ToString();
@@ -255,14 +257,16 @@ public static class TrialsYield
         return cleared;
     }
 
+    /// Takes the CEILING rather than an is-recruit flag, so the ghost rows are minted from the ladder's own
+    /// Trials.CeilingFor instead of a copy of it that can drift out of step (as this table did, #294).
     private static (double Hp, double Atk, double Def, double Spd) MeanStats(
-        int samples, bool recruit, int level, Random rng)
+        int samples, byte ceiling, int level, Random rng)
     {
         double hp = 0, atk = 0, def = 0, spd = 0;
         for (var i = 0; i < samples; i++)
         {
             var e = Entropy(rng);
-            var genome = recruit ? Genome.NewRecruit(e, StarterPolicy.RecruitStatCap) : Genome.NewGen0(e);
+            var genome = Genome.NewRecruit(e, ceiling);
             var s = StatBlock.ComputeFor(genome, level);
             hp += s.MaxHp;
             atk += s.Attack;
