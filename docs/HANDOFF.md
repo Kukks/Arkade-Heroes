@@ -1,11 +1,11 @@
 # Engineering handoff — Arkade Heroes autonomous build
 
 **Audience:** the next agent continuing this build autonomously via /loop.
-**Baseline:** current `main` (HEAD `d502b00` as of 2026-09-07). Gate: **FOUR suites** — they define the full gate, but note PR CI runs only three automatically; E2E is dispatch-only (see §3) — **1145 unit** (`tests/ArkadeHeroes.Tests`, ~55s Release), **248 bUnit** (`tests/ArkadeHeroes.Tests.Web`, ~6s), **54 browser** (`tests/ArkadeHeroes.Tests.Browser`, needs a published bundle) and **64 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+**Baseline:** current `main` (HEAD `8a25ac1` as of 2026-09-07). Gate: **FOUR suites** — they define the full gate, but note PR CI runs only three automatically; E2E is dispatch-only (see §3): `tests/ArkadeHeroes.Tests` (unit), `tests/ArkadeHeroes.Tests.Web` (bUnit), `tests/ArkadeHeroes.Tests.Browser` (needs a published bundle) and `tests/ArkadeHeroes.Tests.E2E` (behind the live stack). **The counts live in §3 and nowhere else** — they were quoted here too, drifted apart, and this line was still claiming 1145/64 while §3 said 65. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
 
 **The gate is ALL GREEN, not a matching count.** Every merged PR moves these numbers, so a count that differs from the one above means THIS DOC is stale — it does not mean the world is broken. Only `Failed: > 0` is a red baseline. This file has already been wrong in both directions: it once claimed 434 in one paragraph and 400 in another while `main` was at neither, which is exactly the trap an agent told to "fix the world first" walks into. Trust the run; correct the doc.
 
-Provenance, so you know what to re-check: all four counts were captured at `d502b00` on 2026-09-07 — unit and bUnit from a local Release run, browser and E2E from the CI run on that head. The previous baseline said "715 unit + 54 E2E" and listed only two suites, which is how an agent following this runbook ends up gating on half the estate; the E2E figure had also gone six weeks without a re-run while being quoted as current.
+Provenance, so you know what to re-check: on 2026-09-07, unit/bUnit/browser from the CI run on `8a25ac1` itself, and browser again from a local published-bundle run. E2E is the one that is NOT from this head — it was 65/65 on `6fc2b74` (#296), and everything merged after that was docs- or test-only, so it has not been re-dispatched. Re-dispatch it before trusting the figure against new server code. The previous baseline said "715 unit + 54 E2E" and listed only two suites, which is how an agent following this runbook ends up gating on half the estate; the E2E figure had also gone six weeks without a re-run while being quoted as current.
 **Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → the auto-memory backlog (`arkade-heroes-backlog.md`, the live prioritized queue) → `docs/DESIGN.md`.
 
 ---
@@ -36,7 +36,7 @@ The bullets above are the ORIGINAL MVP proof, still live. Everything this sectio
 
 ## 3. World verification runbook — run this BEFORE any work
 
-Expected outputs as of `main`@`d502b00`. If any check FAILS, fix the world first — do not code against a broken baseline. A test COUNT that differs from the one recorded here is not a failure (see the note at the top).
+Expected outputs as of `main`@`8a25ac1`. If any check FAILS, fix the world first — do not code against a broken baseline. A test COUNT that differs from the one recorded here is not a failure (see the note at the top).
 
 ```bash
 # 1. Repo state (HEAD is bd901fa or a descendant — handoff-doc commits follow it)
@@ -51,9 +51,15 @@ docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests -c Release --nologo      # → Passed! 1145/1145, ~55s
+dotnet test tests/ArkadeHeroes.Tests -c Release --nologo      # → Passed! 1148/1148, ~80s
 dotnet test tests/ArkadeHeroes.Tests.Web -c Release --nologo  # → Passed! 248/248, ~6s — bUnit, EASY TO FORGET, covers a money path
 # -c Release is not optional here: dotnet test defaults to Debug, and the timings above are Release.
+
+# 3b. Browser gate (no regtest needed, but it runs against a PUBLISHED bundle, not the dev build)
+dotnet publish src/ArkadeHeroes.Web -c Release -o published-web
+ARKADE_WEB_PUBLISH_DIR=published-web dotnet test tests/ArkadeHeroes.Tests.Browser -c Release --nologo  # → Passed! 54/54, ~3 min
+# Verified locally on 8a25ac1. Playwright reads (InnerTextAsync) do NOT auto-wait the way a click does,
+# so a read taken straight after a click can catch a spinner — that put main red once (#299).
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~7 min)
 dotnet test tests/ArkadeHeroes.Tests.E2E -c Release --nologo   # → Passed! 65/65 (serial, ~7 min)
