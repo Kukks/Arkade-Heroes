@@ -377,6 +377,31 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         });
     }
 
+    /// <summary>Trials is free by contract, and a zero that must stay zero regresses quietly.</summary>
+    [Fact]
+    public async Task Trials_ChargesNothing_AndStillSignsAVerifiableReceipt()
+    {
+        var (player, wallet, heroes) = await FundedPlayerAsync("FeeTrials");
+        var before = await wallet.GetBalanceSatsAsync();
+
+        var opened = await player.Trials.OpenAsync(heroes[0].Id);
+        Assert.False(string.IsNullOrWhiteSpace(opened.Affix));
+
+        var run = await player.Trials.RunAsync(opened.TrialsId, $"tr-{Guid.NewGuid():N}");
+
+        // Not Equal(before, after): a recruit's change may still be settling, so the balance can rise.
+        Assert.True(await wallet.GetBalanceSatsAsync() >= before, "an entire trials run must cost nothing");
+        Assert.DoesNotContain("trials", (await player.Economy.HealthAsync()).InflowByTag.Keys);
+
+        var (ok, detail) = ReceiptVerifier.Verify(run.Receipt);
+        Assert.True(ok, detail);
+        Assert.Equal((await player.Chain.InfoAsync()).GameSignerKey, run.Receipt.GameSignerKeyHex);
+
+        Assert.True(run.BestScore == run.WavesCleared,
+            "a first run's best score is that run's score — a recruit usually clears none");
+        await player.Trials.BoardAsync();
+    }
+
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
     // matters is that the podium never pays out more than the entrants actually put in.
     [Fact]
