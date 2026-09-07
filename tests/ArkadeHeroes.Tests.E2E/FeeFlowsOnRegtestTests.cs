@@ -158,6 +158,54 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Assert.Equal(rename.FeeSats, booked);
     }
 
+    /// <summary>The stud service bills the proposer TWICE and pays one of those fees back out to ANOTHER
+    /// player — the only pass-through fee here. `stud` had zero E2E coverage, so neither had run on a
+    /// real chain.</summary>
+    [Fact]
+    public async Task StudBreed_BillsBothFees_AndTheStudFeeReachesTheOtherOwner()
+    {
+        const long StudFee = 3_000;
+        var (alice, aliceWallet, aliceHeroes) = await FundedPlayerAsync("FeeStudAlice");
+        var (bob, bobWallet, bobHeroes) = await FundedPlayerAsync("FeeStudBob", fundTreasury: false);
+        var bobBefore = await bobWallet.GetBalanceSatsAsync();
+
+        var proposal = await alice.Stud.ProposeAsync(
+            new StudProposeRequest(aliceHeroes[0].Id, bobHeroes[0].Id, StudFee));
+        var accept = await bob.Stud.AcceptAsync(proposal.ProposalId);
+
+        Assert.NotNull(accept.StudFeeInvoice);
+        Assert.Equal(StudFee, accept.StudFeeInvoice!.AmountSats);
+        Assert.True(accept.BreedFeeInvoice.AmountSats > 0, "the escalating breed fee is the proposer's too");
+        Assert.NotEqual(accept.BreedFeeInvoice.PayToAddress, accept.StudFeeInvoice.PayToAddress);
+
+        await aliceWallet.SendAsync(accept.BreedFeeInvoice.PayToAddress, accept.BreedFeeInvoice.AmountSats);
+        await aliceWallet.SendAsync(accept.StudFeeInvoice.PayToAddress, accept.StudFeeInvoice.AmountSats);
+
+        StudRevealResponse? revealed = null;
+        await PollUntilAsync(async () =>
+        {
+            try
+            {
+                revealed = await alice.Stud.RevealAsync(
+                    proposal.ProposalId, new StudRevealRequest($"stud-{Guid.NewGuid():N}"));
+                return true;
+            }
+            catch (ArkadeHeroesApiException) { return false; }
+        }, TimeSpan.FromSeconds(120), "both stud invoices to clear so the foal can mint");
+
+        var mine = await alice.Heroes.MineAsync();
+        Assert.Contains(mine, h => h.Id == revealed!.Hero.Id);
+        Assert.Equal(1, revealed!.Hero.Generation);
+
+        // The half this test exists for: the stud fee left the treasury again, to a DIFFERENT wallet.
+        await bobWallet.WaitForBalanceAsync(bobBefore + StudFee, TimeSpan.FromSeconds(120));
+
+        var health = await alice.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.TryGetValue("stud", out var studBooked),
+            $"no 'stud' inflow recorded; tags seen: {string.Join(",", health.InflowByTag.Keys)}");
+        Assert.Equal(StudFee, studBooked);
+    }
+
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
     // matters is that the podium never pays out more than the entrants actually put in.
     [Fact]
