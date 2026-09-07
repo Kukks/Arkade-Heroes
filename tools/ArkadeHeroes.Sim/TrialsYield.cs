@@ -257,8 +257,7 @@ public static class TrialsYield
         return cleared;
     }
 
-    /// Takes the CEILING rather than an is-recruit flag, so the ghost rows are minted from the ladder's own
-    /// Trials.CeilingFor instead of a copy of it that can drift out of step (as this table did, #294).
+    /// Takes the CEILING, so ghost rows come from Trials.CeilingFor rather than a copy that drifts (#294).
     private static (double Hp, double Atk, double Def, double Spd) MeanStats(
         int samples, byte ceiling, int level, Random rng)
     {
