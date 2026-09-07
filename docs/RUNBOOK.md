@@ -26,7 +26,7 @@ this is the same story a human can drive by hand.
   ```
   Verify: `docker ps` shows `arkd`, `emulator`, `bitcoin`. Faucet password is
   `secret`. (Ports: arkd `:7070`, emulator `:7073`.)
-- Gate is green: `dotnet test tests/ArkadeHeroes.Tests` → 173 passing (plus 50 E2E behind the regtest, `tests/ArkadeHeroes.Tests.E2E`).
+- Gate is green: `dotnet test tests/ArkadeHeroes.Tests -c Release` passes, and `tests/ArkadeHeroes.Tests.E2E` passes behind the regtest stack. Deliberately no counts here — they move every PR, and `docs/HANDOFF.md` is the one place that tracks them.
 
 ## 1. Start the server (NArk mode, covenants on)
 
