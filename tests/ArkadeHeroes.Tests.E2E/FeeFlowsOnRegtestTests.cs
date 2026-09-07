@@ -321,6 +321,59 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Assert.Equal(opened.FeeInvoice.AmountSats, booked);
     }
 
+    /// <summary>The last money path with no E2E coverage, and the widest: SIX heroes, a covenant escrow
+    /// per side, and a per-side match fee on top of the stake. Who wins is not asserted — only that the
+    /// pot cannot pay out more than both sides actually staked.</summary>
+    [Fact]
+    public async Task SquadMatch_TakesBothStakesAndBothFees_AndPaysNoMoreThanThePot()
+    {
+        const long Wager = 4_000;
+        var (alice, aliceWallet, _) = await FundedPlayerAsync("FeeSquadA");
+        var (bob, bobWallet, _) = await FundedPlayerAsync("FeeSquadB", fundTreasury: false);
+        var aliceLineup = (await alice.RecruitAsync(aliceWallet, 3)).Take(3).Select(h => h.Id).ToList();
+        var bobLineup = (await bob.RecruitAsync(bobWallet, 3)).Take(3).Select(h => h.Id).ToList();
+
+        var opened = await alice.Squad.OpenAsync(
+            new OpenSquadMatchRequest(aliceLineup, bobLineup, Wager));
+        Assert.NotNull(opened.EscrowAddress);
+        Assert.NotNull(opened.MatchFeeInvoice);
+        Assert.Equal(Wager, opened.EscrowStakeSats);
+
+        await aliceWallet.SendAsync(opened.EscrowAddress!, opened.EscrowStakeSats);
+        await aliceWallet.SendAsync(opened.MatchFeeInvoice!.PayToAddress, opened.MatchFeeInvoice.AmountSats);
+
+        var accepted = await bob.Squad.AcceptAsync(opened.MatchId);
+        Assert.NotNull(accepted.EscrowAddress);
+        Assert.NotNull(accepted.MatchFeeInvoice);
+        Assert.NotEqual(opened.EscrowAddress, accepted.EscrowAddress);
+
+        await bobWallet.SendAsync(accepted.EscrowAddress!, accepted.EscrowStakeSats);
+        await bobWallet.SendAsync(accepted.MatchFeeInvoice!.PayToAddress, accepted.MatchFeeInvoice.AmountSats);
+
+        SquadResolveResponse? resolved = null;
+        await PollUntilAsync(async () =>
+        {
+            try
+            {
+                resolved = await alice.Squad.ResolveAsync(opened.MatchId, new FightRequest($"sq-{Guid.NewGuid():N}"));
+                return true;
+            }
+            catch (ArkadeHeroesApiException) { return false; }
+        }, TimeSpan.FromSeconds(180), "both stakes and both fees to clear so the 3v3 can resolve");
+
+        // Best-of-three over three duels, and the pot is what the two sides staked — never more.
+        Assert.Equal(3, resolved!.Result.Duels.Count);
+        Assert.Equal(3, resolved.Result.ChallengerWins + resolved.Result.DefenderWins);
+        Assert.True(resolved.WinnerPayoutSats > 0, "a resolved 3v3 pays its winner");
+        Assert.True(resolved.WinnerPayoutSats <= Wager * 2,
+            $"paid {resolved.WinnerPayoutSats} out of a {Wager * 2} pot");
+        Assert.All(resolved.Receipts, r =>
+        {
+            var (ok, detail) = ReceiptVerifier.Verify(r);
+            Assert.True(ok, detail);
+        });
+    }
+
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
     // matters is that the podium never pays out more than the entrants actually put in.
     [Fact]
