@@ -167,12 +167,13 @@ public class TrialsTests
         Assert.True(strong > weak, $"a level-20 hero should out-survive a level-3 one across seeds (weak={weak}, strong={strong})");
     }
 
-    // ── The trials ghost is not graded to its runner — AN UNFIXED DEFECT ────────────────────────────
-    // Gauntlet.GhostFor mints at the runner's own StatGeneCeiling; Trials.GhostFor mints from NewGen0 and
-    // never takes the runner at all. The fix is DEFERRED pending a release decision — it moves the ghost
-    // every stamped receipt is client-replayed against. So these pin BROKEN behaviour on purpose: the
-    // first two go RED when it lands and should be rewritten in GauntletGradeTests' wording, the
-    // growth-gene one does not move (it is the capped mint, not this ladder).
+    // ── The trials ghost is not graded to its runner — AN UNFIXED DEFECT (#294) ─────────────────────
+    // Gauntlet.GhostFor mints at the runner's own StatGeneCeiling; Trials.GhostFor mints from NewGen0
+    // and never takes the runner at all. Deferred as a BALANCE call — this note used to say the fix moves
+    // the ghost every stamped receipt is replayed against, which is false: VerifyTrials has ONE caller,
+    // synchronous, and needs a pre-run HeroSnapshot that is persisted nowhere. So these pin BROKEN
+    // behaviour: the first two go RED when it lands and should be rewritten in GauntletGradeTests'
+    // wording, the growth-gene one does not move (it is the capped mint, not this ladder).
 
     private const int Cohort = 150;
 

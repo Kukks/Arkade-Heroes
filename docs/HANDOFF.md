@@ -56,9 +56,12 @@ dotnet test tests/ArkadeHeroes.Tests.Web -c Release --nologo  # → Passed! 248/
 # -c Release is not optional here: dotnet test defaults to Debug, and the timings above are Release.
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~7 min)
-dotnet test tests/ArkadeHeroes.Tests.E2E -c Release --nologo   # → Passed! 64/64 (serial, ~7 min)
-# E2E is dispatch-only on PRs (`gh workflow run CI --ref <branch>`), and it does NOT cover everything:
-# `trials` has no E2E at all. Name the suite that actually gated your change, not the one that merely ran.
+dotnet test tests/ArkadeHeroes.Tests.E2E -c Release --nologo   # → Passed! 65/65 (serial, ~7 min)
+# E2E is dispatch-only on PRs (`gh workflow run CI --ref <branch>`). `trials` was the last KNOWN gap and
+# is closed; that is not the same as exhaustive. It also drives HTTP against an ALREADY-BUILT host, so it
+# cannot see a composition-root defect (#278 was found by booting the thing, not by this suite).
+# Name the suite that actually gated your change, not the one that merely ran.
+# Read the COUNT, not the colour: a skipped test and a passing one are the same green.
 
 # 5. Chain plumbing probes
 node regtest/regtest.mjs rpc getblockcount                       # bitcoin-cli passthrough works
