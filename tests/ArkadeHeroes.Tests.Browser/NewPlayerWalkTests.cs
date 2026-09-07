@@ -68,6 +68,11 @@ public class NewPlayerWalkTests(PlayableAppFixture app)
         var gate = session.Page.Locator(".modal.terms-modal");
         await gate.WaitForAsync(new() { Timeout = 30_000 });
 
+        // InnerTextAsync reads NOW; unlike a click it does not wait for the thing to be ready, and the
+        // frame renders before the document fetch resolves. .terms-doc is TermsDocument's Ready marker.
+        try { await session.Page.Locator(".terms-scroll .terms-doc").WaitForAsync(new() { Timeout = 20_000 }); }
+        catch (TimeoutException) { /* let the assertion below report what was actually on screen */ }
+
         // The prose itself, not just the frame around it. An empty gate is the shipped failure.
         var terms = await session.Page.InnerTextAsync(".terms-scroll");
         Assert.True(terms.Trim().Length > 400,
