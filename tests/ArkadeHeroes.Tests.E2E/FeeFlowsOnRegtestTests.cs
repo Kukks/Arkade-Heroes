@@ -206,6 +206,45 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Assert.Equal(StudFee, studBooked);
     }
 
+    /// <summary>A bid is the only flow where a HERO ASSET has to move between two player wallets before
+    /// anyone is paid, and settle is refused until the chain shows it. `bids` had zero E2E coverage.</summary>
+    [Fact]
+    public async Task AcceptedBid_MovesTheHero_AndPaysTheOwnerTheBidLessTheFee()
+    {
+        const long Bid = 12_000;
+        var (owner, ownerWallet, ownerHeroes) = await FundedPlayerAsync("FeeBidOwner");
+        var (bidder, bidderWallet, _) = await FundedPlayerAsync("FeeBidBuyer", fundTreasury: false);
+        var hero = ownerHeroes[0];
+        var ownerBefore = await ownerWallet.GetBalanceSatsAsync();
+
+        var placed = await bidder.Bids.PlaceAsync(new PlaceBidRequest(hero.Id, Bid));
+        var accepted = await owner.Bids.AcceptAsync(placed.BidId);
+
+        Assert.Equal(Bid, accepted.Invoice.AmountSats);
+        Assert.True(accepted.SellerNetSats < Bid, "the listing fee comes out of the owner's proceeds");
+        Assert.False(accepted.Funded);
+
+        await bidderWallet.SendAsync(accepted.Invoice.PayToAddress, accepted.Invoice.AmountSats);
+        await PollUntilAsync(async () => (await owner.Bids.InvoiceAsync(placed.BidId)).Funded,
+            TimeSpan.FromSeconds(120), "the bidder's payment to clear so the owner can deliver safely");
+
+        // Settle is gated on the CHAIN showing the transfer, not on the owner's word for it.
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => owner.Bids.SettleAsync(placed.BidId));
+
+        await ownerWallet.SendAssetAsync(bidderWallet.Address, hero.AssetId!, 1);
+        await bidderWallet.WaitForAssetAsync(hero.AssetId!, TimeSpan.FromSeconds(90));
+
+        HeroDto? settled = null;
+        await PollUntilAsync(async () =>
+        {
+            try { settled = await owner.Bids.SettleAsync(placed.BidId); return true; }
+            catch (ArkadeHeroesApiException) { return false; }
+        }, TimeSpan.FromSeconds(120), "the hero transfer to be visible so the bid can settle");
+
+        Assert.Equal((await bidder.Players.MeAsync()).PlayerId, settled!.OwnerId);
+        await ownerWallet.WaitForBalanceAsync(ownerBefore + accepted.SellerNetSats, TimeSpan.FromSeconds(120));
+    }
+
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
     // matters is that the podium never pays out more than the entrants actually put in.
     [Fact]
