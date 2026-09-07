@@ -163,6 +163,32 @@ public class SeasonPrizeLoopTests
         Assert.Equal(due, (await game.EconomyHealthAsync()).SeasonSettleBlockedOn);
     }
 
+    /// <summary>The nothing-due early return holds no lock, so it must not erase a marker a concurrent
+    /// settle just wrote. A pre-rollover `now` is the same state the losing side of that race sees.</summary>
+    [Fact]
+    public async Task ASettleWithNothingDue_DoesNotEraseALiveHold()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Prize-Race-A");
+        var (bob, _) = await factory.RegisterAsync("Prize-Race-B");
+        var ah = (await alice.ClaimStartersAsync())[0];
+        var bh = (await bob.ClaimStartersAsync())[0];
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[ah.Id].Xp = 500;
+        store.Heroes[bh.Id].Xp = 500;
+        await StakedFight(alice, bob, ah.Id, bh.Id, "prize-race-1");
+
+        using var scope = factory.Services.CreateScope();
+        var game = scope.ServiceProvider.GetRequiredService<GameService>();
+        var due = Season.Current(DateTimeOffset.UtcNow, 14).Number;
+        await game.SeasonLeaderboardAt(Season.Current(DateTimeOffset.UtcNow, 14).End.AddDays(1), CancellationToken.None);
+        Assert.Equal(due, store.SeasonSettleBlockedOn);
+
+        await game.SeasonLeaderboardAt(DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.Equal(due, store.SeasonSettleBlockedOn);
+    }
+
     [Fact]
     public async Task FundingTheTreasury_ClearsTheStuckMarker_AndPays()
     {

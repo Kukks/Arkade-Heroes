@@ -3096,8 +3096,13 @@ public class GameService(
     private async Task SettleDueSeasonsAsync(DateTimeOffset now, CancellationToken ct)
     {
         var current = Season.Current(now, _config.SeasonLengthDays).Number;
-        // Cleared on BOTH exits, not just where it is set: a stale number here reads as a live fault.
-        if (!SeasonPrize.DueSeasons(store.LastSettledSeason, current).Any()) { store.SeasonSettleBlockedOn = 0; return; }
+        if (!SeasonPrize.DueSeasons(store.LastSettledSeason, current).Any())
+        {
+            // Clear only a marker whose season has since SETTLED. An unconditional clear here races a
+            // concurrent settle that just blocked: this path holds no lock, so it would erase a live fault.
+            if (store.SeasonSettleBlockedOn <= store.LastSettledSeason) store.SeasonSettleBlockedOn = 0;
+            return;
+        }
 
         await store.SettleLock.WaitAsync(ct);
         try
