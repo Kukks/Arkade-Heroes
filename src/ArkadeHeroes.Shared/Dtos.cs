@@ -673,7 +673,10 @@ public record EconomyHealthDto(long TreasuryBalanceSats, long TotalInflowSats, l
     /// and load-bearing (throwing would re-pay a daily claim or re-deliver a paid item), so this counter is
     /// the only way the failure surfaces as a number. Non-zero means the durable totals have fallen behind
     /// the in-memory ones and a restart will lose the difference; it never means a sat moved wrongly.</summary>
-    long LedgerWriteFailures = 0);
+    long LedgerWriteFailures = 0,
+    /// <summary>The season whose pot exceeds the treasury, or 0. Unlike the two tripwires above this is
+    /// not a trend: any non-zero value means this season AND every later one are unpaid right now.</summary>
+    int SeasonSettleBlockedOn = 0);
 
 /// <summary>
 /// The offer address the seller deposits the item unit (+ carrier dust) into

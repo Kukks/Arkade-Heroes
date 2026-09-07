@@ -114,6 +114,8 @@ public class SeasonPrizeLoopTests
         Assert.Equal(treasuryBefore, await chain.TreasuryBalanceAsync());     // …and not one sat left
     }
 
+    /// <summary>Banking XP is what reaches the treasury check at all — without it nobody wins, the season
+    /// leaves by the no-competitors path with LastSettlement ALSO null, and only the marker tells them apart.</summary>
     [Fact]
     public async Task UnderfundedTreasury_DoesNotSettle()
     {
@@ -122,14 +124,68 @@ public class SeasonPrizeLoopTests
         var (bob, _) = await factory.RegisterAsync("Prize-Under-B");
         var ah = (await alice.ClaimStartersAsync())[0];
         var bh = (await bob.ClaimStartersAsync())[0];
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[ah.Id].Xp = 500;
+        store.Heroes[bh.Id].Xp = 500;
         await StakedFight(alice, bob, ah.Id, bh.Id, "prize-under-1");   // treasury = fees only (< 25k base pot)
 
         using var scope = factory.Services.CreateScope();
         var game = scope.ServiceProvider.GetRequiredService<GameService>();
 
+        var due = Season.Current(DateTimeOffset.UtcNow, 14).Number;
         var futureNow = Season.Current(DateTimeOffset.UtcNow, 14).End.AddDays(1);
         var board = await game.SeasonLeaderboardAt(futureNow, CancellationToken.None);
 
         Assert.Null(board.LastSettlement);   // underfunded → the season with competitors was not settled
+        Assert.Equal(due - 1, store.LastSettledSeason);
+    }
+
+    [Fact]
+    public async Task UnderfundedTreasury_NamesTheSeasonItIsStuckOn()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Prize-Stuck-A");
+        var (bob, _) = await factory.RegisterAsync("Prize-Stuck-B");
+        var ah = (await alice.ClaimStartersAsync())[0];
+        var bh = (await bob.ClaimStartersAsync())[0];
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[ah.Id].Xp = 500;
+        store.Heroes[bh.Id].Xp = 500;
+        await StakedFight(alice, bob, ah.Id, bh.Id, "prize-stuck-1");
+
+        using var scope = factory.Services.CreateScope();
+        var game = scope.ServiceProvider.GetRequiredService<GameService>();
+        Assert.Equal(0, (await game.EconomyHealthAsync()).SeasonSettleBlockedOn);
+
+        var due = Season.Current(DateTimeOffset.UtcNow, 14).Number;
+        await game.SeasonLeaderboardAt(Season.Current(DateTimeOffset.UtcNow, 14).End.AddDays(1), CancellationToken.None);
+
+        Assert.Equal(due, (await game.EconomyHealthAsync()).SeasonSettleBlockedOn);
+    }
+
+    [Fact]
+    public async Task FundingTheTreasury_ClearsTheStuckMarker_AndPays()
+    {
+        using var factory = new WebApplicationFactory<Program>();
+        var (alice, _) = await factory.RegisterAsync("Prize-Unstuck-A");
+        var (bob, _) = await factory.RegisterAsync("Prize-Unstuck-B");
+        var ah = (await alice.ClaimStartersAsync())[0];
+        var bh = (await bob.ClaimStartersAsync())[0];
+        var store = factory.Services.GetRequiredService<GameStore>();
+        store.Heroes[ah.Id].Xp = 500;
+        store.Heroes[bh.Id].Xp = 500;
+        await StakedFight(alice, bob, ah.Id, bh.Id, "prize-unstuck-1");
+
+        using var scope = factory.Services.CreateScope();
+        var game = scope.ServiceProvider.GetRequiredService<GameService>();
+        var futureNow = Season.Current(DateTimeOffset.UtcNow, 14).End.AddDays(1);
+        await game.SeasonLeaderboardAt(futureNow, CancellationToken.None);
+        Assert.NotEqual(0, (await game.EconomyHealthAsync()).SeasonSettleBlockedOn);
+
+        await alice.Dev.FundTreasuryAsync(new { Sats = 500_000L });
+        var board = await game.SeasonLeaderboardAt(futureNow, CancellationToken.None);
+
+        Assert.NotNull(board.LastSettlement);
+        Assert.Equal(0, (await game.EconomyHealthAsync()).SeasonSettleBlockedOn);
     }
 }

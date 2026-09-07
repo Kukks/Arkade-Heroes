@@ -882,7 +882,7 @@ public class GameService(
             o => o.Status == "closed" && o.ListingFeeSats > 0 && !store.WasInflowTallied(OfferSaleInflowId(o.Id)));
         return new Shared.EconomyHealthDto(balance, inflow.Values.Sum(), outflow.Values.Sum(), inflow, outflow,
             seasonAccrual, heroSupply, gen0Supply, minted, heroesBurned, activeOffers, closedOffers,
-            unbookedClosedFeeOffers, store.LedgerWriteFailures);
+            unbookedClosedFeeOffers, store.LedgerWriteFailures, store.SeasonSettleBlockedOn);
     }
 
     /// <summary>
@@ -3096,11 +3096,13 @@ public class GameService(
     private async Task SettleDueSeasonsAsync(DateTimeOffset now, CancellationToken ct)
     {
         var current = Season.Current(now, _config.SeasonLengthDays).Number;
-        if (!SeasonPrize.DueSeasons(store.LastSettledSeason, current).Any()) return;
+        // Cleared on BOTH exits, not just where it is set: a stale number here reads as a live fault.
+        if (!SeasonPrize.DueSeasons(store.LastSettledSeason, current).Any()) { store.SeasonSettleBlockedOn = 0; return; }
 
         await store.SettleLock.WaitAsync(ct);
         try
         {
+            store.SeasonSettleBlockedOn = 0;
             foreach (var s in SeasonPrize.DueSeasons(store.LastSettledSeason, current))
             {
                 // A prize needs a WIN behind it. The board ranks on wins but falls through to level and
@@ -3116,7 +3118,17 @@ public class GameService(
                     .ToList();
                 var pot = _config.SeasonPotBaseSats + store.SeasonFeeAccrual.GetValueOrDefault(s);
                 if (standings.Count == 0) { store.LastSettledSeason = s; continue; }   // no competitors / receipts gone
-                if (await chain.TreasuryBalanceAsync(ct) < pot) break;                 // underfunded → retry on a later read
+                if (await chain.TreasuryBalanceAsync(ct) < pot)
+                {
+                    // The break is right; the silence was not — the one failure here that surfaced nothing.
+                    store.SeasonSettleBlockedOn = s;
+                    logger?.LogWarning(
+                        "Season {Season} ended with {Winners} ranked winner(s) but its {Pot}-sat pot exceeds "
+                        + "the treasury, so it was not paid and every later season is held behind it. This "
+                        + "clears itself once the treasury covers the pot; until then no season settles.",
+                        s, standings.Count, pot);
+                    break;
+                }
 
                 var shares = SeasonPrize.Split(pot, standings.Count, SeasonPrize.Weights);
                 store.LastSettledSeason = s;   // commit BEFORE paying → no double-pay

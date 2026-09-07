@@ -824,6 +824,10 @@ public class GameStore(
     /// lose the difference; it never means a sat moved wrongly.</summary>
     public long LedgerWriteFailures => Interlocked.Read(ref _ledgerWriteFailures);
 
+    /// <summary>The season the settle loop refused to pay for want of treasury, 0 when nothing is stuck. One
+    /// ordered marker means it HOLDS every later season; skipping it would strand its winners. Not persisted.</summary>
+    public int SeasonSettleBlockedOn { get; set; }
+
     public readonly SemaphoreSlim SettleLock = new(1, 1);                        // serialize settlement
 
     // ── Per-key async mutexes: the money-path once-only guards ──

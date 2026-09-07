@@ -1279,7 +1279,10 @@ if (AdminGate.IsEnabled(adminToken))
         var detail = store.LastSettledSeason > before
             ? $"The settled-season marker advanced {before} → {store.LastSettledSeason}; "
               + $"season {board.SeasonNumber} is live."
-            : $"Nothing was due — season {board.SeasonNumber} is live, last settled {store.LastSettledSeason}.";
+            : store.SeasonSettleBlockedOn != 0
+                ? $"BLOCKED: season {store.SeasonSettleBlockedOn} has ranked winners but its pot exceeds the "
+                  + "treasury, so it and every season after it are unpaid. Fund the treasury and run this again."
+                : $"Nothing was due — season {board.SeasonNumber} is live, last settled {store.LastSettledSeason}.";
         app.Logger.LogInformation("ADMIN ACTION settle-seasons: {Detail}", detail);
         // The settle ITSELF logs season.settled + treasury.outflow from inside the service, so this entry
         // records only that an operator chose the moment — never a second copy of what was paid.
