@@ -751,14 +751,18 @@ public static class Onboarding
         /// message says no, the gate says what it would take.
         private (string Beat, string Gate)[] Gates() =>
         [
-            ("daily:before-hero", $"needs a claimed starter first — {_config?.StarterClaimFeeSats ?? 0:N0} sats"),
+            ("daily:before-hero", $"needs a claimed starter first — {_config?.StarterClaimFeeSats ?? 0:N0} sats; "
+                + "the BROWSER no longer offers this (DailyCard gates the button on HasHero, #283), so this "
+                + "wall is API-only and a real player does not hit it"),
             ("gauntlet:retry", "per-hero cooldown (GameOptions.GauntletCooldown, 30s default, ~10min in prod); "
                 + "HeroDto carries no gauntlet cooldown, so no client can show it"),
             ("list:that-gear", $"ask must EXCEED the flat {_config?.OfferListingFeeSats ?? 0:N0}-sat marketplace fee, "
                 + $"and the only gear a level-1 hero may equip costs {(_shop.Count == 0 ? 0 : _shop.Min(i => i.PriceSats)):N0}"),
             ("list:my-hero", $"same floor: a recruit costs {_config?.StarterClaimFeeSats ?? 0:N0} and cannot be listed for it"),
             ("equip:next-tier", "gear tiers are level-gated at EQUIP (GameService.EquipAsync), not at purchase "
-                + "(CreateItemInvoiceAsync checks nothing) — the shop sold it and the hero cannot wear it"),
+                + "(CreateItemInvoiceAsync checks nothing) — the shop sold it and the hero cannot wear it; "
+                + "the browser does say so before the sale (Gear.razor renders \"Needs a level-N hero.\"), "
+                + "so this is a disclosed trap rather than a blind one"),
             ("squad:3v3", $"three heroes per side, i.e. {3 * (_config?.StarterClaimFeeSats ?? 0):N0} sats of recruits "
                 + "before the door opens at all"),
             ("breed:one-hero", $"two distinct parents, i.e. a second recruit at {_config?.StarterClaimFeeSats ?? 0:N0}"),
