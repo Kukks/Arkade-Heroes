@@ -111,7 +111,7 @@ ArkadeHeroes.Client (console)      ArkadeHeroes.Web (Blazor WASM + in-browser wa
         │                                   └── NArkChainService → arkd :7070 (regtest denigiri)
 ```
 
-Regtest bring-up: `node external/dotnet-sdk/regtest/regtest.mjs start --profile ark --profile emulator`. The emulator is no longer optional — every covenant path (breed, merge, wager, death-match, offers) needs it to co-sign, and CI brings up both profiles.
+Regtest bring-up: `node regtest/regtest.mjs start --profile ark --profile emulator` — the TOP-LEVEL `regtest` submodule, which is what CI runs and what `RegtestHelper` drives. The SDK carries its own nested `external/dotnet-sdk/regtest` pinned to a different commit; booting that one gives you a stack the tests were not written against. The emulator is no longer optional — every covenant path (breed, merge, wager, death-match, offers) needs it to co-sign, and CI brings up both profiles.
 
 ## 4. Trust model summary
 

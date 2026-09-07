@@ -4,7 +4,8 @@ using CliWrap.Buffered;
 namespace ArkadeHeroes.Tests.E2E;
 
 /// <summary>
-/// Drives the denigiri regtest CLI (external/dotnet-sdk/regtest/regtest.mjs).
+/// Drives the denigiri regtest CLI (regtest/regtest.mjs — the TOP-LEVEL submodule, not the
+/// SDK's nested copy, which is pinned to a different commit).
 /// The stack's `start` seeds an `ark` client wallet inside the arkd container,
 /// which we use as the test faucet for offchain funds.
 /// </summary>

@@ -4,6 +4,9 @@ Read 2026-07-03 directly from the submodule at `external/dotnet-sdk` (pinned at 
 
 ## Regtest harness (denigiri)
 
+> Historical note, and NOT our runbook. The commands below drive the SDK's own nested harness. This repo
+> uses the TOP-LEVEL `regtest` submodule (`node regtest/regtest.mjs …`) — see `docs/HANDOFF.md`.
+
 Nested submodule `external/dotnet-sdk/regtest` (= `arkade-os/arkade-regtest`, no nigiri dependency, plain Docker + Node ≥18):
 
 ```bash
