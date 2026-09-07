@@ -223,7 +223,7 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         var accepted = await owner.Bids.AcceptAsync(placed.BidId);
 
         Assert.Equal(Bid, accepted.Invoice.AmountSats);
-        Assert.True(accepted.SellerNetSats < Bid, "the listing fee comes out of the owner's proceeds");
+        Assert.Equal(Bid - ListingFee, accepted.SellerNetSats);
         Assert.False(accepted.Funded);
 
         await bidderWallet.SendAsync(accepted.Invoice.PayToAddress, accepted.Invoice.AmountSats);
