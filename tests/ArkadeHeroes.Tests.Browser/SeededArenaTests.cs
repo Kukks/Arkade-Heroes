@@ -72,7 +72,6 @@ public class SeededArenaTests(PlayableAppFixture app)
         Assert.Contains(hero.Name, await session.BodyTextAsync(), StringComparison.Ordinal);
     }
 
-    /// <summary>An id-taking route EveryRoute cannot enumerate; the name asserted is the SERVER's.</summary>
     [Fact]
     public async Task APlayersOwnPageResolvesTheIdFromTheUrl()
     {
@@ -85,14 +84,18 @@ public class SeededArenaTests(PlayableAppFixture app)
         Assert.Contains(me.Name, await session.BodyTextAsync(), StringComparison.Ordinal);
     }
 
-    /// <summary>The other, with no data behind it: a rotted share link must render, not throw.</summary>
+    /// <summary>A rotted share link must say MISSING, not "arena unreachable". Not AssertHealthyAsync: the
+    /// page probes both replay endpoints, so a console 404 is the mechanism.</summary>
     [Fact]
-    public async Task AReplayLinkForAMatchThatDoesNotExistRendersRatherThanThrows()
+    public async Task AReplayLinkForAMatchThatDoesNotExistSaysSo_WithoutBlamingTheArena()
     {
         var missing = $"match-{Guid.NewGuid():N}";
 
         var session = await app.OpenAsync($"/watch/{missing}");
-        await session.AssertHealthyAsync($"/watch/{missing}");
+        var body = await session.BodyTextAsync();
+
+        Assert.Contains("the match doesn't exist yet", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("briefly unreachable", body, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
