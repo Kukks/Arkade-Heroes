@@ -1,7 +1,7 @@
 # Engineering handoff — Arkade Heroes autonomous build
 
 **Audience:** the next agent continuing this build autonomously via /loop.
-**Baseline:** current `main` (HEAD `d502b00` as of 2026-09-07). Gate: **FOUR suites, and CI runs all four** — **1145 unit** (`tests/ArkadeHeroes.Tests`, ~55s Release), **248 bUnit** (`tests/ArkadeHeroes.Tests.Web`, ~6s), **54 browser** (`tests/ArkadeHeroes.Tests.Browser`, needs a published bundle) and **64 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
+**Baseline:** current `main` (HEAD `d502b00` as of 2026-09-07). Gate: **FOUR suites** — they define the full gate, but note PR CI runs only three automatically; E2E is dispatch-only (see §3) — **1145 unit** (`tests/ArkadeHeroes.Tests`, ~55s Release), **248 bUnit** (`tests/ArkadeHeroes.Tests.Web`, ~6s), **54 browser** (`tests/ArkadeHeroes.Tests.Browser`, needs a published bundle) and **64 regtest E2E** behind the live stack. The build is well past the original MVP — §2 is the historical proof; §6/§7 have the current shipped surface and what's genuinely open.
 
 **The gate is ALL GREEN, not a matching count.** Every merged PR moves these numbers, so a count that differs from the one above means THIS DOC is stale — it does not mean the world is broken. Only `Failed: > 0` is a red baseline. This file has already been wrong in both directions: it once claimed 434 in one paragraph and 400 in another while `main` was at neither, which is exactly the trap an agent told to "fix the world first" walks into. Trust the run; correct the doc.
 
@@ -51,11 +51,12 @@ docker ps --format '{{.Names}}' | grep -E '^(arkd|emulator|bitcoin|mempool_api)$
 # arkd = ghcr.io/arkade-os/arkd:v0.9.9-rc.1, emulator = v0.0.3 (its /v1/info self-reports v0.0.1 — stale metadata, trust the image tag)
 
 # 3. Unit gate (fast, no infra needed)
-dotnet test tests/ArkadeHeroes.Tests --nologo      # → Passed! 1145/1145, ~55s (Release)
-dotnet test tests/ArkadeHeroes.Tests.Web --nologo  # → Passed! 248/248, ~6s — bUnit, EASY TO FORGET, covers a money path
+dotnet test tests/ArkadeHeroes.Tests -c Release --nologo      # → Passed! 1145/1145, ~55s
+dotnet test tests/ArkadeHeroes.Tests.Web -c Release --nologo  # → Passed! 248/248, ~6s — bUnit, EASY TO FORGET, covers a money path
+# -c Release is not optional here: dotnet test defaults to Debug, and the timings above are Release.
 
-# 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~2 min)
-dotnet test tests/ArkadeHeroes.Tests.E2E --nologo   # → Passed! 64/64 (serial, ~7 min)
+# 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~7 min)
+dotnet test tests/ArkadeHeroes.Tests.E2E -c Release --nologo   # → Passed! 64/64 (serial, ~7 min)
 # E2E is dispatch-only on PRs (`gh workflow run CI --ref <branch>`), and it does NOT cover everything:
 # `trials` has no E2E at all. Name the suite that actually gated your change, not the one that merely ran.
 
