@@ -278,6 +278,49 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => player.Daily.ClaimAsync());
     }
 
+    /// <summary>The ONLY XP mint in the game (trials award a title, PvP only moves XP between heroes).
+    /// `gauntlet` had zero E2E coverage, so nothing had watched a real fee buy real progression.</summary>
+    [Fact]
+    public async Task Gauntlet_ChargesItsFee_AndMintsExactlyTheXpItAwards()
+    {
+        var (player, wallet, heroes) = await FundedPlayerAsync("FeeGauntlet");
+        var hero = heroes[0];
+
+        var opened = await player.Gauntlet.OpenAsync(hero.Id);
+        Assert.True(opened.FeeInvoice.AmountSats > 0, "PvE is a treasury sink, not a faucet");
+
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(
+            () => player.Gauntlet.RunAsync(opened.GauntletId, "gauntlet-unpaid"));
+
+        await wallet.SendAsync(opened.FeeInvoice.PayToAddress, opened.FeeInvoice.AmountSats);
+        var before = await player.Heroes.GetAsync(hero.Id);
+
+        GauntletRunResponse? run = null;
+        await PollUntilAsync(async () =>
+        {
+            try { run = await player.Gauntlet.RunAsync(opened.GauntletId, $"g-{Guid.NewGuid():N}"); return true; }
+            catch (ArkadeHeroesApiException) { return false; }
+        }, TimeSpan.FromSeconds(120), "the gauntlet fee to clear so the ladder can run");
+
+        // Not "xp > 0" — a recruit clears nothing ~40% of the time. TotalXp, not Xp: Apply subtracts the
+        // threshold on a level-up, so raw Xp is progress INTO the level.
+        Assert.InRange(run!.WavesCleared, 0, 5);
+        var after = await player.Heroes.GetAsync(hero.Id);
+        Assert.Equal(
+            ArkadeHeroes.Core.Progression.Leveling.TotalXp(before.Level, before.Xp) + run.XpAwarded,
+            ArkadeHeroes.Core.Progression.Leveling.TotalXp(after.Level, after.Xp));
+        Assert.Equal(after.Level, run.NewLevel);
+
+        var (receiptOk, receiptDetail) = ReceiptVerifier.Verify(run.Receipt);
+        Assert.True(receiptOk, receiptDetail);
+        Assert.Equal((await player.Chain.InfoAsync()).GameSignerKey, run.Receipt.GameSignerKeyHex);
+
+        var health = await player.Economy.HealthAsync();
+        Assert.True(health.InflowByTag.TryGetValue("gauntlet", out var booked),
+            $"no 'gauntlet' inflow recorded; tags seen: {string.Join(",", health.InflowByTag.Keys)}");
+        Assert.Equal(opened.FeeInvoice.AmountSats, booked);
+    }
+
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
     // matters is that the podium never pays out more than the entrants actually put in.
     [Fact]
