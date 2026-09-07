@@ -31,8 +31,8 @@ public enum TrialsAffix
 /// <summary>
 /// The endless solo Trials — a leaderboard-focused PvE ladder that needs no live opponent (cold-start
 /// insurance for a young game). A hero fights an endless run of commit-reveal-seeded GHOST opponents on
-/// an ABSOLUTE difficulty ladder (wave N's ghost is level N), one full-HP fight per wave, ending at the
-/// first loss. The score is how many waves you survived — because the ladder is absolute, that score is a
+/// an ABSOLUTE difficulty ladder, one full-HP fight per wave, ending at the first loss. It climbs on TWO
+/// axes, both pure in the wave: ghost level (<see cref="GhostLevel"/>) and ceiling (<see cref="CeilingFor"/>). The score is how many waves you survived — because the ladder is absolute, that score is a
 /// direct read of the hero's realized power (level + gear + traits), so it makes a meaningful leaderboard
 /// and always terminates (the ghost inevitably outlevels any hero). Server-scored + fully client-replayable
 /// (deterministic in hero, entropy, config).
@@ -109,11 +109,20 @@ public static class Trials
             _ => wave >= 15 ? TopGear : wave >= 8 ? MidGear : [],
         };
 
-    /// <summary>The deterministic ghost for a wave — a gen-0 hero derived entirely from the run entropy, so
-    /// the client re-derives the same ladder and the server cannot substitute a softer foe.</summary>
+    private const int CeilingRampWaves = 3;
+
+    /// <summary>A recruit's cap at wave 1, the full byte from wave 4. Pure in the WAVE on purpose:
+    /// <see cref="Gauntlet.GhostFor"/> grades to its RUNNER, which here would make two scores incomparable.</summary>
+    public static byte CeilingFor(int wave) => (byte)Math.Min(
+        byte.MaxValue,
+        StarterPolicy.RecruitStatCap
+            + (byte.MaxValue - StarterPolicy.RecruitStatCap) * Math.Max(0, wave - 1) / CeilingRampWaves);
+
+    /// <summary>The deterministic ghost — pure in the run entropy, so no softer foe can be substituted.</summary>
     public static Hero GhostFor(ReadOnlySpan<byte> entropy, int wave, TrialsAffix affix = TrialsAffix.None)
     {
-        var genome = Genome.NewGen0(CommitReveal.DeriveEntropy(entropy, "trials-wave", wave.ToString()));
+        var genome = Genome.NewRecruit(
+            CommitReveal.DeriveEntropy(entropy, "trials-wave", wave.ToString()), CeilingFor(wave));
         var ghost = new Hero
         {
             Id = $"trial-ghost-{wave}",

@@ -167,13 +167,7 @@ public class TrialsTests
         Assert.True(strong > weak, $"a level-20 hero should out-survive a level-3 one across seeds (weak={weak}, strong={strong})");
     }
 
-    // ── The trials ghost is not graded to its runner — AN UNFIXED DEFECT (#294) ─────────────────────
-    // Gauntlet.GhostFor mints at the runner's own StatGeneCeiling; Trials.GhostFor mints from NewGen0
-    // and never takes the runner at all. Deferred as a BALANCE call — this note used to say the fix moves
-    // the ghost every stamped receipt is replayed against, which is false: VerifyTrials has ONE caller,
-    // synchronous, and needs a pre-run HeroSnapshot that is persisted nowhere. So these pin BROKEN
-    // behaviour: the first two go RED when it lands and should be rewritten in GauntletGradeTests'
-    // wording, the growth-gene one does not move (it is the capped mint, not this ladder).
+    // ── Ceiling ramps with the WAVE (#294); the third test is the capped MINT and did not move ─────
 
     private const int Cohort = 150;
 
@@ -193,59 +187,61 @@ public class TrialsTests
         SHA256.HashData(Encoding.UTF8.GetBytes($"trials-run-{level}-{i}"));
 
     [Fact]
-    public void TheEntryCohortIsWalledOutOfTheLadder_AnUnfixedDefect()
+    public void TheEntryCohortCanReachTheLadder_AndBreedingStillTakesYouDeeper()
     {
-        // Structure, not rates — percentages are content, and content is meant to be retuned.
-        long recruitWaves = 0, bredWavesAtTheFloor = 0;
-        int recruitTitles = 0, bredTitles = 0;
+        long recruitWaves = 0, bredWaves = 0;
+        int runs = 0, recruitCrossedTheDoorstep = 0;
 
         foreach (var level in EntryLevels)
             for (var i = 0; i < Cohort; i++)
             {
                 var entropy = RunEntropy(level, i);
                 var recruit = Trials.Resolve(RecruitRunner(i, level), entropy).WavesCleared;
-                var bred = Trials.Resolve(BredRunner(i, level), entropy).WavesCleared;
-
                 recruitWaves += recruit;
-                if (level == EntryLevels[0]) bredWavesAtTheFloor += bred;
-                if (Trials.TitleFor(recruit) is not null) recruitTitles++;
-                if (Trials.TitleFor(bred) is not null) bredTitles++;
+                bredWaves += Trials.Resolve(BredRunner(i, level), entropy).WavesCleared;
+                runs++;
+                if (recruit > 0) recruitCrossedTheDoorstep++;
             }
 
-        Assert.True(recruitTitles == 0,
-            $"{recruitTitles} recruit runs earned a title — the entry cohort can reach the mode's first " +
-            "reward band again, so this defect pin is obsolete");
-        Assert.True(bredTitles > 0,
-            "no cohort earned a title at all — the harness is broken, not the ladder");
+        // A loose floor, not the rate (~70% now, ~4% with the defect). Titles are deliberately not asserted.
+        var crossed = (double)recruitCrossedTheDoorstep / runs;
+        Assert.True(crossed > 0.40,
+            $"only {crossed:P1} of entry-cohort runs cleared a single wave — the doorstep is shut again");
 
-        Assert.True(recruitWaves < bredWavesAtTheFloor,
-            $"recruits pooled over levels {string.Join("/", EntryLevels)} cleared {recruitWaves} waves against " +
-            $"{bredWavesAtTheFloor} for bred heroes at level {EntryLevels[0]} alone");
+        Assert.True(bredWaves > recruitWaves,
+            $"bred heroes cleared {bredWaves} against the entry cohort's {recruitWaves} — breeding stopped mattering");
     }
 
     [Fact]
-    public void TheTrialsGhostIsMintedUngraded_WhileTheGauntletsIsGradedToItsRunner_AnUnfixedDefect()
+    public void TheCeilingRampsFromARecruitsCapToTheFullByteByWaveFour()
     {
-        var recruit = RecruitRunner(0, 1);
+        Assert.Equal(StarterPolicy.RecruitStatCap, Trials.CeilingFor(1));
+        Assert.Equal(byte.MaxValue, Trials.CeilingFor(4));
+        Assert.Equal(byte.MaxValue, Trials.CeilingFor(Trials.MaxWaves));
+
+        for (var wave = 2; wave <= 6; wave++)
+            Assert.True(Trials.CeilingFor(wave) >= Trials.CeilingFor(wave - 1),
+                $"wave {wave} eased off — the ladder must never get gentler with depth");
+    }
+
+    [Fact]
+    public void TheGhostIsTheSameForEveryRunner_WhichIsWhatMakesTheScoresComparable()
+    {
         var entropy = RunEntropy(1, 0);
-        Assert.Equal(StarterPolicy.RecruitStatCap, recruit.Genome.StatGeneCeiling);
+        var recruit = RecruitRunner(0, 1);
+        var bred = BredRunner(0, 1);
+        Assert.NotEqual(recruit.Genome.StatGeneCeiling, bred.Genome.StatGeneCeiling);
 
         for (var wave = 1; wave <= 5; wave++)
         {
-            // The one-line difference, stated as the two mints themselves.
             Assert.Equal(
-                Genome.NewGen0(CommitReveal.DeriveEntropy(entropy, "trials-wave", wave.ToString())).ToHex(),
+                Genome.NewRecruit(CommitReveal.DeriveEntropy(entropy, "trials-wave", wave.ToString()),
+                    Trials.CeilingFor(wave)).ToHex(),
                 Trials.GhostFor(entropy, wave).Genome.ToHex());
-            Assert.Equal(
-                Genome.NewRecruit(CommitReveal.DeriveEntropy(entropy, "gauntlet-wave", wave.ToString()),
-                    recruit.Genome.StatGeneCeiling).ToHex(),
-                Gauntlet.GhostFor(entropy, wave, recruit).Genome.ToHex());
 
-            Assert.True(Trials.GhostFor(entropy, wave).Genome.StatGeneCeiling > recruit.Genome.StatGeneCeiling,
-                $"wave {wave}: the trials ghost no longer outgrades its recruit runner — grading has landed " +
-                "here and this defect pin is obsolete");
-            Assert.Equal(recruit.Genome.StatGeneCeiling,
-                Gauntlet.GhostFor(entropy, wave, recruit).Genome.StatGeneCeiling);
+            Assert.NotEqual(
+                Gauntlet.GhostFor(entropy, wave, recruit).Genome.ToHex(),
+                Gauntlet.GhostFor(entropy, wave, bred).Genome.ToHex());
         }
     }
 
