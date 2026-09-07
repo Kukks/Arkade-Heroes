@@ -38,6 +38,8 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Chain__NArk__AllowTreasuryAutoCreate", "true");
         // The listing fee SHIPS DISABLED (0) — turn it on here so the gate is actually exercised.
         Environment.SetEnvironmentVariable("Game__OfferListingFeeSats", ListingFee.ToString());
+        // The daily faucet also SHIPS DISABLED; it is the only OUTFLOW here.
+        Environment.SetEnvironmentVariable("Game__DailyRewardEnabled", "true");
 
         _factory = new WebApplicationFactory<Program>();
     }
@@ -47,6 +49,7 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         // Env vars are process-global and E2E runs serially: leaving the listing fee on would
         // silently change the offer flow for every test class that runs after this one.
         Environment.SetEnvironmentVariable("Game__OfferListingFeeSats", null);
+        Environment.SetEnvironmentVariable("Game__DailyRewardEnabled", null);
         foreach (var wallet in _wallets) await wallet.DisposeAsync();
         _factory.Dispose();
         foreach (var path in _walletDbPaths.Append(_serverDbPath))
@@ -244,6 +247,33 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
 
         Assert.Equal((await bidder.Players.MeAsync()).PlayerId, settled!.OwnerId);
         await ownerWallet.WaitForBalanceAsync(ownerBeforePayout + accepted.SellerNetSats, TimeSpan.FromSeconds(150));
+    }
+
+    /// <summary>The one flow here that PAYS a player rather than billing one, out of the treasury and
+    /// backed by no inflow. `daily` had zero E2E coverage.</summary>
+    [Fact]
+    public async Task DailyClaim_PaysTreasurySatsIntoTheWallet_AndOnlyOnceADay()
+    {
+        var (player, wallet, _) = await FundedPlayerAsync("FeeDaily");
+
+        var status = await player.Daily.StatusAsync();
+        Assert.True(status.HasHero, "FundedPlayerAsync recruits, so the claim's precondition is met");
+        Assert.False(status.ClaimedToday);
+        Assert.True(status.ClaimableNowSats > 0, "the faucet is enabled for this class");
+
+        var before = await wallet.GetBalanceSatsAsync();
+        var claim = await player.Daily.ClaimAsync();
+        Assert.Equal(status.ClaimableNowSats, claim.AwardedSats);
+
+        await wallet.WaitForBalanceAsync(before + claim.AwardedSats, TimeSpan.FromSeconds(150));
+
+        var health = await player.Economy.HealthAsync();
+        Assert.True(health.OutflowByTag.TryGetValue("daily", out var booked),
+            $"no 'daily' outflow recorded; tags seen: {string.Join(",", health.OutflowByTag.Keys)}");
+        Assert.Equal(claim.AwardedSats, booked);
+
+        await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => player.Daily.ClaimAsync());
+        Assert.True((await player.Daily.StatusAsync()).ClaimedToday);
     }
 
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
