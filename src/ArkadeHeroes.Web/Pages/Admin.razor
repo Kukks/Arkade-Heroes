@@ -34,13 +34,11 @@ else
 {
     var e = _overview.Economy;
 
-    @* TRIPWIRES FIRST. These are the "something has silently broken" signals — both failure modes
-       under-report quietly, so a persistent fault and a quiet week look identical without them. Read as a
-       TREND, not a level: the unbooked count is mostly genuine reclaims. *@
-    <div class="card" style="margin-bottom:1.6rem@(e.LedgerWriteFailures > 0 ? ";border-color:var(--danger)" : "")">
+    @* TRIPWIRES FIRST. The two counts are TRENDS, not levels; the held season is a live fault at any value. *@
+    <div class="card" style="margin-bottom:1.6rem@(e.LedgerWriteFailures > 0 || e.SeasonSettleBlockedOn > 0 ? ";border-color:var(--danger)" : "")">
         <div class="page-head" style="margin:0 0 .3rem">
             <h3 style="margin:0">Tripwires</h3>
-            <span class="hud">silent-failure gauges · read as a trend, not a level</span>
+            <span class="hud">silent-failure gauges</span>
             <span class="spacer"></span>
             <button class="btn ghost sm" @onclick="Load" disabled="@_busy">Refresh</button>
         </div>
@@ -54,9 +52,16 @@ else
             <span class="spacer"></span>
             <span class="chip mono">@e.UnbookedClosedFeeOffers.ToString("N0")</span>
         </div>
+        <div class="match-row">
+            <span>season prizes held <span class="hud">pot exceeds the treasury — holds every later season</span></span>
+            <span class="spacer"></span>
+            <span class="chip mono">@(e.SeasonSettleBlockedOn > 0 ? $"season {e.SeasonSettleBlockedOn}" : "none")</span>
+        </div>
         <p class="muted" style="margin:.7rem 0 0">
-            Neither is an alarm on its own. A ledger count above zero means a restart loses the difference;
-            an unbooked count climbing against flat marketplace income means sales stopped being attributed.
+            The first two are trends, not alarms: a ledger count above zero means a restart loses the
+            difference; an unbooked count climbing against flat marketplace income means sales stopped being
+            attributed. The third is not a trend — any season named there is unpaid right now, and so is
+            every season after it, until the treasury covers the pot.
         </p>
     </div>
 
