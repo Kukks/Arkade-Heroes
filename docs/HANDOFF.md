@@ -5,7 +5,7 @@
 
 **The gate is ALL GREEN, not a matching count.** Every merged PR moves these numbers, so a count that differs from the one above means THIS DOC is stale — it does not mean the world is broken. Only `Failed: > 0` is a red baseline. This file has already been wrong in both directions: it once claimed 434 in one paragraph and 400 in another while `main` was at neither, which is exactly the trap an agent told to "fix the world first" walks into. Trust the run; correct the doc.
 
-Provenance, so you know what to re-check: on 2026-09-07 all four were confirmed together on `41e0520` by a dispatched CI run — 1148 / 248 / 54 / 65, every one with 0 skipped. **The standing rule outlives the numbers: E2E is dispatch-only, so it reflects whatever head someone last dispatched, not necessarily this one. Re-dispatch on your own head before trusting it against changed server code** (`gh workflow run CI --ref <branch>`), and read the COUNT out of the log rather than the colour. The previous baseline said "715 unit + 54 E2E" and listed only two suites, which is how an agent following this runbook ends up gating on half the estate; the E2E figure had also gone six weeks without a re-run while being quoted as current.
+Provenance, so you know what to re-check: on 2026-09-07 all four were confirmed together on `41e0520` by a dispatched CI run — 1148 / 248 / 54 / 65, every one with 0 skipped. **The standing rule outlives the numbers: E2E never runs on push or PR — only on manual dispatch and the NIGHTLY schedule** (`ci.yml:157`, `workflow_dispatch || schedule`). So its figure reflects whichever head was last dispatched, or last night's main, not necessarily the commit in front of you. **Re-dispatch on your own head before trusting it against changed server code** (`gh workflow run CI --ref <branch>`), and read the COUNT out of the log rather than the colour. The previous baseline said "715 unit + 54 E2E" and listed only two suites, which is how an agent following this runbook ends up gating on half the estate; the E2E figure had also gone six weeks without a re-run while being quoted as current.
 **Read order:** this file → `contracts/README.md` (covenant traps — mandatory before touching chain code) → the auto-memory backlog (`arkade-heroes-backlog.md`, the live prioritized queue) → `docs/DESIGN.md`.
 
 ---
@@ -63,7 +63,9 @@ ARKADE_WEB_PUBLISH_DIR=published-web dotnet test tests/ArkadeHeroes.Tests.Browse
 
 # 4. Full E2E gate (regtest must be up; runs SERIAL by design, ~7 min)
 dotnet test tests/ArkadeHeroes.Tests.E2E -c Release --nologo   # → Passed! 65/65 (serial, ~7 min)
-# E2E is dispatch-only on PRs (`gh workflow run CI --ref <branch>`). `trials` was the last KNOWN gap and
+# E2E is skipped on push and PR; it runs on manual dispatch (`gh workflow run CI --ref <branch>`) and
+# nightly — the nightly exists because three death-match E2Es sat red for weeks when it was dispatch-only.
+# `trials` was the last KNOWN gap and
 # is closed; that is not the same as exhaustive. It also drives HTTP against an ALREADY-BUILT host, so it
 # cannot see a composition-root defect (#278 was found by booting the thing, not by this suite).
 # Name the suite that actually gated your change, not the one that merely ran.
