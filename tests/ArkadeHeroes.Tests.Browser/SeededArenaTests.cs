@@ -72,6 +72,32 @@ public class SeededArenaTests(PlayableAppFixture app)
         Assert.Contains(hero.Name, await session.BodyTextAsync(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task APlayersOwnPageResolvesTheIdFromTheUrl()
+    {
+        var (client, _) = await SeedHeroAsync("Profile Deep Link");
+        var me = await client.Players.MeAsync();
+
+        var session = await app.OpenAsync($"/players/{me.PlayerId}");
+        await session.AssertHealthyAsync($"/players/{me.PlayerId}");
+
+        Assert.Contains(me.Name, await session.BodyTextAsync(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A rotted share link must say MISSING, not "arena unreachable". Not AssertHealthyAsync: the
+    /// page probes both replay endpoints, so a console 404 is the mechanism.</summary>
+    [Fact]
+    public async Task AReplayLinkForAMatchThatDoesNotExistSaysSo_WithoutBlamingTheArena()
+    {
+        var missing = $"match-{Guid.NewGuid():N}";
+
+        var session = await app.OpenAsync($"/watch/{missing}");
+        var body = await session.BodyTextAsync();
+
+        Assert.Contains("the match doesn't exist yet", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("briefly unreachable", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// A resting offer shows up in the market at the price the seller asked.
     ///
