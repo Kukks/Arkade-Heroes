@@ -336,16 +336,18 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         var opened = await alice.Squad.OpenAsync(
             new OpenSquadMatchRequest(aliceLineup, bobLineup, Wager));
         Assert.NotNull(opened.EscrowAddress);
-        Assert.NotNull(opened.MatchFeeInvoice);
         Assert.Equal(Wager, opened.EscrowStakeSats);
+        Assert.True(opened.MatchFeeInvoice!.AmountSats > 0, "the opener is billed a match fee too");
 
         await aliceWallet.SendAsync(opened.EscrowAddress!, opened.EscrowStakeSats);
         await aliceWallet.SendAsync(opened.MatchFeeInvoice!.PayToAddress, opened.MatchFeeInvoice.AmountSats);
 
         var accepted = await bob.Squad.AcceptAsync(opened.MatchId);
         Assert.NotNull(accepted.EscrowAddress);
-        Assert.NotNull(accepted.MatchFeeInvoice);
         Assert.NotEqual(opened.EscrowAddress, accepted.EscrowAddress);
+        // Both sides: a regression zeroing the DEFENDER's stake or fee would otherwise sail through.
+        Assert.Equal(Wager, accepted.EscrowStakeSats);
+        Assert.True(accepted.MatchFeeInvoice!.AmountSats > 0, "so is the accepter");
 
         await bobWallet.SendAsync(accepted.EscrowAddress!, accepted.EscrowStakeSats);
         await bobWallet.SendAsync(accepted.MatchFeeInvoice!.PayToAddress, accepted.MatchFeeInvoice.AmountSats);
@@ -367,6 +369,7 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Assert.True(resolved.WinnerPayoutSats > 0, "a resolved 3v3 pays its winner");
         Assert.True(resolved.WinnerPayoutSats <= Wager * 2,
             $"paid {resolved.WinnerPayoutSats} out of a {Wager * 2} pot");
+        Assert.NotEmpty(resolved.Receipts);   // Assert.All passes on an empty list
         Assert.All(resolved.Receipts, r =>
         {
             var (ok, detail) = ReceiptVerifier.Verify(r);
