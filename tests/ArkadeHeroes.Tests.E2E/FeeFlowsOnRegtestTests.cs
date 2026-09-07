@@ -272,8 +272,10 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
             $"no 'daily' outflow recorded; tags seen: {string.Join(",", health.OutflowByTag.Keys)}");
         Assert.Equal(claim.AwardedSats, booked);
 
+        var after = await player.Daily.StatusAsync();
+        Assert.Equal(status.DayIndex, after.DayIndex);
+        Assert.True(after.ClaimedToday);
         await Assert.ThrowsAsync<ArkadeHeroesApiException>(() => player.Daily.ClaimAsync());
-        Assert.True((await player.Daily.StatusAsync()).ClaimedToday);
     }
 
     // The buy-in is the only fee that comes BACK to players (as prizes), so the invariant that
