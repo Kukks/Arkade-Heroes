@@ -393,9 +393,9 @@ public class FeeFlowsOnRegtestTests : IAsyncLifetime
         Assert.True(await wallet.GetBalanceSatsAsync() >= before, "an entire trials run must cost nothing");
         Assert.DoesNotContain("trials", (await player.Economy.HealthAsync()).InflowByTag.Keys);
 
-        var (ok, detail) = ReceiptVerifier.Verify(run.Receipt);
-        Assert.True(ok, detail);
-        Assert.Equal((await player.Chain.InfoAsync()).GameSignerKey, run.Receipt.GameSignerKeyHex);
+        var (trust, detail) = ReceiptVerifier.VerifyAgainst(
+            run.Receipt, (await player.Chain.InfoAsync()).GameSignerKey);
+        Assert.True(trust == ReceiptTrust.Verified, detail);
 
         Assert.True(run.BestScore == run.WavesCleared,
             "a first run's best score is that run's score — a recruit usually clears none");
