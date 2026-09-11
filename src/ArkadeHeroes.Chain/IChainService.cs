@@ -227,6 +227,26 @@ public interface IChainService
     /// <summary>The public merge-escrow parameters for trustless client rebuild + refund. Null when unknown.</summary>
     Task<Covenants.MergeEscrowParams?> GetMergeEscrowParamsAsync(string mergeId, CancellationToken ct = default);
 
+    // ── Covenant hero-bid escrows (the offer covenant, roles swapped) ──
+
+    /// <summary>The address the BIDDER deposits into, built at ACCEPTANCE — the first moment both
+    /// destinations are known. The bid never reaches the treasury.</summary>
+    Task<string> CreateBidEscrowAsync(
+        string bidId, string bidderPlayerId, string ownerPlayerId, string heroAssetId,
+        long bidSats, long feeSats, long refundAfterUnixSeconds, CancellationToken ct = default);
+
+    /// <summary>True once the bid sits at the escrow address — the owner's cue that delivering is safe.</summary>
+    Task<bool> IsBidEscrowFundedAsync(string bidId, CancellationToken ct = default);
+
+    /// <summary>True once the BIDDER RECEIVED THE HERO in the transaction that closed the escrow — not
+    /// literally "the fulfil leaf ran", which the indexer cannot answer since it does not expose the leaf a
+    /// spend selected. OBSERVED, never performed: the hero moves from the owner's wallet, so only their
+    /// client can sign it (as with a sold offer).</summary>
+    Task<bool> WasBidSettledAsync(string bidId, CancellationToken ct = default);
+
+    /// <summary>The public bid-escrow parameters for trustless client rebuild + reclaim. Null when unknown.</summary>
+    Task<Covenants.BidEscrowParams?> GetBidEscrowParamsAsync(string bidId, CancellationToken ct = default);
+
     // ── Covenant death-match escrows (JOINT, covenant-v2) ──────────────
 
     /// <summary>
